@@ -1362,6 +1362,8 @@
       
         
       
+        
+      
     
     
       
@@ -1435,6 +1437,27 @@
   
   <span class="md-ellipsis">
     Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
   </span>
   
 
@@ -1667,7 +1690,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
         
           
           
@@ -1683,14 +1706,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1866,7 +1889,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -1882,14 +1905,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2061,10 +2084,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2075,8 +2098,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4655,6 +4678,7 @@ the raw representation for value enums.</p>
 </ul>
 <h3 id="parser-and-syntax">Parser and syntax<a class="headerlink" href="#parser-and-syntax" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Language/Compiler</strong>: Incan functions and methods can now declare variadic positional and keyword captures with <code>*args: T</code> and <code>**kwargs: T</code>, which bind as <code>List[T]</code> and <code>Dict[str, T]</code> inside the callable. Static call-site unpacking with <code>f(*xs)</code> and <code>f(**kw)</code> supports rest-aware callees and fixed-parameter callees when the compiler can prove the unpacked shape. Runtime list and dictionary literals now support spread entries with <code>[*xs]</code> and <code>{**kw}</code>, while invalid destinations such as <code>[**xs]</code> and <code>{*xs}</code> are rejected with targeted diagnostics (#83, RFC 038).</li>
 <li><strong>Language/Compiler</strong>: Incan now supports <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code> for single-pattern control flow. Parsing, formatter round-trips, typechecking, scoping, lowering, and Rust emission now follow the same pattern semantics as <code>match</code>, while <code>if let</code> stays single-arm only and rejects <code>else</code> / <code>elif</code> branches in v1 (<a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a>, #333).</li>
 <li><strong>Language/Compiler</strong>: Incan now supports RFC 032 value enum declarations with <code>str</code> and <code>int</code> backing values. The parser and formatter preserve raw variant assignments, while declaration validation rejects missing values, duplicate raw values, mismatched literal types, payload-bearing variants, generated-helper name collisions, and generic value enums (#317, RFC 032).</li>
 <li><strong>Language/Compiler</strong>: Public classes now preserve authored field visibility. Non-<code>pub</code> class fields stay private after formatter round-trips and member access outside the owning class is rejected, while methods on the class can continue to use private backing fields (#246).</li>
@@ -4668,7 +4692,7 @@ the raw representation for value enums.</p>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.14</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.15</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4681,6 +4705,7 @@ the raw representation for value enums.</p>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li>Testing language primitives: <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a></li>
 <li>Value enums: <a href="/dev/RFCs/032_value_enums">RFC 032</a></li>
+<li>Variadic positional arguments and keyword capture: <a href="/dev/RFCs/038_variadic_positional_args_and_keyword_capture">RFC 038</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>

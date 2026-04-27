@@ -1370,6 +1370,8 @@
       
         
       
+        
+      
     
     
       
@@ -1443,6 +1445,27 @@
   
   <span class="md-ellipsis">
     Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
   </span>
   
 
@@ -1675,7 +1698,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
         
           
           
@@ -1691,14 +1714,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1876,7 +1899,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" checked>
         
           
           
@@ -1892,14 +1915,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2005,6 +2028,15 @@
   <a href="#callableparams-r-type-sugar" class="md-nav__link">
     <span class="md-ellipsis">
       Callable[Params, R] type sugar
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-aware-function-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rest-Aware Function Values
     </span>
   </a>
   
@@ -2129,10 +2161,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2143,8 +2175,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4417,6 +4449,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rest-aware-function-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rest-Aware Function Values
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#callable0-callable1-callable2" class="md-nav__link">
     <span class="md-ellipsis">
       Callable0 / Callable1 / Callable2
@@ -4470,15 +4511,34 @@
 </tbody>
 </table>
 <p>Both forms are interchangeable in type annotations. Named <code>def</code> functions and closures are both accepted wherever a function type is expected. See <a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a> for the full specification.</p>
+<h2 id="rest-aware-function-values">Rest-Aware Function Values<a class="headerlink" href="#rest-aware-function-values" title="Permanent link">&para;</a></h2>
+<p>Function values preserve source-declared rest parameters. A function declared with <code>*args: T</code> accepts additional positional arguments and <code>*list_value</code> unpacking through the function value. A function declared with <code>**kwargs: T</code> accepts additional keyword arguments and <code>**dict_value</code> unpacking through the function value.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">items</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="n">collect</span>
+    <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">}</span>
+    <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
+</code></pre></div>
+<p>The rest bindings still have explicit container types inside the callable: <code>List[T]</code> for <code>*args</code> and <code>Dict[str, T]</code> for <code>**kwargs</code>. A plain fixed-arity function type with a trailing list or dictionary parameter does not imply rest-call behavior by itself.</p>
+<p>See <a href="../../functions/">Functions and calls</a> for the complete rest parameter and call binding rules.</p>
 <h2 id="callable0-callable1-callable2">Callable0 / Callable1 / Callable2<a class="headerlink" href="#callable0-callable1-callable2" title="Permanent link">&para;</a></h2>
 <p>These stdlib traits model "objects that can be called" like <code>obj()</code>, <code>obj(x)</code>, <code>obj(x, y)</code>:</p>
 <ul>
-<li><strong>Callable0[R]</strong></li>
+<li><strong>Callable0[R]</strong><ul>
 <li>Hook: <code>__call__(self) -&gt; R</code></li>
-<li><strong>Callable1[A, R]</strong></li>
+</ul>
+</li>
+<li><strong>Callable1[A, R]</strong><ul>
 <li>Hook: <code>__call__(self, arg: A) -&gt; R</code></li>
-<li><strong>Callable2[A, B, R]</strong></li>
+</ul>
+</li>
+<li><strong>Callable2[A, B, R]</strong><ul>
 <li>Hook: <code>__call__(self, a: A, b: B) -&gt; R</code></li>
+</ul>
+</li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 

@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 038: Variadic Positional Args and Keyword-Argument Capture (*args / **kwargs) - Incan Documentation</title>
+        <title>RFC 038: Variadic Args and Unpacking (*args / **kwargs) - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-038-variadic-positional-args-and-keyword-argument-capture-args-kwargs" class="md-skip">
+        <a href="#rfc-038-variadic-args-and-unpacking-args-kwargs" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 038: Variadic Positional Args and Keyword-Argument Capture (*args / **kwargs)
+              RFC 038: Variadic Args and Unpacking (*args / **kwargs)
             
           </span>
         </div>
@@ -1362,6 +1362,8 @@
       
         
       
+        
+      
     
     
       
@@ -1435,6 +1437,27 @@
   
   <span class="md-ellipsis">
     Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
   </span>
   
 
@@ -1667,7 +1690,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
         
           
           
@@ -1683,14 +1706,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_13" id="__nav_3_4_13_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_13">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1866,7 +1889,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -1882,14 +1905,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2061,10 +2084,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2075,8 +2098,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4349,6 +4372,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -4385,6 +4417,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#call-site-unpacking-is-part-of-the-same-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site unpacking is part of the same feature
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4405,6 +4446,21 @@
       Non-Goals
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Non-Goals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-fixed-parameter-unpacking-belongs-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why fixed-parameter unpacking belongs here
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4440,6 +4496,24 @@
   <a href="#mixed-usage-args-kwargs" class="md-nav__link">
     <span class="md-ellipsis">
       Mixed usage: *args + **kwargs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#call-site-unpacking" class="md-nav__link">
+    <span class="md-ellipsis">
+      Call-site unpacking
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list-and-dictionary-literal-spread" class="md-nav__link">
+    <span class="md-ellipsis">
+      List and dictionary literal spread
     </span>
   </a>
   
@@ -4500,6 +4574,15 @@
   <a href="#call-binding-algorithm" class="md-nav__link">
     <span class="md-ellipsis">
       Call binding algorithm
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collection-literal-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection literal binding
     </span>
   </a>
   
@@ -4634,6 +4717,24 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#5-keep-collection-literal-spread-separate" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Keep collection-literal spread separate
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-permit-xs-as-a-list-flattening-shortcut" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Permit [**xs] as a list flattening shortcut
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4658,9 +4759,129 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#implementation-plan" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-syntax-ast-and-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Syntax, AST, and formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-typechecker-and-callable-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Typechecker and callable metadata
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-lowering-ir-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Lowering, IR, and emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-tooling-tests-and-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Tooling, tests, and docs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / design
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-ast-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parser / AST / formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-ir-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / IR / emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
     </span>
   </a>
   
@@ -4684,9 +4905,9 @@
   
 
 
-<h1 id="rfc-038-variadic-positional-args-and-keyword-argument-capture-args-kwargs">RFC 038: Variadic Positional Args and Keyword-Argument Capture (<code>*args</code> / <code>**kwargs</code>)<a class="headerlink" href="#rfc-038-variadic-positional-args-and-keyword-argument-capture-args-kwargs" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-038-variadic-args-and-unpacking-args-kwargs">RFC 038: Variadic Args and Unpacking (<code>*args</code> / <code>**kwargs</code>)<a class="headerlink" href="#rfc-038-variadic-args-and-unpacking-args-kwargs" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Implemented</li>
 <li><strong>Created:</strong> 2026-03-07</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -4694,23 +4915,32 @@
 <li>RFC 039 (<code>race</code> for awaitable concurrency)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/83</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/83">#83</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
+<li><strong>Shipped in:</strong> 0.3</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Add Python-style rest parameters (<code>*args</code> / <code>**kwargs</code>) to Incan function definitions:</p>
+<p>Add Python-style rest parameters and unpacking to Incan as one static, type-directed binding model: functions may capture extra positional and keyword arguments with <code>*args</code> and <code>**kwargs</code>, calls may unpack positional and keyword values with <code>f(*xs)</code> and <code>f(**kw)</code>, and collection literals may spread existing lists and dictionaries with <code>[*xs]</code> and <code>{**kw}</code> while lowering to explicit typed containers rather than runtime reflection.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>*name: T</code> captures extra positional arguments and binds <code>name</code> as a <code>List[T]</code></li>
 <li><code>**name: V</code> captures extra named arguments and binds <code>name</code> as a <code>Dict[str, V]</code></li>
+<li><code>f(*xs)</code> expands an ordinary list or statically shaped positional value into the call</li>
+<li><code>f(**kw)</code> expands an ordinary dictionary or statically shaped keyword value into the call</li>
+<li><code>[*xs]</code> expands ordinary lists or statically shaped positional values into a list literal</li>
+<li><code>{**kw}</code> expands ordinary dictionaries or statically shaped keyword values into a dict literal</li>
 </ul>
 <p>This is compile-time sugar. The surface syntax is ergonomic, but the lowered model stays explicit:</p>
 <ul>
 <li>a rest positional parameter lowers to an ordinary trailing <code>List[T]</code> parameter</li>
 <li>a rest keyword parameter lowers to an ordinary trailing <code>Dict[str, V]</code> parameter</li>
-<li>call sites that use the sugar are rewritten to construct those containers explicitly</li>
+<li>rest-aware call sites are rewritten to construct those containers explicitly</li>
+<li>fixed-parameter unpacking is rewritten to an ordinary ordered call after the compiler proves the unpacked shape</li>
+<li>collection-literal spread is rewritten to explicit list or dictionary construction in source order</li>
+<li>call-site unpacking is accepted only when the callee type/signature and unpacked value shape provide a deterministic compile-time binding plan</li>
 </ul>
+<p>Collection-literal spread applies to ordinary runtime list and dictionary literals. Const frozen collection initializers remain direct-entry-only until const emission can represent spread entries without changing frozen-storage semantics.</p>
 <p>This RFC is not only about Python-style convenience. It is also a foundational library-design feature. It lets Incan express APIs that naturally accept a variable number of homogeneous inputs without proliferating fixed-arity helper families. A good example is the helper surface proposed in RFC 039, where a variadic <code>std.async.race(*arms: RaceArm[R])</code> is cleaner than a permanent <code>race2</code> / <code>race3</code> / <code>race4</code> ladder.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="python-style-apis-need-a-direct-rest-parameter-model">Python-style APIs need a direct rest-parameter model<a class="headerlink" href="#python-style-apis-need-a-direct-rest-parameter-model" title="Permanent link">&para;</a></h3>
@@ -4749,21 +4979,42 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">race</span><span class="p">(</span><span class="n">awaitable_a</span><span class="p">,</span> <span class="n">on_a</span><span class="p">,</span> <span class="n">awaitable_b</span><span class="p">,</span> <span class="n">on_b</span><span class="p">)</span>
 </code></pre></div>
 <p>That distinction is important. This RFC is about giving Incan a clean homogeneous variadic model, not a magic "any sequence of argument shapes" feature.</p>
+<h3 id="call-site-unpacking-is-part-of-the-same-feature">Call-site unpacking is part of the same feature<a class="headerlink" href="#call-site-unpacking-is-part-of-the-same-feature" title="Permanent link">&para;</a></h3>
+<p>Python users do not experience <code>*args</code>, <code>**kwargs</code>, <code>f(*xs)</code>, <code>f(**kw)</code>, <code>[*xs]</code>, and <code>{**kw}</code> as unrelated features. They are one unpacking model with three related contexts:</p>
+<ul>
+<li>function definitions may capture extra positional or named arguments</li>
+<li>function calls may unpack existing positional or named values</li>
+<li>list and dictionary literals may build new containers by spreading existing containers</li>
+</ul>
+<p>Incan should keep that conceptual model while making each destination explicit. The implementation may still phase the work, but the RFC should define the full unpacking surface instead of splitting fixed-parameter or collection-literal unpacking into separate follow-up RFCs.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Add <code>*name: T</code> and <code>**name: V</code> parameter forms.</li>
+<li>Add <code>f(*xs)</code> and <code>f(**kw)</code> call-site unpacking for calls to rest-aware callables.</li>
+<li>Add <code>f(*xs)</code> and <code>f(**kw)</code> call-site unpacking for ordinary fixed-parameter callables when the compiler can prove the unpacked shape.</li>
+<li>Add list literal spread with <code>[*xs]</code> and mixed forms such as <code>[head, *tail, last]</code>.</li>
+<li>Add dict literal spread with <code>{**kw}</code> and mixed forms such as <code>{"accept": "json", **headers}</code>.</li>
 <li>Specify them as compile-time sugar over explicit trailing container parameters.</li>
+<li>Preserve rest-parameter structure in callable metadata so named function values keep the same rest-call behavior as direct calls.</li>
 <li>Keep the semantics deterministic and type-directed.</li>
 <li>Preserve Python-like ergonomics without introducing runtime reflection.</li>
 <li>Enable cleaner library APIs that naturally take "zero or more packaged values".</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Call-site unpacking (<code>f(*xs)</code> / <code>f(**m)</code>) in this RFC.</li>
+<li>Dynamic runtime arity dispatch for arbitrary <code>List[T]</code> / <code>Dict[str, T]</code> values when the compiler cannot prove the needed length or keys.</li>
 <li>C-style variadics or raw FFI variadics.</li>
 <li>Heterogeneous positional capture without packaging.</li>
 <li>An <code>Any</code> type for untyped keyword captures.</li>
+<li>A richer structured-options container for captured keyword arguments beyond <code>Dict[str, V]</code>.</li>
+<li>Set literal spread. This RFC covers list and dictionary literal spread because they correspond directly to positional and keyword unpacking.</li>
+<li>Treating <code>[**xs]</code> as valid syntax. <code>**</code> is keyword or mapping unpacking, not sequence expansion.</li>
 </ul>
+<h3 id="why-fixed-parameter-unpacking-belongs-here">Why fixed-parameter unpacking belongs here<a class="headerlink" href="#why-fixed-parameter-unpacking-belongs-here" title="Permanent link">&para;</a></h3>
+<p>It is reasonable to ask whether <code>f(*pair)</code> for <code>def f(a: int, b: int)</code> belongs with rest parameters. It does. Python presents rest capture and call-site unpacking through the same <code>*</code> / <code>**</code> spelling because both are parts of call binding.</p>
+<p>The static typing problems are different, so the rules must be explicit. Rest-directed unpacking has a known destination container. If a function declares <code>*items: T</code>, then <code>f(*xs)</code> only needs to prove that <code>xs</code> is compatible with <code>List[T]</code>. If a function declares <code>**labels: T</code>, then <code>f(**kw)</code> only needs to prove that <code>kw</code> is compatible with <code>Dict[str, T]</code>.</p>
+<p>Fixed-parameter unpacking has no such destination container. The compiler must prove the unpacked value's arity, parameter order, named-key set, duplicate bindings, defaults, and per-field types before it can lower the call. Lists do not normally carry length in their type, and ordinary dictionaries do not normally carry a statically known key set. That means fixed-parameter unpacking needs stricter shape-proof rules, not a separate RFC.</p>
+<p>Collection-literal spread follows the same destination rule. <code>[*xs]</code> is list spread because <code>*</code> expands positional values into a sequence destination. <code>{**kw}</code> is dictionary spread because <code>**</code> expands mapping entries into a mapping destination. <code>[**xs]</code> must remain invalid because <code>**</code> has no coherent list destination.</p>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="variadic-positional-capture-args">Variadic positional capture: <code>*args</code><a class="headerlink" href="#variadic-positional-capture-args" title="Permanent link">&para;</a></h3>
 <p>Use <code>*name: T</code> as the last positional-style parameter to accept any number of extra positional arguments. Inside the function, <code>name</code> is a <code>List[T]</code>.</p>
@@ -4785,8 +5036,7 @@
     <span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">,</span> <span class="n">tls</span><span class="o">=</span><span class="s2">&quot;true&quot;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">&quot;danny&quot;</span><span class="p">)</span>
     <span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">)</span>  <span class="c1"># ok: opts is {}</span>
 </code></pre></div>
-<p>This is especially valuable for boundary-style APIs that intentionally forward option bags to another system: readers, writers, HTTP clients, framework adapters, and plugin hooks.</p>
-<p>A useful real-world analogy is Koheesio's <code>ExtraParamsMixin</code>, which separates declared model fields from pass-through extra options while keeping call sites ergonomic. This is quite a common pattern in Python libraries.</p>
+<p>This is especially valuable for boundary-style APIs that intentionally forward option bags to another system: readers, writers, HTTP clients, framework adapters, and plugin hooks. Python libraries commonly separate declared parameters from pass-through extra options for this kind of adapter boundary.</p>
 <p>The important difference in Incan is that <code>**kwargs</code> remains explicit and typed:</p>
 <ul>
 <li>unknown named arguments are still rejected by default unless a function opts in with <code>**name: V</code></li>
@@ -4798,6 +5048,57 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="n">template</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="nb">values</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">template</span>  <span class="c1"># placeholder</span>
 </code></pre></div>
+<h3 id="call-site-unpacking">Call-site unpacking<a class="headerlink" href="#call-site-unpacking" title="Permanent link">&para;</a></h3>
+<p>Use <code>*expr</code> at a call site to pass an existing ordinary list value into a positional rest parameter. Use <code>**expr</code> to pass an existing ordinary dictionary value into a keyword rest parameter.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">msgs</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">level</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;started&quot;</span><span class="p">,</span> <span class="s2">&quot;listening&quot;</span><span class="p">]</span>
+    <span class="n">log</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="o">*</span><span class="n">parts</span><span class="p">)</span>
+    <span class="n">log</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="s2">&quot;boot&quot;</span><span class="p">,</span> <span class="o">*</span><span class="n">parts</span><span class="p">,</span> <span class="s2">&quot;ready&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Keyword unpacking follows the same rule for functions that declare a keyword rest parameter:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="o">...</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">defaults</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;tls&quot;</span><span class="p">:</span> <span class="s2">&quot;true&quot;</span><span class="p">}</span>
+    <span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">defaults</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">&quot;danny&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Call-site unpacking also applies to fixed parameters when the compiler can prove the unpacked shape:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">point</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">,</span><span class="si">{</span><span class="n">y</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">xy</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">point</span><span class="p">(</span><span class="o">*</span><span class="n">xy</span><span class="p">)</span>
+</code></pre></div>
+<p>For keyword unpacking into fixed parameters, the compiler must know the available keys and their value types. Inline dictionary literals with string literal keys are the minimum accepted shape:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">route</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">route</span><span class="p">(</span><span class="o">**</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;/status&quot;</span><span class="p">,</span> <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;GET&quot;</span><span class="p">})</span>
+</code></pre></div>
+<p>Ordinary <code>Dict[str, T]</code> values are still valid for feeding <code>**kwargs</code>; they are not enough by themselves to prove that fixed parameters such as <code>path</code> and <code>method</code> are present unless the compiler can preserve a statically known key shape for that value.</p>
+<h3 id="list-and-dictionary-literal-spread">List and dictionary literal spread<a class="headerlink" href="#list-and-dictionary-literal-spread" title="Permanent link">&para;</a></h3>
+<p>Use <code>*expr</code> inside a list literal when the destination is a new list:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">middle</span> <span class="o">=</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="nb">values</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">middle</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>
+</code></pre></div>
+<p>The result preserves source order. Direct elements are inserted where they appear, and spread values contribute their elements at that position. <code>[*items]</code> therefore creates a shallow list copy, and <code>[head, *tail]</code> is the literal-spread form of prefixing an existing list.</p>
+<p>Use <code>**expr</code> inside a dictionary literal when the destination is a new dictionary:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">defaults</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;accept&quot;</span><span class="p">:</span> <span class="s2">&quot;json&quot;</span><span class="p">}</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">defaults</span><span class="p">,</span> <span class="s2">&quot;trace&quot;</span><span class="p">:</span> <span class="s2">&quot;enabled&quot;</span><span class="p">}</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span>
+</code></pre></div>
+<p>Dictionary spread preserves source order for insertion. If the same key appears more than once, the later entry wins, matching ordinary dictionary construction and <code>**kwargs</code> capture behavior.</p>
+<p>The markers are destination-specific. <code>[*items]</code> is valid because a list is a sequence destination. <code>{**headers}</code> is valid because a dictionary is a mapping destination. <code>[**items]</code> is invalid even if <code>items</code> is a list, because <code>**</code> expands mappings into keyword or dictionary destinations, not sequences.</p>
 <h3 id="higher-order-helper-apis">Higher-order helper APIs<a class="headerlink" href="#higher-order-helper-apis" title="Permanent link">&para;</a></h3>
 <p>Variadics are especially useful when a library wants to accept any number of homogeneous packaged values:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">arm</span><span class="p">,</span> <span class="n">race</span>
@@ -4811,24 +5112,28 @@
 </code></pre></div>
 <p>The repeated thing here is not "awaitable, callback, awaitable, callback". The repeated thing is <code>RaceArm[str]</code>. That is the kind of API variadics make elegant.</p>
 <h3 id="calls-through-variables">Calls through variables<a class="headerlink" href="#calls-through-variables" title="Permanent link">&para;</a></h3>
-<p>For calls where the compiler cannot reliably identify the callee signature, Incan may require explicit list/dict arguments rather than applying rest-capture sugar automatically:</p>
+<p>Rest metadata is part of a callable's type-level contract. A function value created from a rest-aware function keeps the same rest-call behavior as a direct call:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">msgs</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="o">...</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">log</span>
-    <span class="c1"># One plausible rule: require the explicit lowered form here.</span>
-    <span class="n">f</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">])</span>
+    <span class="n">f</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">)</span>
+    <span class="n">f</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="o">*</span><span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">])</span>
 </code></pre></div>
-<p>This remains an open design question because ordinary function types may erase rest-parameter structure unless the type system is extended to preserve it explicitly.</p>
+<p>If a callable type is written without rest markers, the compiler treats it as an exact fixed-arity function type. Rest-call sugar is therefore available through function values only when the callable type preserves the rest structure.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="definitions">Definitions<a class="headerlink" href="#definitions" title="Permanent link">&para;</a></h3>
-<p>This RFC introduces two new parameter kinds:</p>
+<p>This RFC introduces two new parameter kinds and four unpacking forms:</p>
 <ol>
 <li><strong>Rest positional parameter</strong>: <code>*name: T</code>: Binds <code>name</code> as <code>List[T]</code> within the function body</li>
 <li><strong>Rest keyword parameter</strong>: <code>**name: V</code>: Binds <code>name</code> as <code>Dict[str, V]</code> within the function body</li>
+<li><strong>Positional unpack argument</strong>: <code>*expr</code>: Supplies elements of an ordinary list or statically shaped positional value to the call</li>
+<li><strong>Keyword unpack argument</strong>: <code>**expr</code>: Supplies entries of an ordinary dictionary or statically shaped keyword value to the call</li>
+<li><strong>List spread element</strong>: <code>*expr</code>: Supplies elements of an ordinary list or statically shaped positional value to a list literal</li>
+<li><strong>Dictionary spread entry</strong>: <code>**expr</code>: Supplies entries of an ordinary dictionary or statically shaped keyword value to a dictionary literal</li>
 </ol>
-<p>In both cases, the annotation specifies the element type (<code>T</code>) or value type (<code>V</code>), not the container type.</p>
+<p>For rest parameters, the annotation specifies the element type (<code>T</code>) or value type (<code>V</code>), not the container type.</p>
 <h3 id="placement-rules">Placement rules<a class="headerlink" href="#placement-rules" title="Permanent link">&para;</a></h3>
 <p>Within a single parameter list:</p>
 <ul>
@@ -4843,30 +5148,67 @@
 <p>Given:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">p1</span><span class="p">:</span> <span class="nc">A</span><span class="p">,</span> <span class="n">p2</span><span class="p">:</span> <span class="nc">B</span><span class="p">,</span> <span class="o">*</span><span class="n">rest</span><span class="p">:</span> <span class="nc">R</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">:</span> <span class="nc">K</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
-<p>Binding a call <code>f(&lt;positional...&gt;, &lt;named...&gt;)</code> proceeds as:</p>
+<p>Binding a call <code>f(&lt;args...&gt;)</code> proceeds by building one deterministic binding plan across ordinary positional arguments, ordinary named arguments, positional unpack arguments, and keyword unpack arguments.</p>
+<p>For positional arguments:</p>
 <ol>
-<li>Bind normal parameters from positional arguments left-to-right until normal parameters are exhausted or positional arguments run out.</li>
-<li>Bind normal parameters from named arguments by exact name match for any normal params not yet bound.</li>
-<li>If a named argument targets a parameter already bound, emit an error.</li>
-<li>Remaining positional arguments:</li>
-<li>if <code>*rest</code> exists: append them to <code>rest</code> in order</li>
-<li>otherwise: error for too many positional arguments</li>
-<li>Remaining named arguments that do not match any normal parameter:</li>
-<li>if <code>**kw</code> exists: insert them into <code>kw</code></li>
-<li>otherwise: error for unknown named argument</li>
+<li>Positional call items are processed left to right.</li>
+<li>Direct positional arguments bind ordinary positional parameters left-to-right until those parameters are exhausted.</li>
+<li>Surplus direct positional arguments are appended to <code>*rest</code> if present; otherwise they are errors.</li>
+<li><code>*expr</code> may bind ordinary fixed positional parameters only when <code>expr</code> has a statically known ordered shape. The minimum accepted shapes are fixed-length tuples and list literals.</li>
+<li>A shaped <code>*expr</code> is expanded element by element. Elements bind remaining fixed positional parameters first, then extend <code>*rest</code> if present.</li>
+<li>Homogeneous <code>List[T]</code> values with no known length are valid for extending <code>*rest</code> only when no fixed positional parameter still needs to be bound. They must not be used to fill a fixed number of ordinary parameters unless the language gains a separate way to prove list length statically.</li>
 </ol>
+<p>For named arguments:</p>
+<ol>
+<li>Direct named arguments bind ordinary parameters by exact name.</li>
+<li>A direct named argument that targets an already bound parameter is a duplicate-argument error.</li>
+<li>Unknown direct named arguments are inserted into <code>**kw</code> if present; otherwise they are errors.</li>
+<li><code>**expr</code> may bind ordinary fixed named parameters only when <code>expr</code> has a statically known key set and value types.</li>
+<li>If a keyword rest parameter exists, keys that are not consumed by fixed parameters may extend that keyword rest dictionary when their values are compatible with <code>K</code>.</li>
+<li>Ordinary <code>Dict[str, T]</code> is valid for extending <code>**kw</code>. It is not valid for proving that required fixed parameters are present unless a future explicit runtime-checking rule is accepted.</li>
+</ol>
+<p>If an unpacked value would bind a parameter that is already bound, the compiler reports a duplicate-argument error. If a required fixed parameter remains unbound after all direct and unpacked arguments are processed, the compiler reports a missing-argument error.</p>
+<h3 id="collection-literal-binding">Collection literal binding<a class="headerlink" href="#collection-literal-binding" title="Permanent link">&para;</a></h3>
+<p>List literal binding must evaluate direct elements and spread elements from left to right:</p>
+<ol>
+<li>A direct element contributes one value to the resulting list.</li>
+<li>A <code>*expr</code> element contributes zero or more values at its source position.</li>
+<li>Every contributed value must be compatible with the list element type.</li>
+<li><code>**expr</code> must not be accepted in a list literal.</li>
+</ol>
+<p>Dictionary literal binding must evaluate direct entries and spread entries from left to right:</p>
+<ol>
+<li>A direct key-value entry inserts or overwrites one key in the resulting dictionary.</li>
+<li>A <code>**expr</code> entry contributes zero or more key-value pairs at its source position.</li>
+<li>Every contributed key must be compatible with the dictionary key type.</li>
+<li>Every contributed value must be compatible with the dictionary value type.</li>
+<li>Duplicate keys are resolved by source order: later entries overwrite earlier entries.</li>
+<li><code>*expr</code> must not be accepted in a dictionary literal.</li>
+</ol>
+<p>Const frozen collection initializers are not part of collection spread in this RFC implementation. They continue to require direct entries so const evaluation and backend frozen-storage emission stay aligned.</p>
 <h3 id="type-checking-rules">Type checking rules<a class="headerlink" href="#type-checking-rules" title="Permanent link">&para;</a></h3>
 <ul>
 <li>each extra positional argument bound into <code>*rest: R</code> must be type-compatible with <code>R</code></li>
 <li>each extra named argument value bound into <code>**kw: K</code> must be type-compatible with <code>K</code></li>
+<li>each <code>*expr</code> unpack argument must be type-compatible with <code>List[R]</code> for the resolved rest positional parameter</li>
+<li>each <code>**expr</code> unpack argument must be type-compatible with <code>Dict[str, K]</code> for the resolved rest keyword parameter</li>
+<li>each <code>*expr</code> that binds fixed parameters must have a statically known ordered shape with per-position types compatible with the target parameters</li>
+<li>each <code>**expr</code> that binds fixed parameters must have a statically known key set with per-key value types compatible with the target parameters</li>
+<li>each <code>*expr</code> inside a list literal must be compatible with the list element type, either as a homogeneous ordinary list value or as a statically shaped positional value whose elements are each compatible</li>
+<li>each <code>**expr</code> inside a dictionary literal must be compatible with the dictionary key and value types, either as a homogeneous <code>Dict[K, V]</code> or as a statically shaped mapping whose keys and values are each compatible</li>
 <li><code>rest</code> is typechecked as <code>List[R]</code> within the function</li>
 <li><code>kw</code> is typechecked as <code>Dict[str, K]</code> within the function</li>
+<li>callable values must preserve rest structure in their function type when they originate from a rest-aware declaration</li>
 </ul>
 <h3 id="lowering-and-runtime-behavior">Lowering and runtime behavior<a class="headerlink" href="#lowering-and-runtime-behavior" title="Permanent link">&para;</a></h3>
 <p>This feature is specified as pure compile-time lowering:</p>
 <ul>
 <li>functions defined with <code>*rest</code> and/or <code>**kw</code> are implemented as normal functions whose trailing parameters are explicit <code>List[...]</code> / <code>Dict[...]</code> values</li>
-<li>calls that use the sugar are rewritten by the compiler to construct those values at the call site</li>
+<li>calls that use rest-capture sugar are rewritten by the compiler to construct those values at the call site</li>
+<li>unpack arguments that feed rest parameters are lowered into the same explicit list/dict construction path rather than into runtime reflection or dynamic dispatch</li>
+<li>unpack arguments that feed fixed parameters are lowered to ordinary positional Rust arguments after binding is resolved</li>
+<li>list literal spread is lowered to explicit list construction and extension in source order</li>
+<li>dictionary literal spread is lowered to explicit dictionary construction and insertion/extension in source order</li>
 </ul>
 <p>Conceptually:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">,</span> <span class="s2">&quot;c&quot;</span><span class="p">)</span>
@@ -4881,14 +5223,21 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;tls&quot;</span><span class="p">:</span> <span class="s2">&quot;true&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="s2">&quot;danny&quot;</span><span class="p">})</span>
 </code></pre></div>
 <p>The backend can then emit standard Rust <code>Vec&lt;T&gt;</code> / <code>HashMap&lt;String, V&gt;</code> construction without needing true Rust variadics.</p>
+<p>Mixed direct and unpacked rest arguments are flattened into the explicit container in source order:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="p">(</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="o">*</span><span class="n">more</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>lowers conceptually to a call whose final rest list is equivalent to:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="n">more</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>The exact generated Rust does not need to use an Incan <code>+</code> operation; it only needs to preserve the observable list order.</p>
 <h3 id="interaction-with-function-values">Interaction with function values<a class="headerlink" href="#interaction-with-function-values" title="Permanent link">&para;</a></h3>
-<p>RFC 035 makes named functions first-class values, but it does not automatically solve all rest-parameter questions.</p>
-<p>The issue is not whether a function can be passed as a value. The issue is whether a plain function type such as <code>(str, List[str]) -&gt; None</code> preserves enough surface-level information for the compiler to know that <code>f("info", "a", "b")</code> should be treated as sugar instead of an arity error.</p>
-<p>This RFC leaves that question open. A conservative first version may require explicit lowered container arguments when the callee is a function value rather than a directly resolved declaration.</p>
+<p>RFC 035 makes named functions first-class values. RFC 038 extends callable metadata so a function value can preserve whether a parameter is ordinary, positional rest, or keyword rest.</p>
+<p>A plain fixed-arity function type such as <code>(str, List[str]) -&gt; None</code> does not imply rest-call behavior by itself. Function values that come from rest-aware declarations, and callable types that explicitly preserve rest markers, do imply rest-call behavior.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>async/await</strong>: no special interaction; captured list/dict values are ordinary values</li>
 <li><strong>traits/derives</strong>: methods may also use <code>*</code> / <code>**</code> under the same rules</li>
+<li><strong>collection literals</strong>: list and dictionary literals gain spread elements that follow the same positional-vs-mapping marker distinction as call arguments</li>
 <li><strong>imports/modules</strong>: no special interaction</li>
 <li><strong>Rust interop</strong>:<ul>
 <li>the sugar should not be applied to external Rust calls unless the compiler has an Incan-level signature describing the trailing parameters as <code>List[...]</code> / <code>Dict[...]</code></li>
@@ -4902,14 +5251,30 @@
 <div class="language-text highlight"><pre><span></span><code>param ::= IDENT &quot;:&quot; Type
         | &quot;*&quot; IDENT &quot;:&quot; Type
         | &quot;**&quot; IDENT &quot;:&quot; Type
+
+call_arg ::= Expr
+           | IDENT &quot;=&quot; Expr
+           | &quot;*&quot; Expr
+           | &quot;**&quot; Expr
+
+list_elem ::= Expr
+            | &quot;*&quot; Expr
+
+dict_entry ::= Expr &quot;:&quot; Expr
+             | &quot;**&quot; Expr
 </code></pre></div>
-<p>No new call syntax is required for the capture feature itself. Call-site unpacking is explicitly out of scope for this RFC.</p>
+<p>Call-site unpacking is part of this RFC for both statically rest-aware callees and fixed-parameter callees whose unpacked value shapes are statically provable.</p>
+<p>Collection-literal spread is part of this RFC for list and dictionary literals. <code>*expr</code> is valid only where the destination is sequence-like. <code>**expr</code> is valid only where the destination is mapping-like.</p>
 <h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
 <p>Key invariants:</p>
 <ul>
 <li>the <code>*</code> / <code>**</code> marker determines how arguments are captured</li>
 <li>the annotation specifies element/value types, not container types</li>
 <li>binding is deterministic, compile-time, and independent of runtime reflection</li>
+<li>callable metadata preserves rest markers so function values can keep rest-aware call behavior</li>
+<li>unpacking is accepted only when the compiler can resolve every destination it feeds</li>
+<li>fixed-parameter unpacking requires shape proof; rest-parameter unpacking requires container compatibility</li>
+<li>collection-literal spread preserves source order and does not introduce a new runtime container protocol</li>
 </ul>
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>This is intended to be non-breaking:</p>
@@ -4938,29 +5303,124 @@
 <h3 id="4-heterogeneous-variadics">4. Heterogeneous variadics<a class="headerlink" href="#4-heterogeneous-variadics" title="Permanent link">&para;</a></h3>
 <p>Rejected for this RFC.</p>
 <p>The homogeneous model is clearer, easier to typecheck, and already sufficient for many important APIs once repeated inputs are packaged into a common type.</p>
+<h3 id="5-keep-collection-literal-spread-separate">5. Keep collection-literal spread separate<a class="headerlink" href="#5-keep-collection-literal-spread-separate" title="Permanent link">&para;</a></h3>
+<p>Rejected because list and dictionary literal spread are the collection-building counterpart to call-site unpacking. Splitting them would leave users with <code>f(*xs)</code> but no direct way to build <code>[prefix, *xs]</code>, and with <code>f(**kw)</code> but no direct way to build <code>{"trace": "on", **kw}</code>. The implementation can phase these surfaces, but the RFC should define the full unpacking model.</p>
+<h3 id="6-permit-xs-as-a-list-flattening-shortcut">6. Permit <code>[**xs]</code> as a list flattening shortcut<a class="headerlink" href="#6-permit-xs-as-a-list-flattening-shortcut" title="Permanent link">&para;</a></h3>
+<p>Rejected because it makes the marker carry different meanings in different contexts. <code>**</code> means mapping or keyword expansion. List destinations must use <code>*</code>, so <code>[**xs]</code> remains invalid even when <code>xs</code> is a list.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>adds syntax, typing, and diagnostics complexity</li>
 <li>increases the number of ways to express APIs, which can fragment style</li>
-<li>leaves an important open question about calls through function values</li>
+<li>requires callable metadata to carry more than a flat list of parameter types</li>
+<li>requires list and dictionary literal lowering to handle mixed direct and spread elements</li>
 <li>may encourage over-flexible APIs if used without discipline</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Language surface</strong> — <code>*</code> and <code>**</code> parameter forms in function signatures must be supported and remain distinct from ordinary parameters.</li>
-<li><strong>Type system</strong> — rest-parameter metadata, binding rules for extra positional or named arguments, and element or value type mismatches must be validated.</li>
-<li><strong>Execution handoff</strong> — implementations may rewrite extra positionals into <code>List[...]</code> values and extra named arguments into <code>Dict[str, ...]</code> values, but the observable call semantics must match this RFC.</li>
-<li><strong>Formatter</strong> — <code>*</code> and <code>**</code> markers on rest parameters should print predictably.</li>
-<li><strong>LSP</strong> — rest parameter variables should display as <code>List[T]</code> and <code>Dict[str, V]</code> on hover and in completions.</li>
+<li><strong>Language surface</strong> — <code>*</code> and <code>**</code> parameter forms, call arguments, and collection-literal spread elements must be parsed distinctly from ordinary expressions.</li>
+<li><strong>Type system</strong> — rest-parameter metadata, callable rest structure, binding rules for extra positional or named arguments, fixed-parameter unpack shape proof, collection spread typing, and element or value type mismatches must be validated.</li>
+<li><strong>Execution handoff</strong> — implementations may rewrite extra positionals into <code>List[...]</code> values, extra named arguments into <code>Dict[str, ...]</code> values, fixed-parameter unpacking into ordinary ordered calls, and collection spread into explicit list/dict construction, but the observable semantics must match this RFC.</li>
+<li><strong>Formatter</strong> — <code>*</code> and <code>**</code> markers on rest parameters, call arguments, and collection literal spread entries should print predictably.</li>
+<li><strong>LSP</strong> — rest parameter variables should display as <code>List[T]</code> and <code>Dict[str, V]</code> on hover and in completions, and diagnostics/completions should understand valid unpacking contexts.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Should rest-capture sugar apply when calling through function values, or must such calls use the explicit lowered list/dict form?</li>
-<li>Does Incan need function-type syntax that preserves rest-parameter structure explicitly, or is the conservative "direct calls only" rule sufficient?</li>
-<li>Should a follow-up RFC add call-site unpacking (<code>f(*xs)</code> / <code>f(**m)</code> / <code>f(*xs, **m)</code>)?</li>
-<li>Is <code>Dict[str, V]</code> sufficient for keyword captures, or will some ecosystems eventually want a richer tagged-union or structured-options story?</li>
-</ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-syntax-ast-and-formatter">Phase 1: Syntax, AST, and formatter<a class="headerlink" href="#phase-1-syntax-ast-and-formatter" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Parse rest parameters and unpack call arguments.</li>
+<li>Parse list spread elements and dictionary spread entries.</li>
+<li>Preserve rest parameter and unpack argument kinds in the AST.</li>
+<li>Format rest markers, unpack arguments, and collection spread entries predictably.</li>
+</ul>
+<h3 id="phase-2-typechecker-and-callable-metadata">Phase 2: Typechecker and callable metadata<a class="headerlink" href="#phase-2-typechecker-and-callable-metadata" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Preserve rest parameter kinds in function and method metadata.</li>
+<li>Validate rest parameter placement and duplicate rest forms.</li>
+<li>Bind extra positional/named arguments and unpack arguments against the resolved rest targets.</li>
+<li>Bind fixed parameters from unpack arguments when the unpacked value shape is statically known.</li>
+<li>Typecheck list and dictionary literal spread in source order.</li>
+<li>Preserve rest-aware callable behavior through first-class function values.</li>
+</ul>
+<h3 id="phase-3-lowering-ir-and-emission">Phase 3: Lowering, IR, and emission<a class="headerlink" href="#phase-3-lowering-ir-and-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Lower rest parameters to explicit trailing list/dict parameters.</li>
+<li>Lower rest-aware calls to explicit list/dict construction in source order.</li>
+<li>Lower fixed-parameter unpacking to ordinary ordered calls after binding is resolved.</li>
+<li>Lower list and dictionary literal spread to explicit container construction in source order.</li>
+<li>Emit Rust that preserves ordinary fixed-arity calls, rest capture calls, unpacked rest calls, fixed-parameter unpacking, and collection literal spread.</li>
+</ul>
+<h3 id="phase-4-tooling-tests-and-docs">Phase 4: Tooling, tests, and docs<a class="headerlink" href="#phase-4-tooling-tests-and-docs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add parser, formatter, typechecker, codegen snapshot, and integration coverage.</li>
+<li>Update user-facing language docs and release notes.</li>
+<li>Document the rest-directed subset and the full unpacking north star without splitting the design across RFCs.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Link RFC 038 to issue #83.</li>
+<li>[x] Settle function-value behavior: rest metadata is preserved for rest-aware callable values.</li>
+<li>[x] Include static call-site unpacking in RFC 038.</li>
+<li>[x] Fold fixed-parameter call-site unpacking into RFC 038 instead of using a follow-up RFC.</li>
+<li>[x] Include list and dictionary literal spread in RFC 038.</li>
+</ul>
+<h3 id="parser-ast-formatter">Parser / AST / formatter<a class="headerlink" href="#parser-ast-formatter" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parse <code>*name: T</code> and <code>**name: V</code> parameters.</li>
+<li>[x] Parse <code>*expr</code> and <code>**expr</code> call arguments.</li>
+<li>[x] Preserve rest and unpack kinds in AST nodes.</li>
+<li>[x] Format rest parameters and unpack arguments stably.</li>
+<li>[x] Parse and preserve <code>*expr</code> list literal spread.</li>
+<li>[x] Parse and preserve <code>**expr</code> dictionary literal spread.</li>
+<li>[x] Reject <code>**expr</code> in list literals and <code>*expr</code> in dictionary literals.</li>
+<li>[x] Format collection literal spread stably.</li>
+</ul>
+<h3 id="typechecker">Typechecker<a class="headerlink" href="#typechecker" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Type rest parameters as <code>List[T]</code> and <code>Dict[str, V]</code> inside declarations.</li>
+<li>[x] Validate rest parameter placement and duplicates.</li>
+<li>[x] Validate extra direct positional/named arguments against rest element/value types.</li>
+<li>[x] Validate <code>*expr</code> and <code>**expr</code> against rest container types.</li>
+<li>[x] Validate <code>*expr</code> against statically known ordered shapes for fixed positional parameters.</li>
+<li>[x] Validate <code>**expr</code> against statically known key shapes for fixed named parameters.</li>
+<li>[x] Diagnose duplicate and missing fixed-parameter bindings across direct and unpacked arguments.</li>
+<li>[x] Typecheck <code>*expr</code> list literal spread against the list element type.</li>
+<li>[x] Typecheck <code>**expr</code> dictionary literal spread against the dictionary key/value types.</li>
+<li>[x] Preserve rest metadata through first-class function values.</li>
+</ul>
+<h3 id="lowering-ir-emission">Lowering / IR / emission<a class="headerlink" href="#lowering-ir-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Lower rest declarations to explicit trailing container parameters.</li>
+<li>[x] Lower rest-aware direct calls to explicit container arguments.</li>
+<li>[x] Lower unpack call arguments into the same explicit container construction path.</li>
+<li>[x] Emit correct Rust for direct rest calls, function-value rest calls, and unpacked rest calls.</li>
+<li>[x] Lower fixed-parameter unpacking to ordinary ordered calls.</li>
+<li>[x] Lower list literal spread to explicit list construction and extension.</li>
+<li>[x] Lower dictionary literal spread to explicit dictionary construction and insertion/extension.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser tests for rest parameters and unpack arguments.</li>
+<li>[x] Formatter round-trip tests for rest syntax.</li>
+<li>[x] Typechecker tests for valid rest calls, invalid placement, invalid element/value types, and invalid unpack usage.</li>
+<li>[x] Codegen snapshot tests for rest capture, callable-value rest calls, and unpacked rest calls.</li>
+<li>[x] Integration tests for compiled rest calls.</li>
+<li>[x] Typechecker and codegen tests for fixed-parameter unpacking once shape proof lands.</li>
+<li>[x] Parser, formatter, typechecker, codegen, and integration tests for list and dictionary literal spread.</li>
+</ul>
+<h3 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update authored language reference/user docs.</li>
+<li>[x] Add release notes entry.</li>
+<li>[x] Keep the full unpacking design in RFC 038.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Rest-call sugar applies through function values when the callable metadata preserves rest parameter structure.</li>
+<li>RFC 038 adds call-site unpacking for statically rest-aware callees: <code>f(*xs)</code> feeds the callee's positional rest parameter and <code>f(**kw)</code> feeds the callee's keyword rest parameter.</li>
+<li>RFC 038 also owns fixed-parameter call-site unpacking: <code>f(*xs)</code> and <code>f(**kw)</code> may bind ordinary parameters when the compiler can prove the unpacked shape.</li>
+<li>RFC 038 owns list and dictionary literal spread: <code>[*xs]</code> spreads sequence values into list literals, <code>{**kw}</code> spreads mapping values into dictionary literals, and <code>[**xs]</code> remains invalid.</li>
+<li>Captured keyword arguments use <code>Dict[str, V]</code>; richer structured-options containers are speculative and out of scope.</li>
+</ul>
 
 
 
