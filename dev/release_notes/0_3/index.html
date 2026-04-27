@@ -4626,11 +4626,12 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Parser</strong>: Multiline function and method parameter lists now accept a trailing comma before <code>)</code>, including receiver-only method signatures such as <code>def get(self,) -&gt; int</code> when written across lines (#394).</li>
 <li><strong>Language/Testing</strong>: RFC 018's <code>assert expr[, msg]</code> language primitive is always available without importing <code>std.testing</code>. The <code>std.testing</code> helpers mirror assertion failure behavior for call-style checks, raises checks, and unwrap-style <code>Option</code> / <code>Result</code> helpers, while marker decorators remain imported <code>std.testing</code> APIs.</li>
 <li><strong>Language/Testing</strong>: Inline <code>module tests:</code> blocks in production source files are now discovered and executed by <code>incan test</code>, while production build/run output still strips those test-only declarations and imports (<a href="/dev/RFCs/018_testing">RFC 018</a>, #76).</li>
+<li><strong>Runtime/Async</strong>: <code>std.async</code> now documents cancellation-safety contracts and exposes channel reservation APIs so critical sends can reserve capacity before committing messages (#415, #416).</li>
 </ul>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.9</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.10</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>

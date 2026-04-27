@@ -1099,6 +1099,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cancellation-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cancellation Vocabulary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#async-functions" class="md-nav__link">
     <span class="md-ellipsis">
       Async Functions
@@ -1314,32 +1323,14 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#select-racing-futures" class="md-nav__link">
+  <a href="#select-and-future-race" class="md-nav__link">
     <span class="md-ellipsis">
-      Select (Racing Futures)
+      Select and Future Race
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Select (Racing Futures)">
+    <nav class="md-nav" aria-label="Select and Future Race">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#select2" class="md-nav__link">
-    <span class="md-ellipsis">
-      select2
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#select3" class="md-nav__link">
-    <span class="md-ellipsis">
-      select3
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#select_timeout" class="md-nav__link">
@@ -1426,9 +1417,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-handle-cancellation" class="md-nav__link">
+  <a href="#4-handle-cancellation-explicitly" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Handle Cancellation
+      4. Handle Cancellation Explicitly
     </span>
   </a>
   
@@ -4809,6 +4800,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cancellation-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cancellation Vocabulary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#async-functions" class="md-nav__link">
     <span class="md-ellipsis">
       Async Functions
@@ -5024,32 +5024,14 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#select-racing-futures" class="md-nav__link">
+  <a href="#select-and-future-race" class="md-nav__link">
     <span class="md-ellipsis">
-      Select (Racing Futures)
+      Select and Future Race
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Select (Racing Futures)">
+    <nav class="md-nav" aria-label="Select and Future Race">
       <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#select2" class="md-nav__link">
-    <span class="md-ellipsis">
-      select2
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#select3" class="md-nav__link">
-    <span class="md-ellipsis">
-      select3
-    </span>
-  </a>
-  
-</li>
         
           <li class="md-nav__item">
   <a href="#select_timeout" class="md-nav__link">
@@ -5136,9 +5118,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-handle-cancellation" class="md-nav__link">
+  <a href="#4-handle-cancellation-explicitly" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Handle Cancellation
+      4. Handle Cancellation Explicitly
     </span>
   </a>
   
@@ -5236,6 +5218,34 @@ with Rust-level async performance.</p>
     <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Starting...&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="core-concepts">Core Concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h2>
+<h3 id="cancellation-vocabulary">Cancellation Vocabulary<a class="headerlink" href="#cancellation-vocabulary" title="Permanent link">&para;</a></h3>
+<p>Async APIs in <code>std.async</code> document cancellation with four contract terms:</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cancel-safe</code></td>
+<td>Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation.</td>
+</tr>
+<tr>
+<td><code>cancel-safe-but-lossy</code></td>
+<td>Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost.</td>
+</tr>
+<tr>
+<td><code>not cancel-safe</code></td>
+<td>Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting.</td>
+</tr>
+<tr>
+<td><code>durable once spawned</code></td>
+<td>Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result.</td>
+</tr>
+</tbody>
+</table>
 <h3 id="async-functions">Async Functions<a class="headerlink" href="#async-functions" title="Permanent link">&para;</a></h3>
 <p>Declare async functions with <code>async def</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
@@ -5277,6 +5287,7 @@ with Rust-level async performance.</p>
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Success: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Operation timed out&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p><code>timeout()</code> and <code>timeout_ms()</code> cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and decide separately whether to await, detach, or abort the <code>JoinHandle</code>.</p>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
@@ -5297,6 +5308,7 @@ with Rust-level async performance.</p>
 <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">handle</span>
 <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Background task returned: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>Spawned tasks are durable once spawned. Dropping <code>handle</code> detaches the task and loses the result; it does not cancel the task. Use <code>handle.abort()</code> when an async task should be cancelled.</p>
 <h3 id="spawn_blocking">spawn_blocking<a class="headerlink" href="#spawn_blocking" title="Permanent link">&para;</a></h3>
 <p>Run CPU-intensive or blocking code on a dedicated thread:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn_blocking</span>
@@ -5310,6 +5322,7 @@ with Rust-level async performance.</p>
 <span class="c1"># Won&#39;t block the async runtime</span>
 <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="nb">spawn_blocking</span><span class="p">(</span><span class="n">heavy_computation</span><span class="p">)</span>
 </code></pre></div>
+<p><code>spawn_blocking()</code> is for bounded blocking work that eventually finishes on its own. Dropping its <code>JoinHandle</code> detaches the work and loses the result, and <code>abort()</code> cannot stop blocking work after it starts running. <code>abort()</code> can only prevent a queued blocking task from starting.</p>
 <h3 id="yield_now">yield_now<a class="headerlink" href="#yield_now" title="Permanent link">&para;</a></h3>
 <p>Cooperatively yield to let other tasks run:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">yield_now</span>
@@ -5372,6 +5385,22 @@ They're the primary way to communicate between async tasks without shared mutabl
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consumer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Cancellation contracts:</p>
+<ul>
+<li><code>tx.send(value)</code> is cancel-safe-but-lossy. If it is cancelled while waiting for bounded-channel capacity, the value is not sent and is dropped.</li>
+<li><code>tx.reserve()</code> waits for capacity before a value is committed. Use it for critical sends where cancellation must not drop the message value.</li>
+<li><code>permit.send(value)</code> is synchronous and either delivers the value or returns it in <code>SendError[T]</code>.</li>
+<li><code>rx.recv()</code> is cancel-safe. If it is cancelled while waiting, no message is removed from the channel.</li>
+<li><code>try_send()</code> and <code>try_recv()</code> return immediately, so there is no pending wait to cancel.</li>
+</ul>
+<p>Reserve capacity before building or moving a critical message:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="nb">reserve</span><span class="p">():</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">permit</span><span class="p">)</span> <span class="o">=&gt;</span>
+        <span class="k">match</span> <span class="n">permit</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;audit-event&quot;</span><span class="p">):</span>
+            <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;sent&quot;</span><span class="p">)</span>
+            <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;send failed: </span><span class="si">{</span><span class="n">err</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">message</span><span class="p">())</span>
 </code></pre></div>
 <p><strong>Multiple producers</strong> (clone the sender):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
@@ -5504,6 +5533,7 @@ This is perfect for "request-response" patterns where you spawn a task and wait 
     <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got result: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Sender dropped without sending&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>The one-shot receiver is cancel-safe: cancelling <code>rx.recv()</code> does not consume the value. <code>tx.send(value)</code> is synchronous, so it either delivers the value or returns it immediately if the receiver is gone.</p>
 <p><strong>Common pattern - returning results from spawned tasks:</strong></p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">oneshot</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
@@ -5594,6 +5624,7 @@ while Python's Lock is just a lock you use alongside your data.</p>
     <span class="n">guard</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="n">current</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
     <span class="c1"># Lock released when guard goes out of scope</span>
 </code></pre></div>
+<p><code>mutex.lock()</code> is cancel-safe-but-lossy: cancellation before the guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.</p>
 <div class="admonition note">
 <p class="admonition-title">Python comparison</p>
 <p>Python uses a lock separate from the data. Incan wraps the data (<code>Mutex[T]</code>), so the lock and value are kept together.</p>
@@ -5639,6 +5670,7 @@ More efficient than Mutex when reads are frequent.</p>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">config</span><span class="o">.</span><span class="n">write</span><span class="p">()</span>  <span class="c1"># Waits for all readers, then exclusive</span>
     <span class="n">guard</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="nc">Config</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="n">debug</span><span class="p">))</span>
 </code></pre></div>
+<p><code>rwlock.read()</code> and <code>rwlock.write()</code> are cancel-safe-but-lossy: cancellation before a guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.</p>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>
 <p>Python's <code>asyncio</code> doesn't have <code>RwLock</code>. This is a Rust/systems programming concept.</p>
@@ -5664,6 +5696,7 @@ More efficient than Mutex when reads are frequent.</p>
     <span class="c1"># Permit released automatically when permit goes out of scope</span>
     <span class="k">return</span> <span class="n">response</span>
 </code></pre></div>
+<p><code>sem.acquire()</code> is cancel-safe-but-lossy: cancellation before a permit is returned does not acquire a permit, but the waiter loses its place in the fairness queue.</p>
 <div class="admonition note">
 <p class="admonition-title">Python equivalent</p>
 <p><code>asyncio.Semaphore(n)</code> works the same way.</p>
@@ -5688,6 +5721,7 @@ More efficient than Mutex when reads are frequent.</p>
 
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Worker </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2"> starting phase 2&quot;</span><span class="p">)</span>  <span class="c1"># All start phase 2 together</span>
 </code></pre></div>
+<p><code>barrier.wait()</code> is not cancel-safe. Do not place it directly inside a timeout or future race unless the whole barrier generation is being abandoned, because cancelling one participant can leave the remaining participants waiting for a task that will not arrive.</p>
 <div class="admonition note">
 <p class="admonition-title">Python equivalent</p>
 <p><code>asyncio.Barrier(n)</code> (added in Python 3.11) works the same way.</p>
@@ -5695,34 +5729,7 @@ More efficient than Mutex when reads are frequent.</p>
 <h3 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h3>
 <p>See <a href="https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn">examples/advanced/async_sync.incn</a>
 for a runnable demo of all four primitives.</p>
-<h2 id="select-racing-futures">Select (Racing Futures)<a class="headerlink" href="#select-racing-futures" title="Permanent link">&para;</a></h2>
-<h3 id="select2">select2<a class="headerlink" href="#select2" title="Permanent link">&para;</a></h3>
-<p>Race two futures, get whichever completes first:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="n">select2</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fast</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
-    <span class="k">return</span> <span class="s2">&quot;fast&quot;</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">slow</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
-    <span class="k">return</span> <span class="s2">&quot;slow&quot;</span>
-
-<span class="k">match</span> <span class="k">await</span> <span class="n">select2</span><span class="p">(</span><span class="n">fast</span><span class="p">,</span> <span class="n">slow</span><span class="p">):</span>
-    <span class="k">case</span> <span class="nc">Either</span><span class="o">.</span><span class="nc">Left</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Fast won: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nc">Either</span><span class="o">.</span><span class="nc">Right</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Slow won: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="select3">select3<a class="headerlink" href="#select3" title="Permanent link">&para;</a></h3>
-<p>Race three futures:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="n">select3</span>
-
-<span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">select3</span><span class="p">(</span><span class="n">op1</span><span class="p">,</span> <span class="n">op2</span><span class="p">,</span> <span class="n">op3</span><span class="p">)</span>
-<span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
-    <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">First</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op1 won&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">Second</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op2 won&quot;</span><span class="p">)</span>
-    <span class="k">case</span> <span class="nc">Either3</span><span class="o">.</span><span class="nc">Third</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;op3 won&quot;</span><span class="p">)</span>
-</code></pre></div>
+<h2 id="select-and-future-race">Select and Future Race<a class="headerlink" href="#select-and-future-race" title="Permanent link">&para;</a></h2>
 <h3 id="select_timeout">select_timeout<a class="headerlink" href="#select_timeout" title="Permanent link">&para;</a></h3>
 <p>Simplified timeout returning Option:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="nb">select_timeout</span>
@@ -5731,6 +5738,8 @@ for a runnable demo of all four primitives.</p>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Timed out, using default&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p><code>select_timeout()</code> has the same cancellation contract as <code>timeout()</code>: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned.</p>
+<p>Future <code>race</code> syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and keep its handle outside the race when you still need the result.</p>
 <h2 id="runtime-integration">Runtime Integration<a class="headerlink" href="#runtime-integration" title="Permanent link">&para;</a></h2>
 <h3 id="automatic-tokio-main">Automatic Tokio Main<a class="headerlink" href="#automatic-tokio-main" title="Permanent link">&para;</a></h3>
 <p>When your program uses async features, the <code>main()</code> function is automatically wrapped with <code>#[tokio::main]</code>:</p>
@@ -5782,8 +5791,8 @@ for a runnable demo of all four primitives.</p>
 <span class="c1"># Over this (unbounded can grow forever):</span>
 <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">unbounded_channel</span><span class="p">[</span><span class="nc">Data</span><span class="p">]()</span>
 </code></pre></div>
-<h3 id="4-handle-cancellation">4. Handle Cancellation<a class="headerlink" href="#4-handle-cancellation" title="Permanent link">&para;</a></h3>
-<p>Tasks can be cancelled when their handles are dropped:</p>
+<h3 id="4-handle-cancellation-explicitly">4. Handle Cancellation Explicitly<a class="headerlink" href="#4-handle-cancellation-explicitly" title="Permanent link">&para;</a></h3>
+<p>Dropping a task handle detaches the task and loses its result. It does not cancel the task:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
@@ -5792,10 +5801,10 @@ for a runnable demo of all four primitives.</p>
     <span class="k">return</span> <span class="s2">&quot;done&quot;</span>
 
 <span class="n">handle</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">cancellable_work</span><span class="p">)</span>
-<span class="c1"># If we don&#39;t await handle, the task is cancelled!</span>
-<span class="c1"># Always await or explicitly ignore:</span>
-<span class="n">_</span> <span class="o">=</span> <span class="n">handle</span>  <span class="c1"># Explicit ignore (task continues)</span>
+<span class="c1"># This detaches the task and loses the result; the task keeps running.</span>
+<span class="n">_</span> <span class="o">=</span> <span class="n">handle</span>
 </code></pre></div>
+<p>Use <code>handle.abort()</code> when an async task should be cancelled. For blocking work created with <code>spawn_blocking()</code>, <code>abort()</code> only has a chance to prevent execution before the blocking task starts.</p>
 <h2 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
 <h3 id="timeout-errors">Timeout Errors<a class="headerlink" href="#timeout-errors" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="nb">timeout</span>
@@ -5806,8 +5815,7 @@ for a runnable demo of all four primitives.</p>
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Timed out: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="channel-closed">Channel Closed<a class="headerlink" href="#channel-closed" title="Permanent link">&para;</a></h3>
-<p>When sending fails because the receiver was dropped, <code>SendError[T]</code> contains the value that couldn't be sent in its
-<code>.value</code> field:</p>
+<p>When sending fails because the receiver was dropped, <code>SendError[T]</code> contains the value that couldn't be sent in its <code>.value</code> field:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Sender</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sender</span><span class="p">(</span><span class="n">tx</span><span class="p">:</span> <span class="kt">Sender</span><span class="p">[</span><span class="nc">Message</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>

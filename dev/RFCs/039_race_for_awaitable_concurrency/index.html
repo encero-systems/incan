@@ -4508,6 +4508,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#keep-loser-arms-cancellation-safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep loser arms cancellation-safe
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4947,6 +4956,7 @@
 <li><code>race</code> says: "wait on several awaitables and choose the branch attached to the winner"</li>
 </ul>
 <p>The winning branch gets a value binding. The losing branches are cancelled.</p>
+<p>That cancellation is part of the contract, not an optimization. Write race arms so that losing arms can be abandoned safely. Do not put required side effects, final writes, channel sends, barrier waits, or other must-run work after an <code>await</code> inside an arm unless that operation is independently cancellation-safe or the work has been made durable by spawning it before the race.</p>
 <h3 id="basic-syntax">Basic syntax<a class="headerlink" href="#basic-syntax" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
     <span class="k">await</span> <span class="n">fast</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
@@ -4991,6 +5001,7 @@
         <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="n">seconds</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 <p>The public surface is plain Incan. The helper is described in Incan terms, even if its eventual backend realization uses Tokio or another runtime.</p>
+<p>In this example, when the sleep arm wins, <code>task</code> is cancelled. That is the desired timeout contract for ordinary cancel-safe request work. It is not a durable timeout; use a spawned task handle when the timed operation must continue after the timeout result is returned.</p>
 <h3 id="helper-model">Helper model<a class="headerlink" href="#helper-model" title="Permanent link">&para;</a></h3>
 <p>The intended long-term helper model is variadic:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
@@ -5032,6 +5043,31 @@
             <span class="kc">None</span> <span class="o">=&gt;</span> <span class="s2">&quot;b closed&quot;</span>
 </code></pre></div>
 <p>That keeps <code>race</code> focused on concurrency while letting <code>match</code> keep its existing role as the value-shape construct.</p>
+<h3 id="keep-loser-arms-cancellation-safe">Keep loser arms cancellation-safe<a class="headerlink" href="#keep-loser-arms-cancellation-safe" title="Permanent link">&para;</a></h3>
+<p>Losing race arms are cancelled by dropping their awaitable. If a losing arm needs cleanup, the cleanup must be owned by a cancellation-safe resource or a spawned task that is intentionally durable.</p>
+<p>Prefer arms whose awaited operation can be abandoned:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">fetch_primary</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+    <span class="k">await</span> <span class="n">fetch_replica</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+</code></pre></div>
+<p>Avoid relying on loser-arm side effects:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Avoid: if `slow_write()` loses, its final write may never happen.</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">fast_read</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+    <span class="k">await</span> <span class="n">slow_write</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+</code></pre></div>
+<p>For must-run work, spawn it before the race and make the lifetime explicit:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">handle</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">slow_write</span><span class="p">())</span>
+
+<span class="kt">result</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">fast_read</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>
+    <span class="k">await</span> <span class="n">timeout_signal</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">fallback_value</span><span class="p">()</span>
+
+<span class="k">match</span> <span class="k">await</span> <span class="n">handle</span><span class="p">:</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;write finished&quot;</span><span class="p">)</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">message</span><span class="p">())</span>
+</code></pre></div>
+<p>Dropping the handle would detach the spawned task and lose its result; call <code>abort()</code> only when cancellation is intended.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="activation-and-status">Activation and status<a class="headerlink" href="#activation-and-status" title="Permanent link">&para;</a></h3>
 <p><code>race</code> is not always available.</p>
@@ -5146,6 +5182,10 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
 <li>losing arms do not continue running to completion</li>
 <li>dropping a losing awaitable triggers whatever cleanup that awaitable normally performs</li>
 <li>code must not assume side effects after the final suspension point of a losing arm will still happen</li>
+<li><code>race</code> arms that wait on channel receives or one-shot receives are safe to abandon because cancellation does not consume the message</li>
+<li><code>race</code> arms that wait on channel sends are cancel-safe-but-lossy because the unsent value can be dropped</li>
+<li><code>race</code> arms that wait on mutexes, read-write locks, or semaphores are cancel-safe-but-lossy because the waiter loses queue position</li>
+<li><code>race</code> arms that wait at a barrier are not cancel-safe and must be avoided unless the entire barrier generation is abandoned</li>
 </ul>
 <p>This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.</p>
 <h3 id="tie-breaking">Tie-breaking<a class="headerlink" href="#tie-breaking" title="Permanent link">&para;</a></h3>
@@ -5161,6 +5201,7 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
         <span class="k">await</span> <span class="n">http_get</span><span class="p">(</span><span class="nc">PRIMARY_URL</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">data</span>
         <span class="k">await</span> <span class="n">http_get</span><span class="p">(</span><span class="nc">MIRROR_URL</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">data</span>
 </code></pre></div>
+<p>This is safe when either request may be abandoned after the other request wins.</p>
 <h3 id="heterogeneous-winner">Heterogeneous winner<a class="headerlink" href="#heterogeneous-winner" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">race</span> <span class="k">for</span> <span class="n">value</span><span class="p">:</span>
     <span class="k">await</span> <span class="n">fetch_text</span><span class="p">()</span> <span class="o">=&gt;</span> <span class="n">value</span>

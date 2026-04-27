@@ -1770,6 +1770,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancellation-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cancellation vocabulary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#module-stdasynctime" class="md-nav__link">
     <span class="md-ellipsis">
       Module: std.async.time
@@ -4462,6 +4471,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancellation-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cancellation vocabulary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#module-stdasynctime" class="md-nav__link">
     <span class="md-ellipsis">
       Module: std.async.time
@@ -4549,6 +4567,34 @@ See the module source files for authoritative behavior:</p>
 operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged.
 <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.sync</code>, and <code>std.async.prelude</code> still retain wrapper-style surfaces where behavior
 depends on native Rust adapter contracts.</p>
+<h2 id="cancellation-vocabulary">Cancellation vocabulary<a class="headerlink" href="#cancellation-vocabulary" title="Permanent link">&para;</a></h2>
+<p>Async APIs on this page use these contract terms:</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cancel-safe</code></td>
+<td>Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation.</td>
+</tr>
+<tr>
+<td><code>cancel-safe-but-lossy</code></td>
+<td>Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost.</td>
+</tr>
+<tr>
+<td><code>not cancel-safe</code></td>
+<td>Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting.</td>
+</tr>
+<tr>
+<td><code>durable once spawned</code></td>
+<td>Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="module-stdasynctime">Module: <code>std.async.time</code><a class="headerlink" href="#module-stdasynctime" title="Permanent link">&para;</a></h2>
 <p>Import with:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span><span class="p">,</span> <span class="nb">timeout</span><span class="p">,</span> <span class="ne">TimeoutError</span>
@@ -4559,24 +4605,29 @@ depends on native Rust adapter contracts.</p>
 <tr>
 <th>Function</th>
 <th>Returns</th>
+<th>Cancellation contract</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>sleep(seconds: float) -&gt; None</code></td>
 <td><code>None</code></td>
+<td><code>cancel-safe</code></td>
 </tr>
 <tr>
 <td><code>sleep_ms(milliseconds: int) -&gt; None</code></td>
 <td><code>None</code></td>
+<td><code>cancel-safe</code></td>
 </tr>
 <tr>
 <td><code>timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Result[T, TimeoutError]</code></td>
 <td><code>Result[T, TimeoutError]</code></td>
+<td>Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.</td>
 </tr>
 <tr>
 <td><code>timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -&gt; Result[T, TimeoutError]</code></td>
 <td><code>Result[T, TimeoutError]</code></td>
+<td>Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.</td>
 </tr>
 </tbody>
 </table>
@@ -4609,12 +4660,14 @@ depends on native Rust adapter contracts.</p>
 <tr>
 <th>Function</th>
 <th>Returns</th>
+<th>Cancellation contract</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>select_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Option[T]</code></td>
 <td><code>Option[T]</code></td>
+<td>Cancels the supplied future when the deadline wins; cancelling the <code>select_timeout</code> wait also drops the supplied future.</td>
 </tr>
 </tbody>
 </table>
@@ -4625,6 +4678,8 @@ depends on native Rust adapter contracts.</p>
 <li><code>spawn_blocking[T, TaskFn](task: TaskFn) -&gt; JoinHandle[T]</code></li>
 <li><code>yield_now() -&gt; None</code></li>
 </ul>
+<p><code>spawn()</code> and <code>spawn_blocking()</code> create work that is durable once spawned. Dropping a <code>JoinHandle[T]</code> detaches the task and loses the result; it does not cancel the task. Use <code>JoinHandle.abort()</code> to request cancellation for async tasks. <code>spawn_blocking()</code> work cannot be cancelled after it starts running; <code>abort()</code> can only prevent queued blocking work from starting.</p>
+<p>Awaiting a <code>JoinHandle[T]</code> returns <code>Result[T, TaskJoinError]</code>. A task cancelled through <code>abort()</code> reports a join error unless it had already completed.</p>
 <h2 id="module-stdasyncchannel">Module: <code>std.async.channel</code><a class="headerlink" href="#module-stdasyncchannel" title="Permanent link">&para;</a></h2>
 <p>Top-level API:</p>
 <ul>
@@ -4633,9 +4688,52 @@ depends on native Rust adapter contracts.</p>
 <li><code>oneshot[T]() -&gt; Tuple[OneshotSender[T], OneshotReceiver[T]]</code></li>
 <li><code>SendError[T]</code></li>
 <li><code>RecvError</code></li>
-<li><code>Sender[T]</code>, <code>Receiver[T]</code></li>
+<li><code>Sender[T]</code>, <code>SenderPermit[T]</code>, <code>Receiver[T]</code></li>
 <li><code>OneshotSender[T]</code>, <code>OneshotReceiver[T]</code></li>
 </ul>
+<p>Cancellation contracts:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Sender.send(value)</code></td>
+<td><code>cancel-safe-but-lossy</code>: if cancelled while waiting for bounded-channel capacity, the message is not sent and the value is dropped.</td>
+</tr>
+<tr>
+<td><code>Sender.reserve()</code></td>
+<td>Waits for bounded-channel capacity before a value is committed. Cancelling it does not drop a message value, but it gives up the sender's current wait position.</td>
+</tr>
+<tr>
+<td><code>SenderPermit.send(value)</code></td>
+<td>Immediate single-use send through reserved capacity; either delivers the value or returns it in <code>SendError[T]</code>.</td>
+</tr>
+<tr>
+<td><code>Sender.try_send(value)</code></td>
+<td>Immediate operation; returns the value in <code>SendError[T]</code> on failure.</td>
+</tr>
+<tr>
+<td><code>Receiver.recv()</code></td>
+<td><code>cancel-safe</code>: cancelling a pending receive does not remove a message from the channel.</td>
+</tr>
+<tr>
+<td><code>Receiver.try_recv()</code></td>
+<td>Immediate operation; no pending wait to cancel.</td>
+</tr>
+<tr>
+<td><code>OneshotSender.send(value)</code></td>
+<td>Immediate operation; either delivers the value or returns it.</td>
+</tr>
+<tr>
+<td><code>OneshotReceiver.recv()</code></td>
+<td><code>cancel-safe</code>: cancelling a pending receive does not consume the one-shot value.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="module-stdasyncsync">Module: <code>std.async.sync</code><a class="headerlink" href="#module-stdasyncsync" title="Permanent link">&para;</a></h2>
 <p>Top-level API:</p>
 <ul>
@@ -4645,6 +4743,37 @@ depends on native Rust adapter contracts.</p>
 <li><code>Barrier</code></li>
 <li><code>SemaphoreAcquireError</code></li>
 </ul>
+<p>Cancellation contracts:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Mutex.lock()</code></td>
+<td><code>cancel-safe-but-lossy</code>: cancellation does not acquire the lock, but the waiter loses its queue position.</td>
+</tr>
+<tr>
+<td><code>RwLock.read()</code></td>
+<td><code>cancel-safe-but-lossy</code>: cancellation does not acquire the read lock, but the waiter loses its queue position.</td>
+</tr>
+<tr>
+<td><code>RwLock.write()</code></td>
+<td><code>cancel-safe-but-lossy</code>: cancellation does not acquire the write lock, but the waiter loses its queue position.</td>
+</tr>
+<tr>
+<td><code>Semaphore.acquire()</code></td>
+<td><code>cancel-safe-but-lossy</code>: cancellation does not acquire a permit, but the waiter loses its queue position.</td>
+</tr>
+<tr>
+<td><code>Barrier.wait()</code></td>
+<td><code>not cancel-safe</code>: cancellation can leave the barrier generation without the required participants. Do not put <code>wait()</code> directly in timeout or race arms unless the entire generation is being abandoned.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="module-stdasyncprelude">Module: <code>std.async.prelude</code><a class="headerlink" href="#module-stdasyncprelude" title="Permanent link">&para;</a></h2>
 <p><code>std.async.prelude</code> re-exports the following:</p>
 <ul>
