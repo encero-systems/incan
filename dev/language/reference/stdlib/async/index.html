@@ -4597,7 +4597,7 @@ depends on native Rust adapter contracts.</p>
 </table>
 <h2 id="module-stdasynctime">Module: <code>std.async.time</code><a class="headerlink" href="#module-stdasynctime" title="Permanent link">&para;</a></h2>
 <p>Import with:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span><span class="p">,</span> <span class="nb">timeout</span><span class="p">,</span> <span class="ne">TimeoutError</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span><span class="p">,</span> <span class="nb">timeout</span><span class="p">,</span> <span class="n">timeout_join</span><span class="p">,</span> <span class="ne">TimeoutError</span><span class="p">,</span> <span class="nc">TimeoutJoinOutcome</span>
 </code></pre></div>
 <p><strong>Functions</strong>:</p>
 <table>
@@ -4629,9 +4629,19 @@ depends on native Rust adapter contracts.</p>
 <td><code>Result[T, TimeoutError]</code></td>
 <td>Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.</td>
 </tr>
+<tr>
+<td><code>timeout_join[T](seconds: float, handle: JoinHandle[T]) -&gt; TimeoutJoinOutcome[T]</code></td>
+<td><code>TimeoutJoinOutcome[T]</code></td>
+<td>Stops waiting when the deadline expires and returns the live handle in <code>TimedOut(handle)</code>; the task continues running unless explicitly aborted.</td>
+</tr>
+<tr>
+<td><code>timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -&gt; TimeoutJoinOutcome[T]</code></td>
+<td><code>TimeoutJoinOutcome[T]</code></td>
+<td>Millisecond form of <code>timeout_join</code>.</td>
+</tr>
 </tbody>
 </table>
-<p><strong>Models</strong>:</p>
+<p><strong>Types</strong>:</p>
 <table>
 <thead>
 <tr>
@@ -4641,8 +4651,12 @@ depends on native Rust adapter contracts.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>TimeoutJoinOutcome</code></td>
+<td>Outcome type returned by durable timeout helpers, including the recovered live handle on timeout.</td>
+</tr>
+<tr>
 <td><code>TimeoutError</code></td>
-<td>Error type returned by timeout helpers when the deadline expires.</td>
+<td>Error type returned by canceling timeout helpers when the deadline expires.</td>
 </tr>
 <tr>
 <td><code>Duration</code></td>
@@ -4777,7 +4791,7 @@ depends on native Rust adapter contracts.</p>
 <h2 id="module-stdasyncprelude">Module: <code>std.async.prelude</code><a class="headerlink" href="#module-stdasyncprelude" title="Permanent link">&para;</a></h2>
 <p><code>std.async.prelude</code> re-exports the following:</p>
 <ul>
-<li><code>time</code>: <code>sleep</code>, <code>sleep_ms</code>, <code>timeout</code>, <code>timeout_ms</code>, <code>Duration</code>, <code>TimeoutError</code></li>
+<li><code>time</code>: <code>sleep</code>, <code>sleep_ms</code>, <code>timeout</code>, <code>timeout_ms</code>, <code>timeout_join</code>, <code>timeout_join_ms</code>, <code>Duration</code>, <code>TimeoutError</code>, <code>TimeoutJoinOutcome</code></li>
 <li><code>task</code>: <code>spawn</code>, <code>spawn_blocking</code>, <code>yield_now</code>, <code>JoinHandle</code>, <code>TaskJoinError</code></li>
 <li><code>channel</code>: <code>channel</code>, <code>unbounded_channel</code>, <code>oneshot</code>, <code>Sender</code>, <code>Receiver</code>, <code>OneshotSender</code>, <code>OneshotReceiver</code>, <code>SendError</code>, <code>RecvError</code></li>
 <li><code>sync</code>: <code>Mutex</code>, <code>MutexGuard</code>, <code>RwLock</code>, <code>RwLockReadGuard</code>, <code>RwLockWriteGuard</code>, <code>Semaphore</code>, <code>SemaphorePermit</code>, <code>SemaphoreAcquireError</code>, <code>Barrier</code></li>

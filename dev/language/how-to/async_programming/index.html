@@ -1158,6 +1158,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#timeout_join" class="md-nav__link">
+    <span class="md-ellipsis">
+      timeout_join
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4859,6 +4868,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#timeout_join" class="md-nav__link">
+    <span class="md-ellipsis">
+      timeout_join
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5287,7 +5305,21 @@ with Rust-level async performance.</p>
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Success: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Operation timed out&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>timeout()</code> and <code>timeout_ms()</code> cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and decide separately whether to await, detach, or abort the <code>JoinHandle</code>.</p>
+<p><code>timeout()</code> and <code>timeout_ms()</code> cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and use <code>timeout_join()</code> so the timeout result preserves the live <code>JoinHandle</code>.</p>
+<h3 id="timeout_join">timeout_join<a class="headerlink" href="#timeout_join" title="Permanent link">&para;</a></h3>
+<p>Wait for spawned work without cancelling it when the deadline expires:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">timeout_join</span><span class="p">,</span> <span class="nc">TimeoutJoinOutcome</span>
+
+<span class="n">handle</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">write_audit_event</span><span class="p">(</span><span class="n">event</span><span class="p">))</span>
+
+<span class="k">match</span> <span class="k">await</span> <span class="n">timeout_join</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">handle</span><span class="p">):</span>
+    <span class="k">case</span><span class="w"> </span><span class="nc">TimeoutJoinOutcome</span><span class="o">.</span><span class="nc">Completed</span><span class="p">(</span><span class="k">_</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;audit event written&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">TimeoutJoinOutcome</span><span class="o">.</span><span class="nc">JoinFailed</span><span class="p">(</span><span class="n">err</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">message</span><span class="p">())</span>
+    <span class="k">case</span> <span class="nc">TimeoutJoinOutcome</span><span class="o">.</span><span class="nc">TimedOut</span><span class="p">(</span><span class="n">live_handle</span><span class="p">):</span>
+        <span class="n">remember</span><span class="p">(</span><span class="n">live_handle</span><span class="p">)</span>
+</code></pre></div>
+<p>Use <code>timeout_join()</code> for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and <code>TimeoutJoinOutcome.TimedOut(handle)</code> carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. For <code>spawn_blocking()</code> handles, <code>abort()</code> can only prevent queued work from starting; blocking work that has already started must finish on its own.</p>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
@@ -5738,8 +5770,8 @@ for a runnable demo of all four primitives.</p>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Timed out, using default&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>select_timeout()</code> has the same cancellation contract as <code>timeout()</code>: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned.</p>
-<p>Future <code>race</code> syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and keep its handle outside the race when you still need the result.</p>
+<p><code>select_timeout()</code> has the same cancellation contract as <code>timeout()</code>: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use <code>timeout_join()</code> instead.</p>
+<p>Future <code>race</code> syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and use a handle-preserving wait such as <code>timeout_join()</code> when you still need the result.</p>
 <h2 id="runtime-integration">Runtime Integration<a class="headerlink" href="#runtime-integration" title="Permanent link">&para;</a></h2>
 <h3 id="automatic-tokio-main">Automatic Tokio Main<a class="headerlink" href="#automatic-tokio-main" title="Permanent link">&para;</a></h3>
 <p>When your program uses async features, the <code>main()</code> function is automatically wrapped with <code>#[tokio::main]</code>:</p>
