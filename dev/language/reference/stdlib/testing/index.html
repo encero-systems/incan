@@ -4871,7 +4871,7 @@
 <ul>
 <li><code>@fixture</code> / <code>@fixture(scope="function")</code>: created for each test that uses it.</li>
 <li><code>@fixture(scope="module")</code>: cached once per source file inside a generated worker-batch harness.</li>
-<li><code>@fixture(scope="session")</code>: cached once per worker batch. With <code>--jobs 1</code>, one session fixture instance is shared across collected files; with <code>--jobs N</code>, each worker gets its own instance.</li>
+<li><code>@fixture(scope="session")</code>: cached once per worker batch. With <code>--jobs 1</code>, one session fixture instance can be shared across compatible collected files; with <code>--jobs N</code>, each worker gets its own instance.</li>
 </ul>
 <p>Fixtures may use one top-level <code>yield</code> statement. Statements before <code>yield</code> are setup, the yielded value is injected, and statements after <code>yield</code> run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.</p>
 
