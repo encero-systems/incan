@@ -90,6 +90,8 @@ pub struct AstLowering {
     /// When lowering methods inside an impl block, this tracks the current target type name.
     /// Used to avoid rewriting `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
     pub(super) current_impl_type: Option<String>,
+    /// Current classmethod constructor target exposed by source `cls(...)` calls.
+    pub(super) current_classmethod_constructor: Option<String>,
     /// RFC 021: Map from (struct_name, alias) -> canonical_field_name for alias-aware resolution.
     ///
     /// Populated during model/class lowering; used to translate alias field names in:
@@ -206,6 +208,7 @@ impl AstLowering {
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
             current_impl_type: None,
+            current_classmethod_constructor: None,
             struct_field_aliases: HashMap::new(),
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,

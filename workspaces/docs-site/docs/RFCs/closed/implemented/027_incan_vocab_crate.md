@@ -11,7 +11,7 @@
     - RFC 022 (stdlib namespacing)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 031 (library system phase 1)
-    - RFC 040 (scoped DSL glyph surfaces)
+    - RFC 040 (scoped DSL surface forms)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 
@@ -45,7 +45,7 @@ Incan currently maintains **two separate keyword systems**: a compile-time `KEYW
 ## Non-Goals
 
 - Defining the global meaning of operators (`+`, `>>`, `|>`, etc.) — that belongs to RFC 028.
-- Defining scoped glyph surfaces for explicit DSL blocks — that belongs to RFC 040.
+- Defining scoped surface forms for explicit DSL blocks — that belongs to RFC 040.
 - External plugin loading via dynamic libraries (`cdylib`/`libloading`) — desugarers for external libraries use WASM (Phase 4+), not native shared libraries.
 - Implementing the `incan.pub` registry or git-based dependency resolution — those are Phase 2/3 concerns addressed by RFC 034.
 - Replacing the existing `[rust-dependencies]`/Cargo wiring — that is RFC 031's concern.
@@ -1650,7 +1650,7 @@ In other words:
 
 - RFC 027 defines how a library introduces an activated DSL surface and desugars it.
 - RFC 028 defines ordinary global operator overloading.
-- RFC 040 defines how an explicit DSL surface may own scoped glyph behavior without implying global operator support.
+- RFC 040 defines how an explicit DSL surface may own scoped surface behavior without implying global operator support.
 
 Imports alone do not change the meaning of `a >> b` or `a |> b` in ordinary code. Any future glyph support must remain explicitly scoped by the surrounding DSL surface rather than becoming an ambient global operator change.
 

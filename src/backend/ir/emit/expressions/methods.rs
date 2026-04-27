@@ -225,6 +225,13 @@ impl<'a> IrEmitter<'a> {
             // This avoids capitalization heuristics that can mis-emit runtime variables named `TitleCase`.
             if Self::expr_is_type_like(receiver) {
                 let type_ident = format_ident!("{}", name);
+                let type_path = match &receiver.ty {
+                    IrType::NamedGeneric(type_name, type_args) if type_name == name => {
+                        let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+                        quote! { #type_ident :: <#(#emitted),*> }
+                    }
+                    _ => quote! { #type_ident },
+                };
                 let m = format_ident!("{}", method);
                 let in_return = *self.in_return_context.borrow();
                 let receiver_ref_kind = match &receiver.kind {
@@ -265,7 +272,7 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|a| self.emit_expr_for_use(a, use_site))
                     .collect::<Result<_, _>>()?;
-                return Ok(quote! { #type_ident::#m #method_turbofish (#(#arg_tokens),*) });
+                return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
 

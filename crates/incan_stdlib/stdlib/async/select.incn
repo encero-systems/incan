@@ -7,6 +7,12 @@ Multi-branch race/select combinators remain a deliberate follow-up for later awa
 `select_timeout(seconds, task)` returns `Some(value)` when the task finishes before the timeout and `None` when the
 deadline expires first.
 
+Cancellation contract:
+
+- `select_timeout()` cancels the supplied future when the deadline wins.
+- Cancelling `select_timeout()` before it resolves also drops the supplied future.
+- Use `std.async.task.spawn()` first when work must be durable once spawned instead of cancelled by timeout.
+
 Example:
     match await select_timeout(0.5, fetch_user()):
         Some(user) => println(user.name)
@@ -22,6 +28,9 @@ pub async def select_timeout[T with (Send, Static), TaskFuture with RuntimeFutur
     """
     Returns `Some(value)` when `task` completes before the timeout.
     Returns `None` when the timeout expires first.
+
+    If the timeout wins, the supplied future is cancelled by being dropped. Spawn the work first when the operation must
+    continue after the timeout path returns.
     """
     match await tokio_timeout(clamp_seconds(seconds), task):
         Ok(value) => return Some(value)

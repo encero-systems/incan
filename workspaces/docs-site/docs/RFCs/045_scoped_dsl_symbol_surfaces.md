@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 027 (`incan-vocab` library registration and desugaring)
     - RFC 028 (global operator overloading)
-    - RFC 040 (scoped DSL glyph surfaces)
+    - RFC 040 (scoped DSL surface forms)
     - RFC 022 (namespaced stdlib and compiler handoff)
     - RFC 031 (library system phase 1)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/202
@@ -29,7 +29,7 @@ Read this RFC as one foundation plus three mechanisms:
 
 ## Motivation
 
-Incan currently has globally recognized builtin names such as `sum`, and unqualified call resolution treats those names as core language vocabulary. This creates friction for DSLs that need concise, domain-specific meaning for the same symbols in constrained contexts. Query-like DSLs often need `sum(...)` and `count(...)` to express aggregate intent without import boilerplate or naming workarounds, while still preserving ordinary builtin behavior in non-DSL code. Without a scoped symbol mechanism, library authors must either pick awkward substitute names, force mandatory imports for common domain primitives, or ask the compiler for one-off special handling per DSL. Those options do not scale as more DSLs and libraries adopt concise, context-owned authoring surfaces. The language already has a scoped model for glyphs (RFC 040). Identifier symbols need the same class of capability so that DSL meaning can be explicit, local, and tooling-safe.
+Incan currently has globally recognized builtin names such as `sum`, and unqualified call resolution treats those names as core language vocabulary. This creates friction for DSLs that need concise, domain-specific meaning for the same symbols in constrained contexts. Query-like DSLs often need `sum(...)` and `count(...)` to express aggregate intent without import boilerplate or naming workarounds, while still preserving ordinary builtin behavior in non-DSL code. Without a scoped symbol mechanism, library authors must either pick awkward substitute names, force mandatory imports for common domain primitives, or ask the compiler for one-off special handling per DSL. Those options do not scale as more DSLs and libraries adopt concise, context-owned authoring surfaces. The language already has a scoped model for surface forms (RFC 040). Identifier symbols need the same class of capability so that DSL meaning can be explicit, local, and tooling-safe.
 
 ## Goals
 
@@ -47,7 +47,7 @@ Incan currently has globally recognized builtin names such as `sum`, and unquali
 - Making imports globally mutate language semantics outside explicit DSL activation.
 - Defining one DSL-specific aggregate catalog in this RFC; symbol sets remain library-defined.
 - Standardizing backend-specific execution semantics for any one domain library.
-- Scoped glyph surfaces (`>>`, `|>`, `:=`) or scoped expression forms (`.column`) — those belong to RFC 040.
+- Scoped surface forms (`>>`, `|>`, `:=`, `.column`) — those belong to RFC 040.
 
 ## Guide-level explanation (how users think about it)
 
@@ -110,7 +110,7 @@ A DSL may register a scoped symbol descriptor with at least:
 - `eligible_positions`
 - `outside_scope_diagnostic` (optional)
 
-Field names intentionally mirror RFC 040 scoped surface descriptors so vocab registration and tooling can treat glyph surfaces and symbol surfaces as parallel, composable metadata. For symbols, `eligible_positions` describes **name-resolution** contexts (for example where an unqualified call target may be interpreted as a scoped DSL symbol), not parser-only glyph eligibility.
+Field names intentionally mirror RFC 040 scoped surface descriptors so vocab registration and tooling can treat syntax surfaces and symbol surfaces as parallel, composable metadata. For symbols, `eligible_positions` describes **name-resolution** contexts (for example where an unqualified call target may be interpreted as a scoped DSL symbol), not parser-only surface eligibility.
 
 Descriptor naming and shape should follow the same registry discipline used for other DSL metadata.
 
@@ -168,7 +168,7 @@ Scoped symbol semantics are lexical and compile-time, not runtime. Meaning comes
 ### Interaction with existing features
 
 - **RFC 027 (`incan-vocab`)**: scoped symbol descriptors should be registered through the same extension surface and activation pipeline.
-- **RFC 040 (scoped DSL surfaces)**: scoped symbols and scoped glyphs/expression forms are parallel mechanisms; neither replaces the other. Leading-dot field access (`.column`) is an RFC 040 expression-form surface, not an RFC 045 concern.
+- **RFC 040 (scoped DSL surface forms)**: scoped symbols and scoped syntax surfaces are parallel mechanisms; neither replaces the other. Leading-dot field access (`.column`) is an RFC 040 expression-form surface, not an RFC 045 concern.
 - **RFC 028 (global operators)**: scoped symbol semantics do not modify global operator contracts.
 - **Imports/modules**: explicit qualification remains the escape hatch for overlapping names.
 - **LSP/formatter**: tooling must reflect scoped symbol meaning in eligible positions and ordinary meaning elsewhere.
@@ -183,7 +183,7 @@ The feature is additive at language surface level, but it can change behavior fo
 - **Require globally unique DSL symbol names.** Rejected because it produces unnatural user-facing APIs (`inql_sum`, `hees_count`) and does not scale across independent DSL ecosystems that may reasonably want the same short names.
 - **Allow global shadowing of builtins by libraries.** Rejected because it is too broad and unsafe; it breaks predictability outside DSL contexts and makes it impossible for the compiler to provide helpful diagnostics about intent.
 - **Use runtime dunder-like dispatch for function calls.** Rejected because scoped language meaning should be compile-time and lexical, not ambient runtime magic; the enclosing DSL block owns the meaning, not a runtime inspection of "where am I."
-- **Fold scoped symbols into RFC 040 (scoped glyph surfaces).** Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs need parser-level token handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.
+- **Fold scoped symbols into RFC 040 (scoped DSL surface forms).** Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs and expression forms need parser-level handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.
 
 ## Drawbacks
 

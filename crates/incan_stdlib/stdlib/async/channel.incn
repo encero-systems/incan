@@ -9,11 +9,24 @@ Contains the following primitives:
 - `channel(buffer)`:     create a bounded MPSC channel
 - `unbounded_channel()`: create an unbounded MPSC channel
 - `oneshot()`:           create a one-shot channel for sending a single value
+- `Sender.reserve()`:    reserve capacity before building critical messages
+
+Cancellation contracts:
+
+- `Sender.send()` is cancel-safe-but-lossy: if it is cancelled while waiting for bounded-channel capacity, the message is
+  not sent and the value is dropped.
+- `Sender.reserve()` is cancel-safe for message values because no value has been committed yet, but cancellation gives up
+  the sender's wait position.
+- `SenderPermit.send()` is synchronous and either delivers the value or returns it.
+- `Receiver.recv()` is cancel-safe: cancelling a pending receive does not remove a message from the channel.
+- `OneshotSender.send()` is synchronous and either delivers the value or returns it.
+- `OneshotReceiver.recv()` is cancel-safe: cancelling a pending receive does not consume the one-shot value.
 """
 import std.async  # needed to activate the async prelude
 from std.traits.error import Error
 from rust::incan_stdlib::async::channel import (
     RawSender,
+    RawSenderPermit,
     RawReceiver,
     RawOneshotSender,
     RawOneshotReceiver,
@@ -21,6 +34,8 @@ from rust::incan_stdlib::async::channel import (
     unbounded_channel as rust_unbounded_channel,
     oneshot as rust_oneshot,
     sender_send as rust_sender_send,
+    sender_reserve as rust_sender_reserve,
+    sender_permit_send as rust_sender_permit_send,
     sender_try_send as rust_sender_try_send,
     sender_is_closed as rust_sender_is_closed,
     receiver_recv as rust_receiver_recv,
@@ -90,9 +105,28 @@ pub type Sender[T] = newtype RawSender[T]:
 
         For bounded channels, this waits for capacity when the buffer is full.
         Returns `Err(SendError(...))` if the receiver has been dropped.
+
+        Cancellation contract: cancel-safe-but-lossy. If this wait is cancelled before capacity is reserved, the message
+        is not sent and `value` is dropped. Use `reserve()` first for critical sends that must not lose a value if an
+        outer cancellation boundary drops the send future.
         """
         match await rust_sender_send(self.0, value):
             Ok(_) => return Ok(None)
+            Err(err) => return Err(SendError(value=err.into_value()))
+
+    async def reserve(self) -> Result[SenderPermit[T], SendError[None]]:
+        """
+        Reserve capacity for one future send.
+
+        Bounded channels wait until a slot is available and return a `SenderPermit`; unbounded channels return an
+        immediately usable pseudo-permit when the receiver is open. The permit should be used with
+        `permit.send(value)`.
+
+        Cancellation contract: cancel-safe for message values because no value is passed to `reserve()`. If a bounded
+        reservation wait is cancelled, no slot is reserved and the sender gives up its current wait position.
+        """
+        match await rust_sender_reserve(self.0):
+            Ok(permit) => return Ok(SenderPermit(permit))
             Err(err) => return Err(SendError(value=err.into_value()))
 
     def try_send(self, value: T) -> Result[None, SendError[T]]:
@@ -115,6 +149,27 @@ pub type Sender[T] = newtype RawSender[T]:
         return Sender(self.0.clone())
 
 
+pub type SenderPermit[T] = newtype RawSenderPermit[T]:
+    """
+    `SenderPermit[T]` is a single-use permit returned by `Sender.reserve()`.
+
+    A bounded permit holds one channel slot until it sends or is dropped. An unbounded pseudo-permit sends immediately
+    and can still fail if the receiver closes after reservation.
+    """
+
+    def send(self, value: T) -> Result[None, SendError[T]]:
+        """
+        Send a value using this permit.
+
+        Bounded permits use already-reserved capacity. Unbounded pseudo-permits send synchronously and return the value
+        on close.
+
+        Cancellation contract: synchronous. The value is either delivered or returned in `SendError[T]`.
+        """
+        match rust_sender_permit_send(self.0, value):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(SendError(value=err.into_value()))
+
 
 pub type Receiver[T] = newtype RawReceiver[T]:
     """
@@ -128,6 +183,8 @@ pub type Receiver[T] = newtype RawReceiver[T]:
 
         This waits until a value is available or the channel closes.
         Returns `None` only after the channel is closed and fully drained.
+
+        Cancellation contract: cancel-safe. If this wait is cancelled, no message is removed from the channel.
         """
         return await rust_receiver_recv(self.0)
 
@@ -207,6 +264,8 @@ pub type OneshotSender[T] = newtype RawOneshotSender[T]:
         """
         Send the single value carried by this one-shot sender.
         Returns the value back if the receiver is already gone.
+
+        Cancellation contract: this operation is synchronous, so it either delivers the value or returns it immediately.
         """
         match rust_oneshot_sender_send(self.0, value):
             Ok(_) => return Ok(None)
@@ -221,7 +280,11 @@ pub type OneshotReceiver[T] = newtype RawOneshotReceiver[T]:
     """
 
     async def recv(self) -> Result[T, RecvError]:
-        """Wait for the one-shot value or return `RecvError` if the sender was dropped."""
+        """
+        Wait for the one-shot value or return `RecvError` if the sender was dropped.
+
+        Cancellation contract: cancel-safe. If this wait is cancelled, the one-shot value is not consumed.
+        """
         match await rust_oneshot_receiver_recv(self.0):
             Ok(value) => return Ok(value)
             Err(_) => return Err(RecvError())

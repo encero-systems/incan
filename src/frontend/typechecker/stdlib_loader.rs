@@ -32,9 +32,13 @@ use std::path::PathBuf;
 
 use crate::frontend::ast;
 use crate::frontend::symbols::VariableInfo;
-use crate::frontend::symbols::{FunctionInfo, MethodInfo, ResolvedType, TraitInfo};
+use crate::frontend::symbols::{
+    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, TraitInfo, TypeInfo,
+};
+use crate::frontend::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
+use incan_core::lang::rust_keywords;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -45,6 +49,7 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 struct StdlibModuleData {
     functions: Vec<(String, FunctionInfo)>,
     traits: Vec<(String, TraitInfo)>,
+    types: Vec<(String, TypeInfo)>,
     constants: Vec<(String, VariableInfo)>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
@@ -98,6 +103,18 @@ impl StdlibAstCache {
             .traits
             .iter()
             .find(|(name, _)| name == trait_name)
+            .map(|(_, info)| info.clone())
+    }
+
+    /// Look up a specific type in a stdlib module.
+    pub fn lookup_type(&mut self, module_path: &[String], type_name: &str) -> Option<TypeInfo> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .types
+            .iter()
+            .find(|(name, _)| name == type_name)
             .map(|(_, info)| info.clone())
     }
 
@@ -168,6 +185,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
 
     let mut functions = extract_function_signatures(&program);
     let mut traits = extract_trait_signatures(&program);
+    let mut types = extract_type_signatures(&program);
     let mut constants = extract_const_signatures(&program);
     let mut function_meta = extract_function_meta(&program);
     let mut trait_meta = extract_trait_meta(&program);
@@ -181,6 +199,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
         &program,
         &mut functions,
         &mut traits,
+        &mut types,
         &mut constants,
         &mut function_meta,
         &mut trait_meta,
@@ -189,6 +208,7 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
     Some(StdlibModuleData {
         functions,
         traits,
+        types,
         constants,
         function_meta,
         trait_meta,
@@ -203,6 +223,7 @@ fn merge_reexported_metadata(
     program: &ast::Program,
     functions: &mut Vec<(String, FunctionInfo)>,
     traits: &mut Vec<(String, TraitInfo)>,
+    types: &mut Vec<(String, TypeInfo)>,
     constants: &mut Vec<(String, VariableInfo)>,
     function_meta: &mut HashMap<String, FunctionMeta>,
     trait_meta: &mut HashMap<String, TraitMeta>,
@@ -242,6 +263,13 @@ fn merge_reexported_metadata(
                 && !traits.iter().any(|(n, _)| n == effective_name)
             {
                 traits.push((effective_name.to_string(), info.clone()));
+            }
+
+            // Merge type signature.
+            if let Some((_, info)) = sub_data.types.iter().find(|(n, _)| n == &item.name)
+                && !types.iter().any(|(n, _)| n == effective_name)
+            {
+                types.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge const signature.
@@ -448,12 +476,139 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
     traits
 }
 
+/// Extract public type metadata from a parsed stdlib `.incn` program.
+///
+/// Stdlib imports are source-visible type imports, not just function imports. Keeping type metadata here lets generic
+/// rusttypes such as `TimeoutJoinOutcome[T]` retain their Rust backing when imported from `std.async.time`.
+fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
+    let rust_imports = rust_import_aliases(program);
+    let mut types = Vec::new();
+    for decl in &program.declarations {
+        match &decl.node {
+            ast::Declaration::Model(model) if model.visibility == ast::Visibility::Public => {
+                let tp_names = type_param_names(&model.type_params);
+                types.push((
+                    model.name.clone(),
+                    TypeInfo::Model(ModelInfo {
+                        type_params: tp_names.clone(),
+                        traits: model.traits.iter().map(|bound| bound.node.name.clone()).collect(),
+                        derives: Vec::new(),
+                        fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
+                        methods: extract_method_signatures_with_rust_imports(&model.methods, &tp_names, &rust_imports),
+                    }),
+                ));
+            }
+            ast::Declaration::Class(class) if class.visibility == ast::Visibility::Public => {
+                let tp_names = type_param_names(&class.type_params);
+                types.push((
+                    class.name.clone(),
+                    TypeInfo::Class(ClassInfo {
+                        type_params: tp_names.clone(),
+                        extends: class.extends.clone(),
+                        traits: class.traits.iter().map(|bound| bound.node.name.clone()).collect(),
+                        derives: Vec::new(),
+                        fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
+                        methods: extract_method_signatures_with_rust_imports(&class.methods, &tp_names, &rust_imports),
+                    }),
+                ));
+            }
+            ast::Declaration::TypeAlias(alias) if alias.visibility == ast::Visibility::Public => {
+                types.push((alias.name.clone(), TypeInfo::TypeAlias));
+            }
+            ast::Declaration::Newtype(nt) if nt.visibility == ast::Visibility::Public => {
+                let tp_names = type_param_names(&nt.type_params);
+                let underlying = ast_type_to_resolved_with_rust_imports(&nt.underlying.node, &tp_names, &rust_imports);
+                let method_rebindings = nt
+                    .rebindings
+                    .iter()
+                    .filter_map(|rebinding| {
+                        rebinding_target_method_name(&rebinding.node.target.node)
+                            .map(|target| (rebinding.node.name.clone(), target))
+                    })
+                    .collect();
+                types.push((
+                    nt.name.clone(),
+                    TypeInfo::Newtype(NewtypeInfo {
+                        type_params: tp_names.clone(),
+                        is_rusttype: nt.is_rusttype,
+                        has_interop: !nt.interop_edges.is_empty(),
+                        underlying,
+                        method_rebindings,
+                        methods: extract_method_signatures_with_rust_imports(&nt.methods, &tp_names, &rust_imports),
+                    }),
+                ));
+            }
+            ast::Declaration::Enum(en) if en.visibility == ast::Visibility::Public => {
+                types.push((
+                    en.name.clone(),
+                    TypeInfo::Enum(EnumInfo {
+                        type_params: type_param_names(&en.type_params),
+                        variants: en.variants.iter().map(|variant| variant.node.name.clone()).collect(),
+                        value_enum: None,
+                        derives: Vec::new(),
+                    }),
+                ));
+            }
+            _ => {}
+        }
+    }
+    types
+}
+
+/// Extract just the declared names from AST type parameters.
+fn type_param_names(type_params: &[ast::TypeParam]) -> Vec<String> {
+    type_params.iter().map(|tp| tp.name.clone()).collect()
+}
+
+/// Convert AST field declarations into typechecker field metadata.
+fn extract_field_signatures(
+    owner: &str,
+    fields: &[ast::Spanned<ast::FieldDecl>],
+    type_params: &[String],
+    rust_imports: &HashMap<String, String>,
+) -> HashMap<String, FieldInfo> {
+    fields
+        .iter()
+        .map(|field| {
+            (
+                field.node.name.clone(),
+                FieldInfo {
+                    ty: ast_type_to_resolved_with_rust_imports(&field.node.ty.node, type_params, rust_imports),
+                    visibility: field.node.visibility,
+                    owner: Some(owner.to_string()),
+                    has_default: field.node.default.is_some(),
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Extract the effective Rust method name from a rusttype member rebinding target.
+fn rebinding_target_method_name(target: &ast::Expr) -> Option<String> {
+    match target {
+        ast::Expr::Ident(name) => Some(name.clone()),
+        ast::Expr::Field(_, member) => Some(member.clone()),
+        _ => None,
+    }
+}
+
 /// Extract method signatures from AST method declarations.
 ///
 /// Converts each `MethodDecl` into a `MethodInfo` using lightweight type resolution (no full typechecker needed).
 fn extract_method_signatures(
     methods: &[ast::Spanned<ast::MethodDecl>],
     type_params: &[String],
+) -> HashMap<String, MethodInfo> {
+    extract_method_signatures_with_rust_imports(methods, type_params, &HashMap::new())
+}
+
+/// Extract method metadata while resolving Rust import aliases in type positions.
+fn extract_method_signatures_with_rust_imports(
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    type_params: &[String],
+    rust_imports: &HashMap<String, String>,
 ) -> HashMap<String, MethodInfo> {
     methods
         .iter()
@@ -486,7 +641,13 @@ fn extract_method_signatures(
                                 type_args: bound
                                     .type_args
                                     .iter()
-                                    .map(|arg| ast_type_to_resolved(&arg.node, &all_type_params))
+                                    .map(|arg| {
+                                        ast_type_to_resolved_with_rust_imports(
+                                            &arg.node,
+                                            &all_type_params,
+                                            rust_imports,
+                                        )
+                                    })
                                     .collect(),
                             })
                             .collect(),
@@ -500,11 +661,12 @@ fn extract_method_signatures(
                 .map(|p| {
                     (
                         p.node.name.clone(),
-                        ast_type_to_resolved(&p.node.ty.node, &all_type_params),
+                        ast_type_to_resolved_with_rust_imports(&p.node.ty.node, &all_type_params, rust_imports),
                     )
                 })
                 .collect();
-            let return_type = ast_type_to_resolved(&m.node.return_type.node, &all_type_params);
+            let return_type =
+                ast_type_to_resolved_with_rust_imports(&m.node.return_type.node, &all_type_params, rust_imports);
             (
                 m.node.name.clone(),
                 MethodInfo {
@@ -663,14 +825,37 @@ fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
 /// Primitive type names are resolved to their concrete `ResolvedType` variants.
 /// Unknown types are resolved to `Named(name)`.
 fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType {
+    ast_type_to_resolved_with_rust_imports(ty, type_params, &HashMap::new())
+}
+
+/// Convert an AST type to a resolved type while honoring Rust import aliases from the same stdlib module.
+fn ast_type_to_resolved_with_rust_imports(
+    ty: &ast::Type,
+    type_params: &[String],
+    rust_imports: &HashMap<String, String>,
+) -> ResolvedType {
     match ty {
         ast::Type::Unit => ResolvedType::Unit,
         ast::Type::SelfType => ResolvedType::SelfType,
-        ast::Type::Qualified(_) => ResolvedType::Unknown,
+        ast::Type::Qualified(segments) => {
+            let Some((head, tail)) = segments.split_first() else {
+                return ResolvedType::Unknown;
+            };
+            if let Some(base) = rust_imports.get(head) {
+                let mut parts = vec![base.clone()];
+                parts.extend(tail.iter().map(|segment| rust_keywords::escape_keyword(segment)));
+                ResolvedType::RustPath(parts.join("::"))
+            } else {
+                ResolvedType::Unknown
+            }
+        }
         ast::Type::Simple(name) => {
             // Check if it's a type parameter first.
             if type_params.contains(name) {
                 return ResolvedType::TypeVar(name.clone());
+            }
+            if let Some(path) = rust_imports.get(name) {
+                return ResolvedType::RustPath(path.clone());
             }
 
             // Resolve through incan_core registries (numerics, strings, unit).
@@ -698,8 +883,17 @@ fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType 
         ast::Type::Generic(name, args) => {
             let resolved_args: Vec<ResolvedType> = args
                 .iter()
-                .map(|a| ast_type_to_resolved(&a.node, type_params))
+                .map(|a| ast_type_to_resolved_with_rust_imports(&a.node, type_params, rust_imports))
                 .collect();
+
+            if let Some(path) = rust_imports.get(name) {
+                let rendered_args = resolved_args
+                    .iter()
+                    .map(render_resolved_type_as_rust_arg)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return ResolvedType::RustPath(format!("{path}<{rendered_args}>"));
+            }
 
             let collection_id = collection_types::from_str(name);
             match collection_id {
@@ -733,20 +927,58 @@ fn ast_type_to_resolved(ty: &ast::Type, type_params: &[String]) -> ResolvedType 
         ast::Type::Function(params, ret) => {
             let param_types: Vec<ResolvedType> = params
                 .iter()
-                .map(|p| ast_type_to_resolved(&p.node, type_params))
+                .map(|p| ast_type_to_resolved_with_rust_imports(&p.node, type_params, rust_imports))
                 .collect();
-            let ret_type = ast_type_to_resolved(&ret.node, type_params);
+            let ret_type = ast_type_to_resolved_with_rust_imports(&ret.node, type_params, rust_imports);
             ResolvedType::Function(param_types, Box::new(ret_type))
         }
         ast::Type::Tuple(elems) => {
             let elem_types: Vec<ResolvedType> = elems
                 .iter()
-                .map(|e| ast_type_to_resolved(&e.node, type_params))
+                .map(|e| ast_type_to_resolved_with_rust_imports(&e.node, type_params, rust_imports))
                 .collect();
             ResolvedType::Tuple(elem_types)
         }
         ast::Type::Infer => ResolvedType::CallSiteInfer,
     }
+}
+
+/// Collect local aliases for Rust imports declared in a stdlib module.
+fn rust_import_aliases(program: &ast::Program) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    for decl in &program.declarations {
+        let ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        match &import.kind {
+            ast::ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } => {
+                for item in items {
+                    let local_name = item.alias.as_deref().unwrap_or(&item.name);
+                    let mut full_path = vec![rust_keywords::escape_keyword(crate_name)];
+                    full_path.extend(path.iter().map(|segment| rust_keywords::escape_keyword(segment)));
+                    full_path.push(rust_keywords::escape_keyword(&item.name));
+                    aliases.insert(local_name.to_string(), full_path.join("::"));
+                }
+            }
+            ast::ImportKind::RustCrate { crate_name, path, .. } => {
+                let local_name = import
+                    .alias
+                    .as_deref()
+                    .or_else(|| path.last().map(String::as_str))
+                    .unwrap_or(crate_name);
+                let mut full_path = vec![rust_keywords::escape_keyword(crate_name)];
+                full_path.extend(path.iter().map(|segment| rust_keywords::escape_keyword(segment)));
+                aliases.insert(local_name.to_string(), full_path.join("::"));
+            }
+            _ => {}
+        }
+    }
+    aliases
 }
 
 #[cfg(test)]
@@ -818,11 +1050,26 @@ mod tests {
     fn test_load_async_time_module() -> Result<(), Box<dyn std::error::Error>> {
         let path = vec!["std".to_string(), "async".to_string(), "time".to_string()];
         let module = load_stdlib_module_data(&path);
-        let fns = module.ok_or("failed to load stdlib/async/time.incn")?.functions;
+        let module = module.ok_or("failed to load stdlib/async/time.incn")?;
+        let fns = &module.functions;
         let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
         assert!(sleep_fn.is_some(), "should find 'sleep' function");
         let timeout_fn = fns.iter().find(|(name, _)| name == "timeout");
         assert!(timeout_fn.is_some(), "should find 'timeout' function");
+        let timeout_join_outcome = module
+            .types
+            .iter()
+            .find(|(name, _)| name == "TimeoutJoinOutcome")
+            .ok_or("TimeoutJoinOutcome type not found")?;
+        let TypeInfo::Newtype(info) = &timeout_join_outcome.1 else {
+            return Err("TimeoutJoinOutcome should load as a newtype".into());
+        };
+        assert!(info.is_rusttype);
+        assert_eq!(info.type_params, vec!["T".to_string()]);
+        assert_eq!(
+            info.underlying,
+            ResolvedType::RustPath("incan_stdlib::r#async::time::TimeoutJoinOutcome<T>".to_string())
+        );
         Ok(())
     }
 

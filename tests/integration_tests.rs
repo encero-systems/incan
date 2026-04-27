@@ -2521,9 +2521,31 @@ async def main() -> None:
         Some(value) => println(value)
         None => println("closed")
 
+    match await tx.reserve():
+        Ok(permit) =>
+            match permit.send(4):
+                Ok(_) => println("reserved")
+                Err(err) => println(err.message())
+        Err(err) => println(err.message())
+
+    match await rx.recv():
+        Some(value) => println(value)
+        None => println("closed")
+
     tx2, rx2 = unbounded_channel()
     match await tx2.send(2):
         Ok(_) => println("sent")
+        Err(err) => println(err.message())
+
+    match rx2.try_recv():
+        Some(value) => println(value)
+        None => println("empty")
+
+    match await tx2.reserve():
+        Ok(permit) =>
+            match permit.send(5):
+                Ok(_) => println("unbounded reserved")
+                Err(err) => println(err.message())
         Err(err) => println(err.message())
 
     match rx2.try_recv():
@@ -2571,6 +2593,26 @@ async def main() -> None:
         assert!(
             stdout.contains("2"),
             "expected unbounded receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("reserved"),
+            "expected bounded reserve output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("4"),
+            "expected bounded permit receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("unbounded reserved"),
+            "expected unbounded reserve output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("5"),
+            "expected unbounded permit receive output; got:\n{}",
             stdout
         );
         assert!(
@@ -2751,7 +2793,7 @@ def main() -> None:
         let source = r#"
 import std.async
 from std.async.task import spawn, spawn_blocking
-from std.async.time import sleep, timeout, timeout_ms
+from std.async.time import sleep, timeout, timeout_ms, timeout_join, timeout_join_ms, TimeoutJoinOutcome
 
 async def quick_value() -> int:
     await sleep(0.01)
@@ -2788,6 +2830,25 @@ async def main() -> None:
     match await timeout_ms(1, slow_value()):
         Ok(value) => println(f"timeout_ms_unexpected_ok:{value}")
         Err(err) => println(f"timeout_ms_expired:{err.message()}")
+
+    durable = spawn(slow_value())
+    match await timeout_join(0.001, durable):
+        TimeoutJoinOutcome.Completed(value) => println(f"timeout_join_unexpected_ok:{value}")
+        TimeoutJoinOutcome.JoinFailed(err) => println(f"timeout_join_err:{err.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            println("task still running after timeout")
+            match await handle:
+                Ok(value) => println(f"timeout_join_later:{value}")
+                Err(err) => println(f"timeout_join_later_err:{err.message()}")
+
+    durable_ms = spawn(slow_value())
+    match await timeout_join_ms(1, durable_ms):
+        TimeoutJoinOutcome.Completed(value) => println(f"timeout_join_ms_unexpected_ok:{value}")
+        TimeoutJoinOutcome.JoinFailed(err) => println(f"timeout_join_ms_err:{err.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            match await handle:
+                Ok(value) => println(f"timeout_join_ms_later:{value}")
+                Err(err) => println(f"timeout_join_ms_later_err:{err.message()}")
 "#;
         let Ok(()) = std::fs::write(&source_path, source) else {
             panic!("failed to write source file");
@@ -2840,8 +2901,25 @@ async def main() -> None:
             stdout
         );
         assert!(
+            stdout.contains("task still running after timeout"),
+            "expected durable timeout message; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_join_later:99"),
+            "expected timeout_join preserved handle output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_join_ms_later:99"),
+            "expected timeout_join_ms preserved handle output; got:\n{}",
+            stdout
+        );
+        assert!(
             !stdout.contains("timeout_unexpected_ok")
                 && !stdout.contains("timeout_ms_unexpected_ok")
+                && !stdout.contains("timeout_join_unexpected_ok")
+                && !stdout.contains("timeout_join_ms_unexpected_ok")
                 && !stdout.contains("spawn_err:")
                 && !stdout.contains("spawn_blocking_err:")
                 && !stdout.contains("timeout_err:")
@@ -3612,6 +3690,67 @@ def test_two() -> None:
             "expected two passing results (per-test PASSED lines).\nstdout:\n{}",
             stdout,
         );
+    }
+
+    #[test]
+    fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "default_expr_import_test_repro"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            src_dir.join("defaults.incn"),
+            r#"
+pub def fallback() -> int:
+    return 2
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("helper.incn"),
+            r#"
+from defaults import fallback
+
+pub def combine(left: int, middle: int = fallback(), right: int = 3) -> int:
+    return left + middle + right
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_default_expr_import.incn"),
+            r#"
+from std.testing import assert_eq
+from helper import combine
+
+def test_imported_default_expression_expands_with_required_imports() -> None:
+    assert_eq(combine(left=1, right=4), 7, "default expression helper should be available after expansion")
+"#,
+        )?;
+
+        let output = run_incan_test_relative(&dir, "tests");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected imported default expression test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains(
+                "test_default_expr_import.incn::test_imported_default_expression_expands_with_required_imports"
+            ),
+            "expected issue 395 test name in reporter output.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
     }
 
     #[test]
@@ -4575,6 +4714,49 @@ def main() -> None:
             "expected generic instance methods across owner kinds to typecheck and lower, got {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_issue388_generic_type_owned_factories_run() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@derive(Clone)
+class FactoryBox[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+
+  @staticmethod
+  def make_static(value: T) -> Self:
+    return FactoryBox(value=value)
+
+def main() -> None:
+  from_classmethod = FactoryBox[int].make(1)
+  from_staticmethod = FactoryBox[int].make_static(2)
+  println(str(from_classmethod.value))
+  println(str(from_staticmethod.value))
+"#;
+        let output = std::process::Command::new(super::incan_debug_binary())
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected generic type-owned factories to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["1", "2"],
+            "unexpected generic type-owned factory output:\n{stdout}"
+        );
+        Ok(())
     }
 
     #[test]

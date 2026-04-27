@@ -3806,6 +3806,21 @@ def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
     Ok(())
 }
 
+#[test]
+fn test_issue_388_generic_classmethod_cls_constructor_typechecks() {
+    let source = r#"
+@derive(Clone)
+class Box[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+"#;
+
+    assert_check_ok(source);
+}
+
 /// Trait **default** methods are not copied into `ClassInfo.methods`; dispatch goes through the trait branch of
 /// `resolve_named_method`. Call-site `Self` substitution must still apply (#237).
 #[test]

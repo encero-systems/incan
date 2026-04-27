@@ -26,7 +26,7 @@ use crate::cli::commands::common::{
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
-use crate::frontend::ast::{Declaration, Program, Span, Type};
+use crate::frontend::ast::{Declaration, MethodDecl, Program, Span, Type, TypeParam};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::resolve_import_path;
@@ -66,6 +66,11 @@ struct RustOriginSymbol {
     local_name: String,
     span: Span,
     info: crate::frontend::symbols::RustItemInfo,
+}
+
+#[derive(Debug, Clone)]
+struct ClassmethodContext {
+    owner_type: String,
 }
 
 /// Incan Language Server
@@ -924,6 +929,60 @@ def bind(input_columns: list[str]) -> list[str]:
     }
 }
 
+#[cfg(test)]
+mod lsp_classmethod_tests {
+    use std::collections::HashMap;
+
+    use super::{classmethod_cls_detail, classmethod_context_at_offset, identifier_at_offset};
+    use crate::frontend::{lexer, parser};
+
+    fn parse_source(source: &str) -> crate::frontend::ast::Program {
+        let tokens = lexer::lex(source).unwrap_or_else(|errors| panic!("lexer failed: {errors:?}"));
+        parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&HashMap::new()))
+            .unwrap_or_else(|errors| panic!("parser failed: {errors:?}"))
+    }
+
+    #[test]
+    fn classmethod_context_surfaces_cls_receiver_for_lsp() {
+        let source = r#"
+class Box[T with Clone]:
+    value: T
+
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+"#;
+        let ast = parse_source(source);
+        let offset = source.find("cls(value").expect("expected cls call");
+        let aliases = HashMap::new();
+
+        let context = classmethod_context_at_offset(&ast, offset, &aliases).expect("expected classmethod context");
+        assert_eq!(context.owner_type, "Box[T]");
+        assert_eq!(classmethod_cls_detail(&context), "cls: type[Box[T]]");
+
+        let (ident, span) = identifier_at_offset(source, offset).expect("expected identifier at cls call");
+        assert_eq!(ident, "cls");
+        assert_eq!(&source[span.start..span.end], "cls");
+    }
+
+    #[test]
+    fn staticmethod_body_does_not_surface_cls_receiver_for_lsp() {
+        let source = r#"
+class Box[T with Clone]:
+    value: T
+
+    @staticmethod
+    def make(value: T) -> Self:
+        return Box(value=value)
+"#;
+        let ast = parse_source(source);
+        let offset = source.find("return Box").expect("expected static factory body");
+        let aliases = HashMap::new();
+
+        assert!(classmethod_context_at_offset(&ast, offset, &aliases).is_none());
+    }
+}
+
 /// Symbol information for hover/goto
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
@@ -992,6 +1051,153 @@ fn resolve_decorator_path(
     aliases: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
     crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases)
+}
+
+/// Return whether a method has the requested decorator after resolving import aliases.
+fn method_has_decorator(
+    method: &MethodDecl,
+    id: decorators::DecoratorId,
+    aliases: &HashMap<String, Vec<String>>,
+) -> bool {
+    method
+        .decorators
+        .iter()
+        .any(|decorator| decorators::from_segments(&resolve_decorator_path(&decorator.node, aliases)) == Some(id))
+}
+
+/// Format the owner type as it should appear in LSP details.
+fn owner_type_display(owner_name: &str, type_params: &[TypeParam]) -> String {
+    if type_params.is_empty() {
+        owner_name.to_string()
+    } else {
+        let params: Vec<&str> = type_params.iter().map(|param| param.name.as_str()).collect();
+        format!("{owner_name}[{}]", params.join(", "))
+    }
+}
+
+/// Return whether an offset falls inside a method body rather than its signature.
+fn method_body_contains_offset(method: &MethodDecl, method_span: Span, offset: usize) -> bool {
+    let Some(body) = &method.body else {
+        return false;
+    };
+    let Some(first) = body.first() else {
+        return false;
+    };
+    first.span.start <= offset && offset < method_span.end
+}
+
+/// Build contextual classmethod receiver metadata when the offset is inside a classmethod body.
+fn classmethod_context_for_method(
+    owner_name: &str,
+    owner_type_params: &[TypeParam],
+    method: &crate::frontend::ast::Spanned<MethodDecl>,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<ClassmethodContext> {
+    if !method_body_contains_offset(&method.node, method.span, offset) {
+        return None;
+    }
+    if !method_has_decorator(&method.node, decorators::DecoratorId::ClassMethod, aliases) {
+        return None;
+    }
+    Some(ClassmethodContext {
+        owner_type: owner_type_display(owner_name, owner_type_params),
+    })
+}
+
+/// Find the active classmethod receiver context for an offset in a parsed program.
+fn classmethod_context_at_offset(
+    ast: &Program,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<ClassmethodContext> {
+    for decl in &ast.declarations {
+        match &decl.node {
+            Declaration::Model(model) => {
+                for method in &model.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&model.name, &model.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            Declaration::Class(class) => {
+                for method in &class.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&class.name, &class.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            Declaration::Newtype(newtype) => {
+                for method in &newtype.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&newtype.name, &newtype.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Return the identifier containing or immediately preceding an offset.
+fn identifier_at_offset(source: &str, offset: usize) -> Option<(String, Span)> {
+    if source.is_empty() {
+        return None;
+    }
+    let mut cursor = offset.min(source.len().saturating_sub(1));
+    if !source
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    {
+        if cursor == 0 {
+            return None;
+        }
+        cursor -= 1;
+        if !source
+            .as_bytes()
+            .get(cursor)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
+            return None;
+        }
+    }
+
+    let mut start = cursor;
+    while start > 0 {
+        let prev = source.as_bytes()[start - 1];
+        if !(prev.is_ascii_alphanumeric() || prev == b'_') {
+            break;
+        }
+        start -= 1;
+    }
+
+    let mut end = cursor + 1;
+    while end < source.len() {
+        let next = source.as_bytes()[end];
+        if !(next.is_ascii_alphanumeric() || next == b'_') {
+            break;
+        }
+        end += 1;
+    }
+
+    Some((source[start..end].to_string(), Span::new(start, end)))
+}
+
+/// Format the LSP detail string for the contextual `cls` receiver binding.
+fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
+    format!(
+        "{}: type[{}]",
+        keywords::as_str(keywords::KeywordId::Cls),
+        context.owner_type
+    )
 }
 
 fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
@@ -1411,6 +1617,7 @@ impl LanguageServer for IncanLanguageServer {
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
+    /// Provide hover text for symbols, call-site type arguments, Rust imports, and contextual receiver bindings.
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
@@ -1486,6 +1693,24 @@ impl LanguageServer for IncanLanguageServer {
                         value: markdown,
                     }),
                     range: Some(span_to_range(&doc.source, rust_symbol.span.start, rust_symbol.span.end)),
+                }));
+            }
+
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && keywords::from_str(ident.as_str()) == Some(keywords::KeywordId::Cls)
+                && let Some(context) = classmethod_context_at_offset(ast, offset, &aliases)
+            {
+                let detail = classmethod_cls_detail(&context);
+                let markdown = format!(
+                    "```incan\n{detail}\n```\n\n*classmethod receiver* — callable constructor for `{}`.",
+                    context.owner_type
+                );
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
                 }));
             }
 
@@ -1632,6 +1857,7 @@ impl LanguageServer for IncanLanguageServer {
         Ok(None)
     }
 
+    /// Provide context-aware completions for decorators, imports, type arguments, symbols, and receiver bindings.
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
@@ -1672,6 +1898,25 @@ impl LanguageServer for IncanLanguageServer {
         }
 
         // ---- General completions (not in a specific context) ----
+
+        if let Some(ast) = &doc.ast {
+            let aliases = collect_import_aliases(ast);
+            if let Some(off) = position_to_offset(&doc.source, position)
+                && let Some(context) = classmethod_context_at_offset(ast, off, &aliases)
+            {
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    keywords::as_str(keywords::KeywordId::Cls),
+                    CompletionItemKind::VARIABLE,
+                    Some(format!(
+                        "{} — classmethod receiver constructor",
+                        classmethod_cls_detail(&context)
+                    )),
+                    Some("0_cls".to_string()),
+                );
+            }
+        }
 
         // Add keywords from the registry (canonical + aliases).
         for info in keywords::KEYWORDS {

@@ -116,6 +116,7 @@ pub struct CheckedEnumExport {
 pub struct CheckedNewtypeExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    pub is_rusttype: bool,
     pub underlying: ResolvedType,
     pub methods: Vec<CheckedMethod>,
 }
@@ -382,10 +383,14 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
     })
 }
 
+/// Build a manifest-ready newtype export from the checked symbol metadata.
 fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> Option<CheckedNewtypeExport> {
     let symbol = checker.lookup_symbol(newtype_decl.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
-        underlying, methods, ..
+        is_rusttype,
+        underlying,
+        methods,
+        ..
     })) = &symbol.kind
     else {
         return None;
@@ -394,6 +399,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
     Some(CheckedNewtypeExport {
         name: newtype_decl.name.clone(),
         type_params: checked_type_params(&newtype_decl.type_params, checker),
+        is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
         methods: map_methods(methods),
     })
