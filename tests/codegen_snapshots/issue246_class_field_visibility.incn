@@ -1,0 +1,12 @@
+"""Class field visibility should preserve private backing state."""
+
+pub class LazyFrame:
+    _cursor: int
+    pub schema: str
+
+    def cursor(self) -> int:
+        return self._cursor
+
+
+def schema(frame: LazyFrame) -> str:
+    return frame.schema

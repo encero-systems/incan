@@ -11,6 +11,7 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::typechecker::RustArgCoercionKind;
+use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
@@ -182,6 +183,13 @@ impl AstLowering {
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
+            if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
+                && matches!(self.lookup_var(name), IrType::Unknown)
+                && let Some(owner_name) = self.current_classmethod_constructor.clone()
+            {
+                return self.lower_constructor_call(&owner_name, args);
+            }
+
             // Use two strategies for constructor detection:
             // 1. Known struct from current file (in struct_names map)
             // 2. Uppercase identifier heuristic (works cross-file like old codegen)
@@ -706,7 +714,7 @@ from rust::std::boxed import Box
 
 @derive(Clone)
 class Node[T]:
-  value: T
+  pub value: T
 
 def take[T](node: Node[T]) -> T:
   return node.value

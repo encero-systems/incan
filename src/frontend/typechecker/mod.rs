@@ -68,7 +68,7 @@ use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::RustMetadataCache;
-use helpers::{collection_type_id, stringlike_type_id};
+use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
@@ -299,6 +299,10 @@ pub struct TypeChecker {
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
+    /// Active nominal owner while checking a method body.
+    pub(crate) current_method_owner: Option<String>,
+    /// Active `@classmethod` owner type exposed to the method body as `cls`.
+    pub(crate) current_classmethod_self_ty: Option<ResolvedType>,
     /// Deduplicate missing-`@requires` diagnostics within a single trait default method body.
     pub(crate) current_trait_missing_requires_emitted: Option<HashSet<String>>,
     /// Collected module-level const declarations (for rich const-eval + cycle detection).
@@ -378,6 +382,7 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
+    /// Create an empty typechecker with fresh symbol, diagnostic, import, and lowering-metadata state.
     pub fn new() -> Self {
         Self {
             symbols: SymbolTable::new(),
@@ -389,6 +394,8 @@ impl TypeChecker {
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_name: None,
+            current_method_owner: None,
+            current_classmethod_self_ty: None,
             current_trait_missing_requires_emitted: None,
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
@@ -667,6 +674,25 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Resolve a source-level rusttype backing type to its canonical Rust path spelling.
+    pub(crate) fn rust_path_for_rusttype_underlying(&self, ty: &ResolvedType) -> Option<String> {
+        if let ResolvedType::RustPath(path) = ty {
+            return Some(path.clone());
+        }
+
+        let (base, _definition, args) = self.rust_identity_for_type(ty)?;
+        if args.is_empty() {
+            return Some(base);
+        }
+
+        let rendered_args = args
+            .iter()
+            .map(render_resolved_type_as_rust_arg)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{base}<{rendered_args}>"))
     }
 
     fn rust_type_identities_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> Option<bool> {

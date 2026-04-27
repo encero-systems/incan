@@ -544,6 +544,8 @@ pub struct VariantInfo {
 #[derive(Debug, Clone)]
 pub struct FieldInfo {
     pub ty: ResolvedType,
+    pub visibility: crate::frontend::ast::Visibility,
+    pub owner: Option<String>,
     pub has_default: bool,
     pub alias: Option<String>,
     pub description: Option<String>,

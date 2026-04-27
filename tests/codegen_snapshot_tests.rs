@@ -974,6 +974,13 @@ fn test_classes_codegen() {
 }
 
 #[test]
+fn test_issue246_class_field_visibility_codegen() {
+    let source = load_test_file("issue246_class_field_visibility");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue246_class_field_visibility", rust_code);
+}
+
+#[test]
 fn test_generic_methods_codegen() {
     let source = load_test_file("generic_methods");
     let rust_code = generate_rust(&source);
@@ -1645,6 +1652,28 @@ fn test_std_async_time_compiled_codegen() {
     };
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_async_time_compiled", rust_code);
+}
+
+/// Compile `std.async.channel` from `.incn` source.
+#[test]
+fn test_std_async_channel_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/channel.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_channel_compiled", rust_code);
+}
+
+/// Compile `std.async.sync` from `.incn` source.
+#[test]
+fn test_std_async_sync_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/sync.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_sync_compiled", rust_code);
 }
 
 /// Compile `std.async.select` from `.incn` source.

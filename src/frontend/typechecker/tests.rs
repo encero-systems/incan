@@ -146,6 +146,59 @@ fn assert_check_ok(source: &str) {
     }
 }
 
+fn has_private_field_error(errors: &[CompileError], type_name: &str, field: &str) -> bool {
+    let needle = format!("Field '{field}' on '{type_name}' is private");
+    errors.iter().any(|err| err.message.contains(&needle))
+}
+
+#[test]
+fn test_class_private_field_access_rejected_outside_owner() {
+    let source = r#"
+pub class LazyFrame:
+  _cursor: int
+  pub schema: str
+
+def leak(frame: LazyFrame) -> int:
+  return frame._cursor
+"#;
+    let errors = check_str_err(source, "private class field access should fail typechecking");
+    assert!(
+        has_private_field_error(&errors, "LazyFrame", "_cursor"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_class_private_field_access_allowed_inside_owner_method() {
+    let source = r#"
+pub class LazyFrame:
+  _cursor: int
+
+  def cursor(self) -> int:
+    return self._cursor
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_class_private_parent_field_access_rejected_in_child_method() {
+    let source = r#"
+class Parent:
+  private_value: int
+
+class Child extends Parent:
+  def expose(self) -> int:
+    return self.private_value
+"#;
+    let errors = check_str_err(source, "private parent field access should fail in child method");
+    assert!(
+        has_private_field_error(&errors, "Child", "private_value"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
 fn library_index_with_mylib_exports() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
@@ -3753,6 +3806,21 @@ def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
     Ok(())
 }
 
+#[test]
+fn test_issue_388_generic_classmethod_cls_constructor_typechecks() {
+    let source = r#"
+@derive(Clone)
+class Box[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+"#;
+
+    assert_check_ok(source);
+}
+
 /// Trait **default** methods are not copied into `ClassInfo.methods`; dispatch goes through the trait branch of
 /// `resolve_named_method`. Call-site `Self` substitution must still apply (#237).
 #[test]
@@ -6744,7 +6812,7 @@ def main() -> None:
 fn test_local_inference_preserves_method_result_field_access_after_factory_call() {
     let source = r#"
 class Backend:
-  enable_optimizer: bool
+  pub enable_optimizer: bool
 
 class Session:
   @staticmethod
@@ -6820,7 +6888,7 @@ def main() -> None:
 fn test_local_inference_annotation_control_still_typechecks() {
     let source = r#"
 class Backend:
-  enable_optimizer: bool
+  pub enable_optimizer: bool
 
 class Session:
   @staticmethod
@@ -6842,7 +6910,7 @@ def main() -> None:
 fn test_direct_construction_method_result_field_access_control_typechecks() {
     let source = r#"
 class Backend:
-  enable_optimizer: bool
+  pub enable_optimizer: bool
 
 class Session:
   def backend(self) -> Backend:
@@ -6860,7 +6928,7 @@ def main() -> None:
 fn test_direct_construction_with_static_factory_present_still_typechecks() {
     let source = r#"
 class Backend:
-  enable_optimizer: bool
+  pub enable_optimizer: bool
 
 class Session:
   @staticmethod

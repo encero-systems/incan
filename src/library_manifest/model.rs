@@ -161,6 +161,8 @@ pub enum TypeRef {
     SelfType,
     /// A reference type.
     Ref { inner: Box<TypeRef> },
+    /// A canonical Rust path imported through `rust::...`.
+    RustPath { path: String },
     /// A placeholder used when the manifest intentionally preserves unknown type information.
     Unknown,
 }
@@ -323,6 +325,9 @@ pub enum EnumValueExport {
 pub struct NewtypeExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Whether this newtype is a zero-cost Rust type alias (`type X = rusttype RustX`).
+    #[serde(default)]
+    pub is_rusttype: bool,
     /// Underlying wrapped type.
     pub underlying: TypeRef,
     pub methods: Vec<MethodExport>,
@@ -612,10 +617,12 @@ fn value_enum_value_from_checked(value: &ValueEnumValue) -> EnumValueExport {
     }
 }
 
+/// Convert a checked newtype export into the serialized manifest shape.
 fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
     NewtypeExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         methods: export.methods.iter().map(method_from_checked).collect(),
     }

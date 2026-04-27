@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 027 (`incan-vocab` block registration and desugaring)
-    - RFC 040 (scoped DSL glyph surfaces)
+    - RFC 040 (scoped DSL surface forms)
     - RFC 022 (namespaced stdlib modules and compiler handoff)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
@@ -163,7 +163,7 @@ That means:
 
 - shell DSL syntax is only active when `std.process` vocab is activated in the current file/module;
 - shell DSL remains an explicit lane and does not redefine ordinary process APIs;
-- DSL glyph use (for example `|`) is scoped inside the `sh` block surface, consistent with RFC 040-style scoped DSL semantics.
+- DSL surface use (for example `|`) is scoped inside the `sh` block surface, consistent with RFC 040-style scoped DSL semantics.
 
 ### Interpolation policy for shell DSL
 

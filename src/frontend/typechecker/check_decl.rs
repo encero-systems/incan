@@ -7,6 +7,7 @@ use crate::frontend::symbols::*;
 
 use super::TypeChecker;
 use incan_core::interop::RustItemKind;
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::traits::{self, TraitId};
@@ -74,6 +75,14 @@ struct InteropAdapterSig {
 }
 
 impl TypeChecker {
+    /// Return whether a method carries a resolved builtin decorator.
+    fn method_has_decorator(method: &MethodDecl, id: DecoratorId) -> bool {
+        method
+            .decorators
+            .iter()
+            .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(id))
+    }
+
     /// Replace every nested `Self` occurrence in an annotation with the concrete owner type used for this method body.
     ///
     /// Method return validation runs against the concrete owning type, not the abstract declaration surface, so
@@ -945,6 +954,7 @@ impl TypeChecker {
         let _ = span;
     }
 
+    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
 
@@ -1005,6 +1015,8 @@ impl TypeChecker {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
+                    visibility: field.node.visibility,
+                    owner: Some(model.name.clone()),
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
@@ -1158,6 +1170,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a class declaration after collection, including inheritance, field metadata, traits, and methods.
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
@@ -1222,6 +1235,8 @@ impl TypeChecker {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
                     ty,
+                    visibility: field.node.visibility,
+                    owner: Some(class.name.clone()),
                     has_default: field.node.default.is_some(),
                     alias: field.node.metadata.alias.clone(),
                     description: field.node.metadata.description.clone(),
@@ -1354,6 +1369,7 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
         self.validate_decorators(&nt.decorators);
 
@@ -1366,16 +1382,21 @@ impl TypeChecker {
             ));
         }
 
-        if nt.is_rusttype && !matches!(underlying, ResolvedType::RustPath(_)) {
+        let rusttype_path = if nt.is_rusttype {
+            self.rust_path_for_rusttype_underlying(&underlying)
+        } else {
+            None
+        };
+        if nt.is_rusttype && rusttype_path.is_none() {
             self.errors
                 .push(errors::rusttype_requires_rust_backing(&nt.name, nt.underlying.span));
         }
         if nt.is_rusttype
-            && let ResolvedType::RustPath(path) = &underlying
+            && let Some(path) = rusttype_path
         {
             self.type_info
                 .rusttype_canonical_rust_paths
-                .insert(nt.name.clone(), path.clone());
+                .insert(nt.name.clone(), path);
         }
         if !nt.is_rusttype && !nt.interop_edges.is_empty() {
             self.errors
@@ -1592,6 +1613,7 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
         self.validate_decorators(&method.decorators);
         let owner_type_params = self
@@ -1604,9 +1626,27 @@ impl TypeChecker {
                 TypeInfo::Builtin | TypeInfo::TypeAlias => Vec::new(),
             })
             .unwrap_or_default();
-        self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()), &owner_type_params);
+        let previous_owner = self.current_method_owner.replace(owner.to_string());
+        let owner_self_ty = if owner_type_params.is_empty() {
+            ResolvedType::Named(owner.to_string())
+        } else {
+            ResolvedType::Generic(
+                owner.to_string(),
+                owner_type_params
+                    .iter()
+                    .map(|type_param| ResolvedType::TypeVar(type_param.clone()))
+                    .collect(),
+            )
+        };
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
+        self.current_method_owner = previous_owner;
     }
 
+    /// Check a method body with the concrete owner type used for `Self` in annotations and classmethod constructors.
+    ///
+    /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
+    /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
+    /// adopter is resolved later during trait conformance and method-call substitution.
     fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
@@ -1650,6 +1690,11 @@ impl TypeChecker {
                 scope: 0,
             });
         }
+        let is_classmethod = Self::method_has_decorator(method, DecoratorId::ClassMethod);
+        let previous_classmethod_self_ty = self.current_classmethod_self_ty.take();
+        if is_classmethod {
+            self.current_classmethod_self_ty = Some(self_ty.clone());
+        }
 
         // Define parameters
         for param in &method.params {
@@ -1684,6 +1729,7 @@ impl TypeChecker {
         }
 
         self.current_return_error_type = None;
+        self.current_classmethod_self_ty = previous_classmethod_self_ty;
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

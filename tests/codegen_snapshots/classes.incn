@@ -2,13 +2,13 @@
 
 # Simple class with fields
 class Point:
-    x: int
-    y: int
+    pub x: int
+    pub y: int
 
 
 class Rectangle:
-    width: int
-    height: int
+    pub width: int
+    pub height: int
 
 
 # Class with regular methods
