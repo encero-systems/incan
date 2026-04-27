@@ -6,7 +6,7 @@
 - **Related:** RFC 018 (language primitives for testing), RFC 007 (runner semantics; superseded), RFC 001 (runner portions; superseded), RFC 002 (runner portions; superseded)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/77
 - **RFC PR:** —
-- **Implementation PRs:** this PR
+- **Implementation PRs:** https://github.com/dannys-code-corner/incan/pull/435
 - **Written against:** v0.1
 - **Shipped in:** v0.3
 
