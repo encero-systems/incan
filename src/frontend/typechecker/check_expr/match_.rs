@@ -335,12 +335,14 @@ impl TypeChecker {
     ) -> bool {
         let is_rust_backed = match expected_ty {
             ResolvedType::RustPath(_) => true,
-            ResolvedType::Named(type_name) => self.lookup_type_info(type_name).is_some_and(|info| {
-                matches!(
-                    info,
-                    TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
-                )
-            }),
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
+                self.lookup_type_info(type_name).is_some_and(|info| {
+                    matches!(
+                        info,
+                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
+                    )
+                })
+            }
             _ => false,
         };
         if !is_rust_backed {
@@ -376,7 +378,7 @@ impl TypeChecker {
             return false;
         }
         match expected_ty {
-            ResolvedType::Named(type_name) => info.enum_name == *type_name,
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => info.enum_name == *type_name,
             // Scrutinee is a bare Rust path: module-level variant symbols are Incan-/manifest-scoped names.
             ResolvedType::RustPath(_) => false,
             _ => false,
@@ -406,7 +408,7 @@ impl TypeChecker {
         };
 
         let base_rust_path: String = match expected_ty {
-            ResolvedType::Named(type_name) => {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
                 if let Some(q) = enum_qualifier_opt
                     && q != type_name.as_str()
                 {
@@ -425,7 +427,8 @@ impl TypeChecker {
             _ => return None,
         };
 
-        if let Some(meta) = self.rust_item_metadata_for_path(base_rust_path.as_str())
+        let (metadata_rust_path, _) = self.rust_path_base_and_args(base_rust_path.as_str());
+        if let Some(meta) = self.rust_item_metadata_for_path(metadata_rust_path.as_str())
             && let RustItemKind::Type(info) = meta.kind
             && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
         {

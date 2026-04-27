@@ -2793,7 +2793,7 @@ def main() -> None:
         let source = r#"
 import std.async
 from std.async.task import spawn, spawn_blocking
-from std.async.time import sleep, timeout, timeout_ms
+from std.async.time import sleep, timeout, timeout_ms, timeout_join, timeout_join_ms, TimeoutJoinOutcome
 
 async def quick_value() -> int:
     await sleep(0.01)
@@ -2830,6 +2830,25 @@ async def main() -> None:
     match await timeout_ms(1, slow_value()):
         Ok(value) => println(f"timeout_ms_unexpected_ok:{value}")
         Err(err) => println(f"timeout_ms_expired:{err.message()}")
+
+    durable = spawn(slow_value())
+    match await timeout_join(0.001, durable):
+        TimeoutJoinOutcome.Completed(value) => println(f"timeout_join_unexpected_ok:{value}")
+        TimeoutJoinOutcome.JoinFailed(err) => println(f"timeout_join_err:{err.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            println("task still running after timeout")
+            match await handle:
+                Ok(value) => println(f"timeout_join_later:{value}")
+                Err(err) => println(f"timeout_join_later_err:{err.message()}")
+
+    durable_ms = spawn(slow_value())
+    match await timeout_join_ms(1, durable_ms):
+        TimeoutJoinOutcome.Completed(value) => println(f"timeout_join_ms_unexpected_ok:{value}")
+        TimeoutJoinOutcome.JoinFailed(err) => println(f"timeout_join_ms_err:{err.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            match await handle:
+                Ok(value) => println(f"timeout_join_ms_later:{value}")
+                Err(err) => println(f"timeout_join_ms_later_err:{err.message()}")
 "#;
         let Ok(()) = std::fs::write(&source_path, source) else {
             panic!("failed to write source file");
@@ -2882,8 +2901,25 @@ async def main() -> None:
             stdout
         );
         assert!(
+            stdout.contains("task still running after timeout"),
+            "expected durable timeout message; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_join_later:99"),
+            "expected timeout_join preserved handle output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("timeout_join_ms_later:99"),
+            "expected timeout_join_ms preserved handle output; got:\n{}",
+            stdout
+        );
+        assert!(
             !stdout.contains("timeout_unexpected_ok")
                 && !stdout.contains("timeout_ms_unexpected_ok")
+                && !stdout.contains("timeout_join_unexpected_ok")
+                && !stdout.contains("timeout_join_ms_unexpected_ok")
                 && !stdout.contains("spawn_err:")
                 && !stdout.contains("spawn_blocking_err:")
                 && !stdout.contains("timeout_err:")

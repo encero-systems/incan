@@ -99,7 +99,26 @@ async def demo() -> None:
         case Err(e): println("Operation timed out")
 ```
 
-`timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and decide separately whether to await, detach, or abort the `JoinHandle`.
+`timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and use `timeout_join()` so the timeout result preserves the live `JoinHandle`.
+
+### timeout_join
+
+Wait for spawned work without cancelling it when the deadline expires:
+
+```incan
+from std.async.task import spawn
+from std.async.time import timeout_join, TimeoutJoinOutcome
+
+handle = spawn(write_audit_event(event))
+
+match await timeout_join(1.0, handle):
+    case TimeoutJoinOutcome.Completed(_): println("audit event written")
+    case TimeoutJoinOutcome.JoinFailed(err): println(err.message())
+    case TimeoutJoinOutcome.TimedOut(live_handle):
+        remember(live_handle)
+```
+
+Use `timeout_join()` for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and `TimeoutJoinOutcome.TimedOut(handle)` carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. For `spawn_blocking()` handles, `abort()` can only prevent queued work from starting; blocking work that has already started must finish on its own.
 
 ## Task Spawning
 
@@ -546,9 +565,9 @@ match await select_timeout(2.0, slow_operation):
     case None: println("Timed out, using default")
 ```
 
-`select_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned.
+`select_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use `timeout_join()` instead.
 
-Future `race` syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and keep its handle outside the race when you still need the result.
+Future `race` syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and use a handle-preserving wait such as `timeout_join()` when you still need the result.
 
 ## Runtime Integration
 

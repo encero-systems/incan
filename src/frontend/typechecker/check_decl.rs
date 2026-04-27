@@ -1369,6 +1369,7 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
         self.validate_decorators(&nt.decorators);
 
@@ -1381,16 +1382,21 @@ impl TypeChecker {
             ));
         }
 
-        if nt.is_rusttype && !matches!(underlying, ResolvedType::RustPath(_)) {
+        let rusttype_path = if nt.is_rusttype {
+            self.rust_path_for_rusttype_underlying(&underlying)
+        } else {
+            None
+        };
+        if nt.is_rusttype && rusttype_path.is_none() {
             self.errors
                 .push(errors::rusttype_requires_rust_backing(&nt.name, nt.underlying.span));
         }
         if nt.is_rusttype
-            && let ResolvedType::RustPath(path) = &underlying
+            && let Some(path) = rusttype_path
         {
             self.type_info
                 .rusttype_canonical_rust_paths
-                .insert(nt.name.clone(), path.clone());
+                .insert(nt.name.clone(), path);
         }
         if !nt.is_rusttype && !nt.interop_edges.is_empty() {
             self.errors

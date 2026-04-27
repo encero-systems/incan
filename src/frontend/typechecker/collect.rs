@@ -441,7 +441,14 @@ impl TypeChecker {
 
     /// Register a newtype declaration with its underlying type and methods.
     fn collect_newtype(&mut self, nt: &NewtypeDecl, span: Span) {
-        let underlying = self.resolve_type_checked(&nt.underlying);
+        let resolved_underlying = self.resolve_type_checked(&nt.underlying);
+        let underlying = if nt.is_rusttype {
+            self.rust_path_for_rusttype_underlying(&resolved_underlying)
+                .map(ResolvedType::RustPath)
+                .unwrap_or_else(|| resolved_underlying.clone())
+        } else {
+            resolved_underlying.clone()
+        };
         let method_rebindings = nt
             .rebindings
             .iter()

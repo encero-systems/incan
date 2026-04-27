@@ -6,7 +6,7 @@ submodule individually.
 
 It re-exports:
 
-- time helpers such as `sleep`, `timeout`, and `Duration`
+- time helpers such as `sleep`, `timeout`, `timeout_join`, and `Duration`
 - task helpers such as `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, and `TaskJoinError`
 - channel helpers and error types
 - synchronization primitives (`Mutex`, `RwLock`, `Semaphore`, `Barrier`) and `SemaphoreAcquireError`
@@ -17,7 +17,17 @@ Example:
 """
 
 # Time primitives
-from std.async.time import sleep, sleep_ms, timeout, timeout_ms, Duration, TimeoutError
+from std.async.time import (
+    sleep,
+    sleep_ms,
+    timeout,
+    timeout_ms,
+    timeout_join,
+    timeout_join_ms,
+    Duration,
+    TimeoutError,
+    TimeoutJoinOutcome,
+)
 
 # Task spawning
 from std.async.task import spawn, spawn_blocking, yield_now, JoinHandle, TaskJoinError

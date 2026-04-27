@@ -33,24 +33,27 @@ Async APIs on this page use these contract terms:
 Import with:
 
 ```incan
-from std.async.time import sleep, timeout, TimeoutError
+from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJoinOutcome
 ```
 
 **Functions**:
 
-| Function                                                                                    | Returns                   | Cancellation contract |
-| ------------------------------------------------------------------------------------------- | ------------------------- | --------------------- |
-| `sleep(seconds: float) -> None`                                                             | `None`                    | `cancel-safe` |
-| `sleep_ms(milliseconds: int) -> None`                                                       | `None`                    | `cancel-safe` |
-| `timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]`       | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
-| `timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]` | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
+| Function                                                                                                             | Returns                                            | Cancellation contract |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------- |
+| `sleep(seconds: float) -> None`                                                                                      | `None`                                             | `cancel-safe` |
+| `sleep_ms(milliseconds: int) -> None`                                                                                | `None`                                             | `cancel-safe` |
+| `timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]`                                | `Result[T, TimeoutError]`                          | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
+| `timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]`                          | `Result[T, TimeoutError]`                          | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
+| `timeout_join[T](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`                                  | `TimeoutJoinOutcome[T]` | Stops waiting when the deadline expires and returns the live handle in `TimedOut(handle)`; the task continues running unless explicitly aborted. |
+| `timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`                            | `TimeoutJoinOutcome[T]` | Millisecond form of `timeout_join`. |
 
-**Models**:
+**Types**:
 
-| Name           | Description                                                       |
-| -------------- | ----------------------------------------------------------------- |
-| `TimeoutError` | Error type returned by timeout helpers when the deadline expires. |
-| `Duration`     | Simple duration value object exposed as a convenience type.       |
+| Name                 | Description                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `TimeoutJoinOutcome` | Outcome type returned by durable timeout helpers, including the recovered live handle on timeout. |
+| `TimeoutError`       | Error type returned by canceling timeout helpers when the deadline expires.                       |
+| `Duration`           | Simple duration value object exposed as a convenience type.                                       |
 
 ## Module: `std.async.select`
 
@@ -127,7 +130,7 @@ Cancellation contracts:
 
 `std.async.prelude` re-exports the following:
 
-- `time`: `sleep`, `sleep_ms`, `timeout`, `timeout_ms`, `Duration`, `TimeoutError`
+- `time`: `sleep`, `sleep_ms`, `timeout`, `timeout_ms`, `timeout_join`, `timeout_join_ms`, `Duration`, `TimeoutError`, `TimeoutJoinOutcome`
 - `task`: `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, `TaskJoinError`
 - `channel`: `channel`, `unbounded_channel`, `oneshot`, `Sender`, `Receiver`, `OneshotSender`, `OneshotReceiver`, `SendError`, `RecvError`
 - `sync`: `Mutex`, `MutexGuard`, `RwLock`, `RwLockReadGuard`, `RwLockWriteGuard`, `Semaphore`, `SemaphorePermit`, `SemaphoreAcquireError`, `Barrier`

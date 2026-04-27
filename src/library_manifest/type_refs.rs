@@ -56,7 +56,7 @@ pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         ResolvedType::RefMut(inner) => TypeRef::Ref {
             inner: Box::new(type_ref_from_resolved(inner)),
         },
-        ResolvedType::RustPath(_) => TypeRef::Unknown,
+        ResolvedType::RustPath(path) => TypeRef::RustPath { path: path.clone() },
         ResolvedType::CallSiteInfer => TypeRef::Unknown,
         ResolvedType::Unknown => TypeRef::Unknown,
     }
@@ -98,6 +98,7 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
         TypeRef::SelfType => ResolvedType::SelfType,
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
     }
 }
