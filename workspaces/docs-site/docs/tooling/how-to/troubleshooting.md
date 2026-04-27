@@ -31,6 +31,7 @@ command -v incan
 command -v incan-lsp
 ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp
 incan --version
+incan tools doctor
 ```
 
 If `command -v incan` or `command -v incan-lsp` points somewhere unexpected, fix your `PATH` or remove the stale binary from the earlier location. If the `ls -l` target points at a different checkout, rerun `make build` from the checkout you want to use.
@@ -44,13 +45,14 @@ For VS Code/Cursor, also check the Incan settings:
 }
 ```
 
-Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/path/to/incan/target/debug/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands.
+Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/path/to/incan/target/debug/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.
 
 After changing paths or rebuilding, reload the editor window so it starts a new language-server process:
 
-1. Run **Developer: Reload Window** from the command palette.
-2. Reopen a `.incn` file.
-3. Open **View → Output → Incan Language Server** and check the startup error or command-resolution message if diagnostics still look stale.
+1. Run **Incan: Doctor** from the command palette and check the **Incan** output channel.
+2. Run **Developer: Reload Window** from the command palette.
+3. Reopen a `.incn` file.
+4. Re-run **Incan: Doctor** if diagnostics still look stale.
 
 ## I didn’t run `make install` (no-install fallback)
 
@@ -91,4 +93,5 @@ If you’re still stuck, please [open an issue](https://github.com/dannys-code-c
 - the exact commands you ran
 - the full error output
 - `command -v incan`, `command -v incan-lsp`, and `ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp`
+- `incan tools doctor --format json`
 - whether `incan.lsp.path` or `incan.compiler.path` is set in VS Code/Cursor

@@ -13,6 +13,7 @@
 //! - `lifecycle` — Project lifecycle commands (`version` and `env`)
 //! - `lock` — Lock file generation and resolution
 //! - `stdlib_loader` — RFC 023: Stdlib module loading for compilation
+//! - `tools` — Local toolchain inspection helpers
 
 pub mod build;
 pub mod common;
@@ -22,6 +23,7 @@ pub mod init;
 pub mod lifecycle;
 pub mod lock;
 pub mod stdlib_loader;
+pub mod tools;
 pub(crate) mod vocab_extraction;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
@@ -32,6 +34,7 @@ pub use format::format_files;
 pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
+pub use tools::{ToolsDoctorFormat, tools_doctor};
 
 // Crate-internal API (used by test_runner and other CLI modules)
 pub(crate) use lock::{LockResolutionRequest, resolve_lock_payload};

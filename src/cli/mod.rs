@@ -13,6 +13,7 @@
 //! - `test [path]` - Run tests (pytest-style)
 //! - `version <bump>|--set <version>` - Update `[project].version` in `incan.toml`
 //! - `env <subcommand>` - Inspect and run named project environments
+//! - `tools doctor` - Inspect local CLI/LSP/editor toolchain resolution
 //!
 //! ## Modules
 //!
@@ -44,6 +45,7 @@ use std::process;
 use crate::manifest::ProjectManifest;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
+use commands::tools::ToolsDoctorFormat;
 
 // ============================================================================
 // CLI Error handling
@@ -256,6 +258,12 @@ pub enum Command {
         command: EnvCommand,
     },
 
+    /// Inspect local toolchain and editor integration state
+    Tools {
+        #[command(subcommand)]
+        command: ToolsCommand,
+    },
+
     /// Run tests (pytest-style)
     Test {
         /// Path to test file or directory
@@ -403,6 +411,16 @@ pub enum EnvCommand {
         /// Project root containing incan.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ToolsCommand {
+    /// Inspect local `incan` / `incan-lsp` path resolution
+    Doctor {
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ToolsDoctorFormat,
     },
 }
 
@@ -572,6 +590,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 args,
                 project,
             } => commands::env_run(&env, &script, dry_run, &args, project.as_deref()),
+        },
+        Some(Command::Tools { command }) => match command {
+            ToolsCommand::Doctor { format } => commands::tools_doctor(format),
         },
         Some(Command::New {
             name,
@@ -1034,6 +1055,19 @@ mod tests {
         };
         assert_eq!(format, EnvOutputFormat::Json);
         assert_eq!(project.as_deref(), Some(std::path::Path::new("examples/greeter")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_tools_doctor_json() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "tools", "doctor", "--format", "json"])?;
+        let Some(Command::Tools {
+            command: ToolsCommand::Doctor { format },
+        }) = cli.command
+        else {
+            return Err(expected_command("tools doctor"));
+        };
+        assert_eq!(format, ToolsDoctorFormat::Json);
         Ok(())
     }
 

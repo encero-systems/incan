@@ -46,6 +46,11 @@
         "command": "incan.checkFile",
         "title": "Check Incan File (Type Check Only)",
         "icon": "$(check)"
+      },
+      {
+        "command": "incan.doctor",
+        "title": "Incan: Doctor",
+        "icon": "$(tools)"
       }
     ],
     "menus": {

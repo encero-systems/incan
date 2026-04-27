@@ -25,6 +25,7 @@ Commands:
 - `version` - Update the project version in `incan.toml`
 - `env` - List, inspect, or run configured project environments
 - `lock` - Generate or update `incan.lock`
+- `tools` - Inspect local toolchain and editor integration state
 
 ## Global options
 
@@ -351,6 +352,34 @@ inputs. Commit it to version control for reproducible builds.
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 
+### `incan tools doctor`
+
+Usage:
+
+```text
+incan tools doctor [OPTIONS]
+```
+
+Inspects local CLI/LSP/editor pathing. Use this when the terminal and editor appear to be using different `incan` or `incan-lsp` binaries, or when diagnostics look stale after rebuilding.
+
+Options:
+
+- `--format text|json`: Output format (default: `text`).
+
+The report includes:
+
+- the running `incan` version and executable path
+- `incan` and `incan-lsp` resolution from `PATH`
+- `~/.cargo/bin/incan` and `~/.cargo/bin/incan-lsp` existence, executable status, and symlink targets
+- editor setup guidance for `incan.lsp.path`, `incan.compiler.path`, and reload behavior
+
+Examples:
+
+```bash
+incan tools doctor
+incan tools doctor --format json
+```
+
 ## Outputs and paths
 
 Build outputs:
@@ -393,4 +422,4 @@ Specific behavior:
 
 Before a release, verify the docs stay aligned with the real CLI surface:
 
-- Compare `incan --help` and `incan {build,run,fmt,test,init,lock} --help` against this page.
+- Compare `incan --help` and `incan {build,run,fmt,test,init,lock,tools} --help` against this page.

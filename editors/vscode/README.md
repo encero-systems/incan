@@ -17,6 +17,8 @@ The extension includes support for the Incan Language Server, providing:
 
 **Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer `target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the syntax supported by your current checkout (e.g. `pub const`). Running `make build` at the repo root also symlinks `~/.cargo/bin/incan-lsp` (and `incan`) to `target/debug/...` on local machines, so other workspaces pick up the same binaries via PATH after you reload the window.
 
+Run **Incan: Doctor** from the command palette to see which `incan` and `incan-lsp` binaries the extension resolved, whether configured paths exist and are executable, and whether `~/.cargo/bin/incan*` symlinks point at the expected checkout. The CLI counterpart is `incan tools doctor`.
+
 ### Syntax Highlighting
 
 - **Function definitions** with parameters and return types
@@ -172,7 +174,9 @@ Restart VS Code/Cursor to activate the language server.
 |       Setting       | Default |             Description             |
 | ------------------- | ------- | ----------------------------------- |
 | `incan.lsp.enabled` | `true`  | Enable/disable the language server  |
-| `incan.lsp.path`    | `""`    | Custom path to the incan-lsp binary |
+| `incan.lsp.path`    | `""`    | Literal path to the incan-lsp binary |
+
+Path settings are literal executable paths. The extension does not expand `$HOME`, `~`, command substitutions, or other shell syntax in `incan.lsp.path` or `incan.compiler.path`.
 
 ## Scopes Reference
 
