@@ -69,6 +69,7 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | Let | `let` |  | Hard | - | Binding | Statement | RFC 000 | 0.1 | Stable |
 | Mut | `mut` |  | Hard | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
 | SelfKw | `self` |  | Hard | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
+| Cls | `cls` |  | Contextual | - | Binding | ReceiverOnly | RFC 000 | 0.2 | Stable |
 | True | `true` | `True` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
 | False | `false` | `False` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
 | None | `None` |  | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |

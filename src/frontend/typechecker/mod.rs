@@ -301,6 +301,8 @@ pub struct TypeChecker {
     pub(crate) current_trait_name: Option<String>,
     /// Active nominal owner while checking a method body.
     pub(crate) current_method_owner: Option<String>,
+    /// Active `@classmethod` owner type exposed to the method body as `cls`.
+    pub(crate) current_classmethod_self_ty: Option<ResolvedType>,
     /// Deduplicate missing-`@requires` diagnostics within a single trait default method body.
     pub(crate) current_trait_missing_requires_emitted: Option<HashSet<String>>,
     /// Collected module-level const declarations (for rich const-eval + cycle detection).
@@ -393,6 +395,7 @@ impl TypeChecker {
             current_trait_requires: None,
             current_trait_name: None,
             current_method_owner: None,
+            current_classmethod_self_ty: None,
             current_trait_missing_requires_emitted: None,
             const_decls: HashMap::new(),
             static_decls: Vec::new(),

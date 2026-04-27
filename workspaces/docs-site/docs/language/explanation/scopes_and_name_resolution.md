@@ -86,7 +86,11 @@ In this example, the names `sqrt`, `PI`, `area`, and `Circle` are all resolved f
 
 Each `def ...:` body is a **function scope**.
 
-Methods also have a function-like scope and define `self` (and `mut self`) for the method body.
+Methods also have a function-like scope and define receiver names for the method body:
+
+- Instance methods define `self` or `mut self`.
+- Class methods define their explicit first parameter, conventionally `cls`. Inside a `@classmethod`, calling
+  `cls(...)` constructs the declaring type.
 
 For example:
 
@@ -102,13 +106,17 @@ model Circle:
 
     def area(self) -> float:
         return PI * self.radius * self.radius  # self: method scope, PI: module scope
+
+    @classmethod
+    def unit(cls) -> Self:
+        return cls(radius=1.0)                  # cls: classmethod scope, constructor for Circle
 ```
 
 In these examples:
 
 - **Module-scope names**: `PI`, `Circle`, `area_scaled`
 - **Function-scope names**: parameters like `r` and `scale`, plus locals like `base`
-- **Method-scope names**: `self` (and anything you bind inside the method body)
+- **Method-scope names**: `self`, `cls`, and anything you bind inside the method body
 
 ### Block scope
 

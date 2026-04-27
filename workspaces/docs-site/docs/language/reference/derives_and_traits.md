@@ -178,10 +178,25 @@ model UserId:
 
     @classmethod
     def from(cls, value: str) -> Self:
-        return UserId(value=int(value))
+        return cls(value=int(value))
 ```
 
-Unlike an instance method, a class method does not take `self`. Unlike a static method, it is written as a type-associated constructor-style hook and returns `Self` naturally.
+Unlike an instance method, a class method does not take `self`. Its first parameter is conventionally named `cls` and can be called like a constructor for the declaring type. Unlike a static method, it is written as a type-associated constructor-style hook and returns `Self` naturally.
+
+For generic types, `Self` keeps the active type arguments at the call site:
+
+```incan
+class Box[T with Clone]:
+    value: T
+
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+
+def main() -> None:
+    boxed = Box[int].make(1)
+    println(str(boxed.value))
+```
 
 ### `@requires(...)`
 

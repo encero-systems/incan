@@ -7,6 +7,7 @@ use crate::frontend::symbols::*;
 
 use super::TypeChecker;
 use incan_core::interop::RustItemKind;
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::traits::{self, TraitId};
@@ -74,6 +75,14 @@ struct InteropAdapterSig {
 }
 
 impl TypeChecker {
+    /// Return whether a method carries a resolved builtin decorator.
+    fn method_has_decorator(method: &MethodDecl, id: DecoratorId) -> bool {
+        method
+            .decorators
+            .iter()
+            .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(id))
+    }
+
     /// Replace every nested `Self` occurrence in an annotation with the concrete owner type used for this method body.
     ///
     /// Method return validation runs against the concrete owning type, not the abstract declaration surface, so
@@ -1612,10 +1621,26 @@ impl TypeChecker {
             })
             .unwrap_or_default();
         let previous_owner = self.current_method_owner.replace(owner.to_string());
-        self.check_method_with_self_ty(method, ResolvedType::Named(owner.to_string()), &owner_type_params);
+        let owner_self_ty = if owner_type_params.is_empty() {
+            ResolvedType::Named(owner.to_string())
+        } else {
+            ResolvedType::Generic(
+                owner.to_string(),
+                owner_type_params
+                    .iter()
+                    .map(|type_param| ResolvedType::TypeVar(type_param.clone()))
+                    .collect(),
+            )
+        };
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
         self.current_method_owner = previous_owner;
     }
 
+    /// Check a method body with the concrete owner type used for `Self` in annotations and classmethod constructors.
+    ///
+    /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
+    /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
+    /// adopter is resolved later during trait conformance and method-call substitution.
     fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
@@ -1659,6 +1684,11 @@ impl TypeChecker {
                 scope: 0,
             });
         }
+        let is_classmethod = Self::method_has_decorator(method, DecoratorId::ClassMethod);
+        let previous_classmethod_self_ty = self.current_classmethod_self_ty.take();
+        if is_classmethod {
+            self.current_classmethod_self_ty = Some(self_ty.clone());
+        }
 
         // Define parameters
         for param in &method.params {
@@ -1693,6 +1723,7 @@ impl TypeChecker {
         }
 
         self.current_return_error_type = None;
+        self.current_classmethod_self_ty = previous_classmethod_self_ty;
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

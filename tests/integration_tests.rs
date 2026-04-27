@@ -4578,6 +4578,49 @@ def main() -> None:
     }
 
     #[test]
+    fn test_issue388_generic_type_owned_factories_run() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@derive(Clone)
+class FactoryBox[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+
+  @staticmethod
+  def make_static(value: T) -> Self:
+    return FactoryBox(value=value)
+
+def main() -> None:
+  from_classmethod = FactoryBox[int].make(1)
+  from_staticmethod = FactoryBox[int].make_static(2)
+  println(str(from_classmethod.value))
+  println(str(from_staticmethod.value))
+"#;
+        let output = std::process::Command::new(super::incan_debug_binary())
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected generic type-owned factories to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["1", "2"],
+            "unexpected generic type-owned factory output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_match_with_case() {
         let source = r#"
 def foo(x: Option[int]) -> int:
