@@ -226,6 +226,12 @@ impl TypeChecker {
             TypeInfo::Class(class) => {
                 // RFC 021: No alias-aware resolution for classes (models only)
                 let (_, info) = self.resolve_field_info(&class.fields, field, false, true)?;
+                let owner = info.owner.as_deref().unwrap_or(type_name);
+                if matches!(info.visibility, Visibility::Private) && self.current_method_owner.as_deref() != Some(owner)
+                {
+                    self.errors.push(errors::private_field(type_name, field, span));
+                    return Some(ResolvedType::Unknown);
+                }
                 if let Some(args) = type_args {
                     let subst = type_param_subst_map(&class.type_params, args);
                     return Some(substitute_resolved_type(&info.ty, &subst));

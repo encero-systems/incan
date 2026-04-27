@@ -20,7 +20,7 @@ trait Counter:
 
 class Service with Loggable, Counter:
     name: str
-    count: int = 0
+    pub count: int = 0
 
 
 def main() -> None:

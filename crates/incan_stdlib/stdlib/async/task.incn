@@ -7,6 +7,16 @@ This module exposes the core task helpers used to run async or blocking work con
 - `spawn_blocking(task)` starts blocking work and returns a `JoinHandle[T]`
 - `yield_now()` voluntarily yields back to the scheduler
 
+Cancellation contracts:
+
+- Spawned tasks are durable once spawned: dropping a `JoinHandle[T]` detaches the task and loses its result, but does
+  not cancel the task.
+- `JoinHandle.abort()` requests cancellation for async tasks. Awaiting the handle after abort returns a join error unless
+  the task had already completed.
+- `spawn_blocking()` work cannot be cancelled after it starts running. `abort()` can only prevent a blocking task from
+  starting if it is still queued.
+- `yield_now()` is cancel-safe.
+
 Examples:
     handle = spawn(fetch_user())
     match await handle:
@@ -35,6 +45,9 @@ pub def spawn[T with (Send, Static), TaskFuture with RuntimeFuture[T]](task: Tas
 
     The generic output type `T` is constrained to `Send + Static` so this wrapper stays aligned with the host runtime's
     task-safety requirements.
+
+    The returned task is durable once spawned. Dropping the `JoinHandle[T]` detaches the task and loses the result; call
+    `abort()` on the handle when cancellation is required.
     """
     return rust_spawn(task)
 
@@ -45,6 +58,9 @@ pub def spawn_blocking[T with (Send, Static), TaskFn with RuntimeFnOnce[T]](task
 
     Like `spawn()`, this wrapper carries explicit `Send + Static` bounds so stdlib authors can express the host runtime
     capability requirements directly in Incan source.
+
+    Blocking work is durable once it starts running. Dropping the handle detaches it and loses the result; `abort()` only
+    has a chance to stop the work if the blocking task is still queued and has not started.
     """
     return rust_spawn_blocking(task)
 

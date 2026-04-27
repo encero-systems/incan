@@ -20,6 +20,7 @@ use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion, is_rust_capability_bound};
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
@@ -2116,6 +2117,29 @@ impl TypeChecker {
         }
 
         if let Expr::Ident(name) = &callee.node {
+            if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
+                && self.symbols.lookup(name).is_none()
+                && let (Some(owner_name), Some(self_ty)) = (
+                    self.current_method_owner.clone(),
+                    self.current_classmethod_self_ty.clone(),
+                )
+            {
+                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+                    self.lookup_type_info(&owner_name).and_then(|info| match info {
+                        TypeInfo::Model(m) => Some(m.fields.clone()),
+                        TypeInfo::Class(c) => Some(c.fields.clone()),
+                        _ => None,
+                    });
+                if let Some(fields) = ctor_fields {
+                    self.record_expr_type(callee.span, self_ty.clone());
+                    self.type_info
+                        .ident_kinds
+                        .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                    self.check_model_or_class_constructor_call(&owner_name, &fields, args, span);
+                    return self_ty;
+                }
+            }
+
             let marker_binding_in_scope = self
                 .symbols
                 .lookup(name)

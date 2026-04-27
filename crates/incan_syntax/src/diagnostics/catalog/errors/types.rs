@@ -838,6 +838,12 @@ pub fn missing_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Type '{}' has no field '{}'", type_name, field), span)
 }
 
+/// Report access to a class field that is not visible from the current member-access context.
+pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)
+        .with_hint("Access this field from a method on the declaring class, or mark the field `pub`")
+}
+
 pub fn missing_method(type_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Type '{}' has no method '{}(...)'", type_name, method), span)
         .with_hint("Check the method name spelling and receiver type")

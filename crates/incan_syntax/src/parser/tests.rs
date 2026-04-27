@@ -205,6 +205,36 @@ def check() -> None:
     }
 
     #[test]
+    fn test_parse_assert_identity_bool_literals_as_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(ready: bool, done: bool) -> None:
+  assert ready is true, "ready should be true"
+  assert done is false
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assert(true_assert) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected true assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(true_assert.kind, AssertKind::Condition(_)));
+        assert!(true_assert.message.is_some());
+
+        let Statement::Assert(false_assert) = &func.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected false assert statement".to_string(),
+                func.body[1].span,
+            )]);
+        };
+        assert!(matches!(false_assert.kind, AssertKind::Condition(_)));
+        assert!(false_assert.message.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_assert_is_some_pattern_statement() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def check(user: Option[str]) -> None:
@@ -395,6 +425,21 @@ class Box:
         assert_eq!(method.type_params[0].name, "T");
         assert_eq!(method.type_params[0].bounds.len(), 1);
         assert_eq!(method.type_params[0].bounds[0].name, "Clone");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_class_preserves_authored_field_visibility() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+pub class LazyFrame:
+  _cursor: int
+  pub schema: str
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert!(matches!(class.visibility, Visibility::Public));
+        assert!(matches!(class.fields[0].node.visibility, Visibility::Private));
+        assert!(matches!(class.fields[1].node.visibility, Visibility::Public));
         Ok(())
     }
 

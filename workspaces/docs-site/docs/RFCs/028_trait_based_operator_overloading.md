@@ -3,7 +3,7 @@
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)
+- **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/314
 - **RFC PR:** —
 - **Written against:** v0.2
@@ -235,11 +235,11 @@ The following language operators are also explicitly **not overloadable** in thi
 
 `is` retains identity semantics. `in` / `not in` remain language-defined membership operators. `and` / `or` / `not` keep their built-in logical short-circuit semantics and are not aliases for `&` / `|` / `~`. Ranges remain dedicated syntax rather than trait-dispatched operators.
 
-### Boundary with scoped DSL glyph surfaces
+### Boundary with scoped DSL surface forms
 
 This RFC defines ordinary global operator semantics. If `a >> b`, `a << b`, `a |> b`, or `a <| b` is valid under this RFC, it is valid because the operand types expose the corresponding global operator surface (`Shr`, `Shl`, `PipeForward`, `PipeBackward`, or compatible dunders).
 
-Explicit DSL blocks may reuse the same glyphs with block-local meaning, but that scoped reuse is not defined here and does not imply that the operand types globally implement the corresponding operator trait. Imports alone do not change the meaning of operators in ordinary code. See RFC 040 for the scoped-glyph mechanism.
+Explicit DSL blocks may reuse the same glyphs or expression-form surfaces with block-local meaning, but that scoped reuse is not defined here and does not imply that the operand types globally implement the corresponding operator trait. Imports alone do not change the meaning of operators in ordinary code. See RFC 040 for the scoped-surface mechanism.
 
 ### Resolution rules
 

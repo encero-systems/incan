@@ -45,6 +45,29 @@ Skills, learnings, and agent notes live under **this repository’s** `.agents/`
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
 6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast` and `make pre-commit`.
 
+### Pattern intake before edits
+
+Before touching production code, tests, or docs for a non-trivial change, do a short pattern intake:
+
+- Identify the active area: parser, typechecker, lowering, emission, stdlib, CLI/tooling, docs, or tests.
+- Read 2-3 nearby files that already implement the same kind of behavior. Prefer same-stage and same-domain precedents over generic Rust examples.
+- Name the source-of-truth boundary or registry when one exists, such as the RFC, stdlib registry, diagnostics catalog, ownership policy, or CLI contract.
+- State which verification path must prove the change, including whether parser/typechecker coverage, codegen snapshots, integration tests, docs build, or feature-specific builds are required.
+
+Do not substitute broad advice like "follow Rust best practices" for local precedent. Incan patterns are stage- and boundary-specific; copying a shape from the wrong compiler layer is a common way to create drift.
+
+### Rust compiler error intake
+
+When debugging a Rust compiler error, capture the full error context before proposing a fix:
+
+- the exact command that failed;
+- the complete diagnostic, including error code, notes, help text, and secondary spans;
+- active feature flags or build mode, especially default build vs. `rust-metadata`;
+- the relevant function signature and nearby type definitions;
+- the local files or tests that establish the intended pattern.
+
+Classify the root cause before editing: lifetime/borrow across boundary, trait bound, feature gate/build-mode mismatch, orphan/coherence rule, missing import, or pipeline-stage wiring. Avoid applying a local `.clone()`, `.into()`, `.as_ref()`, or type annotation workaround until the owning boundary is clear.
+
 ### Common commands
 
 | Command                                                   | Purpose                                                               |

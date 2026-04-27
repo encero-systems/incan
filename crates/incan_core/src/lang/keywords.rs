@@ -83,6 +83,7 @@ pub enum KeywordId {
     Let,
     Mut,
     SelfKw,
+    Cls,
 
     // Literals
     True,
@@ -523,6 +524,15 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    info_contextual_binding(
+        KeywordId::Cls,
+        "cls",
+        KeywordCategory::Binding,
+        &[KeywordUsage::ReceiverOnly],
+        RFC::_000,
+        Since(0, 2),
+        Stability::Stable,
+    ),
     // Literals
     info_with_aliases(
         KeywordId::True,
@@ -845,6 +855,32 @@ const fn info_contextual(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // const table constructor mirrors the keyword metadata shape
+/// Build metadata for an always-available contextual keyword with no parser surface handoff.
+const fn info_contextual_binding(
+    id: KeywordId,
+    canonical: &'static str,
+    category: KeywordCategory,
+    usage: &'static [KeywordUsage],
+    introduced_in_rfc: RfcId,
+    since: Since,
+    stability: Stability,
+) -> KeywordDescriptor {
+    KeywordDescriptor {
+        id,
+        canonical,
+        aliases: &[],
+        activation: KeywordActivation::Contextual,
+        surface_kind: None,
+        category,
+        usage,
+        introduced_in_rfc,
+        since,
+        stability,
+        examples: &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -861,5 +897,12 @@ mod tests {
     fn hard_only_lookup_excludes_contextual_assert() {
         assert_eq!(from_str("assert"), Some(KeywordId::Assert));
         assert_eq!(from_str_hard_only("assert"), None);
+    }
+
+    #[test]
+    fn hard_only_lookup_excludes_contextual_cls() {
+        assert_eq!(from_str("cls"), Some(KeywordId::Cls));
+        assert_eq!(activation_kind(KeywordId::Cls), KeywordActivation::Contextual);
+        assert_eq!(from_str_hard_only("cls"), None);
     }
 }

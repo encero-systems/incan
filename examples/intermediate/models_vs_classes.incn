@@ -64,8 +64,8 @@ trait Describable:
 
 # Class with behavior and trait implementation
 class Animal with Describable:
-    name: str
-    age: int
+    pub name: str
+    pub age: int
 
     def describe(self) -> str:
         return f"{self.name} is {self.age} years old"

@@ -289,7 +289,28 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
-                let receiver = self.lower_expr_spanned(o)?;
+                let receiver = if let ast::Expr::Index(base, _) = &o.node
+                    && let ast::Expr::Ident(name) = &base.node
+                    && self.type_info.as_ref().is_some_and(|info| {
+                        matches!(info.ident_kind(base.span), Some(IdentKind::TypeName | IdentKind::Trait))
+                    }) {
+                    let ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(o.span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or_else(|| self.struct_names.get(name).cloned().unwrap_or(IrType::Unknown));
+                    TypedExpr::new(
+                        IrExprKind::Var {
+                            name: name.clone(),
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::TypeName,
+                        },
+                        ty,
+                    )
+                } else {
+                    self.lower_expr_spanned(o)?
+                };
                 let mut args_ir = self.lower_call_args(args)?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {

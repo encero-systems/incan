@@ -974,7 +974,7 @@
     "variables": {
       "patterns": [
         {
-          "match": "\\b(self)\\b",
+          "match": "\\b(cls|self)\\b",
           "name": "variable.language.self.incan"
         },
         {

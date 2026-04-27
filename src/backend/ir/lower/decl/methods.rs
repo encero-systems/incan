@@ -10,9 +10,18 @@ use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
 
 impl AstLowering {
+    /// Return whether a method carries a resolved builtin decorator.
+    fn method_has_decorator(method: &ast::MethodDecl, id: DecoratorId) -> bool {
+        method
+            .decorators
+            .iter()
+            .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(id))
+    }
+
     /// Trait type-parameter names from either local AST declarations or typechecker metadata.
     fn trait_type_param_names(&self, trait_name: &str) -> Option<Vec<String>> {
         if let Some(decl) = self.trait_decls.get(trait_name) {
@@ -151,65 +160,71 @@ impl AstLowering {
         impl_methods: &[Spanned<ast::MethodDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
-        // Avoid holding an immutable borrow of `self` across lowering calls.
-        //
-        // In multi-module lowering, imported trait declarations may live in a different module AST and therefore not be
-        // present in `self.trait_decls` for this module. Typechecker already validates trait conformance, so lowering
-        // should stay permissive and emit an impl block from the methods we do have instead of hard-failing.
-        let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
+        let prev = self.current_impl_type.replace(type_name.to_string());
+        let lowered_result = (|| {
+            // Avoid holding an immutable borrow of `self` across lowering calls.
+            //
+            // In multi-module lowering, imported trait declarations may live in a different module AST and therefore
+            // not be present in `self.trait_decls` for this module. Typechecker already validates trait
+            // conformance, so lowering should stay permissive and emit an impl block from the methods we do
+            // have instead of hard-failing.
+            let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
+                let mut methods: Vec<IrFunction> = Vec::new();
+                for method in impl_methods {
+                    methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
+                }
+                return Ok(IrImpl {
+                    target_type: type_name.to_string(),
+                    type_params: Self::lower_type_params(type_params),
+                    trait_name: Some(trait_name.to_string()),
+                    trait_type_args,
+                    methods,
+                });
+            };
+            let trait_methods = trait_decl.methods;
+
             let mut methods: Vec<IrFunction> = Vec::new();
-            for method in impl_methods {
-                methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
+            for trait_method in &trait_methods {
+                let method_name = trait_method.node.name.as_str();
+
+                // Prefer the implementing type's override, if present.
+                let mut found_override: Option<&ast::MethodDecl> = None;
+                for m in impl_methods {
+                    if m.node.name == method_name {
+                        found_override = Some(&m.node);
+                        break;
+                    }
+                }
+                if let Some(m) = found_override {
+                    methods.push(self.lower_impl_method_for_trait(m, Some(&type_param_names))?);
+                    continue;
+                }
+
+                // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
+                if trait_method.node.body.is_some() {
+                    methods.push(self.lower_impl_method_for_trait(&trait_method.node, Some(&type_param_names))?);
+                    continue;
+                }
+
+                // Required trait method with no default implementation.
+                return Err(LoweringError {
+                    message: format!(
+                        "Type '{type_name}' does not implement required method '{method_name}' for trait '{trait_name}'"
+                    ),
+                    span: IrSpan::default(),
+                });
             }
-            return Ok(IrImpl {
+
+            Ok(IrImpl {
                 target_type: type_name.to_string(),
                 type_params: Self::lower_type_params(type_params),
                 trait_name: Some(trait_name.to_string()),
                 trait_type_args,
                 methods,
-            });
-        };
-        let trait_methods = trait_decl.methods;
-
-        let mut methods: Vec<IrFunction> = Vec::new();
-        for trait_method in &trait_methods {
-            let method_name = trait_method.node.name.as_str();
-
-            // Prefer the implementing type's override, if present.
-            let mut found_override: Option<&ast::MethodDecl> = None;
-            for m in impl_methods {
-                if m.node.name == method_name {
-                    found_override = Some(&m.node);
-                    break;
-                }
-            }
-            if let Some(m) = found_override {
-                methods.push(self.lower_impl_method_for_trait(m, Some(&type_param_names))?);
-                continue;
-            }
-
-            // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
-            if trait_method.node.body.is_some() {
-                methods.push(self.lower_impl_method_for_trait(&trait_method.node, Some(&type_param_names))?);
-                continue;
-            }
-
-            // Required trait method with no default implementation.
-            return Err(LoweringError {
-                message: format!(
-                    "Type '{type_name}' does not implement required method '{method_name}' for trait '{trait_name}'"
-                ),
-                span: IrSpan::default(),
-            });
-        }
-
-        Ok(IrImpl {
-            target_type: type_name.to_string(),
-            type_params: Self::lower_type_params(type_params),
-            trait_name: Some(trait_name.to_string()),
-            trait_type_args,
-            methods,
-        })
+            })
+        })();
+        self.current_impl_type = prev;
+        lowered_result
     }
 
     /// Lower one concrete impl method while preserving owner and method type parameters.
@@ -336,7 +351,11 @@ impl AstLowering {
         })
     }
 
-    /// Lower one inherent method while preserving owner and method type parameters.
+    /// Lower an inherent method while preserving owner and method generic parameters in signatures and bodies.
+    ///
+    /// During `@classmethod` bodies this also exposes the current impl target as the lowering target for source
+    /// `cls(...)` constructor calls. The marker is scoped to the body lowering so ordinary methods and local `cls`
+    /// bindings keep their normal value-call behavior.
     fn lower_method_with_type_params(
         &mut self,
         m: &ast::MethodDecl,
@@ -420,12 +439,20 @@ impl AstLowering {
         params.extend(other_params);
 
         let return_type = self.lower_callable_return_type(&m.return_type.node, Some(&combined_type_param_names));
-        let body = if let Some(ref body_stmts) = m.body {
-            self.lower_statements(body_stmts)?
+        let previous_classmethod_constructor = self.current_classmethod_constructor.take();
+        if Self::method_has_decorator(m, DecoratorId::ClassMethod)
+            && let Some(type_name) = self.current_impl_type.clone()
+        {
+            self.current_classmethod_constructor = Some(type_name);
+        }
+        let body_result = if let Some(ref body_stmts) = m.body {
+            self.lower_statements(body_stmts)
         } else {
             // Abstract method with no body
-            vec![]
+            Ok(vec![])
         };
+        self.current_classmethod_constructor = previous_classmethod_constructor;
+        let body = body_result?;
         self.pop_scope();
 
         // Incan methods are part of the type's public surface. Trait-impl methods are handled separately in

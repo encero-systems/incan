@@ -8,6 +8,11 @@ enum SenderInner<T> {
     Unbounded(tokio::sync::mpsc::UnboundedSender<T>),
 }
 
+enum SenderPermitInner<T> {
+    Bounded(tokio::sync::mpsc::OwnedPermit<T>),
+    Unbounded(tokio::sync::mpsc::UnboundedSender<T>),
+}
+
 enum ReceiverInner<T> {
     Bounded(tokio::sync::mpsc::Receiver<T>),
     Unbounded(tokio::sync::mpsc::UnboundedReceiver<T>),
@@ -16,9 +21,14 @@ enum ReceiverInner<T> {
 /// Public sender surface used by generated Incan code.
 pub struct Sender<T>(SenderInner<T>);
 
+/// Single-use sender permit used by generated Incan code after reserving channel capacity.
+#[must_use]
+pub struct SenderPermit<T>(Arc<StdMutex<Option<SenderPermitInner<T>>>>);
+
 /// Send error surface used by generated Incan code.
 #[must_use]
 pub struct SendError<T> {
+    /// Value that could not be delivered to the channel.
     pub value: T,
 }
 
@@ -95,6 +105,13 @@ impl<T> fmt::Debug for Sender<T> {
     }
 }
 
+impl<T> fmt::Debug for SenderPermit<T> {
+    /// Format the sender permit without exposing runtime internals.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SenderPermit(..)")
+    }
+}
+
 impl<T> fmt::Debug for Receiver<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Receiver(..)")
@@ -150,6 +167,9 @@ fn try_lock_receiver_sync<T>(
 
 impl<T> Sender<T> {
     /// Send a value, awaiting for capacity when the channel is bounded.
+    ///
+    /// Use [`Sender::reserve`] and [`SenderPermit::send`] for critical sends that must not lose a value if an outer
+    /// cancellation boundary drops the send future after capacity becomes available.
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         match &self.0 {
             SenderInner::Bounded(sender) => match sender.send(value).await {
@@ -161,6 +181,28 @@ impl<T> Sender<T> {
                 Err(error) => Err(SendError { value: error.0 }),
             },
         }
+    }
+
+    /// Reserve capacity for one future send.
+    ///
+    /// Bounded senders wait for capacity using Tokio's owned permit API. Unbounded senders do not need capacity, so
+    /// they return an immediate pseudo-permit when the receiver is still open.
+    pub async fn reserve(&self) -> Result<SenderPermit<T>, SendError<()>> {
+        let permit = match &self.0 {
+            SenderInner::Bounded(sender) => match sender.clone().reserve_owned().await {
+                Ok(permit) => SenderPermitInner::Bounded(permit),
+                Err(error) => return Err(SendError { value: error.0 }),
+            },
+            SenderInner::Unbounded(sender) => {
+                if sender.is_closed() {
+                    return Err(SendError { value: () });
+                }
+
+                SenderPermitInner::Unbounded(sender.clone())
+            }
+        };
+
+        Ok(SenderPermit(Arc::new(StdMutex::new(Some(permit)))))
     }
 
     /// Try to send immediately.
@@ -187,6 +229,31 @@ impl<T> Sender<T> {
     }
 }
 
+impl<T> SenderPermit<T> {
+    /// Send a value using this permit.
+    ///
+    /// Bounded permits consume capacity that was already reserved by [`Sender::reserve`]. Unbounded pseudo-permits send
+    /// synchronously and can still fail if the receiver closes after reservation but before this call.
+    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+        let mut permit_slot = match self.0.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        match permit_slot.take() {
+            Some(SenderPermitInner::Bounded(permit)) => {
+                drop(permit.send(value));
+                Ok(())
+            }
+            Some(SenderPermitInner::Unbounded(sender)) => match sender.send(value) {
+                Ok(()) => Ok(()),
+                Err(error) => Err(SendError { value: error.0 }),
+            },
+            None => Err(SendError { value }),
+        }
+    }
+}
+
 impl<T> Receiver<T> {
     /// Receive the next message, waiting until one is available or the channel closes.
     pub async fn recv(&self) -> Option<T> {
@@ -206,14 +273,21 @@ impl<T> Receiver<T> {
         }
     }
 
-    /// Close the channel from the receiving side.
-    pub fn close(&self) {
-        if let Some(mut receiver) = try_lock_receiver_sync(&self.0) {
-            match &mut *receiver {
-                ReceiverInner::Bounded(inner) => inner.close(),
-                ReceiverInner::Unbounded(inner) => inner.close(),
-            }
+    /// Try to close the channel from the receiving side.
+    ///
+    /// Returns `false` if another cloned receiver currently owns the receiver state, such as while it is waiting in
+    /// [`Receiver::recv`]. In that case the channel is left unchanged and the caller may retry after the wait completes
+    /// or is cancelled.
+    pub fn close(&self) -> bool {
+        let Some(mut receiver) = try_lock_receiver_sync(&self.0) else {
+            return false;
+        };
+
+        match &mut *receiver {
+            ReceiverInner::Bounded(inner) => inner.close(),
+            ReceiverInner::Unbounded(inner) => inner.close(),
         }
+        true
     }
 }
 
@@ -238,17 +312,16 @@ impl<T> OneshotSender<T> {
 impl<T> OneshotReceiver<T> {
     /// Receive the oneshot value.
     pub async fn recv(&self) -> Result<T, RecvError> {
-        let receiver = {
-            let mut slot = self.0.lock().await;
-            slot.take()
+        let mut slot = self.0.lock().await;
+        let result = match slot.as_mut() {
+            Some(receiver) => receiver.await,
+            None => return Err(RecvError),
         };
 
-        match receiver {
-            Some(receiver) => match receiver.await {
-                Ok(value) => Ok(value),
-                Err(_) => Err(RecvError),
-            },
-            None => Err(RecvError),
+        *slot = None;
+        match result {
+            Ok(value) => Ok(value),
+            Err(_) => Err(RecvError),
         }
     }
 }
@@ -290,6 +363,16 @@ pub fn sender_try_send<T>(sender: &Sender<T>, value: T) -> Result<(), SendError<
     sender.try_send(value)
 }
 
+/// Runtime shim for `Sender::reserve`.
+pub async fn sender_reserve<T>(sender: &Sender<T>) -> Result<SenderPermit<T>, SendError<()>> {
+    sender.reserve().await
+}
+
+/// Runtime shim for `SenderPermit::send`.
+pub fn sender_permit_send<T>(permit: &SenderPermit<T>, value: T) -> Result<(), SendError<T>> {
+    permit.send(value)
+}
+
 /// Runtime shim for `Sender::is_closed`.
 pub fn sender_is_closed<T>(sender: &Sender<T>) -> bool {
     sender.is_closed()
@@ -306,7 +389,7 @@ pub fn receiver_try_recv<T>(receiver: &Receiver<T>) -> Option<T> {
 }
 
 /// Runtime shim for `Receiver::close`.
-pub fn receiver_close<T>(receiver: &Receiver<T>) {
+pub fn receiver_close<T>(receiver: &Receiver<T>) -> bool {
     receiver.close()
 }
 
@@ -324,6 +407,7 @@ pub use OneshotReceiver as RawOneshotReceiver;
 pub use OneshotSender as RawOneshotSender;
 pub use Receiver as RawReceiver;
 pub use Sender as RawSender;
+pub use SenderPermit as RawSenderPermit;
 pub use channel as runtime_channel;
 pub use oneshot as runtime_oneshot;
 pub use oneshot_receiver_recv as runtime_oneshot_receiver_recv;
@@ -332,25 +416,124 @@ pub use receiver_close as runtime_receiver_close;
 pub use receiver_recv as runtime_receiver_recv;
 pub use receiver_try_recv as runtime_receiver_try_recv;
 pub use sender_is_closed as runtime_sender_is_closed;
+pub use sender_permit_send as runtime_sender_permit_send;
+pub use sender_reserve as runtime_sender_reserve;
 pub use sender_send as runtime_sender_send;
 pub use sender_try_send as runtime_sender_try_send;
 pub use unbounded_channel as runtime_unbounded_channel;
 
 #[cfg(test)]
 mod tests {
-    use super::channel;
+    use super::{channel, oneshot, unbounded_channel};
+    use std::time::Duration;
+
+    async fn wait_until_oneshot_receive_is_pending<T>(
+        receiver: &super::OneshotReceiver<T>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for _ in 0..100 {
+            if receiver.0.try_lock().is_err() {
+                return Ok(());
+            }
+            tokio::task::yield_now().await;
+        }
+
+        Err(Box::new(std::io::Error::other(
+            "oneshot receive future did not reach pending state",
+        )))
+    }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn try_recv_and_close_do_not_block_inside_runtime() {
-        let (_tx, rx) = channel::<i32>(1);
+    async fn reserve_sends_through_bounded_channel() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = channel::<i32>(1);
+
+        let permit = tx.reserve().await?;
+        permit.send(7)?;
+
+        assert_eq!(rx.recv().await, Some(7));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reserve_reports_closed_bounded_channel() {
+        let (tx, rx) = channel::<i32>(1);
+        drop(rx);
+
+        assert!(tx.reserve().await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reserve_reports_closed_unbounded_channel() {
+        let (tx, rx) = unbounded_channel::<i32>();
+        drop(rx);
+
+        assert!(tx.reserve().await.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reserved_bounded_permit_holds_capacity_until_send() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = channel::<i32>(1);
+
+        let permit = tx.reserve().await?;
+        assert!(tx.try_send(99).is_err());
+
+        permit.send(42)?;
+
+        assert_eq!(rx.recv().await, Some(42));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_bounded_reserve_does_not_consume_existing_message() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = channel::<i32>(1);
+
+        tx.send(1).await?;
+        let reservation = tokio::time::timeout(Duration::ZERO, tx.reserve()).await;
+        assert!(reservation.is_err());
+        assert_eq!(rx.recv().await, Some(1));
+
+        let permit = tx.reserve().await?;
+        permit.send(2)?;
+        assert_eq!(rx.recv().await, Some(2));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reserve_sends_through_unbounded_channel() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = unbounded_channel::<i32>();
+
+        let permit = tx.reserve().await?;
+        permit.send(11)?;
+
+        assert_eq!(rx.recv().await, Some(11));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelling_oneshot_receive_preserves_value() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = oneshot::<i32>();
         let waiting_rx = rx.clone();
 
-        let waiting_task = tokio::spawn(async move { waiting_rx.recv().await });
-        tokio::task::yield_now().await;
-
-        assert_eq!(rx.try_recv(), None);
-        rx.close();
-
+        let waiting_task = tokio::spawn({
+            let waiting_rx = waiting_rx.clone();
+            async move { waiting_rx.recv().await }
+        });
+        wait_until_oneshot_receive_is_pending(&waiting_rx).await?;
         waiting_task.abort();
+        let _ = waiting_task.await;
+
+        assert!(tx.send(17).is_ok());
+        assert_eq!(rx.recv().await.ok(), Some(17));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_reports_when_receiver_state_is_busy() {
+        let (_tx, rx) = channel::<i32>(1);
+
+        let guard = rx.0.lock().await;
+        assert_eq!(rx.try_recv(), None);
+        assert!(!rx.close());
+        drop(guard);
+        assert!(rx.close());
     }
 }

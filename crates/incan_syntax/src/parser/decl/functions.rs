@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
                 self.skip_newlines();
             }
             Some(Receiver::Immutable)
-        } else if is_classmethod && self.peek_ident_text("cls") {
+        } else if is_classmethod && self.peek_ident_text(incan_core::lang::keywords::as_str(KeywordId::Cls)) {
             self.advance();
             self.skip_newlines();
             if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {

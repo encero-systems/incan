@@ -273,9 +273,48 @@ pub enum Command {
         /// Filter tests by keyword expression
         #[arg(short = 'k', value_name = "EXPR")]
         filter: Option<String>,
+        /// Filter tests by marker expression
+        #[arg(short = 'm', long = "markers", value_name = "EXPR")]
+        marker_expr: Option<String>,
+        /// Treat unknown marker names as collection errors
+        #[arg(long = "strict-markers")]
+        strict_markers: bool,
+        /// Maximum number of runner execution units to run concurrently
+        #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 1)]
+        jobs: usize,
+        /// Enable a collection-time testing feature for std.testing.feature("name")
+        #[arg(long = "feature", value_name = "NAME")]
+        test_features: Vec<String>,
+        /// Default generated test-batch timeout, such as 250ms, 5s, or 2m
+        #[arg(long = "timeout", value_name = "DURATION")]
+        timeout: Option<String>,
+        /// Show test stdout/stderr even when tests pass
+        #[arg(long = "nocapture")]
+        no_capture: bool,
         /// Fail if no tests are collected
         #[arg(long = "fail-on-empty")]
         fail_on_empty: bool,
+        /// List collected tests after filtering and do not execute them
+        #[arg(long = "list")]
+        list_only: bool,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "console")]
+        report_format: test_runner::TestOutputFormat,
+        /// Write a JUnit XML report to this path
+        #[arg(long = "junit", value_name = "PATH")]
+        junit_path: Option<PathBuf>,
+        /// Show the slowest N test durations after the run
+        #[arg(long = "durations", value_name = "N")]
+        durations: Option<usize>,
+        /// Shuffle test execution order
+        #[arg(long)]
+        shuffle: bool,
+        /// Seed used with --shuffle
+        #[arg(long, value_name = "N")]
+        seed: Option<u64>,
+        /// Run xfail tests as ordinary tests
+        #[arg(long = "run-xfail")]
+        run_xfail: bool,
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
@@ -529,7 +568,20 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             stop_on_fail,
             slow,
             filter,
+            marker_expr,
+            strict_markers,
+            jobs,
+            test_features,
+            timeout,
+            no_capture,
             fail_on_empty,
+            list_only,
+            report_format,
+            junit_path,
+            durations,
+            shuffle,
+            seed,
+            run_xfail,
             locked,
             frozen,
             cargo_features,
@@ -541,8 +593,21 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             stop_on_fail,
             include_slow: slow,
             filter: filter.as_deref(),
+            marker_expr: marker_expr.as_deref(),
+            strict_markers,
+            jobs,
+            test_features,
+            timeout: timeout.as_deref(),
+            no_capture,
             use_color,
             fail_on_empty,
+            list_only,
+            report_format,
+            junit_path,
+            durations,
+            shuffle,
+            seed,
+            run_xfail,
             locked,
             frozen,
             cargo_features,

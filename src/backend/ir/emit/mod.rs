@@ -113,6 +113,12 @@ pub struct IrEmitter<'a> {
     ///
     /// Used to avoid recursively forcing the module-wide static init helper while generating static initializer code.
     in_static_initializer: RefCell<bool>,
+    /// Whether canonical calls to internal modules should be emitted with explicit `crate::...` paths.
+    ///
+    /// Normal imported calls use ordinary local bindings and imports. Default argument expressions are different: they
+    /// can be expanded at a caller outside the defining module, so imported helper calls inside those defaults need a
+    /// durable crate-qualified path.
+    qualify_internal_canonical_paths: RefCell<bool>,
     /// Stack of statement-slice analyses describing which local `StaticBinding` names need mutable Rust bindings.
     ///
     /// An Incan alias like `let live = ITEMS` is not source-level `mut`, but if later emitted Rust uses
@@ -122,6 +128,8 @@ pub struct IrEmitter<'a> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Create an emitter using the function registry that drives call-site default argument filling and type-aware
+    /// argument conversion.
     pub fn new(function_registry: &'a FunctionRegistry) -> Self {
         Self {
             // Enable minimal allows for patterns that can't easily be made warning-free:
@@ -152,6 +160,7 @@ impl<'a> IrEmitter<'a> {
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
             module_has_local_statics: RefCell::new(false),
             in_static_initializer: RefCell::new(false),
+            qualify_internal_canonical_paths: RefCell::new(false),
             storage_binding_mut_names: RefCell::new(Vec::new()),
         }
     }

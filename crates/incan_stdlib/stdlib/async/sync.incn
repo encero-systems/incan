@@ -6,6 +6,12 @@ This module provides async-aware synchronization primitives:
 - RwLock: Reader-writer lock
 - Semaphore: Counting semaphore
 - Barrier: Synchronization barrier
+
+Cancellation contracts:
+- `Mutex.lock()`, `RwLock.read()`, `RwLock.write()`, and `Semaphore.acquire()` are cancel-safe-but-lossy:
+  cancelling the wait does not acquire the resource, but the waiter gives up its place in the fairness queue.
+- `Barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the
+  current generation and frees its arrival slot. Once a generation releases, the participant has crossed the barrier.
 """
 
 import std.async
@@ -90,6 +96,9 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
 
         Returns a guard that provides access to the inner value.
         The lock is released when the guard is dropped.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, the lock is not acquired and the waiter gives up its place in the fairness queue.
         """
         return MutexGuard(await rust_mutex_lock(self.0))
 
@@ -161,6 +170,9 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
 
         Multiple readers can hold the lock simultaneously.
         Blocks if a writer holds the lock.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, no read lock is acquired and the waiter gives up its place in the fairness queue.
         """
         return RwLockReadGuard(await rust_rwlock_read(self.0))
 
@@ -169,6 +181,9 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
         Acquire a write lock.
 
         Exclusive access - blocks all readers and other writers.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, no write lock is acquired and the waiter gives up its place in the fairness queue.
         """
         return RwLockWriteGuard(await rust_rwlock_write(self.0))
 
@@ -240,6 +255,9 @@ pub type Semaphore = newtype RawSemaphore:
 
         Returns `Err(SemaphoreAcquireError)` if the semaphore is closed while waiting.
         The permit is released when dropped.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before a permit is
+        returned, no permit is acquired and the waiter gives up its place in the fairness queue.
         """
         match await rust_semaphore_acquire(self.0):
             Ok(permit) => return Ok(SemaphorePermit(permit))
@@ -293,7 +311,13 @@ pub type Barrier = newtype RawBarrier:
         """
         Wait at the barrier until all tasks arrive.
 
-        Returns the arrival index (0 to count-1).
+        Returns a unique participant slot for the completed generation.
+
+        The slot is in the range `0` to `count - 1`. It is useful for leader election within a generation, but it is
+        not a chronological arrival index when cancellation has freed and reused earlier slots.
+
+        Cancellation contract: cancellation-aware before release. Cancelling a pending wait withdraws the participant
+        from the current generation and frees its arrival slot. Remaining participants still need enough active
+        participants to arrive in that generation before they can continue.
         """
         return await rust_barrier_wait(self.0)
-

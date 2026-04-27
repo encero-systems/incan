@@ -132,6 +132,7 @@ pub async fn yield_now() {
 #[cfg(test)]
 mod tests {
     use super::{spawn, spawn_blocking};
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn join_handle_await_surfaces_task_join_error() {
@@ -145,6 +146,19 @@ mod tests {
             assert!(err.is_panic());
             assert!(!err.message().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn dropping_join_handle_detaches_without_cancelling_task() -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, receiver) = oneshot::channel::<i32>();
+        let handle = spawn(async move {
+            let _ = sender.send(23);
+        });
+
+        drop(handle);
+
+        assert_eq!(receiver.await?, 23);
+        Ok(())
     }
 
     #[tokio::test]

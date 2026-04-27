@@ -66,7 +66,7 @@ const LOGICAL_OPERATOR_KEYWORDS: &[KeywordId] = &[
 const TRUE_KEYWORDS: &[KeywordId] = &[KeywordId::True];
 const FALSE_KEYWORDS: &[KeywordId] = &[KeywordId::False];
 const NONE_KEYWORDS: &[KeywordId] = &[KeywordId::None];
-const SELF_KEYWORDS: &[KeywordId] = &[KeywordId::SelfKw];
+const SELF_KEYWORDS: &[KeywordId] = &[KeywordId::SelfKw, KeywordId::Cls];
 
 /// Registry-backed regex buckets for VS Code/TextMate grammar generation.
 pub const VSCODE_KEYWORD_BUCKETS: &[VscodeKeywordBucket] = &[
