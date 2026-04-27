@@ -4702,7 +4702,12 @@ the current scope).</p>
 <p>In this example, the names <code>sqrt</code>, <code>PI</code>, <code>area</code>, and <code>Circle</code> are all resolved from the module scope.</p>
 <h3 id="function-method-scope">Function / method scope<a class="headerlink" href="#function-method-scope" title="Permanent link">&para;</a></h3>
 <p>Each <code>def ...:</code> body is a <strong>function scope</strong>.</p>
-<p>Methods also have a function-like scope and define <code>self</code> (and <code>mut self</code>) for the method body.</p>
+<p>Methods also have a function-like scope and define receiver names for the method body:</p>
+<ul>
+<li>Instance methods define <code>self</code> or <code>mut self</code>.</li>
+<li>Class methods define their explicit first parameter, conventionally <code>cls</code>. Inside a <code>@classmethod</code>, calling
+  <code>cls(...)</code> constructs the declaring type.</li>
+</ul>
 <p>For example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">PI</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14159</span>  <span class="c1"># module scope</span>
 
@@ -4715,12 +4720,16 @@ the current scope).</p>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">area</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
         <span class="k">return</span> <span class="nc">PI</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>  <span class="c1"># self: method scope, PI: module scope</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">unit</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">radius</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>                  <span class="c1"># cls: classmethod scope, constructor for Circle</span>
 </code></pre></div>
 <p>In these examples:</p>
 <ul>
 <li><strong>Module-scope names</strong>: <code>PI</code>, <code>Circle</code>, <code>area_scaled</code></li>
 <li><strong>Function-scope names</strong>: parameters like <code>r</code> and <code>scale</code>, plus locals like <code>base</code></li>
-<li><strong>Method-scope names</strong>: <code>self</code> (and anything you bind inside the method body)</li>
+<li><strong>Method-scope names</strong>: <code>self</code>, <code>cls</code>, and anything you bind inside the method body</li>
 </ul>
 <h3 id="block-scope">Block scope<a class="headerlink" href="#block-scope" title="Permanent link">&para;</a></h3>
 <p>Bodies of these constructs are checked in a <strong>block scope</strong>:</p>

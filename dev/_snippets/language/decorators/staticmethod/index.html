@@ -4361,6 +4361,7 @@
 <ul>
 <li>A <code>@staticmethod</code> method <strong>must not</strong> have a <code>self</code> or <code>mut self</code> parameter. The compiler rejects this.</li>
 <li>Call static methods via the type name: <code>TypeName.method_name(...)</code>.</li>
+<li>Generic static factory methods can return <code>Self</code>; call them with explicit type arguments when inference needs the owner type, such as <code>Box[int].make(...)</code>.</li>
 <li><code>@staticmethod</code> can be combined with <code>@rust.extern</code> for Rust-backed static methods on types.</li>
 </ul>
 <p>Use cases:</p>
@@ -4369,6 +4370,18 @@
 <li><strong>Utility functions</strong>: logic scoped to a type that doesn't need instance state.</li>
 <li><strong>Rust interop</strong>: <code>@rust.extern</code> on type methods requires <code>@staticmethod</code> (instance delegation is not supported).</li>
 </ul>
+<p>Generic static factories can use the declaring type constructor directly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">Box</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">boxed</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+</code></pre></div>
 
 
 

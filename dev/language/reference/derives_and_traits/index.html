@@ -5256,6 +5256,7 @@ So we can change the destination in one place if we move/rename sections.
 <ul>
 <li>A <code>@staticmethod</code> method <strong>must not</strong> have a <code>self</code> or <code>mut self</code> parameter. The compiler rejects this.</li>
 <li>Call static methods via the type name: <code>TypeName.method_name(...)</code>.</li>
+<li>Generic static factory methods can return <code>Self</code>; call them with explicit type arguments when inference needs the owner type, such as <code>Box[int].make(...)</code>.</li>
 <li><code>@staticmethod</code> can be combined with <code>@rust.extern</code> for Rust-backed static methods on types.</li>
 </ul>
 <p>Use cases:</p>
@@ -5264,6 +5265,18 @@ So we can change the destination in one place if we move/rename sections.
 <li><strong>Utility functions</strong>: logic scoped to a type that doesn't need instance state.</li>
 <li><strong>Rust interop</strong>: <code>@rust.extern</code> on type methods requires <code>@staticmethod</code> (instance delegation is not supported).</li>
 </ul>
+<p>Generic static factories can use the declaring type constructor directly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">Box</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">boxed</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+</code></pre></div>
 <p>See also: <a href="../../explanation/models_and_classes/classes/#static-methods-staticmethod">Classes: Static methods</a></p>
 <h3 id="classmethod"><code>@classmethod</code><a class="headerlink" href="#classmethod" title="Permanent link">&para;</a></h3>
 <p>Use <code>@classmethod</code> for methods that are called on the type rather than on an instance, but still conceptually belong to that type.</p>
@@ -5273,9 +5286,21 @@ So we can change the destination in one place if we move/rename sections.
 
     <span class="nd">@classmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nc">UserId</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
 </code></pre></div>
-<p>Unlike an instance method, a class method does not take <code>self</code>. Unlike a static method, it is written as a type-associated constructor-style hook and returns <code>Self</code> naturally.</p>
+<p>Unlike an instance method, a class method does not take <code>self</code>. Its first parameter is conventionally named <code>cls</code> and can be called like a constructor for the declaring type. Unlike a static method, it is written as a type-associated constructor-style hook and returns <code>Self</code> naturally.</p>
+<p>For generic types, <code>Self</code> keeps the active type arguments at the call site:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nc">T</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">make</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">boxed</span> <span class="o">=</span> <span class="nc">Box</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">boxed</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+</code></pre></div>
 <h3 id="requires"><code>@requires(...)</code><a class="headerlink" href="#requires" title="Permanent link">&para;</a></h3>
 <p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
 <hr />
