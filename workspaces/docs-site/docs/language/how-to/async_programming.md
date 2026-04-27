@@ -30,6 +30,17 @@ def main() -> None:
 
 ## Core Concepts
 
+### Cancellation Vocabulary
+
+Async APIs in `std.async` document cancellation with four contract terms:
+
+| Term | Meaning |
+| ---- | ------- |
+| `cancel-safe` | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation. |
+| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost. |
+| `not cancel-safe` | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting. |
+| `durable once spawned` | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
+
 ### Async Functions
 
 Declare async functions with `async def`:
@@ -88,6 +99,8 @@ async def demo() -> None:
         case Err(e): println("Operation timed out")
 ```
 
+`timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and decide separately whether to await, detach, or abort the `JoinHandle`.
+
 ## Task Spawning
 
 ### spawn
@@ -113,6 +126,8 @@ result = await handle
 println(f"Background task returned: {result}")
 ```
 
+Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
+
 ### spawn_blocking
 
 Run CPU-intensive or blocking code on a dedicated thread:
@@ -129,6 +144,8 @@ def heavy_computation() -> int:
 # Won't block the async runtime
 result = await spawn_blocking(heavy_computation)
 ```
+
+`spawn_blocking()` is for bounded blocking work that eventually finishes on its own. Dropping its `JoinHandle` detaches the work and loses the result, and `abort()` cannot stop blocking work after it starts running. `abort()` can only prevent a queued blocking task from starting.
 
 ### yield_now
 
@@ -183,6 +200,25 @@ async def producer() -> None:
 async def consumer() -> None:
     while let Some(msg) = await rx.recv():
         println(f"Got: {msg}")
+```
+
+Cancellation contracts:
+
+- `tx.send(value)` is cancel-safe-but-lossy. If it is cancelled while waiting for bounded-channel capacity, the value is not sent and is dropped.
+- `tx.reserve()` waits for capacity before a value is committed. Use it for critical sends where cancellation must not drop the message value.
+- `permit.send(value)` is synchronous and either delivers the value or returns it in `SendError[T]`.
+- `rx.recv()` is cancel-safe. If it is cancelled while waiting, no message is removed from the channel.
+- `try_send()` and `try_recv()` return immediately, so there is no pending wait to cancel.
+
+Reserve capacity before building or moving a critical message:
+
+```incan
+match await tx.reserve():
+    Ok(permit) =>
+        match permit.send("audit-event"):
+            Ok(_) => println("sent")
+            Err(err) => println(f"send failed: {err.value}")
+    Err(err) => println(err.message())
 ```
 
 **Multiple producers** (clone the sender):
@@ -291,6 +327,8 @@ match await rx.recv():
     case Err(e): println("Sender dropped without sending")
 ```
 
+The one-shot receiver is cancel-safe: cancelling `rx.recv()` does not consume the value. `tx.send(value)` is synchronous, so it either delivers the value or returns it immediately if the receiver is gone.
+
 **Common pattern - returning results from spawned tasks:**
 
 ```incan
@@ -367,6 +405,8 @@ async def increment() -> None:
     # Lock released when guard goes out of scope
 ```
 
+`mutex.lock()` is cancel-safe-but-lossy: cancellation before the guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.
+
 !!! note "Python comparison"
     Python uses a lock separate from the data. Incan wraps the data (`Mutex[T]`), so the lock and value are kept together.
 
@@ -420,6 +460,8 @@ async def update_config(debug: bool) -> None:
     guard.set(Config(debug=debug))
 ```
 
+`rwlock.read()` and `rwlock.write()` are cancel-safe-but-lossy: cancellation before a guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.
+
 !!! note "Coming from Python?"
     Python's `asyncio` doesn't have `RwLock`. This is a Rust/systems programming concept.
 
@@ -450,6 +492,8 @@ async def make_request() -> Response:
     return response
 ```
 
+`sem.acquire()` is cancel-safe-but-lossy: cancellation before a permit is returned does not acquire a permit, but the waiter loses its place in the fairness queue.
+
 !!! note "Python equivalent"
     `asyncio.Semaphore(n)` works the same way.
 
@@ -478,6 +522,8 @@ async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 2")  # All start phase 2 together
 ```
 
+`barrier.wait()` is not cancel-safe. Do not place it directly inside a timeout or future race unless the whole barrier generation is being abandoned, because cancelling one participant can leave the remaining participants waiting for a task that will not arrive.
+
 !!! note "Python equivalent"
     `asyncio.Barrier(n)` (added in Python 3.11) works the same way.
 
@@ -486,42 +532,7 @@ async def worker(id: int) -> None:
 See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn)
 for a runnable demo of all four primitives.
 
-## Select (Racing Futures)
-
-### select2
-
-Race two futures, get whichever completes first:
-
-```incan
-from std.async.select import select2
-from std.async.time import sleep
-
-async def fast() -> str:
-    await sleep(0.1)
-    return "fast"
-
-async def slow() -> str:
-    await sleep(1.0)
-    return "slow"
-
-match await select2(fast, slow):
-    case Either.Left(result): println(f"Fast won: {result}")
-    case Either.Right(result): println(f"Slow won: {result}")
-```
-
-### select3
-
-Race three futures:
-
-```incan
-from std.async.select import select3
-
-result = await select3(op1, op2, op3)
-match result:
-    case Either3.First(v): println("op1 won")
-    case Either3.Second(v): println("op2 won")
-    case Either3.Third(v): println("op3 won")
-```
+## Select and Future Race
 
 ### select_timeout
 
@@ -534,6 +545,10 @@ match await select_timeout(2.0, slow_operation):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
 ```
+
+`select_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned.
+
+Future `race` syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and keep its handle outside the race when you still need the result.
 
 ## Runtime Integration
 
@@ -608,9 +623,9 @@ tx, rx = channel[Data](100)
 tx, rx = unbounded_channel[Data]()
 ```
 
-### 4. Handle Cancellation
+### 4. Handle Cancellation Explicitly
 
-Tasks can be cancelled when their handles are dropped:
+Dropping a task handle detaches the task and loses its result. It does not cancel the task:
 
 ```incan
 from std.async.task import spawn
@@ -621,10 +636,11 @@ async def cancellable_work() -> str:
     return "done"
 
 handle = spawn(cancellable_work)
-# If we don't await handle, the task is cancelled!
-# Always await or explicitly ignore:
-_ = handle  # Explicit ignore (task continues)
+# This detaches the task and loses the result; the task keeps running.
+_ = handle
 ```
+
+Use `handle.abort()` when an async task should be cancelled. For blocking work created with `spawn_blocking()`, `abort()` only has a chance to prevent execution before the blocking task starts.
 
 ## Error Handling
 
@@ -641,8 +657,7 @@ match result:
 
 ### Channel Closed
 
-When sending fails because the receiver was dropped, `SendError[T]` contains the value that couldn't be sent in its
-`.value` field:
+When sending fails because the receiver was dropped, `SendError[T]` contains the value that couldn't be sent in its `.value` field:
 
 ```incan
 from std.async.channel import Sender

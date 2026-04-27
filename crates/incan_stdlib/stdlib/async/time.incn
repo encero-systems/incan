@@ -8,6 +8,13 @@ This module is the user-facing timing surface for `std.async`. It exposes:
 - `timeout(seconds, task)` for deadline-bound async work
 - `timeout_ms(milliseconds, task)` for integer millisecond deadlines
 
+Cancellation contracts:
+
+- `sleep()` and `sleep_ms()` are cancel-safe: cancelling the sleep future stops waiting and has no side effect.
+- `timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires.
+- Cancelling a `timeout()` or `timeout_ms()` call before it resolves also drops the supplied future.
+- Use `std.async.task.spawn()` first when work must be durable once spawned instead of cancelled by timeout.
+
 Examples:
     await sleep(0.25)
     await sleep_ms(50)
@@ -103,6 +110,9 @@ pub async def sleep_ms(milliseconds: int) -> None:
 pub async def timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]:
     """
     Await `task` with a floating-point second timeout.
+
+    If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+    not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
     """
     match await tokio_timeout(clamp_seconds(seconds), task):
         Ok(value) => return Ok(value)
@@ -112,6 +122,9 @@ pub async def timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](s
 pub async def timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]:
     """
     Await `task` with an integer millisecond timeout.
+
+    If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+    not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
     """
     match await tokio_timeout(clamp_millis(milliseconds), task):
         Ok(value) => return Ok(value)
