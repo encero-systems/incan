@@ -15,6 +15,43 @@ echo "$PATH"
 which incan || true
 ```
 
+## Shell or editor is using an old `incan` / `incan-lsp`
+
+This usually means your shell and editor are resolving different binaries. For local development from a clone, prefer:
+
+```bash
+cd /path/to/incan
+make build
+```
+
+On local machines, `make build` builds the compiler and LSP with `cargo build --features lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there:
+
+```bash
+command -v incan
+command -v incan-lsp
+ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp
+incan --version
+```
+
+If `command -v incan` or `command -v incan-lsp` points somewhere unexpected, fix your `PATH` or remove the stale binary from the earlier location. If the `ls -l` target points at a different checkout, rerun `make build` from the checkout you want to use.
+
+For VS Code/Cursor, also check the Incan settings:
+
+```json
+{
+  "incan.lsp.path": "",
+  "incan.compiler.path": ""
+}
+```
+
+Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/path/to/incan/target/debug/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands.
+
+After changing paths or rebuilding, reload the editor window so it starts a new language-server process:
+
+1. Run **Developer: Reload Window** from the command palette.
+2. Reopen a `.incn` file.
+3. Open **View → Output → Incan Language Server** and check the startup error or command-resolution message if diagnostics still look stale.
+
 ## I didn’t run `make install` (no-install fallback)
 
 If you’re using the no-install fallback, run commands from the repository root and invoke:
@@ -53,3 +90,5 @@ If you’re still stuck, please [open an issue](https://github.com/dannys-code-c
 - your OS and architecture
 - the exact commands you ran
 - the full error output
+- `command -v incan`, `command -v incan-lsp`, and `ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp`
+- whether `incan.lsp.path` or `incan.compiler.path` is set in VS Code/Cursor
