@@ -1369,18 +1369,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixtures-using-other-fixtures" class="md-nav__link">
+  <a href="#fixture-scopes" class="md-nav__link">
     <span class="md-ellipsis">
-      Fixtures using other fixtures
+      Fixture scopes
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixture-scopes" class="md-nav__link">
+  <a href="#fixtures-using-other-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
-      Fixture scopes
+      Fixtures using other fixtures
     </span>
   </a>
   
@@ -4629,18 +4629,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixtures-using-other-fixtures" class="md-nav__link">
+  <a href="#fixture-scopes" class="md-nav__link">
     <span class="md-ellipsis">
-      Fixtures using other fixtures
+      Fixture scopes
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#fixture-scopes" class="md-nav__link">
+  <a href="#fixtures-using-other-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
-      Fixture scopes
+      Fixtures using other fixtures
     </span>
   </a>
   
@@ -4892,16 +4892,36 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 </thead>
 <tbody>
 <tr>
+<td><code>@test</code></td>
+<td>Marks a non-<code>test_*</code> function as a test.</td>
+</tr>
+<tr>
 <td><code>@skip(reason?)</code></td>
 <td>Skips the test unconditionally.</td>
+</tr>
+<tr>
+<td><code>@skipif(condition, reason?)</code></td>
+<td>Skips the test when a collection-time condition is true.</td>
 </tr>
 <tr>
 <td><code>@xfail(reason?)</code></td>
 <td>Marks the test as expected to fail (XPASS if it passes).</td>
 </tr>
 <tr>
+<td><code>@xfailif(condition, reason?)</code></td>
+<td>Marks the test expected-fail when a collection-time condition is true.</td>
+</tr>
+<tr>
 <td><code>@slow</code></td>
 <td>Excludes the test by default; include with <code>incan test --slow</code>.</td>
+</tr>
+<tr>
+<td><code>@mark(name)</code></td>
+<td>Adds a custom marker for <code>incan test -m</code> selection.</td>
+</tr>
+<tr>
+<td><code>@timeout(duration)</code></td>
+<td>Overrides the timeout for the generated test batch.</td>
 </tr>
 <tr>
 <td><code>@fixture</code></td>
@@ -4911,10 +4931,34 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 <td><code>@parametrize(argnames, argvalues)</code></td>
 <td>Runs the test once per parameter set.</td>
 </tr>
+<tr>
+<td><code>param_case(..., id?, marks?)</code></td>
+<td>Gives one parameter set an explicit id and/or marks.</td>
+</tr>
+<tr>
+<td><code>@resource(name)</code> / <code>@serial</code></td>
+<td>Applies runner scheduling constraints for shared or exclusive tests.</td>
+</tr>
+<tr>
+<td><code>platform()</code> / <code>feature(name)</code></td>
+<td>Collection-time probes for <code>skipif</code> / <code>xfailif</code>.</td>
+</tr>
 </tbody>
 </table>
 <p>Unlike the language <code>assert</code> statement, markers are <code>std.testing</code> APIs. Import the marker decorators you use.</p>
-<p>Markers are declared in <code>testing.incn</code> with marker metadata, and <code>incan test</code> consumes that metadata during discovery. This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.</p>
+<p>Marker APIs in <code>std.testing</code> carry metadata that <code>incan test</code> consumes during discovery. This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.</p>
+<p>Conditional markers run during collection:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">feature</span><span class="p">,</span> <span class="n">platform</span><span class="p">,</span> <span class="n">skipif</span><span class="p">,</span> <span class="n">xfailif</span>
+
+<span class="nd">@skipif</span><span class="p">(</span><span class="n">platform</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;windows&quot;</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;path semantics differ&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_posix_path</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="s2">&quot;/&quot;</span><span class="p">)</span>
+
+<span class="nd">@xfailif</span><span class="p">(</span><span class="n">feature</span><span class="p">(</span><span class="s2">&quot;new_parser&quot;</span><span class="p">),</span> <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;tracked parser bug&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_new_parser_case</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;...&quot;</span><span class="p">),</span> <span class="n">expected</span><span class="p">)</span>
+</code></pre></div>
+<p>Pass <code>incan test --feature new_parser</code> to make <code>feature("new_parser")</code> true during collection.</p>
 <h2 id="fixtures">Fixtures<a class="headerlink" href="#fixtures" title="Permanent link">&para;</a></h2>
 <h3 id="the-problem-fixtures-solve">The problem fixtures solve<a class="headerlink" href="#the-problem-fixtures-solve" title="Permanent link">&para;</a></h3>
 <p>Tests often need some shared setup — a database connection, a temporary file, a logged-in user. Without fixtures you end up repeating that setup in every test:</p>
@@ -4933,7 +4977,7 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 <p>This is tedious, error-prone (forget one <code>db.close()</code> and you leak a connection), and makes the actual test logic harder to spot.</p>
 <h3 id="declaring-a-fixture">Declaring a fixture<a class="headerlink" href="#declaring-a-fixture" title="Permanent link">&para;</a></h3>
 <p>A <strong>fixture</strong> is a function decorated with <code>@fixture</code> that produces a value your tests can reuse.</p>
-<p>Mark it with the <code>@fixture</code> decorator and return (or yield) the value:</p>
+<p>Mark it with the <code>@fixture</code> decorator and return the value:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
 
 <span class="nd">@fixture</span>
@@ -4952,30 +4996,12 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@fixture</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
     <span class="n">db</span> <span class="o">=</span> <span class="nc">Database</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;test.db&quot;</span><span class="p">)</span>
-    <span class="k">yield</span> <span class="n">db</span>          <span class="c1"># &lt;-- test receives `db` here</span>
-    <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>        <span class="c1"># &lt;-- runs after the test finishes, even if it failed</span>
+    <span class="k">yield</span> <span class="n">db</span>          <span class="c1"># test receives `db` here</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>        <span class="c1"># runs after the test finishes, even if it failed</span>
 </code></pre></div>
-<p>This guarantees cleanup runs regardless of whether the test passes or fails — no more leaked connections or orphaned temp files.</p>
-<h3 id="fixtures-using-other-fixtures">Fixtures using other fixtures<a class="headerlink" href="#fixtures-using-other-fixtures" title="Permanent link">&para;</a></h3>
-<p>Fixtures can depend on other fixtures, just like tests do. Use the same name-matching pattern:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@fixture</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="nc">Database</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;test.db&quot;</span><span class="p">)</span>
-    <span class="k">yield</span> <span class="n">db</span>
-    <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-
-<span class="nd">@fixture</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">populated_db</span><span class="p">(</span><span class="n">database</span><span class="p">:</span> <span class="nc">Database</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
-    <span class="n">database</span><span class="o">.</span><span class="nb">insert</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">})</span>
-    <span class="n">database</span><span class="o">.</span><span class="nb">insert</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bob&quot;</span><span class="p">})</span>
-    <span class="k">return</span> <span class="n">database</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">test_user_count</span><span class="p">(</span><span class="n">populated_db</span><span class="p">:</span> <span class="nc">Database</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">populated_db</span><span class="o">.</span><span class="nb">count</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">),</span> <span class="mi">2</span><span class="p">)</span>
-</code></pre></div>
-<p>The test runner resolves the dependency chain for you: <code>populated_db</code> needs <code>database</code>, so <code>database()</code> runs first, then its result is passed into <code>populated_db()</code>.</p>
+<p>Teardown can reference setup locals such as <code>db</code> and fixture parameters. If teardown fails, the test run fails. Timeout-enforced worker termination can still bypass teardown.</p>
 <h3 id="fixture-scopes">Fixture scopes<a class="headerlink" href="#fixture-scopes" title="Permanent link">&para;</a></h3>
-<p>By default, a fixture is created and torn down for <strong>each test</strong> that uses it. If the setup is expensive (e.g., a database connection or a network client), you can share it across a wider scope with the <code>scope</code> argument:</p>
+<p>By default, a fixture is created and torn down for <strong>each test</strong> that uses it. If the setup is expensive, share it across a wider scope with the <code>scope</code> argument:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;module&quot;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">shared_client</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Client</span><span class="p">:</span>
     <span class="n">client</span> <span class="o">=</span> <span class="nc">Client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;https://api.example.com&quot;</span><span class="p">)</span>
@@ -4996,15 +5022,33 @@ If you want the API reference only, see <a href="../../reference/stdlib/testing/
 </tr>
 <tr>
 <td><code>"module"</code></td>
-<td>Shared across all tests in one test file.</td>
+<td>Shared across all tests from one source file inside a worker batch.</td>
 </tr>
 <tr>
 <td><code>"session"</code></td>
-<td>Shared across the entire test session.</td>
+<td>Shared across a worker batch; with <code>--jobs 1</code>, compatible tests can share it across source files.</td>
 </tr>
 </tbody>
 </table>
-<p>Choose the narrowest scope that makes sense — <code>"function"</code> keeps tests fully isolated, while wider scopes trade isolation for speed. You have to decide what is best for your test suite and your use case.</p>
+<p>Choose the narrowest scope that makes sense. <code>"function"</code> keeps tests fully isolated; wider scopes trade isolation for speed.</p>
+<h3 id="fixtures-using-other-fixtures">Fixtures using other fixtures<a class="headerlink" href="#fixtures-using-other-fixtures" title="Permanent link">&para;</a></h3>
+<p>Fixtures can depend on other fixtures, just like tests do. Use the same name-matching pattern:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@fixture</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="nc">Database</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;test.db&quot;</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="n">db</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+<span class="nd">@fixture</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">populated_db</span><span class="p">(</span><span class="n">database</span><span class="p">:</span> <span class="nc">Database</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>
+    <span class="n">database</span><span class="o">.</span><span class="nb">insert</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">})</span>
+    <span class="n">database</span><span class="o">.</span><span class="nb">insert</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bob&quot;</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">database</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_user_count</span><span class="p">(</span><span class="n">populated_db</span><span class="p">:</span> <span class="nc">Database</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">populated_db</span><span class="o">.</span><span class="nb">count</span><span class="p">(</span><span class="s2">&quot;users&quot;</span><span class="p">),</span> <span class="mi">2</span><span class="p">)</span>
+</code></pre></div>
+<p>The test runner resolves the dependency chain for you: <code>populated_db</code> needs <code>database</code>, so <code>database()</code> runs first, then its result is passed into <code>populated_db()</code>.</p>
 <h2 id="parametrized-tests">Parametrized tests<a class="headerlink" href="#parametrized-tests" title="Permanent link">&para;</a></h2>
 <p>When you want to test the same logic with different inputs, you could write a separate test for each case:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">test_add_positive</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -5034,6 +5078,16 @@ test_add<span class="o">[</span><span class="m">0</span>-0-0<span class="o">]</s
 test_add<span class="o">[</span>-1-1-0<span class="o">]</span><span class="w"> </span>...<span class="w"> </span>PASSED
 </code></pre></div>
 <p>Adding a new case is just one more tuple — no new function needed.</p>
+<p>Use <code>param_case(...)</code> when one parameter set needs a stable id or marker:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">param_case</span><span class="p">,</span> <span class="n">parametrize</span><span class="p">,</span> <span class="n">xfail</span>
+
+<span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;x, expected&quot;</span><span class="p">,</span> <span class="p">[</span>
+    <span class="n">param_case</span><span class="p">((</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;known-bug&quot;</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">xfail</span><span class="p">(</span><span class="s2">&quot;tracked bug&quot;</span><span class="p">)]),</span>
+    <span class="n">param_case</span><span class="p">((</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;happy-path&quot;</span><span class="p">),</span>
+<span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">expected</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_is_some</span><span class="p">,</span> <span class="n">fixture</span><span class="p">,</span> <span class="n">skip</span>
 
