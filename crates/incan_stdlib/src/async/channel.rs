@@ -273,14 +273,21 @@ impl<T> Receiver<T> {
         }
     }
 
-    /// Close the channel from the receiving side.
-    pub fn close(&self) {
-        if let Some(mut receiver) = try_lock_receiver_sync(&self.0) {
-            match &mut *receiver {
-                ReceiverInner::Bounded(inner) => inner.close(),
-                ReceiverInner::Unbounded(inner) => inner.close(),
-            }
+    /// Try to close the channel from the receiving side.
+    ///
+    /// Returns `false` if another cloned receiver currently owns the receiver state, such as while it is waiting in
+    /// [`Receiver::recv`]. In that case the channel is left unchanged and the caller may retry after the wait completes
+    /// or is cancelled.
+    pub fn close(&self) -> bool {
+        let Some(mut receiver) = try_lock_receiver_sync(&self.0) else {
+            return false;
+        };
+
+        match &mut *receiver {
+            ReceiverInner::Bounded(inner) => inner.close(),
+            ReceiverInner::Unbounded(inner) => inner.close(),
         }
+        true
     }
 }
 
@@ -382,7 +389,7 @@ pub fn receiver_try_recv<T>(receiver: &Receiver<T>) -> Option<T> {
 }
 
 /// Runtime shim for `Receiver::close`.
-pub fn receiver_close<T>(receiver: &Receiver<T>) {
+pub fn receiver_close<T>(receiver: &Receiver<T>) -> bool {
     receiver.close()
 }
 
@@ -418,6 +425,22 @@ pub use unbounded_channel as runtime_unbounded_channel;
 #[cfg(test)]
 mod tests {
     use super::{channel, oneshot, unbounded_channel};
+    use std::time::Duration;
+
+    async fn wait_until_oneshot_receive_is_pending<T>(
+        receiver: &super::OneshotReceiver<T>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for _ in 0..100 {
+            if receiver.0.try_lock().is_err() {
+                return Ok(());
+            }
+            tokio::task::yield_now().await;
+        }
+
+        Err(Box::new(std::io::Error::other(
+            "oneshot receive future did not reach pending state",
+        )))
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn reserve_sends_through_bounded_channel() -> Result<(), Box<dyn std::error::Error>> {
@@ -460,6 +483,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_bounded_reserve_does_not_consume_existing_message() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, rx) = channel::<i32>(1);
+
+        tx.send(1).await?;
+        let reservation = tokio::time::timeout(Duration::ZERO, tx.reserve()).await;
+        assert!(reservation.is_err());
+        assert_eq!(rx.recv().await, Some(1));
+
+        let permit = tx.reserve().await?;
+        permit.send(2)?;
+        assert_eq!(rx.recv().await, Some(2));
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn reserve_sends_through_unbounded_channel() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, rx) = unbounded_channel::<i32>();
 
@@ -471,30 +509,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn cancelling_oneshot_receive_preserves_value() {
+    async fn cancelling_oneshot_receive_preserves_value() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, rx) = oneshot::<i32>();
         let waiting_rx = rx.clone();
 
-        let waiting_task = tokio::spawn(async move { waiting_rx.recv().await });
-        tokio::task::yield_now().await;
+        let waiting_task = tokio::spawn({
+            let waiting_rx = waiting_rx.clone();
+            async move { waiting_rx.recv().await }
+        });
+        wait_until_oneshot_receive_is_pending(&waiting_rx).await?;
         waiting_task.abort();
         let _ = waiting_task.await;
 
         assert!(tx.send(17).is_ok());
         assert_eq!(rx.recv().await.ok(), Some(17));
+        Ok(())
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn try_recv_and_close_do_not_block_inside_runtime() {
+    async fn close_reports_when_receiver_state_is_busy() {
         let (_tx, rx) = channel::<i32>(1);
-        let waiting_rx = rx.clone();
 
-        let waiting_task = tokio::spawn(async move { waiting_rx.recv().await });
-        tokio::task::yield_now().await;
-
+        let guard = rx.0.lock().await;
         assert_eq!(rx.try_recv(), None);
-        rx.close();
-
-        waiting_task.abort();
+        assert!(!rx.close());
+        drop(guard);
+        assert!(rx.close());
     }
 }

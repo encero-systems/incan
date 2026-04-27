@@ -826,6 +826,7 @@ mod tests {
             ty: IrType::List(Box::new(IrType::Int)),
             mutability: Mutability::Mutable,
             is_self: false,
+            kind: crate::frontend::ast::ParamKind::Normal,
             default: None,
         };
         let conv = determine_conversion_for_incan_call(
@@ -849,6 +850,7 @@ mod tests {
             ty: IrType::String,
             mutability: Mutability::Mutable,
             is_self: false,
+            kind: crate::frontend::ast::ParamKind::Normal,
             default: None,
         };
         let conv = determine_conversion_for_incan_call(
@@ -1269,6 +1271,7 @@ mod tests {
                 method: "as_ref".to_string(),
                 type_args: Vec::new(),
                 args: Vec::new(),
+                callable_signature: None,
                 arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1294,6 +1297,7 @@ mod tests {
                 method: "as_ref".to_string(),
                 type_args: Vec::new(),
                 args: Vec::new(),
+                callable_signature: None,
                 arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1318,6 +1322,7 @@ mod tests {
                 method: "as_ref".to_string(),
                 type_args: Vec::new(),
                 args: Vec::new(),
+                callable_signature: None,
                 arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
             },
             IrType::Ref(Box::new(IrType::Struct("Node".to_string()))),
@@ -1351,6 +1356,7 @@ mod tests {
                 method: "as_ref".to_string(),
                 type_args: Vec::new(),
                 args: Vec::new(),
+                callable_signature: None,
                 arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1375,6 +1381,7 @@ mod tests {
                 method: "as_ref".to_string(),
                 type_args: Vec::new(),
                 args: Vec::new(),
+                callable_signature: None,
                 arg_policy: crate::backend::ir::expr::MethodCallArgPolicy::Default,
             },
             IrType::Unknown,

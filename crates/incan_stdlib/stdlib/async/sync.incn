@@ -10,8 +10,8 @@ This module provides async-aware synchronization primitives:
 Cancellation contracts:
 - `Mutex.lock()`, `RwLock.read()`, `RwLock.write()`, and `Semaphore.acquire()` are cancel-safe-but-lossy:
   cancelling the wait does not acquire the resource, but the waiter gives up its place in the fairness queue.
-- `Barrier.wait()` is not cancel-safe. Cancelling a task after it has entered the barrier can leave other participants
-  waiting for a participant that will not arrive in that generation.
+- `Barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the
+  current generation and frees its arrival slot. Once a generation releases, the participant has crossed the barrier.
 """
 
 import std.async
@@ -311,9 +311,13 @@ pub type Barrier = newtype RawBarrier:
         """
         Wait at the barrier until all tasks arrive.
 
-        Returns the arrival index (0 to count-1).
+        Returns a unique participant slot for the completed generation.
 
-        Cancellation contract: not cancel-safe. Do not use `wait()` inside a timeout or race arm unless the whole barrier
-        generation is known to be abandoned; use a higher-level protocol when participants may be cancelled independently.
+        The slot is in the range `0` to `count - 1`. It is useful for leader election within a generation, but it is
+        not a chronological arrival index when cancellation has freed and reused earlier slots.
+
+        Cancellation contract: cancellation-aware before release. Cancelling a pending wait withdraws the participant
+        from the current generation and frees its arrival slot. Remaining participants still need enough active
+        participants to arrive in that generation before they can continue.
         """
         return await rust_barrier_wait(self.0)

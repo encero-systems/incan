@@ -121,6 +121,15 @@ pub struct AstLowering {
 }
 
 impl AstLowering {
+    /// Convert a declared callable parameter element type into its runtime parameter type.
+    pub(super) fn lower_param_container_type(kind: ast::ParamKind, base_ty: IrType) -> IrType {
+        match kind {
+            ast::ParamKind::Normal => base_ty,
+            ast::ParamKind::RestPositional => IrType::List(Box::new(base_ty)),
+            ast::ParamKind::RestKeyword => IrType::Dict(Box::new(IrType::String), Box::new(base_ty)),
+        }
+    }
+
     /// Select a validated constructor method for a newtype for v0.1 checked construction.
     ///
     /// Heuristic (minimal hardening for #44, RFC runway):
@@ -531,15 +540,17 @@ impl AstLowering {
                     .iter()
                     .map(|p| {
                         let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                        let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
                         FunctionParam {
                             name: p.node.name.clone(),
-                            ty: base_ty,
+                            ty: param_ty,
                             mutability: if p.node.is_mut {
                                 Mutability::Mutable
                             } else {
                                 Mutability::Immutable
                             },
                             is_self: false,
+                            kind: p.node.kind,
                             default: match &p.node.default {
                                 Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
                                 None => None,

@@ -159,6 +159,7 @@ impl TypeChecker {
         result
     }
 
+    /// Evaluate a const expression into the limited compile-time value domain used by declarations and attributes.
     fn eval_const_expr(
         &mut self,
         expr: &Spanned<Expr>,
@@ -429,6 +430,11 @@ impl TypeChecker {
                 })
             }
             Expr::List(items) => {
+                if items.iter().any(|item| matches!(item, ListEntry::Spread(_))) {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                }
+
                 let elem_expected = expected.and_then(|t| match t {
                     ResolvedType::FrozenList(elem) => Some(elem.as_ref()),
                     ResolvedType::Generic(name, args)
@@ -444,10 +450,16 @@ impl TypeChecker {
                 let elem_ty = if items.is_empty() {
                     elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
                 } else {
-                    let first = self.eval_const_expr(&items[0], elem_expected, stack, decl_span)?;
+                    let ListEntry::Element(ast_first) = &items[0] else {
+                        unreachable!("list spreads were rejected before const list evaluation");
+                    };
+                    let first = self.eval_const_expr(ast_first, elem_expected, stack, decl_span)?;
                     // Evaluate the rest just for validation.
                     for it in items.iter().skip(1) {
-                        self.eval_const_expr(it, elem_expected, stack, decl_span)?;
+                        let ListEntry::Element(value) = it else {
+                            unreachable!("list spreads were rejected before const list evaluation");
+                        };
+                        self.eval_const_expr(value, elem_expected, stack, decl_span)?;
                     }
                     first.ty
                 };
@@ -514,10 +526,17 @@ impl TypeChecker {
                         v_expected.cloned().unwrap_or(ResolvedType::Unknown),
                     )
                 } else {
-                    let (k0, v0) = &pairs[0];
+                    let DictEntry::Pair(k0, v0) = &pairs[0] else {
+                        self.errors.push(errors::const_expression_not_allowed(expr.span));
+                        return None;
+                    };
                     let kk = self.eval_const_expr(k0, k_expected, stack, decl_span)?;
                     let vv = self.eval_const_expr(v0, v_expected, stack, decl_span)?;
-                    for (k, v) in pairs.iter().skip(1) {
+                    for entry in pairs.iter().skip(1) {
+                        let DictEntry::Pair(k, v) = entry else {
+                            self.errors.push(errors::const_expression_not_allowed(expr.span));
+                            return None;
+                        };
                         self.eval_const_expr(k, k_expected, stack, decl_span)?;
                         self.eval_const_expr(v, v_expected, stack, decl_span)?;
                     }

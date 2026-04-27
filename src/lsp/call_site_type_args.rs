@@ -124,12 +124,10 @@ fn scan_types_in_call(type_args: &[Spanned<Type>], offset: usize) -> Option<&Spa
 fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     for a in args {
         match a {
-            CallArg::Positional(e) => {
-                if let Some(hit) = call_site_type_in_expr(e, offset) {
-                    return Some(hit);
-                }
-            }
-            CallArg::Named(_, e) => {
+            CallArg::Positional(e)
+            | CallArg::Named(_, e)
+            | CallArg::PositionalUnpack(e)
+            | CallArg::KeywordUnpack(e) => {
                 if let Some(hit) = call_site_type_in_expr(e, offset) {
                     return Some(hit);
                 }
@@ -139,6 +137,7 @@ fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     None
 }
 
+/// Find the call-site type argument node at a byte offset within an expression tree.
 fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanned<Type>> {
     match &expr.node {
         Expr::Call(callee, type_args, args) => {
@@ -211,12 +210,18 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             .or_else(|| call_site_type_in_expr(&boxed.iter, offset))
             .or_else(|| boxed.filter.as_ref().and_then(|e| call_site_type_in_expr(e, offset))),
         Expr::Closure(_, body) => call_site_type_in_expr(body, offset),
-        Expr::Tuple(items) | Expr::List(items) | Expr::Set(items) => {
-            items.iter().find_map(|e| call_site_type_in_expr(e, offset))
-        }
-        Expr::Dict(pairs) => pairs
-            .iter()
-            .find_map(|(k, v)| call_site_type_in_expr(k, offset).or_else(|| call_site_type_in_expr(v, offset))),
+        Expr::Tuple(items) | Expr::Set(items) => items.iter().find_map(|e| call_site_type_in_expr(e, offset)),
+        Expr::List(entries) => entries.iter().find_map(|entry| match entry {
+            crate::frontend::ast::ListEntry::Element(value) | crate::frontend::ast::ListEntry::Spread(value) => {
+                call_site_type_in_expr(value, offset)
+            }
+        }),
+        Expr::Dict(pairs) => pairs.iter().find_map(|entry| match entry {
+            crate::frontend::ast::DictEntry::Pair(k, v) => {
+                call_site_type_in_expr(k, offset).or_else(|| call_site_type_in_expr(v, offset))
+            }
+            crate::frontend::ast::DictEntry::Spread(value) => call_site_type_in_expr(value, offset),
+        }),
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {

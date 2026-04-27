@@ -75,6 +75,26 @@ pub fn empty_index_not_allowed(span: Span) -> CompileError {
     CompileError::syntax("Empty index is not allowed".to_string(), span)
 }
 
+// -- Collection literal spread markers ---------------------------------------
+
+/// Report `**expr` in a list literal, where only positional `*expr` spread is valid.
+pub fn invalid_list_spread_marker(span: Span) -> CompileError {
+    CompileError::syntax("Invalid list spread marker `**`".to_string(), span)
+        .with_hint("Use `*expr` to spread a list inside a list literal")
+}
+
+/// Report `*expr` in a dictionary literal, where mapping spread must use `**expr`.
+pub fn invalid_dict_spread_marker(span: Span) -> CompileError {
+    CompileError::syntax("Invalid dictionary spread marker `*`".to_string(), span)
+        .with_hint("Use `**expr` to spread a dictionary inside a dictionary literal")
+}
+
+/// Report attempted set literal spread, which RFC 038 intentionally leaves out of scope.
+pub fn set_literal_spread_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Set literal spread is not supported".to_string(), span)
+        .with_hint("Use a list or dictionary literal spread, or build the set with methods")
+}
+
 // -- Imports & decorators ----------------------------------------------------
 
 pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {

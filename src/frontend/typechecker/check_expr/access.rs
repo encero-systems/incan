@@ -92,7 +92,10 @@ impl TypeChecker {
                 let expected = call.value_enum.value_type.resolved_type();
                 if let Some((arg_ty, arg)) = call.arg_types.first().zip(call.args.first()) {
                     let expr = match arg {
-                        CallArg::Positional(expr) | CallArg::Named(_, expr) => expr,
+                        CallArg::Positional(expr)
+                        | CallArg::Named(_, expr)
+                        | CallArg::PositionalUnpack(expr)
+                        | CallArg::KeywordUnpack(expr) => expr,
                     };
                     if !self.types_compatible(arg_ty, &expected) {
                         self.errors.push(errors::type_mismatch(
@@ -247,7 +250,7 @@ impl TypeChecker {
                     && let Some(value_enum) = &enum_info.value_enum
                 {
                     return Some(ResolvedType::Function(
-                        vec![value_enum.value_type.resolved_type()],
+                        vec![CallableParam::positional(value_enum.value_type.resolved_type())],
                         Box::new(Self::value_enum_from_value_return_type(type_name)),
                     ));
                 }
@@ -324,58 +327,6 @@ impl TypeChecker {
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => Some(ResolvedType::Unknown),
-        }
-    }
-
-    /// Check value arguments at a method call site against already-resolved formal parameter types.
-    ///
-    /// `params` is the method’s `(name, type)` list after any call-site `Self` substitution (and, for RFC 054, after
-    /// substituting explicit bracketed type arguments into the signature). `arg_types` must be the types of `args`
-    /// in order as produced by the caller (typically by running the expression checker on each argument expression).
-    /// Emits a type-mismatch diagnostic when a provided argument is incompatible with the corresponding formal
-    /// parameter; missing arguments are not reported here (arity is handled elsewhere).
-    pub(in crate::frontend::typechecker::check_expr) fn validate_method_call_args(
-        &mut self,
-        params: &[(String, ResolvedType)],
-        args: &[CallArg],
-        arg_types: &[ResolvedType],
-    ) {
-        let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
-        let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
-
-        for (arg, ty) in args.iter().zip(arg_types.iter()) {
-            let expr = match arg {
-                CallArg::Positional(e) | CallArg::Named(_, e) => e,
-            };
-            match arg {
-                CallArg::Positional(_) => positional.push((ty.clone(), expr.span)),
-                CallArg::Named(name, _) => {
-                    named.insert(name.as_str(), (ty.clone(), expr.span));
-                }
-            }
-        }
-
-        let mut pos_idx = 0usize;
-        for (param_name, param_ty) in params {
-            let arg = if let Some(value) = named.get(param_name.as_str()) {
-                Some(value)
-            } else if pos_idx < positional.len() {
-                let value = positional.get(pos_idx);
-                pos_idx += 1;
-                value
-            } else {
-                None
-            };
-
-            if let Some((arg_ty, arg_span)) = arg
-                && !self.types_compatible(arg_ty, param_ty)
-            {
-                self.errors.push(errors::type_mismatch(
-                    &param_ty.to_string(),
-                    &arg_ty.to_string(),
-                    *arg_span,
-                ));
-            }
         }
     }
 
@@ -537,15 +488,15 @@ impl TypeChecker {
         &self,
         method_info: &MethodInfo,
         receiver_ty: &ResolvedType,
-    ) -> (Vec<(String, ResolvedType)>, ResolvedType) {
+    ) -> (Vec<CallableParam>, ResolvedType) {
         let params = method_info
             .params
             .iter()
-            .map(|(name, ty)| {
-                (
-                    name.clone(),
-                    self.substitute_self_in_resolved_type(ty.clone(), receiver_ty),
-                )
+            .map(|param| CallableParam {
+                name: param.name.clone(),
+                ty: self.substitute_self_in_resolved_type(param.ty.clone(), receiver_ty),
+                kind: param.kind,
+                has_default: param.has_default,
             })
             .collect();
         let return_type = self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);
@@ -960,7 +911,10 @@ impl TypeChecker {
         let arg_types: Vec<ResolvedType> = args
             .iter()
             .map(|arg| match arg {
-                CallArg::Positional(e) | CallArg::Named(_, e) => self.check_expr(e),
+                CallArg::Positional(e)
+                | CallArg::Named(_, e)
+                | CallArg::PositionalUnpack(e)
+                | CallArg::KeywordUnpack(e) => self.check_expr(e),
             })
             .collect();
 

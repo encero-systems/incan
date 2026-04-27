@@ -1,0 +1,7 @@
+def main() -> None:
+    tail: tuple[int, int] = (4, 5)
+    values = [1, *[2, 3], *tail]
+    defaults = {"trace": "disabled", "accept": "json"}
+    merged = {**defaults, "trace": "enabled"}
+    println(values[0] + values[1] + values[2] + values[3] + values[4])
+    println(merged["trace"])

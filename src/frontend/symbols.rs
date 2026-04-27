@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::ast::{Receiver, Span, Type};
+use crate::frontend::ast::{ParamKind, Receiver, Span, Type};
 use incan_core::interop::RustItemMetadata;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
@@ -145,7 +145,7 @@ impl SymbolTable {
             self.define(Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Function(FunctionInfo {
-                    params: vec![("msg".to_string(), ResolvedType::Str)],
+                    params: vec![CallableParam::named("msg", ResolvedType::Str, ParamKind::Normal)],
                     return_type: ResolvedType::Unit,
                     is_async: false,
                     type_params: vec![],
@@ -158,7 +158,11 @@ impl SymbolTable {
         self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Len).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("collection".to_string(), ResolvedType::Unknown)],
+                params: vec![CallableParam::named(
+                    "collection",
+                    ResolvedType::Unknown,
+                    ParamKind::Normal,
+                )],
                 return_type: ResolvedType::Int,
                 is_async: false,
                 type_params: vec![],
@@ -171,7 +175,7 @@ impl SymbolTable {
         self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Range).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("n".to_string(), ResolvedType::Int)],
+                params: vec![CallableParam::named("n", ResolvedType::Int, ParamKind::Normal)],
                 return_type: ResolvedType::Named("Range".to_string()), // Iterator-like
                 is_async: false,
                 type_params: vec![],
@@ -400,12 +404,62 @@ pub struct StaticInfo {
 /// Function information
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub type_params: Vec<String>,
     /// Explicit source-declared bounds per type parameter (RFC 023), keyed by type parameter name.
     pub type_param_bounds: HashMap<String, Vec<String>>,
+}
+
+/// Callable parameter metadata preserved after type resolution.
+///
+/// RFC 038 requires callable values to retain rest-parameter shape instead of collapsing to a flat list of types. The
+/// optional `name` lets explicit `Callable[...]` types keep unnamed fixed parameters while declarations and methods
+/// preserve names for keyword binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallableParam {
+    pub name: Option<String>,
+    pub ty: ResolvedType,
+    pub kind: ParamKind,
+    pub has_default: bool,
+}
+
+impl CallableParam {
+    /// Build metadata for a source-declared callable parameter.
+    pub fn named(name: impl Into<String>, ty: ResolvedType, kind: ParamKind) -> Self {
+        Self {
+            name: Some(name.into()),
+            ty,
+            kind,
+            has_default: false,
+        }
+    }
+
+    /// Build metadata for a source-declared callable parameter with default-value information.
+    pub fn named_with_default(name: impl Into<String>, ty: ResolvedType, kind: ParamKind, has_default: bool) -> Self {
+        Self {
+            name: Some(name.into()),
+            ty,
+            kind,
+            has_default,
+        }
+    }
+
+    /// Build metadata for an unnamed fixed parameter in a function type.
+    pub fn positional(ty: ResolvedType) -> Self {
+        Self {
+            name: None,
+            ty,
+            kind: ParamKind::Normal,
+            has_default: false,
+        }
+    }
+
+    /// Return the source name when the callable metadata has one.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
 }
 
 /// Type information
@@ -558,7 +612,7 @@ pub struct MethodInfo {
     pub type_param_bounds: HashMap<String, Vec<String>>,
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
     pub receiver: Option<Receiver>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool, // false for abstract methods (...)
@@ -591,8 +645,8 @@ pub enum ResolvedType {
     Named(String),
     /// Generic type with arguments
     Generic(String, Vec<ResolvedType>),
-    /// Function type
-    Function(Vec<ResolvedType>, Box<ResolvedType>),
+    /// Function type, including rest-parameter shape when known.
+    Function(Vec<CallableParam>, Box<ResolvedType>),
     /// Tuple type
     Tuple(Vec<ResolvedType>),
     /// Type variable (for generics)
@@ -707,7 +761,11 @@ impl std::fmt::Display for ResolvedType {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", p)?;
+                    match p.kind {
+                        ParamKind::Normal => write!(f, "{}", p.ty)?,
+                        ParamKind::RestPositional => write!(f, "*{}", p.ty)?,
+                        ParamKind::RestKeyword => write!(f, "**{}", p.ty)?,
+                    }
                 }
                 write!(f, ") -> {}", ret)
             }
@@ -845,7 +903,10 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             }
         }
         Type::Function(params, ret) => {
-            let resolved_params: Vec<_> = params.iter().map(|p| resolve_type(&p.node, symbols)).collect();
+            let resolved_params: Vec<_> = params
+                .iter()
+                .map(|p| CallableParam::positional(resolve_type(&p.node, symbols)))
+                .collect();
             let resolved_ret = resolve_type(&ret.node, symbols);
             ResolvedType::Function(resolved_params, Box::new(resolved_ret))
         }
@@ -946,7 +1007,10 @@ mod tests {
         let ty = resolve_type(&fn_single, &symbols);
         assert_eq!(
             ty,
-            ResolvedType::Function(vec![ResolvedType::Int], Box::new(ResolvedType::Int))
+            ResolvedType::Function(
+                vec![CallableParam::positional(ResolvedType::Int)],
+                Box::new(ResolvedType::Int),
+            )
         );
 
         // (int, str) -> bool (multi param)
@@ -960,7 +1024,13 @@ mod tests {
         let ty = resolve_type(&fn_multi, &symbols);
         assert_eq!(
             ty,
-            ResolvedType::Function(vec![ResolvedType::Int, ResolvedType::Str], Box::new(ResolvedType::Bool))
+            ResolvedType::Function(
+                vec![
+                    CallableParam::positional(ResolvedType::Int),
+                    CallableParam::positional(ResolvedType::Str),
+                ],
+                Box::new(ResolvedType::Bool),
+            )
         );
     }
 

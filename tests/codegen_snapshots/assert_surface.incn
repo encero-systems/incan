@@ -6,3 +6,11 @@ def check_basics() -> None:
     assert not false
     assert true
     assert 10 > 5, "ten should be greater than five"
+
+
+def encoded_len() -> int:
+    return 1
+
+
+def check_assert_eq_accepts_comparison_operand() -> None:
+    assert_eq(encoded_len() > 0, true)

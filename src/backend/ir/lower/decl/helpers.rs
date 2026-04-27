@@ -420,7 +420,10 @@ impl AstLowering {
             ast::Expr::List(items) => {
                 let mut out = Vec::new();
                 for item in items {
-                    out.push(Self::serialize_expr(&item.node)?);
+                    let ast::ListEntry::Element(value) = item else {
+                        return None;
+                    };
+                    out.push(Self::serialize_expr(&value.node)?);
                 }
                 Some(format!("[{}]", out.join(", ")))
             }

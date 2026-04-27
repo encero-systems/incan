@@ -54,8 +54,8 @@ use quote::{ToTokens, format_ident, quote};
 
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
-    CollectionMethodKind, IrExprKind, IrInteropCoercionKind, Literal as IrLiteral, MethodKind, TypedExpr, UnaryOp,
-    VarRefKind,
+    CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, Literal as IrLiteral,
+    MethodKind, TypedExpr, UnaryOp, VarRefKind,
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -90,6 +90,18 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Build a typed tuple-field read for compiler-expanded tuple unpacking.
+    pub(super) fn tuple_field_expr(expr: &TypedExpr, idx: usize, ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(expr.clone()),
+                field: idx.to_string(),
+            },
+            ty,
+        )
+        .with_span(expr.span)
+    }
+
     /// Emit one list-literal element, materializing owned sink semantics at the literal boundary.
     ///
     /// Incan `list[str]` literals should store owned Rust `String` elements up front, but ordinary Incan-to-Incan
@@ -107,6 +119,130 @@ impl<'a> IrEmitter<'a> {
                 target_ty: item_target_ty,
             },
         )
+    }
+
+    /// Emit a list literal while preserving direct and spread entry order.
+    fn emit_list_literal_entries(
+        &self,
+        items: &[IrListEntry],
+        item_target_ty: Option<&IrType>,
+    ) -> Result<TokenStream, EmitError> {
+        if items.iter().all(|entry| matches!(entry, IrListEntry::Element(_))) {
+            let item_tokens: Vec<TokenStream> = items
+                .iter()
+                .map(|entry| match entry {
+                    IrListEntry::Element(item) => self.emit_list_literal_item(item, item_target_ty),
+                    IrListEntry::Spread(_) => Err(EmitError::Unsupported(
+                        "internal error: unexpected list spread in direct-only literal emission".to_string(),
+                    )),
+                })
+                .collect::<Result<_, _>>()?;
+            return Ok(quote! { vec![#(#item_tokens),*] });
+        }
+
+        let steps: Vec<TokenStream> = items
+            .iter()
+            .map(|entry| match entry {
+                IrListEntry::Element(item) => {
+                    let item_tokens = self.emit_list_literal_item(item, item_target_ty)?;
+                    Ok(quote! { __incan_list.push(#item_tokens); })
+                }
+                IrListEntry::Spread(value) => {
+                    if let IrType::Tuple(items) = &value.ty {
+                        let mut pushes = Vec::with_capacity(items.len());
+                        for (idx, item_ty) in items.iter().enumerate() {
+                            let item = Self::tuple_field_expr(value, idx, item_ty.clone());
+                            let item_tokens = self.emit_list_literal_item(&item, item_target_ty)?;
+                            pushes.push(quote! { __incan_list.push(#item_tokens); });
+                        }
+                        Ok(quote! { #(#pushes)* })
+                    } else {
+                        let value_tokens = self.emit_expr(value)?;
+                        Ok(quote! { __incan_list.extend((#value_tokens).into_iter()); })
+                    }
+                }
+            })
+            .collect::<Result<_, EmitError>>()?;
+
+        Ok(quote! {{
+            let mut __incan_list = Vec::new();
+            #(#steps)*
+            __incan_list
+        }})
+    }
+
+    /// Emit a dictionary literal while preserving direct and spread entry order.
+    fn emit_dict_literal_entries(
+        &self,
+        pairs: &[IrDictEntry],
+        key_target_ty: Option<&IrType>,
+        value_target_ty: Option<&IrType>,
+    ) -> Result<TokenStream, EmitError> {
+        if pairs.is_empty() {
+            return Ok(quote! { HashMap::new() });
+        }
+
+        if pairs.iter().all(|entry| matches!(entry, IrDictEntry::Pair(_, _))) {
+            let pair_tokens: Vec<TokenStream> = pairs
+                .iter()
+                .map(|entry| match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        let key_tokens = self.emit_expr_for_use(
+                            key,
+                            ValueUseSite::CollectionElement {
+                                target_ty: key_target_ty,
+                            },
+                        )?;
+                        let value_tokens = self.emit_expr_for_use(
+                            value,
+                            ValueUseSite::CollectionElement {
+                                target_ty: value_target_ty,
+                            },
+                        )?;
+                        Ok(quote! { (#key_tokens, #value_tokens) })
+                    }
+                    IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
+                        "internal error: unexpected dict spread in direct-only literal emission".to_string(),
+                    )),
+                })
+                .collect::<Result<_, EmitError>>()?;
+            return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() });
+        }
+
+        let steps: Vec<TokenStream> = pairs
+            .iter()
+            .map(|entry| match entry {
+                IrDictEntry::Pair(key, value) => {
+                    let key_tokens = self.emit_expr_for_use(
+                        key,
+                        ValueUseSite::CollectionElement {
+                            target_ty: key_target_ty,
+                        },
+                    )?;
+                    let value_tokens = self.emit_expr_for_use(
+                        value,
+                        ValueUseSite::CollectionElement {
+                            target_ty: value_target_ty,
+                        },
+                    )?;
+                    Ok(quote! { __incan_dict.insert(#key_tokens, #value_tokens); })
+                }
+                IrDictEntry::Spread(value) => {
+                    let value_tokens = self.emit_expr(value)?;
+                    Ok(quote! {
+                        for (__incan_key, __incan_value) in (#value_tokens).into_iter() {
+                            __incan_dict.insert(__incan_key, __incan_value);
+                        }
+                    })
+                }
+            })
+            .collect::<Result<_, EmitError>>()?;
+
+        Ok(quote! {{
+            let mut __incan_dict = HashMap::new();
+            #(#steps)*
+            __incan_dict
+        }})
     }
 
     /// Return the target type carried by a value-use site, if the site has one.
@@ -156,23 +292,9 @@ impl<'a> IrEmitter<'a> {
                         _ => None,
                     },
                 };
-                let item_tokens: Vec<TokenStream> = items
-                    .iter()
-                    .map(|item| {
-                        self.emit_expr_for_use(
-                            item,
-                            ValueUseSite::CollectionElement {
-                                target_ty: item_target_ty,
-                            },
-                        )
-                    })
-                    .collect::<Result<_, _>>()?;
-                return Ok(quote! { vec![#(#item_tokens),*] });
+                return self.emit_list_literal_entries(items, item_target_ty);
             }
             IrExprKind::Dict(pairs) => {
-                if pairs.is_empty() {
-                    return Ok(quote! { HashMap::new() });
-                }
                 let (key_target_ty, value_target_ty) = match Self::use_site_target_ty(site) {
                     Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
                     _ => match &expr.ty {
@@ -180,25 +302,7 @@ impl<'a> IrEmitter<'a> {
                         _ => (None, None),
                     },
                 };
-                let pair_tokens: Vec<TokenStream> = pairs
-                    .iter()
-                    .map(|(key, value)| {
-                        let key_tokens = self.emit_expr_for_use(
-                            key,
-                            ValueUseSite::CollectionElement {
-                                target_ty: key_target_ty,
-                            },
-                        )?;
-                        let value_tokens = self.emit_expr_for_use(
-                            value,
-                            ValueUseSite::CollectionElement {
-                                target_ty: value_target_ty,
-                            },
-                        )?;
-                        Ok(quote! { (#key_tokens, #value_tokens) })
-                    })
-                    .collect::<Result<_, EmitError>>()?;
-                return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() });
+                return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty);
             }
             IrExprKind::Set(items) => {
                 if items.is_empty() {
@@ -460,16 +564,31 @@ impl<'a> IrEmitter<'a> {
                 func,
                 type_args,
                 args,
+                callable_signature,
                 canonical_path,
-            } => self.emit_call_expr(func, type_args, args, canonical_path.as_deref()),
+            } => self.emit_call_expr(
+                func,
+                type_args,
+                args,
+                callable_signature.as_ref(),
+                canonical_path.as_deref(),
+            ),
             IrExprKind::BuiltinCall { func, args } => self.emit_builtin_call(func, args),
             IrExprKind::MethodCall {
                 receiver,
                 method,
                 type_args,
                 args,
+                callable_signature,
                 arg_policy,
-            } => self.emit_method_call_expr(receiver, method, type_args, args, *arg_policy),
+            } => self.emit_method_call_expr(
+                receiver,
+                method,
+                type_args,
+                args,
+                callable_signature.as_ref(),
+                *arg_policy,
+            ),
             IrExprKind::KnownMethodCall { receiver, kind, args } => self.emit_known_method_call(receiver, kind, args),
 
             IrExprKind::Field { object, field } => self.emit_field_expr(object, field),
@@ -500,41 +619,15 @@ impl<'a> IrEmitter<'a> {
                     IrType::List(elem) => Some(elem.as_ref()),
                     _ => None,
                 };
-                let item_tokens: Vec<TokenStream> = items
-                    .iter()
-                    .map(|i| self.emit_list_literal_item(i, item_target_ty))
-                    .collect::<Result<_, _>>()?;
-                Ok(quote! { vec![#(#item_tokens),*] })
+                self.emit_list_literal_entries(items, item_target_ty)
             }
 
             IrExprKind::Dict(pairs) => {
-                if pairs.is_empty() {
-                    Ok(quote! { HashMap::new() })
-                } else {
-                    let (key_target_ty, value_target_ty) = match &expr.ty {
-                        IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
-                        _ => (None, None),
-                    };
-                    let pair_tokens: Vec<TokenStream> = pairs
-                        .iter()
-                        .map(|(k, v)| {
-                            let kk = self.emit_expr_for_use(
-                                k,
-                                ValueUseSite::CollectionElement {
-                                    target_ty: key_target_ty,
-                                },
-                            )?;
-                            let vv = self.emit_expr_for_use(
-                                v,
-                                ValueUseSite::CollectionElement {
-                                    target_ty: value_target_ty,
-                                },
-                            )?;
-                            Ok(quote! { (#kk, #vv) })
-                        })
-                        .collect::<Result<_, EmitError>>()?;
-                    Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() })
-                }
+                let (key_target_ty, value_target_ty) = match &expr.ty {
+                    IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
+                    _ => (None, None),
+                };
+                self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty)
             }
 
             IrExprKind::Set(items) => {
@@ -767,7 +860,7 @@ mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::expr::{
-        CollectionMethodKind, IrCallArg, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
+        CollectionMethodKind, IrCallArg, IrCallArgKind, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
     };
 
     #[test]
@@ -788,6 +881,7 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "html".to_string(),
@@ -797,6 +891,7 @@ mod tests {
                         IrType::String,
                     ),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Response".to_string()),
@@ -913,6 +1008,7 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(
                             IrExprKind::Var {
                                 name: "other".to_string(),
@@ -924,9 +1020,11 @@ mod tests {
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Bool(true), IrType::Bool),
                     },
                 ],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Dataset".to_string()),
@@ -964,6 +1062,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Get),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "word".to_string(),
@@ -1010,8 +1109,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::PreserveShape,
             },
             IrType::Option(Box::new(IrType::Int)),
@@ -1049,6 +1150,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Get),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("the".to_string()), IrType::String),
                 }],
             },
@@ -1127,6 +1229,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Index),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1143,6 +1246,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Count),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1159,6 +1263,7 @@ mod tests {
                 kind: MethodKind::Collection(CollectionMethodKind::Remove),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                 }],
             },
@@ -1176,10 +1281,12 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::Int(9), IrType::Int),
                     },
                 ],
@@ -1212,8 +1319,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("logs".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1257,10 +1366,12 @@ mod tests {
                 args: vec![
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(IrExprKind::String("order_lines".to_string()), IrType::String),
                     },
                     IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: TypedExpr::new(
                             IrExprKind::Var {
                                 name: "input_uri".to_string(),
@@ -1271,6 +1382,7 @@ mod tests {
                         ),
                     },
                 ],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1309,6 +1421,7 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Var {
                             name: "DEFAULT_NAME".to_string(),
@@ -1318,6 +1431,7 @@ mod tests {
                         IrType::String,
                     ),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Unknown,
@@ -1361,8 +1475,10 @@ mod tests {
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(IrExprKind::String("alice@example.com".to_string()), IrType::String),
                 }],
+                callable_signature: None,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Name".to_string()),

@@ -118,7 +118,7 @@ match await timeout_join(1.0, handle):
         remember(live_handle)
 ```
 
-Use `timeout_join()` for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and `TimeoutJoinOutcome.TimedOut(handle)` carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. For `spawn_blocking()` handles, `abort()` can only prevent queued work from starting; blocking work that has already started must finish on its own.
+Use `timeout_join()` for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and `TimeoutJoinOutcome.TimedOut(handle)` carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. If an outer cancellation boundary cancels the `timeout_join()` call itself before it returns, the helper-owned handle is dropped and the task is detached unless you arranged another completion path. For `spawn_blocking()` handles, `abort()` can only prevent queued work from starting; blocking work that has already started must finish on its own.
 
 ## Task Spawning
 
@@ -406,7 +406,7 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 
 **API:**
 
-- `Mutex(value)` — Create a mutex wrapping a value
+- `Mutex.new(value)` — Create a mutex wrapping a value
 - `await mutex.lock()` — Acquire lock, returns a guard
 - `guard.get()` — Read the value
 - `guard.set(new_value)` — Write a new value
@@ -415,7 +415,7 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 ```incan
 from std.async.sync import Mutex
 
-shared_counter = Mutex(0)
+shared_counter = Mutex.new(0)
 
 async def increment() -> None:
     guard = await shared_counter.lock()  # Blocks until lock acquired
@@ -443,7 +443,7 @@ async def increment():
 from std.async.sync import Mutex
 
 # Incan - lock wraps the data
-counter = Mutex(0)
+counter = Mutex.new(0)
 
 async def increment() -> None:
     guard = await counter.lock()
@@ -459,7 +459,7 @@ More efficient than Mutex when reads are frequent.
 
 **API:**
 
-- `RwLock(value)` — Create an RwLock wrapping a value
+- `RwLock.new(value)` — Create an RwLock wrapping a value
 - `await rwlock.read()` — Acquire read lock (shared with other readers)
 - `await rwlock.write()` — Acquire write lock (exclusive)
 - `guard.get()` — Read the value
@@ -468,7 +468,7 @@ More efficient than Mutex when reads are frequent.
 ```incan
 from std.async.sync import RwLock
 
-config = RwLock(Config(debug=False))
+config = RwLock.new(Config(debug=False))
 
 async def read_config() -> bool:
     guard = await config.read()  # Multiple readers allowed simultaneously
@@ -494,7 +494,7 @@ Counting semaphore — limits how many tasks can access a resource concurrently 
 
 **API:**
 
-- `Semaphore(n)` — Create with n permits
+- `Semaphore.new(n)` — Create with n permits
 - `await sem.acquire()` — Wait for and acquire a permit
 - Permit auto-releases when it goes out of scope
 
@@ -502,7 +502,7 @@ Counting semaphore — limits how many tasks can access a resource concurrently 
 from std.async.sync import Semaphore
 
 # Allow max 3 concurrent connections
-connection_limit = Semaphore(3)
+connection_limit = Semaphore.new(3)
 
 async def make_request() -> Response:
     permit = await connection_limit.acquire()  # Blocks if no permits
@@ -524,13 +524,13 @@ Synchronization point — makes N tasks wait until **all of them** reach the bar
 
 **API:**
 
-- `Barrier(n)` — Create barrier for n tasks
+- `Barrier.new(n)` — Create barrier for n tasks
 - `await barrier.wait()` — Wait until all n tasks reach this point
 
 ```incan
 from std.async.sync import Barrier
 
-barrier = Barrier(3)  # Wait for 3 tasks
+barrier = Barrier.new(3)  # Wait for 3 tasks
 
 async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 1")
@@ -541,7 +541,7 @@ async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 2")  # All start phase 2 together
 ```
 
-`barrier.wait()` is not cancel-safe. Do not place it directly inside a timeout or future race unless the whole barrier generation is being abandoned, because cancelling one participant can leave the remaining participants waiting for a task that will not arrive.
+`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
 
 !!! note "Python equivalent"
     `asyncio.Barrier(n)` (added in Python 3.11) works the same way.

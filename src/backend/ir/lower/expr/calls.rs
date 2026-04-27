@@ -1,22 +1,68 @@
 //! Call expression lowering: struct constructors, builtin dispatch, newtype checked construction, and regular function
 //! calls.
 
-use super::super::super::TypedExpr;
+use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{
-    BuiltinFn, IrCallArg, IrExprKind, IrInteropCoercionKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy,
-    Pattern, VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
+    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
 };
 use super::super::super::types::IrType;
+use super::super::super::{FunctionSignature, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
-use crate::frontend::typechecker::RustArgCoercionKind;
+use crate::frontend::symbols::{CallableParam, ResolvedType};
+use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
 
 impl AstLowering {
+    /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
+    fn callable_signature_from_params(&self, params: &[CallableParam], ret: &ResolvedType) -> FunctionSignature {
+        FunctionSignature {
+            params: params
+                .iter()
+                .enumerate()
+                .map(|(idx, param)| {
+                    let base_ty = self.lower_resolved_type(&param.ty);
+                    let ty = Self::lower_param_container_type(param.kind, base_ty);
+                    FunctionParam {
+                        name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                        ty,
+                        mutability: super::super::super::types::Mutability::Immutable,
+                        is_self: false,
+                        kind: param.kind,
+                        default: None,
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(ret),
+        }
+    }
+
+    fn callable_signature_for_callee_span(&self, span: ast::Span) -> Option<FunctionSignature> {
+        let info = self.type_info.as_ref()?;
+        match info.expr_type(span)? {
+            ResolvedType::Function(params, ret) if params.iter().any(|param| param.kind != ast::ParamKind::Normal) => {
+                Some(self.callable_signature_from_params(params, ret))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn callable_signature_for_call_span(&self, span: ast::Span) -> Option<FunctionSignature> {
+        let info = self.type_info.as_ref()?;
+        let params = info.call_site_callable_params(span)?;
+        Some(FunctionSignature {
+            params: self
+                .callable_signature_from_params(params, &ResolvedType::Unknown)
+                .params,
+            return_type: IrType::Unknown,
+        })
+    }
+
     /// Prefer monomorphized call-site type args from the typechecker (RFC 054); otherwise lower AST types.
     pub(super) fn lower_call_site_type_args(
         &self,
@@ -35,7 +81,10 @@ impl AstLowering {
 
     fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
         match arg {
-            ast::CallArg::Positional(e) | ast::CallArg::Named(_, e) => e,
+            ast::CallArg::Positional(e)
+            | ast::CallArg::Named(_, e)
+            | ast::CallArg::PositionalUnpack(e)
+            | ast::CallArg::KeywordUnpack(e) => e,
         }
     }
 
@@ -244,6 +293,7 @@ impl AstLowering {
                 1,
                 IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: TypedExpr::new(
                         IrExprKind::Literal(IrLiteral::StaticStr(error_type.node.to_string())),
                         IrType::StaticStr,
@@ -261,6 +311,7 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
+                callable_signature: self.callable_signature_for_callee_span(f.span),
                 canonical_path: imported_callee_path,
             },
             ret_ty,
@@ -310,8 +361,10 @@ impl AstLowering {
                     type_args: Vec::new(),
                     args: vec![IrCallArg {
                         name: None,
+                        kind: IrCallArgKind::Positional,
                         expr: lowered_value,
                     }],
+                    callable_signature: None,
                     arg_policy: MethodCallArgPolicy::Default,
                 },
                 IrType::Result(Box::new(struct_ty.clone()), Box::new(IrType::Unknown)),
@@ -361,8 +414,10 @@ impl AstLowering {
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
+                            kind: IrCallArgKind::Positional,
                             expr: panic_message,
                         }],
+                        callable_signature: None,
                         canonical_path: None,
                     },
                     struct_ty.clone(),
@@ -395,6 +450,10 @@ impl AstLowering {
                     let lowered_value = self.lower_expr_spanned(value)?;
                     Ok((String::new(), lowered_value))
                 }
+                ast::CallArg::PositionalUnpack(value) | ast::CallArg::KeywordUnpack(value) => {
+                    let lowered_value = self.lower_expr_spanned(value)?;
+                    Ok((String::new(), lowered_value))
+                }
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
         Ok((
@@ -408,21 +467,114 @@ impl AstLowering {
 
     /// Lower call arguments to IR expressions.
     ///
-    /// Handles both positional and named arguments.
+    /// Handles positional, named, and unpack arguments.
     pub(in crate::backend::ir::lower) fn lower_call_args(
         &mut self,
         args: &[ast::CallArg],
     ) -> Result<Vec<IrCallArg>, LoweringError> {
-        args.iter()
-            .map(|a| match a {
-                ast::CallArg::Positional(e) => Ok(IrCallArg {
+        let mut lowered = Vec::new();
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(e) => lowered.push(IrCallArg {
                     name: None,
+                    kind: IrCallArgKind::Positional,
                     expr: self.lower_expr_spanned(e)?,
                 }),
-                ast::CallArg::Named(name, e) => Ok(IrCallArg {
+                ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
                     name: Some(name.clone()),
+                    kind: IrCallArgKind::Named,
                     expr: self.lower_expr_spanned(e)?,
                 }),
+                ast::CallArg::PositionalUnpack(e) => {
+                    let expr = self.lower_expr_spanned(e)?;
+                    if let Some(FixedUnpackPlan::Positional(item_types)) =
+                        self.type_info.as_ref().and_then(|info| info.fixed_unpack_plan(e.span))
+                    {
+                        lowered.extend(self.lower_fixed_positional_unpack_args(&expr, item_types));
+                    } else {
+                        lowered.push(IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::PositionalUnpack,
+                            expr,
+                        });
+                    }
+                }
+                ast::CallArg::KeywordUnpack(e) => {
+                    let expr = self.lower_expr_spanned(e)?;
+                    if let Some(FixedUnpackPlan::Keyword(keys)) =
+                        self.type_info.as_ref().and_then(|info| info.fixed_unpack_plan(e.span))
+                    {
+                        lowered.extend(self.lower_fixed_keyword_unpack_args(&expr, keys));
+                    } else {
+                        lowered.push(IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::KeywordUnpack,
+                            expr,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(lowered)
+    }
+
+    /// Expand a typechecker-proven `*expr` shape into ordinary positional IR arguments.
+    fn lower_fixed_positional_unpack_args(&self, expr: &TypedExpr, item_types: &[ResolvedType]) -> Vec<IrCallArg> {
+        let items = match &expr.kind {
+            IrExprKind::Tuple(items) => items.clone(),
+            IrExprKind::List(items) => items
+                .iter()
+                .filter_map(|item| match item {
+                    IrListEntry::Element(value) => Some(value.clone()),
+                    IrListEntry::Spread(_) => None,
+                })
+                .collect(),
+            _ => item_types
+                .iter()
+                .enumerate()
+                .map(|(idx, ty)| {
+                    TypedExpr::new(
+                        IrExprKind::Field {
+                            object: Box::new(expr.clone()),
+                            field: idx.to_string(),
+                        },
+                        self.lower_resolved_type(ty),
+                    )
+                    .with_span(expr.span)
+                })
+                .collect(),
+        };
+
+        items
+            .into_iter()
+            .map(|expr| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr,
+            })
+            .collect()
+    }
+
+    /// Expand a typechecker-proven `**expr` key set into ordinary named IR arguments.
+    fn lower_fixed_keyword_unpack_args(&self, expr: &TypedExpr, keys: &[String]) -> Vec<IrCallArg> {
+        let IrExprKind::Dict(entries) = &expr.kind else {
+            return vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::KeywordUnpack,
+                expr: expr.clone(),
+            }];
+        };
+
+        entries
+            .iter()
+            .zip(keys.iter())
+            .filter_map(|(entry, name)| match entry {
+                IrDictEntry::Pair(_, value) => Some(IrCallArg {
+                    name: Some(name.clone()),
+                    kind: IrCallArgKind::Named,
+                    expr: value.as_ref().clone(),
+                }),
+                IrDictEntry::Spread(_) => None,
             })
             .collect()
     }

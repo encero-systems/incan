@@ -106,6 +106,50 @@ pub fn regular_enum_variant_value_not_allowed(enum_name: &str, variant_name: &st
     .with_hint("Use `enum Name(str):` or `enum Name(int):` for value enums")
 }
 
+pub fn duplicate_call_argument(callee: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Duplicate argument '{name}' when calling '{callee}'"), span)
+        .with_hint("Pass each fixed parameter at most once")
+}
+
+pub fn unknown_keyword_argument(callee: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Unexpected keyword argument '{name}' when calling '{callee}'"),
+        span,
+    )
+    .with_hint("Add a `**kwargs` rest parameter to capture arbitrary keyword arguments")
+}
+
+pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot use `{unpack}` unpacking when calling '{callee}' because the callee has no matching rest parameter"
+        ),
+        span,
+    )
+}
+
+pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Missing required argument '{name}' when calling '{callee}'"),
+        span,
+    )
+}
+
+pub fn duplicate_rest_parameter(kind: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Only one `{kind}` rest parameter is allowed in a callable signature"),
+        span,
+    )
+}
+
+pub fn invalid_rest_parameter_order(message: &str, span: Span) -> CompileError {
+    CompileError::type_error(message.to_string(), span)
+}
+
+pub fn rest_parameter_default_not_allowed(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Rest parameter '{name}' cannot declare a default value"), span)
+}
+
 // -- Decorators & namespaces -------------------------------------------------
 
 pub fn unknown_decorator(path: &str, span: Span) -> CompileError {

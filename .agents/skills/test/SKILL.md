@@ -18,6 +18,13 @@ Identify which compiler stages are affected by the current changes:
 | CLI behavior | Integration tests |
 | Formatter change | Property tests, integration tests |
 
+For non-trivial changes, do a quick pattern intake before writing or changing tests:
+
+- Identify the active area and downstream stages the behavior must survive.
+- Read 2-3 nearby tests or fixtures that already cover a similar behavior shape.
+- Name the source-of-truth boundary, such as the RFC, diagnostics catalog, stdlib registry, ownership policy, CLI reference, or docs contract.
+- Pick the narrowest failing test first, then the downstream verification that proves the behavior reaches the right stage.
+
 ## Step 2: Pick the right tests to write
 
 ### Decision tree
@@ -194,3 +201,15 @@ After tests pass, check:
 - [ ] Test functions that do fallible work return `Result`
 - [ ] Codegen snapshots are updated (no pending `cargo insta review`)
 - [ ] Both valid and invalid cases are covered for new diagnostics
+
+## Rust compiler error workflow
+
+When the task is to debug a Rust compiler error, collect the full context before changing code:
+
+- exact command that failed;
+- full diagnostic text, including error code, notes, help text, and secondary spans;
+- active features or build mode, especially default build vs. `rust-metadata`;
+- relevant function signature and nearby type definitions;
+- local precedent files or tests that show the intended pattern.
+
+Classify the root cause before proposing a fix: lifetime/borrow across an await or compiler boundary, missing trait bound, feature-gate/build-mode mismatch, orphan/coherence rule, missing import, or incomplete parser/typechecker/lowering/emission wiring. Prefer fixing the owning boundary over adding local conversion or clone workarounds.

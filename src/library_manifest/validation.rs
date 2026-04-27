@@ -12,16 +12,121 @@ use semver::Version;
 
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
-    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError,
-    VocabProviderManifest,
+    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
+    ParamKindExport, VocabProviderManifest,
 };
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
 pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
     validate_manifest_version(raw)?;
+    validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Validate exported callable parameter metadata before import code trusts it as a semantic signature.
+fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), LibraryManifestError> {
+    for function in &exports.functions {
+        validate_callable_params(&format!("function `{}`", function.name), &function.params)?;
+    }
+    for model in &exports.models {
+        for method in &model.methods {
+            validate_callable_params(
+                &format!("model `{}` method `{}`", model.name, method.name),
+                &method.params,
+            )?;
+        }
+    }
+    for class in &exports.classes {
+        for method in &class.methods {
+            validate_callable_params(
+                &format!("class `{}` method `{}`", class.name, method.name),
+                &method.params,
+            )?;
+        }
+    }
+    for trait_export in &exports.traits {
+        for method in &trait_export.methods {
+            validate_callable_params(
+                &format!("trait `{}` method `{}`", trait_export.name, method.name),
+                &method.params,
+            )?;
+        }
+    }
+    for newtype in &exports.newtypes {
+        for method in &newtype.methods {
+            validate_callable_params(
+                &format!("newtype `{}` method `{}`", newtype.name, method.name),
+                &method.params,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate one exported callable signature's rest-parameter metadata.
+fn validate_callable_params(owner: &str, params: &[ParamExport]) -> Result<(), LibraryManifestError> {
+    let mut saw_rest_positional = false;
+    let mut saw_rest_keyword = false;
+    let mut saw_rest = false;
+
+    for param in params {
+        match param.kind {
+            ParamKindExport::Normal => {
+                if saw_rest_keyword {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "{owner} parameter `{}` cannot appear after a `**kwargs` rest parameter",
+                        param.name
+                    )));
+                }
+                if saw_rest {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "{owner} parameter `{}` cannot appear after a rest parameter",
+                        param.name
+                    )));
+                }
+            }
+            ParamKindExport::RestPositional => {
+                if saw_rest_positional {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "{owner} declares more than one `*args` rest parameter"
+                    )));
+                }
+                if saw_rest_keyword {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "{owner} `*args` rest parameter must appear before `**kwargs`"
+                    )));
+                }
+                validate_rest_param_has_no_default(owner, param)?;
+                saw_rest_positional = true;
+                saw_rest = true;
+            }
+            ParamKindExport::RestKeyword => {
+                if saw_rest_keyword {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "{owner} declares more than one `**kwargs` rest parameter"
+                    )));
+                }
+                validate_rest_param_has_no_default(owner, param)?;
+                saw_rest_keyword = true;
+                saw_rest = true;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Reject rest parameters that claim default values across the manifest boundary.
+fn validate_rest_param_has_no_default(owner: &str, param: &ParamExport) -> Result<(), LibraryManifestError> {
+    if param.has_default {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} rest parameter `{}` cannot declare a default value",
+            param.name
+        )));
+    }
     Ok(())
 }
 

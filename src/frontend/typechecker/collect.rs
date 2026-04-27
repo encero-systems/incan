@@ -569,7 +569,14 @@ impl TypeChecker {
         let params: Vec<_> = func
             .params
             .iter()
-            .map(|p| (p.node.name.clone(), self.resolve_type_checked(&p.node.ty)))
+            .map(|p| {
+                CallableParam::named_with_default(
+                    p.node.name.clone(),
+                    self.resolve_type_checked(&p.node.ty),
+                    p.node.kind,
+                    p.node.default.is_some(),
+                )
+            })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
 

@@ -1,8 +1,9 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
@@ -15,8 +16,13 @@ use crate::cli::commands::common::{
 use crate::cli::prelude::ParsedModule;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
-use crate::frontend::ast::{Declaration, Program};
+use crate::frontend::ast::{
+    AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
+    Program, Spanned, Statement, Type,
+};
+use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::testing_markers::{TestingMarkerKind, load_testing_marker_semantics, resolve_testing_marker_kind};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
@@ -24,10 +30,17 @@ use crate::manifest::ProjectManifest;
 use sha2::{Digest, Sha256};
 
 use super::module_graph::collect_source_modules_for_test;
-use super::types::{TestInfo, TestResult};
+use super::types::{FixtureScope, TestInfo, TestResult};
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases, one `cargo test` per file.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct TestExecutionOptions {
+    pub no_capture: bool,
+    pub timeout: Option<Duration>,
+    pub jobs: usize,
+}
 
 fn parse_isolated_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
@@ -51,6 +64,309 @@ fn ast_with_inline_test_declarations(ast: &Program) -> Program {
         declarations,
         rust_module_path: ast.rust_module_path.clone(),
         warnings: ast.warnings.clone(),
+    }
+}
+
+/// Return whether a top-level function is a `std.testing.fixture` declaration.
+fn has_fixture_decorator(
+    decorators: &[crate::frontend::ast::Spanned<crate::frontend::ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
+) -> bool {
+    let Ok(semantics) = load_testing_marker_semantics() else {
+        return false;
+    };
+    decorators.iter().any(|decorator| {
+        resolve_testing_marker_kind(&decorator.node, aliases, &semantics) == Some(TestingMarkerKind::Fixture)
+    })
+}
+
+/// Remove shadowed fixture functions so execution uses the same "nearest fixture wins" rule as collection.
+fn prune_shadowed_fixture_declarations(ast: &mut Program) {
+    let aliases = decorator_resolution::collect_import_aliases(ast);
+    let mut last_fixture_decl = HashMap::new();
+    for (index, decl) in ast.declarations.iter().enumerate() {
+        if let Declaration::Function(func) = &decl.node
+            && has_fixture_decorator(&func.decorators, &aliases)
+        {
+            last_fixture_decl.insert(func.name.clone(), index);
+        }
+    }
+
+    ast.declarations = ast
+        .declarations
+        .iter()
+        .enumerate()
+        .filter(|(index, decl)| {
+            if let Declaration::Function(func) = &decl.node
+                && has_fixture_decorator(&func.decorators, &aliases)
+            {
+                return last_fixture_decl.get(&func.name) == Some(index);
+            }
+            true
+        })
+        .map(|(_, decl)| decl.clone())
+        .collect();
+}
+
+/// Build a stable de-duplication key for one imported item under an import declaration prefix.
+fn import_item_key(prefix: &str, item: &ImportItem) -> String {
+    format!("{prefix}:{}:{:?}", item.name, item.alias)
+}
+
+/// Drop repeated import bindings introduced by concatenating inherited conftests.
+fn dedupe_import_declarations(ast: &mut Program) {
+    let mut seen_imports = Vec::new();
+    let mut declarations = Vec::with_capacity(ast.declarations.len());
+
+    for mut decl in ast.declarations.drain(..) {
+        let keep = match &mut decl.node {
+            Declaration::Import(import) => match &mut import.kind {
+                ImportKind::From { module, items } => {
+                    let prefix = format!("from:{:?}:{:?}", import.visibility, module);
+                    items.retain(|item| {
+                        let key = import_item_key(&prefix, item);
+                        if seen_imports.contains(&key) {
+                            false
+                        } else {
+                            seen_imports.push(key);
+                            true
+                        }
+                    });
+                    !items.is_empty()
+                }
+                ImportKind::PubFrom { library, items } => {
+                    let prefix = format!("pub-from:{:?}:{library}", import.visibility);
+                    items.retain(|item| {
+                        let key = import_item_key(&prefix, item);
+                        if seen_imports.contains(&key) {
+                            false
+                        } else {
+                            seen_imports.push(key);
+                            true
+                        }
+                    });
+                    !items.is_empty()
+                }
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    version,
+                    features,
+                    items,
+                } => {
+                    let prefix = format!(
+                        "rust-from:{:?}:{crate_name}:{path:?}:{version:?}:{features:?}",
+                        import.visibility
+                    );
+                    items.retain(|item| {
+                        let key = import_item_key(&prefix, item);
+                        if seen_imports.contains(&key) {
+                            false
+                        } else {
+                            seen_imports.push(key);
+                            true
+                        }
+                    });
+                    !items.is_empty()
+                }
+                _ => {
+                    let key = format!("import:{import:?}");
+                    if seen_imports.contains(&key) {
+                        false
+                    } else {
+                        seen_imports.push(key);
+                        true
+                    }
+                }
+            },
+            _ => true,
+        };
+
+        if keep {
+            declarations.push(decl);
+        }
+    }
+
+    ast.declarations = declarations;
+}
+
+#[derive(Debug, Default)]
+struct TopLevelNames {
+    types: HashSet<String>,
+    values: HashSet<String>,
+}
+
+/// Collect top-level Rust item names that would collide if multiple Incan files were concatenated.
+fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
+    /// Add the Rust type/value namespace names contributed by one declaration.
+    fn collect_from_decl(decl: &Declaration, names: &mut TopLevelNames) {
+        match decl {
+            Declaration::Const(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Static(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Model(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Class(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Trait(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::TypeAlias(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::Newtype(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Enum(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::Function(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::TestModule(decl) => {
+                for nested in &decl.body {
+                    collect_from_decl(&nested.node, names);
+                }
+            }
+            Declaration::Import(_) | Declaration::Docstring(_) => {}
+        }
+    }
+
+    let mut names = TopLevelNames::default();
+    for decl in &program.declarations {
+        collect_from_decl(&decl.node, &mut names);
+    }
+    names
+}
+
+/// Return whether concatenating source files into one worker harness would collide at Rust module scope.
+///
+/// Worker batches can share one process only when their source files can coexist in the generated crate. If two files
+/// define the same model, function, or other top-level Rust item, the runner falls back to per-file harnesses.
+fn batch_has_cross_file_top_level_collision(
+    sources_by_file: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> bool {
+    if sources_by_file.len() <= 1 {
+        return false;
+    }
+
+    let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
+    let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
+    for (path, source) in sources_by_file {
+        let Ok(tokens) = lexer::lex(source) else {
+            return false;
+        };
+        let Ok(ast) =
+            parser::parse_with_context(&tokens, Some(path.to_string_lossy().as_ref()), library_imported_vocab)
+        else {
+            return false;
+        };
+        let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
+        for name in names.types {
+            if type_owner
+                .insert(name, path.clone())
+                .is_some_and(|owner| owner != *path)
+            {
+                return true;
+            }
+        }
+        for name in names.values {
+            if value_owner
+                .insert(name, path.clone())
+                .is_some_and(|owner| owner != *path)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Resolve a dotted expression path using local import aliases collected from the runner AST.
+fn resolved_expr_path(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
+    match &expr.node {
+        Expr::Ident(name) => aliases.get(name).cloned().or_else(|| Some(vec![name.clone()])),
+        Expr::Field(base, field) => {
+            let mut path = resolved_expr_path(base, aliases)?;
+            path.push(field.clone());
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+/// Return the condition from a runner-only one-argument `std.testing.assert(...)` call statement.
+fn runner_assert_condition(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Spanned<Expr>> {
+    let (path, args) = match &expr.node {
+        Expr::Call(callee, type_args, args) if type_args.is_empty() => (resolved_expr_path(callee, aliases)?, args),
+        Expr::MethodCall(base, method, type_args, args) if type_args.is_empty() => {
+            let mut path = resolved_expr_path(base, aliases)?;
+            path.push(method.clone());
+            (path, args)
+        }
+        _ => return None,
+    };
+    if args.len() != 1 {
+        return None;
+    }
+    if path.as_slice() != ["std", "testing", "assert"] {
+        return None;
+    }
+    let CallArg::Positional(condition) = &args[0] else {
+        return None;
+    };
+    Some(condition.clone())
+}
+
+/// Rewrite `std.testing.assert(condition)` expression statements in a statement body to native assert statements.
+fn normalize_runner_assert_statements_in_body(
+    body: &mut Vec<Spanned<Statement>>,
+    aliases: &HashMap<String, Vec<String>>,
+) {
+    for stmt in body {
+        match &mut stmt.node {
+            Statement::Expr(expr) => {
+                if let Some(condition) = runner_assert_condition(expr, aliases) {
+                    stmt.node = Statement::Assert(AssertStmt {
+                        kind: AssertKind::Condition(condition),
+                        message: None,
+                    });
+                }
+            }
+            Statement::If(if_stmt) => {
+                normalize_runner_assert_statements_in_body(&mut if_stmt.then_body, aliases);
+                for (_, body) in &mut if_stmt.elif_branches {
+                    normalize_runner_assert_statements_in_body(body, aliases);
+                }
+                if let Some(body) = &mut if_stmt.else_body {
+                    normalize_runner_assert_statements_in_body(body, aliases);
+                }
+            }
+            Statement::Loop(loop_stmt) => normalize_runner_assert_statements_in_body(&mut loop_stmt.body, aliases),
+            Statement::While(while_stmt) => normalize_runner_assert_statements_in_body(&mut while_stmt.body, aliases),
+            Statement::For(for_stmt) => normalize_runner_assert_statements_in_body(&mut for_stmt.body, aliases),
+            _ => {}
+        }
+    }
+}
+
+/// Normalize runner assertion helper call statements before lowering/codegen.
+fn normalize_runner_assert_statements(ast: &mut Program) {
+    let aliases = decorator_resolution::collect_import_aliases(ast);
+    for decl in &mut ast.declarations {
+        if let Declaration::Function(func) = &mut decl.node {
+            normalize_runner_assert_statements_in_body(&mut func.body, &aliases);
+        }
     }
 }
 
@@ -81,6 +397,7 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
 pub(super) struct PreparedTestFile {
     pub library_manifest_index: LibraryManifestIndex,
     pub ast: Program,
+    pub fixture_teardowns: HashMap<String, YieldFixtureTeardown>,
     pub source_modules: Vec<ParsedModule>,
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
@@ -88,6 +405,367 @@ pub(super) struct PreparedTestFile {
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+}
+
+/// Return the generated function name that contains the post-yield teardown body.
+fn yield_fixture_teardown_name(name: &str) -> String {
+    format!("__incan_fixture_teardown_{}", safe_fixture_ident(name))
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct YieldFixtureCapture {
+    name: String,
+    ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct YieldFixtureTeardown {
+    teardown_function: String,
+    captures: Vec<YieldFixtureCapture>,
+    value_ty: Type,
+}
+
+/// Infer primitive fixture-capture types from literal setup assignments when no explicit annotation is present.
+fn literal_type(expr: &Spanned<Expr>) -> Option<Type> {
+    match &expr.node {
+        Expr::Literal(crate::frontend::ast::Literal::Int(_)) => Some(Type::Simple("int".to_string())),
+        Expr::Literal(crate::frontend::ast::Literal::Float(_)) => Some(Type::Simple("float".to_string())),
+        Expr::Literal(crate::frontend::ast::Literal::Bool(_)) => Some(Type::Simple("bool".to_string())),
+        Expr::Literal(crate::frontend::ast::Literal::String(_)) => Some(Type::Simple("str".to_string())),
+        Expr::Literal(crate::frontend::ast::Literal::None) => Some(Type::Unit),
+        _ => None,
+    }
+}
+
+/// Return whether an expression reads a setup binding that must be preserved for yield teardown.
+fn expr_references_name(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Ident(ident) => ident == name,
+        Expr::Unary(_, inner) | Expr::Try(inner) | Expr::Paren(inner) | Expr::Yield(Some(inner)) => {
+            expr_references_name(&inner.node, name)
+        }
+        Expr::Binary(left, _, right) => {
+            expr_references_name(&left.node, name) || expr_references_name(&right.node, name)
+        }
+        Expr::Call(callee, _, args) => {
+            expr_references_name(&callee.node, name)
+                || args.iter().any(|arg| match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Named(_, expr)
+                    | CallArg::PositionalUnpack(expr)
+                    | CallArg::KeywordUnpack(expr) => expr_references_name(&expr.node, name),
+                })
+        }
+        Expr::Index(base, index) => expr_references_name(&base.node, name) || expr_references_name(&index.node, name),
+        Expr::Slice(base, slice) => {
+            expr_references_name(&base.node, name)
+                || slice
+                    .start
+                    .as_ref()
+                    .is_some_and(|expr| expr_references_name(&expr.node, name))
+                || slice
+                    .end
+                    .as_ref()
+                    .is_some_and(|expr| expr_references_name(&expr.node, name))
+                || slice
+                    .step
+                    .as_ref()
+                    .is_some_and(|expr| expr_references_name(&expr.node, name))
+        }
+        Expr::Field(base, _) => expr_references_name(&base.node, name),
+        Expr::MethodCall(base, _, _, args) => {
+            expr_references_name(&base.node, name)
+                || args.iter().any(|arg| match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Named(_, expr)
+                    | CallArg::PositionalUnpack(expr)
+                    | CallArg::KeywordUnpack(expr) => expr_references_name(&expr.node, name),
+                })
+        }
+        Expr::Match(scrutinee, arms) => {
+            expr_references_name(&scrutinee.node, name)
+                || arms.iter().any(|arm| match &arm.node.body {
+                    crate::frontend::ast::MatchBody::Expr(expr) => expr_references_name(&expr.node, name),
+                    crate::frontend::ast::MatchBody::Block(body) => body_references_name(body, name),
+                })
+        }
+        Expr::If(if_expr) => {
+            expr_references_name(&if_expr.condition.node, name)
+                || body_references_name(&if_expr.then_body, name)
+                || if_expr
+                    .else_body
+                    .as_ref()
+                    .is_some_and(|body| body_references_name(body, name))
+        }
+        Expr::Loop(loop_expr) => body_references_name(&loop_expr.body, name),
+        Expr::ListComp(comp) => {
+            expr_references_name(&comp.expr.node, name)
+                || expr_references_name(&comp.iter.node, name)
+                || comp
+                    .filter
+                    .as_ref()
+                    .is_some_and(|expr| expr_references_name(&expr.node, name))
+        }
+        Expr::DictComp(comp) => {
+            expr_references_name(&comp.key.node, name)
+                || expr_references_name(&comp.value.node, name)
+                || expr_references_name(&comp.iter.node, name)
+                || comp
+                    .filter
+                    .as_ref()
+                    .is_some_and(|expr| expr_references_name(&expr.node, name))
+        }
+        Expr::Closure(_, body) => expr_references_name(&body.node, name),
+        Expr::Tuple(items) | Expr::Set(items) => items.iter().any(|item| expr_references_name(&item.node, name)),
+        Expr::List(items) => items.iter().any(|item| match item {
+            ListEntry::Element(value) | ListEntry::Spread(value) => expr_references_name(&value.node, name),
+        }),
+        Expr::Dict(pairs) => pairs.iter().any(|entry| match entry {
+            DictEntry::Pair(key, value) => {
+                expr_references_name(&key.node, name) || expr_references_name(&value.node, name)
+            }
+            DictEntry::Spread(value) => expr_references_name(&value.node, name),
+        }),
+        Expr::Constructor(_, args) => args.iter().any(|arg| match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => expr_references_name(&expr.node, name),
+        }),
+        Expr::FString(parts) => parts.iter().any(|part| {
+            if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                expr_references_name(&expr.node, name)
+            } else {
+                false
+            }
+        }),
+        Expr::Range { start, end, .. } => {
+            expr_references_name(&start.node, name) || expr_references_name(&end.node, name)
+        }
+        Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Surface(_) => false,
+    }
+}
+
+/// Return whether a statement reads a setup binding that must be preserved for yield teardown.
+fn statement_references_name(stmt: &Statement, name: &str) -> bool {
+    match stmt {
+        Statement::Assignment(assign) => expr_references_name(&assign.value.node, name),
+        Statement::FieldAssignment(assign) => {
+            expr_references_name(&assign.object.node, name) || expr_references_name(&assign.value.node, name)
+        }
+        Statement::IndexAssignment(assign) => {
+            expr_references_name(&assign.object.node, name)
+                || expr_references_name(&assign.index.node, name)
+                || expr_references_name(&assign.value.node, name)
+        }
+        Statement::Return(Some(expr)) | Statement::Expr(expr) => expr_references_name(&expr.node, name),
+        Statement::If(if_stmt) => {
+            (match &if_stmt.condition {
+                crate::frontend::ast::Condition::Expr(expr) => expr_references_name(&expr.node, name),
+                crate::frontend::ast::Condition::Let { value, .. } => expr_references_name(&value.node, name),
+            }) || body_references_name(&if_stmt.then_body, name)
+                || if_stmt
+                    .elif_branches
+                    .iter()
+                    .any(|(expr, body)| expr_references_name(&expr.node, name) || body_references_name(body, name))
+                || if_stmt
+                    .else_body
+                    .as_ref()
+                    .is_some_and(|body| body_references_name(body, name))
+        }
+        Statement::Loop(loop_stmt) => body_references_name(&loop_stmt.body, name),
+        Statement::While(while_stmt) => {
+            (match &while_stmt.condition {
+                crate::frontend::ast::Condition::Expr(expr) => expr_references_name(&expr.node, name),
+                crate::frontend::ast::Condition::Let { value, .. } => expr_references_name(&value.node, name),
+            }) || body_references_name(&while_stmt.body, name)
+        }
+        Statement::For(for_stmt) => {
+            expr_references_name(&for_stmt.iter.node, name) || body_references_name(&for_stmt.body, name)
+        }
+        Statement::Assert(assert_stmt) => match &assert_stmt.kind {
+            AssertKind::Condition(expr) => expr_references_name(&expr.node, name),
+            AssertKind::Raises { call, .. } => expr_references_name(&call.node, name),
+            AssertKind::IsPattern { value, .. } => expr_references_name(&value.node, name),
+        },
+        Statement::CompoundAssignment(assign) => expr_references_name(&assign.value.node, name),
+        Statement::TupleUnpack(assign) => expr_references_name(&assign.value.node, name),
+        Statement::TupleAssign(assign) => {
+            assign
+                .targets
+                .iter()
+                .any(|target| expr_references_name(&target.node, name))
+                || expr_references_name(&assign.value.node, name)
+        }
+        Statement::ChainedAssignment(assign) => expr_references_name(&assign.value.node, name),
+        Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => false,
+        Statement::Break(Some(expr)) => expr_references_name(&expr.node, name),
+        Statement::Surface(_) | Statement::VocabBlock(_) => false,
+    }
+}
+
+/// Return whether any statement in a body reads a setup binding that must be preserved for yield teardown.
+fn body_references_name(body: &[Spanned<Statement>], name: &str) -> bool {
+    body.iter().any(|stmt| statement_references_name(&stmt.node, name))
+}
+
+/// Collect fixture parameters and typed setup locals that can be captured into generated teardown state.
+fn capture_candidates(
+    func: &crate::frontend::ast::FunctionDecl,
+    setup_body: &[Spanned<Statement>],
+) -> Vec<YieldFixtureCapture> {
+    let mut captures = func
+        .params
+        .iter()
+        .map(|param| YieldFixtureCapture {
+            name: param.node.name.clone(),
+            ty: param.node.ty.node.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    for stmt in setup_body {
+        if let Statement::Assignment(assign) = &stmt.node {
+            let ty = assign
+                .ty
+                .as_ref()
+                .map(|ty| ty.node.clone())
+                .or_else(|| literal_type(&assign.value));
+            if let Some(ty) = ty {
+                captures.push(YieldFixtureCapture {
+                    name: assign.name.clone(),
+                    ty,
+                });
+            }
+        }
+    }
+    captures
+}
+
+/// Split runner fixture functions with a top-level `yield` into setup and teardown functions.
+///
+/// Incan does not lower general generators yet. For runner fixtures, RFC019 only needs the pytest-style boundary:
+/// statements before `yield` produce the fixture value, and statements after `yield` are teardown. This transform keeps
+/// that boundary runner-local and leaves production lowering untouched.
+fn split_yield_fixture_declarations(ast: &mut Program) -> Result<HashMap<String, YieldFixtureTeardown>, String> {
+    let aliases = decorator_resolution::collect_import_aliases(ast);
+    let mut teardowns = HashMap::new();
+    let mut additional = Vec::new();
+
+    for decl in &mut ast.declarations {
+        let Declaration::Function(func) = &mut decl.node else {
+            continue;
+        };
+        if !has_fixture_decorator(&func.decorators, &aliases) {
+            continue;
+        }
+        let Some((yield_index, yielded)) = func.body.iter().enumerate().find_map(|(index, stmt)| {
+            if let Statement::Expr(expr) = &stmt.node
+                && let Expr::Yield(value) = &expr.node
+            {
+                Some((index, value.as_ref().map(|value| (**value).clone())))
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+
+        let Some(yielded) = yielded else {
+            return Err(format!(
+                "fixture `{}` uses `yield` teardown without a yielded value; runner fixtures must yield the fixture value",
+                func.name
+            ));
+        };
+        let teardown_name = yield_fixture_teardown_name(&func.name);
+        let mut setup_body = func.body[..yield_index].to_vec();
+        let teardown_body = if yield_index + 1 < func.body.len() {
+            func.body[yield_index + 1..].to_vec()
+        } else {
+            vec![Spanned::new(Statement::Pass, func.body[yield_index].span)]
+        };
+        let captures = capture_candidates(func, &setup_body)
+            .into_iter()
+            .filter(|capture| body_references_name(&teardown_body, &capture.name))
+            .collect::<Vec<_>>();
+        if let Some(name) = captures
+            .iter()
+            .filter(|capture| rust_type_for_fixture_cache(&capture.ty).is_none())
+            .map(|capture| capture.name.as_str())
+            .next()
+        {
+            return Err(format!(
+                "fixture `{}` uses `yield` teardown with captured setup local `{name}` whose type cannot be stored by the runner; add an explicit primitive or tuple type annotation",
+                func.name
+            ));
+        }
+
+        if captures.is_empty() {
+            setup_body.push(Spanned::new(
+                Statement::Return(Some(yielded)),
+                func.body[yield_index].span,
+            ));
+        } else {
+            let mut tuple_items = Vec::with_capacity(1 + captures.len());
+            tuple_items.push(yielded);
+            tuple_items.extend(
+                captures
+                    .iter()
+                    .map(|capture| Spanned::new(Expr::Ident(capture.name.clone()), func.body[yield_index].span)),
+            );
+            setup_body.push(Spanned::new(
+                Statement::Return(Some(Spanned::new(
+                    Expr::Tuple(tuple_items),
+                    func.body[yield_index].span,
+                ))),
+                func.body[yield_index].span,
+            ));
+        }
+
+        let mut teardown_func = func.clone();
+        teardown_func.decorators.clear();
+        teardown_func.name = teardown_name.clone();
+        teardown_func.params = captures
+            .iter()
+            .map(|capture| {
+                Spanned::new(
+                    crate::frontend::ast::Param {
+                        is_mut: false,
+                        name: capture.name.clone(),
+                        ty: Spanned::new(capture.ty.clone(), func.body[yield_index].span),
+                        kind: ParamKind::Normal,
+                        default: None,
+                    },
+                    func.body[yield_index].span,
+                )
+            })
+            .collect();
+        teardown_func.return_type.node = Type::Unit;
+        teardown_func.body = teardown_body;
+        let original_return_type = func.return_type.node.clone();
+        if !captures.is_empty() {
+            let mut state_types = Vec::with_capacity(1 + captures.len());
+            state_types.push(Spanned::new(original_return_type.clone(), func.return_type.span));
+            state_types.extend(
+                captures
+                    .iter()
+                    .map(|capture| Spanned::new(capture.ty.clone(), func.return_type.span)),
+            );
+            func.return_type.node = Type::Tuple(state_types);
+        }
+        func.body = setup_body;
+        teardowns.insert(
+            func.name.clone(),
+            YieldFixtureTeardown {
+                teardown_function: teardown_name,
+                captures,
+                value_ty: original_return_type,
+            },
+        );
+        additional.push(Spanned::new(Declaration::Function(teardown_func), decl.span));
+    }
+
+    ast.declarations.extend(additional);
+    Ok(teardowns)
 }
 
 fn canonical_path_for_cache_key(path: &Path) -> PathBuf {
@@ -242,10 +920,20 @@ fn merge_test_runner_dependencies(
     Ok(merged)
 }
 
-fn file_batch_dir_suffix(file_path: &Path) -> String {
-    let p = fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+/// Build a stable generated-crate suffix for one worker batch, which may contain multiple source files.
+fn file_batch_dir_suffix(file_paths: &[PathBuf]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(p.to_string_lossy().as_bytes());
+    let mut paths = file_paths.to_vec();
+    paths.sort();
+    paths.dedup();
+    let multi_file = paths.len() > 1;
+    for file_path in paths {
+        let p = fs::canonicalize(&file_path).unwrap_or(file_path);
+        hasher.update(p.to_string_lossy().as_bytes());
+        if multi_file {
+            hasher.update(b"\0");
+        }
+    }
     let digest = hex::encode(hasher.finalize());
     format!("batch_{}", &digest[..16])
 }
@@ -303,43 +991,531 @@ fn harness_fn_name(test: &TestInfo, index: usize) -> String {
     format!("incan_harness_{index}_{slug}")
 }
 
+/// Render a Rust string literal suitable for generated harness code.
+fn rust_string_literal(value: &str) -> String {
+    format!("{value:?}")
+}
+
+/// Generate setup and argument expression for a built-in fixture.
+fn builtin_fixture_arg(
+    name: &str,
+    index: usize,
+    setup: &mut String,
+    created_builtins: &mut HashSet<String>,
+) -> Option<String> {
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let ident = format!("__incan_fixture_{index}_{safe_name}");
+    match name {
+        "tmp_path" => {
+            if created_builtins.insert(name.to_string()) {
+                setup.push_str(&format!(
+                    "        let {ident} = std::env::temp_dir().join(format!(\"incan-test-{{}}-{index}-tmp-path\", std::process::id()));\n"
+                ));
+                setup.push_str(&format!(
+                    "        if let Err(err) = std::fs::create_dir_all(&{ident}) {{ panic!(\"failed to create tmp_path fixture: {{}}\", err); }}\n"
+                ));
+            }
+            Some(format!("{ident}.clone()"))
+        }
+        "tmp_workdir" => {
+            if created_builtins.insert(name.to_string()) {
+                setup.push_str(&format!(
+                    "        let {ident} = std::env::temp_dir().join(format!(\"incan-test-{{}}-{index}-tmp-workdir\", std::process::id()));\n"
+                ));
+                setup.push_str(&format!(
+                    "        if let Err(err) = std::fs::create_dir_all(&{ident}) {{ panic!(\"failed to create tmp_workdir fixture: {{}}\", err); }}\n"
+                ));
+                setup.push_str(&format!(
+                    "        if let Err(err) = std::env::set_current_dir(&{ident}) {{ panic!(\"failed to enter tmp_workdir fixture: {{}}\", err); }}\n"
+                ));
+            }
+            Some(format!("{ident}.clone()"))
+        }
+        "env" => {
+            if created_builtins.insert(name.to_string()) {
+                setup.push_str(&format!(
+                    "        let mut {ident} = incan_stdlib::testing::TestEnv::new();\n"
+                ));
+            }
+            Some(format!("&mut {ident}"))
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FixtureExecutionInfo {
+    params: Vec<String>,
+    scope: FixtureScope,
+    has_teardown: bool,
+    return_rust_type: Option<String>,
+    state_rust_type: Option<String>,
+    teardown: Option<YieldFixtureTeardown>,
+}
+
+/// Convert a fixture name into an identifier fragment suitable for generated Rust.
+fn safe_fixture_ident(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// Return the shared generated cache static name for a broader-scope fixture.
+fn fixture_cache_static_name(name: &str) -> String {
+    let safe_name = safe_fixture_ident(name);
+    format!("__INCAN_FIXTURE_CACHE_{}", safe_name.to_ascii_uppercase())
+}
+
+/// Return the local generated Rust binding that stores one fixture's setup/teardown state.
+fn fixture_state_ident(index: usize, name: &str) -> String {
+    format!("__incan_fixture_state_{index}_{}", safe_fixture_ident(name))
+}
+
+/// Return the local generated Rust binding that is passed to the user test as the fixture value.
+fn fixture_value_ident(index: usize, name: &str) -> String {
+    format!("__incan_fixture_value_{index}_{}", safe_fixture_ident(name))
+}
+
+/// Generate an expression that calls a fixture, recursively filling fixture dependencies.
+fn fixture_arg(
+    name: &str,
+    index: usize,
+    setup: &mut String,
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+    created_builtins: &mut HashSet<String>,
+    teardown_steps: &mut Vec<String>,
+    visiting: &mut Vec<String>,
+) -> String {
+    if let Some(expr) = builtin_fixture_arg(name, index, setup, created_builtins) {
+        return expr;
+    }
+
+    if visiting.iter().any(|existing| existing == name) {
+        return format!("super::{name}()");
+    }
+    visiting.push(name.to_string());
+    let args = fixtures
+        .get(name)
+        .map(|fixture| {
+            fixture
+                .params
+                .iter()
+                .map(|param| {
+                    fixture_arg(
+                        param,
+                        index,
+                        setup,
+                        fixtures,
+                        created_builtins,
+                        teardown_steps,
+                        visiting,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let _ = visiting.pop();
+    let Some(fixture) = fixtures.get(name) else {
+        return format!("super::{name}({args})");
+    };
+    let Some(return_rust_type) = fixture.return_rust_type.as_ref() else {
+        return format!("super::{name}({args})");
+    };
+    if fixture.has_teardown {
+        let Some(teardown) = &fixture.teardown else {
+            return format!("super::{name}({args})");
+        };
+        if fixture.scope == FixtureScope::Function {
+            let state_ident = fixture_state_ident(index, name);
+            let value_ident = fixture_value_ident(index, name);
+            setup.push_str(&format!("        let {state_ident} = super::{name}({args});\n"));
+            if teardown.captures.is_empty() {
+                setup.push_str(&format!("        let {value_ident} = {state_ident};\n"));
+                teardown_steps.push(format!("super::{}();", teardown.teardown_function));
+            } else {
+                let capture_names = teardown
+                    .captures
+                    .iter()
+                    .map(|capture| format!("__incan_fixture_capture_{}_{}", safe_fixture_ident(name), capture.name))
+                    .collect::<Vec<_>>();
+                setup.push_str(&format!(
+                    "        let ({value_ident}, {}) = {state_ident};\n",
+                    capture_names.join(", ")
+                ));
+                teardown_steps.push(format!(
+                    "super::{}({});",
+                    teardown.teardown_function,
+                    capture_names.join(", ")
+                ));
+            }
+            return value_ident;
+        }
+        let static_name = fixture_cache_static_name(name);
+        if teardown.captures.is_empty() {
+            return format!(
+                "{{\n\
+                     let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
+                     let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     let Some(__incan_value) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                     __incan_value.clone()\n\
+                 }}"
+            );
+        }
+        return format!(
+            "{{\n\
+                     let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
+                     let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     let Some(__incan_state) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                     let __incan_value: &{return_rust_type} = &__incan_state.0;\n\
+                     __incan_value.clone()\n\
+                 }}"
+        );
+    }
+    if fixture.scope == FixtureScope::Function {
+        return format!("super::{name}({args})");
+    }
+
+    let static_name = fixture_cache_static_name(name);
+    format!(
+        "{{\n\
+                 let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
+                 let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new(super::{name}({args}))); }}\n\
+                 let Some(__incan_boxed) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                 let Some(__incan_value) = __incan_boxed.downcast_ref::<{return_rust_type}>() else {{ panic!(\"fixture cache `{name}` had an unexpected type\"); }};\n\
+                 __incan_value.clone()\n\
+             }}"
+    )
+}
+
+/// Generate the body statement that invokes one collected test case.
+fn harness_call(test: &TestInfo, index: usize, fixtures: &HashMap<String, FixtureExecutionInfo>) -> String {
+    let mut setup = String::new();
+    let mut args = Vec::new();
+    let mut teardown_steps = Vec::new();
+    let mut used_fixtures = HashSet::new();
+    let mut created_builtins = HashSet::new();
+    let parametrize = test.parametrize_call.as_ref();
+
+    for param_name in &test.parameter_names {
+        if let Some(call) = parametrize
+            && let Some(pos) = call.argument_names.iter().position(|name| name == param_name)
+            && let Some(value) = call.rust_arguments.get(pos)
+        {
+            args.push(value.clone());
+            continue;
+        }
+
+        if test.required_fixtures.iter().any(|fixture| fixture == param_name) {
+            used_fixtures.insert(param_name.clone());
+            args.push(fixture_arg(
+                param_name,
+                index,
+                &mut setup,
+                fixtures,
+                &mut created_builtins,
+                &mut teardown_steps,
+                &mut Vec::new(),
+            ));
+        }
+    }
+
+    if test.parameter_names.is_empty() {
+        if let Some(call) = parametrize {
+            args.extend(call.rust_arguments.clone());
+        }
+        for fixture in &test.required_fixtures {
+            used_fixtures.insert(fixture.clone());
+            args.push(fixture_arg(
+                fixture,
+                index,
+                &mut setup,
+                fixtures,
+                &mut created_builtins,
+                &mut teardown_steps,
+                &mut Vec::new(),
+            ));
+        }
+    }
+
+    for fixture in &test.required_fixtures {
+        if !used_fixtures.contains(fixture) {
+            let expr = fixture_arg(
+                fixture,
+                index,
+                &mut setup,
+                fixtures,
+                &mut created_builtins,
+                &mut teardown_steps,
+                &mut Vec::new(),
+            );
+            setup.push_str(&format!("        let _ = {expr};\n"));
+        }
+    }
+
+    let joined = args.join(", ");
+    if teardown_steps.is_empty() {
+        return format!("{setup}        super::{}({joined});\n", test.function_name);
+    }
+
+    let mut teardown = String::new();
+    for step in teardown_steps.iter().rev() {
+        teardown.push_str("        ");
+        teardown.push_str(step);
+        teardown.push('\n');
+    }
+    format!(
+        "{setup}        let __incan_test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
+                     super::{}({joined});\n\
+                 }}));\n\
+         {teardown}        if let Err(__incan_panic) = __incan_test_result {{ std::panic::resume_unwind(__incan_panic); }}\n",
+        test.function_name
+    )
+}
+
+/// Map cacheable fixture return types to the Rust types stored by generated module/session fixture caches.
+fn rust_type_for_fixture_cache(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Simple(name) => match name.as_str() {
+            "int" => Some("i64".to_string()),
+            "float" => Some("f64".to_string()),
+            "bool" => Some("bool".to_string()),
+            "str" => Some("String".to_string()),
+            _ => None,
+        },
+        Type::Unit => Some("()".to_string()),
+        Type::Tuple(elements) => {
+            let mut rendered = Vec::new();
+            for element in elements {
+                rendered.push(rust_type_for_fixture_cache(&element.node)?);
+            }
+            Some(format!("({})", rendered.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+/// Collect runner-only fixture lifecycle metadata used by generated harness calls.
+fn collect_fixture_execution_info(
+    ast: &crate::frontend::ast::Program,
+    fixture_teardowns: &HashMap<String, YieldFixtureTeardown>,
+) -> HashMap<String, FixtureExecutionInfo> {
+    let aliases = decorator_resolution::collect_import_aliases(ast);
+    let semantics = load_testing_marker_semantics().ok();
+    ast.declarations
+        .iter()
+        .filter_map(|decl| {
+            if let crate::frontend::ast::Declaration::Function(func) = &decl.node {
+                let is_fixture = semantics.as_ref().is_some_and(|semantics| {
+                    func.decorators.iter().any(|decorator| {
+                        resolve_testing_marker_kind(&decorator.node, &aliases, semantics)
+                            == Some(TestingMarkerKind::Fixture)
+                    })
+                });
+                if !is_fixture {
+                    return None;
+                }
+                let mut scope = FixtureScope::Function;
+                if let Some(semantics) = semantics.as_ref() {
+                    for decorator in &func.decorators {
+                        if resolve_testing_marker_kind(&decorator.node, &aliases, semantics)
+                            != Some(TestingMarkerKind::Fixture)
+                        {
+                            continue;
+                        }
+                        for arg in &decorator.node.args {
+                            if let crate::frontend::ast::DecoratorArg::Named(name, value) = arg
+                                && name == &semantics.fixture_scope_arg
+                                && let crate::frontend::ast::DecoratorArgValue::Expr(expr) = value
+                                && let Expr::Literal(crate::frontend::ast::Literal::String(value)) = &expr.node
+                            {
+                                scope = match value.as_str() {
+                                    value if value == semantics.fixture_scope_module.as_str() => FixtureScope::Module,
+                                    value if value == semantics.fixture_scope_session.as_str() => FixtureScope::Session,
+                                    _ => FixtureScope::Function,
+                                };
+                            }
+                        }
+                    }
+                }
+                let teardown = fixture_teardowns.get(&func.name).cloned();
+                Some((
+                    func.name.clone(),
+                    FixtureExecutionInfo {
+                        params: func.params.iter().map(|param| param.node.name.clone()).collect(),
+                        scope,
+                        has_teardown: teardown.is_some(),
+                        return_rust_type: teardown
+                            .as_ref()
+                            .and_then(|teardown| rust_type_for_fixture_cache(&teardown.value_ty))
+                            .or_else(|| rust_type_for_fixture_cache(&func.return_type.node)),
+                        state_rust_type: rust_type_for_fixture_cache(&func.return_type.node),
+                        teardown,
+                    },
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
 /// shot.
 ///
 /// The generated harness resets the process cwd to the source project root before each test so fixture paths behave
 /// the same way as ordinary `incan run/build/test` entrypoints rather than inheriting the generated temp crate path.
-fn inject_file_test_harness(rust_code: &str, tests: &[TestInfo], project_root: &Path) -> String {
+fn inject_file_test_harness(
+    rust_code: &str,
+    tests: &[TestInfo],
+    project_root: &Path,
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+) -> String {
     let mut out = rust_code.to_string();
-    let project_root_literal = format!("{:?}", project_root.to_string_lossy());
+    let project_root_literal = project_root.to_string_lossy().to_string();
     out.push_str("\n\n#[cfg(test)]\nmod ");
     out.push_str(INCAN_FILE_TEST_MOD);
     out.push_str(" {\nuse super::*;\n");
+    for (name, fixture) in fixtures {
+        if fixture.scope == FixtureScope::Function {
+            continue;
+        }
+        if fixture.has_teardown {
+            if let Some(state_rust_type) = &fixture.state_rust_type {
+                out.push_str("static ");
+                out.push_str(&fixture_cache_static_name(name));
+                out.push_str(": std::sync::OnceLock<std::sync::Mutex<Option<");
+                out.push_str(state_rust_type);
+                out.push_str(">>> = std::sync::OnceLock::new();\n");
+            }
+        } else if fixture.return_rust_type.is_some() {
+            out.push_str("static ");
+            out.push_str(&fixture_cache_static_name(name));
+            out.push_str(
+                ": std::sync::OnceLock<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>> = std::sync::OnceLock::new();\n",
+            );
+        }
+    }
+    out.push_str(
+        "struct __IncanCwdGuard(Option<std::path::PathBuf>);\n\
+         impl Drop for __IncanCwdGuard {\n\
+             /// Restore the cwd that was active before the generated test ran.\n\
+             fn drop(&mut self) {\n\
+                 if let Some(path) = self.0.as_ref() { let _ = std::env::set_current_dir(path); }\n\
+             }\n\
+         }\n",
+    );
+    let teardown_fixtures = ordered_teardown_fixtures(tests, fixtures);
     for (index, t) in tests.iter().enumerate() {
         let fname = harness_fn_name(t, index);
-        let call = match &t.parametrize_call {
-            Some(pc) => format!("    super::{}({});\n", t.function_name, pc.rust_args),
-            None => format!("    super::{}();\n", t.function_name),
-        };
+        let call = harness_call(t, index, fixtures);
         out.push_str("    #[test]\n    fn ");
         out.push_str(&fname);
         out.push_str("() {\n");
+        out.push_str("        let __incan_cwd_guard = __IncanCwdGuard(std::env::current_dir().ok());\n");
+        out.push_str("        let _ = &__incan_cwd_guard;\n");
         out.push_str("        if let Err(err) = std::env::set_current_dir(");
-        out.push_str(&project_root_literal);
+        out.push_str(&rust_string_literal(&project_root_literal));
         out.push_str(") {\n");
         out.push_str("            panic!(\"failed to set generated test cwd: {}\", err);\n");
         out.push_str("        }\n");
         out.push_str(&call);
         out.push_str("    }\n");
     }
+    if !teardown_fixtures.is_empty() {
+        out.push_str("    #[test]\n    fn zzzz_incan_harness_teardown_cached_fixtures() {\n");
+        out.push_str("        let __incan_cwd_guard = __IncanCwdGuard(std::env::current_dir().ok());\n");
+        out.push_str("        let _ = &__incan_cwd_guard;\n");
+        out.push_str("        if let Err(err) = std::env::set_current_dir(");
+        out.push_str(&rust_string_literal(&project_root_literal));
+        out.push_str(") {\n");
+        out.push_str("            panic!(\"failed to set generated test cwd: {}\", err);\n");
+        out.push_str("        }\n");
+        for name in teardown_fixtures.iter().rev() {
+            let Some(fixture) = fixtures.get(name) else {
+                continue;
+            };
+            let Some(teardown) = &fixture.teardown else {
+                continue;
+            };
+            let static_name = fixture_cache_static_name(name);
+            out.push_str(&format!(
+                "        if let Some(__incan_cache) = {static_name}.get() {{\n\
+                         let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                         if let Some(__incan_state) = __incan_guard.take() {{\n"
+            ));
+            if teardown.captures.is_empty() {
+                out.push_str("            let _ = __incan_state;\n");
+                out.push_str(&format!("            super::{}();\n", teardown.teardown_function));
+            } else {
+                let capture_names = teardown
+                    .captures
+                    .iter()
+                    .map(|capture| format!("__incan_fixture_capture_{}_{}", safe_fixture_ident(name), capture.name))
+                    .collect::<Vec<_>>();
+                out.push_str(&format!(
+                    "            let (_, {}) = __incan_state;\n",
+                    capture_names.join(", ")
+                ));
+                out.push_str(&format!(
+                    "            super::{}({});\n",
+                    teardown.teardown_function,
+                    capture_names.join(", ")
+                ));
+            }
+            out.push_str("                         }\n        }\n");
+        }
+        out.push_str("    }\n");
+    }
     out.push_str("}\n");
     out
+}
+
+/// Add a broader-scoped teardown fixture after its dependencies so reverse iteration tears dependents down first.
+fn push_fixture_order(name: &str, fixtures: &HashMap<String, FixtureExecutionInfo>, ordered: &mut Vec<String>) {
+    if ordered.iter().any(|existing| existing == name) {
+        return;
+    }
+    let Some(fixture) = fixtures.get(name) else {
+        return;
+    };
+    for dependency in &fixture.params {
+        push_fixture_order(dependency, fixtures, ordered);
+    }
+    if fixture.scope != FixtureScope::Function && fixture.has_teardown {
+        ordered.push(name.to_string());
+    }
+}
+
+/// Return broader-scoped teardown fixtures used by a worker batch in setup dependency order.
+fn ordered_teardown_fixtures(tests: &[TestInfo], fixtures: &HashMap<String, FixtureExecutionInfo>) -> Vec<String> {
+    let mut ordered = Vec::new();
+    for test in tests {
+        for fixture in &test.required_fixtures {
+            push_fixture_order(fixture, fixtures, &mut ordered);
+        }
+    }
+    ordered
 }
 
 /// Parse `cargo test` / libtest lines: `test <name> ... ok|FAILED`.
 fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
     let mut map = HashMap::new();
+    let mut pending_name: Option<String> = None;
     for line in combined.lines() {
         let line = line.trim();
+        if line == "ok" {
+            if let Some(name) = pending_name.take() {
+                map.insert(name, true);
+            }
+            continue;
+        }
         let Some(rest) = line.strip_prefix("test ") else {
             continue;
         };
@@ -351,6 +1527,8 @@ fn parse_libtest_outcomes(combined: &str) -> HashMap<String, bool> {
         let failed = status.starts_with("FAILED");
         if passed || failed {
             map.insert(normalize_libtest_test_name(name), passed);
+        } else {
+            pending_name = Some(normalize_libtest_test_name(name));
         }
     }
     map
@@ -415,6 +1593,17 @@ fn map_batch_results(
 
     let outcomes = parse_libtest_outcomes(combined_output);
     let per_test_ms = elapsed.as_millis() / tests.len().max(1) as u128;
+    let batch_failed = combined_output.contains("test result: FAILED") || combined_output.contains("failures:");
+    let expected_failures = tests
+        .iter()
+        .enumerate()
+        .filter(|(index, t)| {
+            let fname = harness_fn_name(t, *index);
+            let full = libtest_qualified_name(&fname);
+            outcomes.get(&full) == Some(&false)
+        })
+        .count();
+    let teardown_failure = batch_failed && expected_failures == 0;
 
     tests
         .iter()
@@ -428,6 +1617,10 @@ fn map_batch_results(
                     let detail = extract_libtest_failure_detail(combined_output, &full);
                     TestResult::Failed(std::time::Duration::from_millis(per_test_ms as u64), detail)
                 }
+                None if teardown_failure && index + 1 == tests.len() => TestResult::Failed(
+                    std::time::Duration::from_millis(per_test_ms as u64),
+                    extract_libtest_failure_detail(combined_output, "zzzz_incan_harness_teardown_cached_fixtures"),
+                ),
                 None => TestResult::Failed(
                     elapsed,
                     if combined_output.contains(INCAN_FILE_TEST_MOD) {
@@ -448,6 +1641,25 @@ fn map_batch_results(
         .collect()
 }
 
+/// Run a command and report whether it exceeded the supplied timeout.
+fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> std::io::Result<(Output, bool)> {
+    let Some(timeout) = timeout else {
+        return command.output().map(|output| (output, false));
+    };
+    let start = Instant::now();
+    let mut child = command.spawn()?;
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(|output| (output, false));
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().map(|output| (output, true));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Run every collected test in `tests` that lives in the same `.incn` file with **one** `cargo test` invocation (#271).
 ///
 /// Returns an empty vector when `tests` is empty. Otherwise every entry must share the same [`TestInfo::file_path`].
@@ -455,44 +1667,67 @@ fn map_batch_results(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
+    conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
     prep_cache: &mut HashMap<String, Arc<PreparedTestFile>>,
     locked: bool,
     frozen: bool,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
-    fail_fast: bool,
+    options: TestExecutionOptions,
 ) -> Vec<(TestInfo, TestResult)> {
     if tests.is_empty() {
         return Vec::new();
-    }
-    if tests.windows(2).any(|w| w[0].file_path != w[1].file_path) {
-        let start = Instant::now();
-        let msg = "internal error: `run_file_tests_batch` received tests from multiple files".to_string();
-        return tests
-            .iter()
-            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
-            .collect();
     }
 
     let start = Instant::now();
     let first = &tests[0];
 
     // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
-    let source = match fs::read_to_string(&first.file_path) {
-        Ok(s) => s,
-        Err(e) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Failed to read file: {}", e)),
-                    )
-                })
-                .collect();
+    let mut source_parts = Vec::new();
+    let mut sources_by_file = Vec::new();
+    let mut seen_conftests = BTreeSet::new();
+    let mut seen_files = BTreeSet::new();
+    for test in tests {
+        if !seen_files.insert(test.file_path.clone()) {
+            continue;
         }
-    };
+        if let Some(conftest_files) = conftest_files_by_file.get(&test.file_path) {
+            for conftest in conftest_files {
+                if !seen_conftests.insert(conftest.clone()) {
+                    continue;
+                }
+                match fs::read_to_string(conftest) {
+                    Ok(source) => source_parts.push(source),
+                    Err(err) => {
+                        let message = format!("Failed to read conftest {}: {}", conftest.display(), err);
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                            .collect();
+                    }
+                }
+            }
+        }
+        match fs::read_to_string(&test.file_path) {
+            Ok(source) => {
+                sources_by_file.push((test.file_path.clone(), source.clone()));
+                source_parts.push(source);
+            }
+            Err(e) => {
+                return tests
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.clone(),
+                            TestResult::Failed(start.elapsed(), format!("Failed to read file: {}", e)),
+                        )
+                    })
+                    .collect();
+            }
+        }
+    }
+    let source = source_parts.join("\n");
 
     let manifest = match ProjectManifest::discover(first.file_path.parent().unwrap_or_else(|| Path::new("."))) {
         Ok(manifest) => manifest,
@@ -513,6 +1748,29 @@ pub(super) fn run_file_tests_batch(
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
+
+    if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
+        let mut split_results = Vec::new();
+        for file_path in seen_files {
+            let file_tests = tests
+                .iter()
+                .filter(|test| test.file_path == file_path)
+                .cloned()
+                .collect::<Vec<_>>();
+            split_results.extend(run_file_tests_batch(
+                &file_tests,
+                conftest_files_by_file,
+                prep_cache,
+                locked,
+                frozen,
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+                options,
+            ));
+        }
+        return split_results;
+    }
 
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
@@ -558,7 +1816,19 @@ pub(super) fn run_file_tests_batch(
             })
             .collect();
     }
-    let runner_ast = ast_with_inline_test_declarations(&ast);
+    let mut runner_ast = ast_with_inline_test_declarations(&ast);
+    normalize_runner_assert_statements(&mut runner_ast);
+    prune_shadowed_fixture_declarations(&mut runner_ast);
+    dedupe_import_declarations(&mut runner_ast);
+    let fixture_teardowns = match split_yield_fixture_declarations(&mut runner_ast) {
+        Ok(teardowns) => teardowns,
+        Err(message) => {
+            return tests
+                .iter()
+                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                .collect();
+        }
+    };
 
     let cargo_feature_selection = CargoFeatureSelection {
         cargo_features: cargo_features.to_vec(),
@@ -736,6 +2006,7 @@ pub(super) fn run_file_tests_batch(
         let prepared = PreparedTestFile {
             library_manifest_index,
             ast: runner_ast,
+            fixture_teardowns,
             source_modules,
             project_root,
             resolved,
@@ -761,7 +2032,8 @@ pub(super) fn run_file_tests_batch(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
 
-    let dir_suffix = file_batch_dir_suffix(&first.file_path);
+    let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
+    let dir_suffix = file_batch_dir_suffix(&batch_file_paths);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
     let temp_dir = format!("target/incan_tests/{}", dir_suffix);
     let temp_dir_path = PathBuf::from(&temp_dir);
@@ -799,7 +2071,8 @@ pub(super) fn run_file_tests_batch(
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root);
+        let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
+        let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root, &fixtures);
         if let Err(e) = generator.generate(&rust_code) {
             return gen_err(format!("Failed to generate project: {}", e));
         }
@@ -813,15 +2086,20 @@ pub(super) fn run_file_tests_batch(
             Ok(result) => result,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root);
+        let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
+        let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
         if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
             return gen_err(format!("Failed to generate project: {}", e));
         }
     }
 
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
-    let mut command = std::process::Command::new("cargo");
+    let mut command = Command::new("cargo");
     command.arg("test");
+    if options.jobs > 1 {
+        command.arg("--jobs");
+        command.arg(options.jobs.to_string());
+    }
     command.arg("--manifest-path");
     command.arg(&manifest_path);
     for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
@@ -832,17 +2110,16 @@ pub(super) fn run_file_tests_batch(
     // isolation assumptions for tests that use shared global runtime state.
     command.arg("--");
     command.arg("--test-threads=1");
-    if fail_fast {
-        command.arg("--fail-fast");
+    if options.no_capture {
+        command.arg("--nocapture");
     }
 
-    let output = match command
-        .env("CARGO_TARGET_DIR", &shared_target_dir)
-        // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
-        .current_dir(&prepared.project_root)
-        .output()
-    {
-        Ok(o) => o,
+    command.env("CARGO_TARGET_DIR", &shared_target_dir);
+    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
+    command.current_dir(&prepared.project_root);
+
+    let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
+        Ok(result) => result,
         Err(e) => {
             return tests
                 .iter()
@@ -860,6 +2137,20 @@ pub(super) fn run_file_tests_batch(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}\n{stderr}");
+    if options.no_capture && !combined.trim().is_empty() {
+        print!("{combined}");
+    }
+
+    if timed_out {
+        let message = match options.timeout {
+            Some(timeout) => format!("test batch timed out after {:.3}s", timeout.as_secs_f64()),
+            None => "test batch timed out".to_string(),
+        };
+        return tests
+            .iter()
+            .map(|t| (t.clone(), TestResult::Failed(elapsed, message.clone())))
+            .collect();
+    }
 
     let compile_failed = !output.status.success()
         && (combined.contains("could not compile")
@@ -892,7 +2183,7 @@ fn inject_test_main(
     parametrize: Option<&super::types::ParametrizeCall>,
 ) -> String {
     let call = if let Some(pc) = parametrize {
-        format!("    {}({});", function_name, pc.rust_args)
+        format!("    {}({});", function_name, pc.rust_args())
     } else {
         format!("    {}();", function_name)
     };
@@ -969,7 +2260,9 @@ mod tests {
         let rust = "fn test_add(x: i64, y: i64, expected: i64) { assert_eq!(x + y, expected); }";
         let pc = ParametrizeCall {
             display_id: "test_add[1-2-3]".to_string(),
-            rust_args: "1, 2, 3".to_string(),
+            argument_names: vec!["x".to_string(), "y".to_string(), "expected".to_string()],
+            rust_arguments: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            parameters: vec!["1".to_string(), "2".to_string(), "3".to_string()],
         };
         let result = inject_test_main(rust, "test_add", Some(&pc));
         assert!(result.contains("fn main()"), "should inject fn main()");
@@ -981,7 +2274,9 @@ mod tests {
         let rust = "fn test_len(input: String, expected: i64) {}";
         let pc = ParametrizeCall {
             display_id: "test_len[hello-5]".to_string(),
-            rust_args: "\"hello\".to_string(), 5".to_string(),
+            argument_names: vec!["input".to_string(), "expected".to_string()],
+            rust_arguments: vec!["\"hello\".to_string()".to_string(), "5".to_string()],
+            parameters: vec!["hello".to_string(), "5".to_string()],
         };
         let result = inject_test_main(rust, "test_len", Some(&pc));
         assert!(
@@ -995,13 +2290,47 @@ mod tests {
         let rust = "fn test_sub(a: i64, b: i64, expected: i64) {}";
         let pc = ParametrizeCall {
             display_id: "test_sub[-1-1-0]".to_string(),
-            rust_args: "-1, 1, 0".to_string(),
+            argument_names: vec!["a".to_string(), "b".to_string(), "expected".to_string()],
+            rust_arguments: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
+            parameters: vec!["-1".to_string(), "1".to_string(), "0".to_string()],
         };
         let result = inject_test_main(rust, "test_sub", Some(&pc));
         assert!(
             result.contains("test_sub(-1, 1, 0);"),
             "should call with negative int args"
         );
+    }
+
+    #[test]
+    fn cross_file_batch_collision_detects_duplicate_top_level_model_names() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model Order:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        assert!(batch_has_cross_file_top_level_collision(&sources, None));
+    }
+
+    #[test]
+    fn cross_file_batch_collision_allows_distinct_top_level_names() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model OrderA:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model OrderB:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        assert!(!batch_has_cross_file_top_level_collision(&sources, None));
     }
 
     #[test]
@@ -1175,6 +2504,8 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
                 function_name: "test_a".to_string(),
                 markers: vec![],
                 required_fixtures: vec![],
+                parameter_names: vec![],
+                timeout: None,
                 parametrize_call: None,
             },
             TestInfo {
@@ -1182,10 +2513,12 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
                 function_name: "test_b".to_string(),
                 markers: vec![],
                 required_fixtures: vec![],
+                parameter_names: vec![],
+                timeout: None,
                 parametrize_call: None,
             },
         ];
-        let g = inject_file_test_harness(rust, &tests, Path::new("."));
+        let g = inject_file_test_harness(rust, &tests, Path::new("."), &HashMap::new());
         assert!(g.contains("mod __incan_file_tests"));
         assert!(g.contains("fn incan_harness_0_test_a"));
         assert!(g.contains("fn incan_harness_1_test_b"));

@@ -227,6 +227,7 @@ impl AstLowering {
         lowered_result
     }
 
+    /// Lower one concrete impl method while preserving owner and method type parameters.
     fn lower_impl_method_for_trait(
         &mut self,
         m: &ast::MethodDecl,
@@ -257,6 +258,7 @@ impl AstLowering {
                     ast::Receiver::Mutable => Mutability::Mutable,
                 },
                 is_self: true,
+                kind: ast::ParamKind::Normal,
                 default: None,
             });
         }
@@ -272,15 +274,17 @@ impl AstLowering {
                     &mut hidden_type_params,
                     &mut hidden_counter,
                 );
+                let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
                 FunctionParam {
                     name: p.node.name.clone(),
-                    ty: base_ty,
+                    ty: param_ty,
                     mutability: if p.node.is_mut {
                         Mutability::Mutable
                     } else {
                         Mutability::Immutable
                     },
                     is_self: false,
+                    kind: p.node.kind,
                     default: match &p.node.default {
                         Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
                         None => None,
@@ -385,6 +389,7 @@ impl AstLowering {
                     Mutability::Immutable
                 },
                 is_self: true,
+                kind: ast::ParamKind::Normal,
                 default: None,
             });
             // Add self to scope
@@ -402,11 +407,12 @@ impl AstLowering {
                     &mut hidden_type_params,
                     &mut hidden_counter,
                 );
+                let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
                 // For mutable parameters, wrap in RefMut
                 let ty = if p.node.is_mut {
-                    IrType::RefMut(Box::new(base_ty.clone()))
+                    IrType::RefMut(Box::new(param_ty.clone()))
                 } else {
-                    base_ty.clone()
+                    param_ty.clone()
                 };
                 self.define_local_binding(p.node.name.clone(), ty.clone(), false);
                 // Track mutable parameters
@@ -415,13 +421,14 @@ impl AstLowering {
                 }
                 FunctionParam {
                     name: p.node.name.clone(),
-                    ty: base_ty,
+                    ty: param_ty,
                     mutability: if p.node.is_mut {
                         Mutability::Mutable
                     } else {
                         Mutability::Immutable
                     },
                     is_self: p.node.name == keywords::as_str(KeywordId::SelfKw),
+                    kind: p.node.kind,
                     default: match &p.node.default {
                         Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
                         None => None,

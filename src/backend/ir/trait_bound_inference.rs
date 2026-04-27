@@ -30,7 +30,9 @@ use incan_core::lang::trait_bounds::rust as tb;
 
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
-use super::expr::{BinOp, FormatPart, IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+use super::expr::{
+    BinOp, FormatPart, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind,
+};
 use super::ownership::{ValueUseSite, plan_value_use};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
@@ -256,12 +258,17 @@ fn propagate_trait_bounds_from_signature_maps(
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
     collect_current_callable_signature_maps(program, &mut function_bounds, &mut function_params);
+    let local_callable_keys = collect_current_callable_keys(program);
 
     for (key, bounds) in external_bounds {
-        function_bounds.entry(key.clone()).or_insert_with(|| bounds.clone());
+        if !local_callable_keys.contains(key) {
+            function_bounds.entry(key.clone()).or_insert_with(|| bounds.clone());
+        }
     }
     for (key, params) in external_params {
-        function_params.entry(key.clone()).or_insert_with(|| params.clone());
+        if !local_callable_keys.contains(key) {
+            function_params.entry(key.clone()).or_insert_with(|| params.clone());
+        }
     }
 
     let max_iterations = 20;
@@ -323,6 +330,39 @@ fn propagate_trait_bounds_from_signature_maps(
     }
 
     write_back_callable_bounds(program, &mut function_bounds);
+}
+
+/// Collect every local callable key, including non-generic functions.
+///
+/// External signatures are keyed by callable name for legacy cross-module propagation. Keeping a complete local key set
+/// prevents a same-named external generic helper from rewriting a local non-generic declaration's signature.
+fn collect_current_callable_keys(program: &IrProgram) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    for decl in &program.declarations {
+        match &decl.kind {
+            IrDeclKind::Function(func) => {
+                keys.insert(func.name.clone());
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for (index, method) in trait_decl.methods.iter().enumerate() {
+                    keys.insert(format!("trait:{}:{}:{}", trait_decl.name, index, method.name));
+                }
+            }
+            IrDeclKind::Impl(impl_block) => {
+                for (index, method) in impl_block.methods.iter().enumerate() {
+                    keys.insert(format!(
+                        "impl:{}:{}:{}:{}",
+                        impl_block.target_type,
+                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                        index,
+                        method.name
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
 }
 
 /// Collect the callable signatures that are already present on an IR program.
@@ -596,16 +636,9 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
     }
 
     match &expr.kind {
-        IrExprKind::Tuple(items) | IrExprKind::List(items) | IrExprKind::Set(items) => {
+        IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
             let item_target_ty = match &expr.kind {
                 IrExprKind::Tuple(_) => None,
-                IrExprKind::List(_) => match value_use_site_target_ty(site) {
-                    Some(IrType::List(elem)) => Some(elem.as_ref()),
-                    _ => match &expr.ty {
-                        IrType::List(elem) => Some(elem.as_ref()),
-                        _ => None,
-                    },
-                },
                 IrExprKind::Set(_) => match value_use_site_target_ty(site) {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
                     _ => match &expr.ty {
@@ -640,6 +673,31 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                 );
             }
         }
+        IrExprKind::List(items) => {
+            let item_target_ty = match value_use_site_target_ty(site) {
+                Some(IrType::List(elem)) => Some(elem.as_ref()),
+                _ => match &expr.ty {
+                    IrType::List(elem) => Some(elem.as_ref()),
+                    _ => None,
+                },
+            };
+            for item in items {
+                match item {
+                    IrListEntry::Element(value) => collect_backend_clone_bounds_for_value_use(
+                        value,
+                        ValueUseSite::CollectionElement {
+                            target_ty: item_target_ty,
+                        },
+                        type_param_names,
+                        self_clone_params,
+                        clone_params,
+                    ),
+                    IrListEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
+            }
+        }
         IrExprKind::Dict(entries) => {
             let (key_target_ty, value_target_ty) = match value_use_site_target_ty(site) {
                 Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
@@ -648,25 +706,32 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                     _ => (None, None),
                 },
             };
-            for (key, value) in entries {
-                collect_backend_clone_bounds_for_value_use(
-                    key,
-                    ValueUseSite::CollectionElement {
-                        target_ty: key_target_ty,
-                    },
-                    type_param_names,
-                    self_clone_params,
-                    clone_params,
-                );
-                collect_backend_clone_bounds_for_value_use(
-                    value,
-                    ValueUseSite::CollectionElement {
-                        target_ty: value_target_ty,
-                    },
-                    type_param_names,
-                    self_clone_params,
-                    clone_params,
-                );
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        collect_backend_clone_bounds_for_value_use(
+                            key,
+                            ValueUseSite::CollectionElement {
+                                target_ty: key_target_ty,
+                            },
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                        collect_backend_clone_bounds_for_value_use(
+                            value,
+                            ValueUseSite::CollectionElement {
+                                target_ty: value_target_ty,
+                            },
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    IrDictEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
             }
         }
         IrExprKind::Struct { fields, .. } => {
@@ -746,15 +811,31 @@ fn collect_backend_clone_bounds_in_expr(
             }
             collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
         }
-        IrExprKind::BuiltinCall { args, .. } | IrExprKind::List(args) | IrExprKind::Tuple(args) => {
+        IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) => {
             for arg in args {
                 collect_backend_clone_bounds_in_expr(arg, type_param_names, self_clone_params, clone_params);
             }
         }
+        IrExprKind::List(args) => {
+            for arg in args {
+                match arg {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
+            }
+        }
         IrExprKind::Dict(entries) => {
-            for (key, value) in entries {
-                collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
-                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                    IrDictEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
             }
         }
         IrExprKind::Set(items) => {
@@ -1322,13 +1403,20 @@ fn scan_expr_for_bounds(
         // ---- Dict literal: keys that are generic require Eq + Hash ----
         // Note: `Eq: PartialEq` in Rust, so we only need `Eq` (not redundant `PartialEq`).
         IrExprKind::Dict(entries) => {
-            for (key, value) in entries {
-                if let Some(tp_name) = expr_type_param_name(key, type_params, params) {
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        if let Some(tp_name) = expr_type_param_name(key, type_params, params) {
+                            add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+                            add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+                        }
+                        scan_expr_for_bounds(key, type_params, params, bounds_map);
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
+                    IrDictEntry::Spread(value) => {
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
                 }
-                scan_expr_for_bounds(key, type_params, params, bounds_map);
-                scan_expr_for_bounds(value, type_params, params, bounds_map);
             }
         }
 
@@ -1369,9 +1457,18 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Collections: recurse ----
-        IrExprKind::List(elems) | IrExprKind::Tuple(elems) => {
+        IrExprKind::Tuple(elems) => {
             for elem in elems {
                 scan_expr_for_bounds(elem, type_params, params, bounds_map);
+            }
+        }
+        IrExprKind::List(elems) => {
+            for elem in elems {
+                match elem {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
+                }
             }
         }
 
@@ -2102,4 +2199,76 @@ fn propagate_transitive_bounds(
     }
 
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::decl::{IrDecl, IrDeclKind, Visibility};
+
+    fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
+        IrFunction {
+            name: name.to_string(),
+            params: Vec::new(),
+            return_type: IrType::Unit,
+            body: Vec::new(),
+            is_async: false,
+            visibility: Visibility::Public,
+            type_params,
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        }
+    }
+
+    fn program(functions: Vec<IrFunction>) -> IrProgram {
+        IrProgram {
+            declarations: functions
+                .into_iter()
+                .map(|func| IrDecl::new(IrDeclKind::Function(func)))
+                .collect(),
+            entry_point: None,
+            function_registry: FunctionRegistry::new(),
+            rust_module_path: None,
+        }
+    }
+
+    #[test]
+    fn external_generic_bounds_do_not_rewrite_same_named_local_non_generic_function()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut local = program(vec![function("timeout", Vec::new())]);
+        let external = program(vec![function(
+            "timeout",
+            vec![
+                IrTypeParam::bare("T"),
+                IrTypeParam {
+                    name: "TaskFuture".to_string(),
+                    bounds: vec![IrTraitBound::with_type_args_classified(
+                        "RuntimeFuture".to_string(),
+                        vec![IrType::Generic("T".to_string())],
+                    )],
+                },
+            ],
+        )]);
+
+        propagate_trait_bounds_from_programs(&mut local, &[&external]);
+
+        let decl = local
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Function(func),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(
+            func.type_params.is_empty(),
+            "local non-generic timeout should not inherit external generic bounds"
+        );
+        Ok(())
+    }
 }

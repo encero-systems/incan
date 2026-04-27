@@ -4,6 +4,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_method_info, substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
+use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
 use super::TypeChecker;
 use incan_core::interop::RustItemKind;
@@ -20,6 +21,14 @@ fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
         && a.has_body == b.has_body
         && a.params == b.params
         && a.return_type == b.return_type
+}
+
+fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
+    match kind {
+        ParamKind::Normal => ty,
+        ParamKind::RestPositional => list_ty(ty),
+        ParamKind::RestKeyword => dict_ty(ResolvedType::Str, ty),
+    }
 }
 
 /// Module path segments for builtin traits whose [`SymbolTable`] stubs carry no methods.
@@ -75,6 +84,60 @@ struct InteropAdapterSig {
 }
 
 impl TypeChecker {
+    /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.
+    fn validate_callable_rest_params(&mut self, params: &[Spanned<Param>]) {
+        let mut saw_rest_positional = false;
+        let mut saw_rest_keyword = false;
+        let mut saw_rest = false;
+
+        for param in params {
+            match param.node.kind {
+                ParamKind::Normal => {
+                    if saw_rest_keyword {
+                        self.errors.push(errors::invalid_rest_parameter_order(
+                            "Normal parameters cannot appear after a `**kwargs` rest parameter",
+                            param.span,
+                        ));
+                    } else if saw_rest {
+                        self.errors.push(errors::invalid_rest_parameter_order(
+                            "Normal parameters cannot appear after a rest parameter",
+                            param.span,
+                        ));
+                    }
+                }
+                ParamKind::RestPositional => {
+                    if saw_rest_positional {
+                        self.errors.push(errors::duplicate_rest_parameter("*args", param.span));
+                    }
+                    if saw_rest_keyword {
+                        self.errors.push(errors::invalid_rest_parameter_order(
+                            "`*args` must appear before `**kwargs`",
+                            param.span,
+                        ));
+                    }
+                    if param.node.default.is_some() {
+                        self.errors
+                            .push(errors::rest_parameter_default_not_allowed(&param.node.name, param.span));
+                    }
+                    saw_rest_positional = true;
+                    saw_rest = true;
+                }
+                ParamKind::RestKeyword => {
+                    if saw_rest_keyword {
+                        self.errors
+                            .push(errors::duplicate_rest_parameter("**kwargs", param.span));
+                    }
+                    if param.node.default.is_some() {
+                        self.errors
+                            .push(errors::rest_parameter_default_not_allowed(&param.node.name, param.span));
+                    }
+                    saw_rest_keyword = true;
+                    saw_rest = true;
+                }
+            }
+        }
+    }
+
     /// Return whether a method carries a resolved builtin decorator.
     fn method_has_decorator(method: &MethodDecl, id: DecoratorId) -> bool {
         method
@@ -108,7 +171,12 @@ impl TypeChecker {
             ResolvedType::Function(params, ret) => ResolvedType::Function(
                 params
                     .iter()
-                    .map(|param| Self::concretize_self_type_in_annotation(param, self_ty))
+                    .map(|param| crate::frontend::symbols::CallableParam {
+                        name: param.name.clone(),
+                        ty: Self::concretize_self_type_in_annotation(&param.ty, self_ty),
+                        kind: param.kind,
+                        has_default: param.has_default,
+                    })
                     .collect(),
                 Box::new(Self::concretize_self_type_in_annotation(ret, self_ty)),
             ),
@@ -180,7 +248,7 @@ impl TypeChecker {
                 candidates.push(InteropAdapterSig {
                     name: format!("{}.{}", nt.name, name),
                     receiver: method.receiver,
-                    params: method.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                    params: method.params.iter().map(|param| param.ty.clone()).collect(),
                     return_type: method.return_type.clone(),
                 });
             }
@@ -497,8 +565,10 @@ impl TypeChecker {
         if !recv.is_empty() {
             parts.push(recv.to_string());
         }
-        for (name, ty) in &m.params {
-            parts.push(format!("{name}: {ty}"));
+        for param in &m.params {
+            if let Some(name) = param.name() {
+                parts.push(format!("{name}: {}", param.ty));
+            }
         }
         let async_kw = if m.is_async { "async " } else { "" };
         format!(
@@ -519,8 +589,11 @@ impl TypeChecker {
         if expected.params.len() != found.params.len() {
             return false;
         }
-        for ((_, e_ty), (_, f_ty)) in expected.params.iter().zip(found.params.iter()) {
-            if !self.types_compatible(e_ty, f_ty) {
+        for (expected_param, found_param) in expected.params.iter().zip(found.params.iter()) {
+            if expected_param.kind != found_param.kind {
+                return false;
+            }
+            if !self.types_compatible(&expected_param.ty, &found_param.ty) {
                 return false;
             }
         }
@@ -1566,6 +1639,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators(&func.decorators);
+        self.validate_callable_rest_params(&func.params);
         // TODO(#146): add async return-type and related validation here via the surface semantics registry — not
         // hardcoded KeywordId checks.
 
@@ -1581,7 +1655,7 @@ impl TypeChecker {
 
         // Define parameters
         for param in &func.params {
-            let ty = self.resolve_type_checked(&param.node.ty);
+            let ty = local_type_for_param(param.node.kind, self.resolve_type_checked(&param.node.ty));
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {
@@ -1651,6 +1725,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
+        self.validate_callable_rest_params(&method.params);
         // TODO(#146): add async return-type and related validation for methods via the surface semantics registry.
 
         // Define owner type parameters so generic wrappers can use them in bodies and annotations.
@@ -1698,7 +1773,7 @@ impl TypeChecker {
 
         // Define parameters
         for param in &method.params {
-            let ty = self.resolve_type_checked(&param.node.ty);
+            let ty = local_type_for_param(param.node.kind, self.resolve_type_checked(&param.node.ty));
             self.symbols.define(Symbol {
                 name: param.node.name.clone(),
                 kind: SymbolKind::Variable(VariableInfo {

@@ -99,7 +99,7 @@ impl TypeChecker {
                     span: p.span,
                     scope: 0,
                 });
-                ty
+                CallableParam::named(p.node.name.clone(), ty, p.node.kind)
             })
             .collect();
 

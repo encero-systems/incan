@@ -552,6 +552,7 @@ impl<'a> Parser<'a> {
         self.shift_expr_spans(&mut expr.node, offset);
     }
 
+    /// Recursively shift expression spans parsed from an f-string interpolation back into outer-source coordinates.
     fn shift_expr_spans(&self, expr: &mut Expr, offset: usize) {
         match expr {
             Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
@@ -566,7 +567,10 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(callee, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -595,7 +599,10 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(base, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -636,21 +643,38 @@ impl<'a> Parser<'a> {
             Expr::Closure(_, body) => {
                 self.shift_spanned_expr(body, offset);
             }
-            Expr::Tuple(elems) | Expr::List(elems) | Expr::Set(elems) => {
+            Expr::Tuple(elems) | Expr::Set(elems) => {
                 for elem in elems {
                     self.shift_spanned_expr(elem, offset);
                 }
             }
+            Expr::List(entries) => {
+                for entry in entries {
+                    match entry {
+                        ListEntry::Element(value) | ListEntry::Spread(value) => {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
+            }
             Expr::Dict(entries) => {
-                for (key, value) in entries {
-                    self.shift_spanned_expr(key, offset);
-                    self.shift_spanned_expr(value, offset);
+                for entry in entries {
+                    match entry {
+                        DictEntry::Pair(key, value) => {
+                            self.shift_spanned_expr(key, offset);
+                            self.shift_spanned_expr(value, offset);
+                        }
+                        DictEntry::Spread(value) => self.shift_spanned_expr(value, offset),
+                    }
                 }
             }
             Expr::Constructor(_, args) => {
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -1003,6 +1027,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse a bracketed expression as either a list literal, list comprehension, or list spread form.
     fn list_or_comp(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after [
         self.skip_newlines();
@@ -1013,11 +1038,13 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Expr::List(Vec::new()), Span::new(start, end)));
         }
 
-        let first = self.expression()?;
+        let first = self.list_entry()?;
         self.skip_newlines();
 
         // Check for comprehension
-        if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
+        if let ListEntry::Element(first_expr) = &first
+            && self.match_token(&TokenKind::Keyword(KeywordId::For))
+        {
             self.skip_newlines();
             let var = self.identifier()?;
             self.skip_newlines();
@@ -1039,7 +1066,7 @@ impl<'a> Parser<'a> {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(
                 Expr::ListComp(Box::new(ListComp {
-                    expr: first,
+                    expr: first_expr.clone(),
                     var,
                     iter,
                     filter,
@@ -1055,7 +1082,7 @@ impl<'a> Parser<'a> {
             if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
                 break;
             }
-            elements.push(self.expression()?);
+            elements.push(self.list_entry()?);
             self.skip_newlines();
         }
         self.expect(
@@ -1066,6 +1093,25 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(Expr::List(elements), Span::new(start, end)))
     }
 
+    /// Parse one list literal entry, including RFC 038 `*expr` spread and invalid `**expr` diagnostics.
+    fn list_entry(&mut self) -> Result<ListEntry, CompileError> {
+        if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            return Err(errors::invalid_list_spread_marker(self.tokens[self.pos - 1].span));
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            let marker_start = self.tokens[self.pos - 1].span.start;
+            let value = self.expression()?;
+            return Ok(ListEntry::Spread(Spanned::new(
+                value.node,
+                Span::new(marker_start, value.span.end),
+            )));
+        }
+
+        Ok(ListEntry::Element(self.expression()?))
+    }
+
+    /// Parse a brace expression as a dictionary, set, comprehension, or RFC 038 dictionary spread literal.
     fn dict_or_comp(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after {
         self.skip_newlines();
@@ -1074,6 +1120,15 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::Punctuation(PunctuationId::RBrace)) {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(Expr::Dict(Vec::new()), Span::new(start, end)));
+        }
+
+        if self.check(&TokenKind::Operator(OperatorId::StarStar)) {
+            let first = self.dict_entry()?;
+            return self.finish_dict_literal(start, first);
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            return Err(errors::invalid_dict_spread_marker(self.tokens[self.pos - 1].span));
         }
 
         let first = self.expression()?;
@@ -1120,29 +1175,7 @@ impl<'a> Parser<'a> {
             }
 
             // Dict literal
-            let mut entries = vec![(first, first_value)];
-            while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                self.skip_newlines();
-                if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
-                    break;
-                }
-                let key = self.expression()?;
-                self.skip_newlines();
-                self.expect(
-                    &TokenKind::Punctuation(PunctuationId::Colon),
-                    "Expected ':' in dict entry",
-                )?;
-                self.skip_newlines();
-                let value = self.expression()?;
-                self.skip_newlines();
-                entries.push((key, value));
-            }
-            self.expect(
-                &TokenKind::Punctuation(PunctuationId::RBrace),
-                "Expected '}' after dict",
-            )?;
-            let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(Expr::Dict(entries), Span::new(start, end)))
+            self.finish_dict_literal(start, DictEntry::Pair(first, first_value))
         } else {
             // It's a set literal: {expr, expr, ...}
             let mut elements = vec![first];
@@ -1151,6 +1184,11 @@ impl<'a> Parser<'a> {
                 if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
                     break;
                 }
+                if self.match_token(&TokenKind::Operator(OperatorId::Star))
+                    || self.match_token(&TokenKind::Operator(OperatorId::StarStar))
+                {
+                    return Err(errors::set_literal_spread_not_supported(self.tokens[self.pos - 1].span));
+                }
                 elements.push(self.expression()?);
                 self.skip_newlines();
             }
@@ -1158,6 +1196,53 @@ impl<'a> Parser<'a> {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Expr::Set(elements), Span::new(start, end)))
         }
+    }
+
+    /// Finish parsing a dictionary literal after the first entry has already been disambiguated.
+    fn finish_dict_literal(&mut self, start: usize, first: DictEntry) -> Result<Spanned<Expr>, CompileError> {
+        self.skip_newlines();
+
+        let mut entries = vec![first];
+        while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            self.skip_newlines();
+            if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
+                break;
+            }
+            entries.push(self.dict_entry()?);
+            self.skip_newlines();
+        }
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::RBrace),
+            "Expected '}' after dict",
+        )?;
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(Expr::Dict(entries), Span::new(start, end)))
+    }
+
+    /// Parse one dictionary literal entry, including `key: value`, `**expr` spread, and invalid `*expr` diagnostics.
+    fn dict_entry(&mut self) -> Result<DictEntry, CompileError> {
+        if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            let marker_start = self.tokens[self.pos - 1].span.start;
+            let value = self.expression()?;
+            return Ok(DictEntry::Spread(Spanned::new(
+                value.node,
+                Span::new(marker_start, value.span.end),
+            )));
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            return Err(errors::invalid_dict_spread_marker(self.tokens[self.pos - 1].span));
+        }
+
+        let key = self.expression()?;
+        self.skip_newlines();
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' in dict entry",
+        )?;
+        self.skip_newlines();
+        let value = self.expression()?;
+        Ok(DictEntry::Pair(key, value))
     }
 
     fn paren_or_tuple(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
@@ -1252,6 +1337,7 @@ impl<'a> Parser<'a> {
                     params.push(Spanned::new(
                         Param {
                             is_mut: false,
+                            kind: ParamKind::Normal,
                             name: name.clone(),
                             ty: inferred_ty,
                             default: None,
@@ -1295,6 +1381,24 @@ impl<'a> Parser<'a> {
                     let value = self.expression()?;
                     self.skip_newlines();
                     args.push(CallArg::Named(name, value));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
+                if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::KeywordUnpack(expr));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
+                if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::PositionalUnpack(expr));
                     if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                         break;
                     }

@@ -31,7 +31,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use incan::library_manifest::{
-        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, StaticExport, TypeRef,
+        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, StaticExport, TypeRef,
     };
     use std::collections::HashMap;
 
@@ -64,6 +64,8 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             ty: TypeRef::Named {
                 name: "str".to_string(),
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Named {
             name: "Widget".to_string(),
@@ -293,7 +295,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
     };
     use incan::frontend::vocab_desugar_pass::desugar_program_vocab_blocks;
     use incan::library_manifest::{
-        FunctionExport, LibraryManifest, ParamExport, TypeRef, VocabDesugarerArtifact, VocabExports,
+        FunctionExport, LibraryManifest, ParamExport, ParamKindExport, TypeRef, VocabDesugarerArtifact, VocabExports,
     };
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
@@ -409,6 +411,8 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
             ty: TypeRef::Named {
                 name: "int".to_string(),
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Named {
             name: "int".to_string(),
@@ -761,6 +765,13 @@ fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("function_calls", rust_code);
+}
+
+#[test]
+fn test_variadic_calls_codegen() {
+    let source = load_test_file("variadic_calls");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("variadic_calls", rust_code);
 }
 
 #[test]
@@ -1417,6 +1428,56 @@ fn test_issue389_for_tuple_unpack_enumerate_codegen() {
 }
 
 #[test]
+fn test_fixed_call_unpack_codegen() {
+    let source = load_test_file("fixed_call_unpack");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("fixed_call_unpack", rust_code);
+    assert!(
+        rust_code.contains("combine(\n        1,\n        \"Ada\".to_string()"),
+        "expected shaped positional unpack to emit ordinary fixed arguments"
+    );
+    assert!(
+        rust_code.contains("__incan_rest_args.push(7);"),
+        "expected leftover shaped positional entries to feed *rest"
+    );
+    assert!(
+        rust_code.contains("__incan_rest_kwargs.insert(\"city\".to_string(), \"London\".to_string());"),
+        "expected unknown shaped keyword entries to feed **kwargs"
+    );
+    assert!(
+        rust_code.contains("route(\"/status\".to_string(), \"GET\".to_string())"),
+        "expected shaped keyword unpack to emit ordinary fixed keyword arguments"
+    );
+    assert!(
+        rust_code.contains("counter.add(5, 6)"),
+        "expected fixed method unpack to emit ordinary method arguments"
+    );
+}
+
+#[test]
+fn test_collection_literal_spread_codegen() {
+    let source = load_test_file("collection_literal_spread");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("collection_literal_spread", rust_code);
+    assert!(
+        rust_code.contains("__incan_list.extend((vec![2, 3]).into_iter());"),
+        "expected list literal spread to emit Vec::extend"
+    );
+    assert!(
+        rust_code.contains("__incan_list.push(tail.0);") && rust_code.contains("__incan_list.push(tail.1);"),
+        "expected tuple-shaped list spread to emit field pushes"
+    );
+    assert!(
+        rust_code.contains("for (__incan_key, __incan_value) in (defaults).into_iter()"),
+        "expected dict literal spread to emit insertion loop"
+    );
+    assert!(
+        rust_code.contains("__incan_dict.insert(\"trace\".to_string(), \"enabled\".to_string());"),
+        "expected later direct dict entry to overwrite earlier spread entry"
+    );
+}
+
+#[test]
 fn test_issue391_list_str_append_literal_codegen() {
     let source = load_test_file("issue391_list_str_append_literal");
     let rust_code = generate_rust(&source);
@@ -1652,6 +1713,28 @@ fn test_std_async_time_compiled_codegen() {
     };
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_async_time_compiled", rust_code);
+}
+
+/// Compile `std.async.channel` from `.incn` source.
+#[test]
+fn test_std_async_channel_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/channel.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_channel_compiled", rust_code);
+}
+
+/// Compile `std.async.sync` from `.incn` source.
+#[test]
+fn test_std_async_sync_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/sync.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_async_sync_compiled", rust_code);
 }
 
 /// Compile `std.async.select` from `.incn` source.

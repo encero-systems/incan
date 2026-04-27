@@ -32,10 +32,7 @@ impl TypeChecker {
                 }
                 (
                     IdentKind::Value,
-                    ResolvedType::Function(
-                        info.params.iter().map(|(_, ty)| ty.clone()).collect(),
-                        Box::new(info.return_type.clone()),
-                    ),
+                    ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone())),
                 )
             }
             SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
@@ -70,7 +67,11 @@ impl TypeChecker {
                             let params = sig
                                 .params
                                 .iter()
-                                .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                                .map(|p| {
+                                    CallableParam::positional(
+                                        self.resolved_type_from_rust_display(p.type_display.as_str()),
+                                    )
+                                })
                                 .collect();
                             let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
                             ResolvedType::Function(params, Box::new(ret))

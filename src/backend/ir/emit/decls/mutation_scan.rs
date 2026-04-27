@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 
 use incan_core::lang::surface::methods::{dict_methods, list_methods};
 
-use super::super::super::expr::{IrExpr, IrExprKind, MethodKind, VarAccess};
+use super::super::super::expr::{IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodKind, VarAccess};
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::IrEmitter;
 use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
@@ -226,15 +226,29 @@ impl<'a> IrEmitter<'a> {
                     self.scan_expr_for_param_writes(f, param_names, mutated);
                 }
             }
-            IrExprKind::List(items) | IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
+            IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
                 for i in items {
                     self.scan_expr_for_param_writes(i, param_names, mutated);
                 }
             }
+            IrExprKind::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                            self.scan_expr_for_param_writes(value, param_names, mutated);
+                        }
+                    }
+                }
+            }
             IrExprKind::Dict(pairs) => {
-                for (k, v) in pairs {
-                    self.scan_expr_for_param_writes(k, param_names, mutated);
-                    self.scan_expr_for_param_writes(v, param_names, mutated);
+                for entry in pairs {
+                    match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            self.scan_expr_for_param_writes(k, param_names, mutated);
+                            self.scan_expr_for_param_writes(v, param_names, mutated);
+                        }
+                        IrDictEntry::Spread(value) => self.scan_expr_for_param_writes(value, param_names, mutated),
+                    }
                 }
             }
             IrExprKind::Struct { fields, .. } => {

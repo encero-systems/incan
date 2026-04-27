@@ -114,6 +114,11 @@ pub struct TypeCheckInfo {
     pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// RFC 038: unpack operands whose static shape has been proven by call binding.
+    ///
+    /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
+    /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
+    pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
     /// Map from identifier expression span (start,end) -> how it resolved (value vs type vs module).
     ///
     /// This exists so downstream stages (IR lowering/codegen) can reliably distinguish:
@@ -151,6 +156,20 @@ pub struct TypeCheckInfo {
     /// that [`AstLowering::lower_expr`](crate::backend::ir::lower::AstLowering::lower_expr) receives as `expr_span`
     /// for those nodes, so lookup stays consistent across phases without holding AST node identities.
     pub call_site_monomorph_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// RFC 038: Rest-aware callable signatures keyed by full call expression span.
+    ///
+    /// Function-value calls can recover this from the callee expression type, but method calls need a snapshot because
+    /// lowering does not retain the frontend method table.
+    pub call_site_callable_params: HashMap<(usize, usize), Vec<CallableParam>>,
+}
+
+/// Typechecker-proven call-unpack shape consumed by IR lowering.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FixedUnpackPlan {
+    /// `*expr` has a statically known ordered shape with one type per contributed positional item.
+    Positional(Vec<ResolvedType>),
+    /// `**expr` has statically known string keys in source order.
+    Keyword(Vec<String>),
 }
 
 /// How an identifier expression resolved in the symbol table.
@@ -207,6 +226,11 @@ impl TypeCheckInfo {
         self.expr_types.get(&(span.start, span.end))
     }
 
+    /// Return the RFC 038 fixed/static unpack plan recorded for an unpack operand, if any.
+    pub fn fixed_unpack_plan(&self, span: Span) -> Option<&FixedUnpackPlan> {
+        self.fixed_unpack_plans.get(&(span.start, span.end))
+    }
+
     /// Return how the identifier expression at `span` resolved in the symbol table.
     pub fn ident_kind(&self, span: Span) -> Option<IdentKind> {
         self.ident_kinds.get(&(span.start, span.end)).copied()
@@ -248,6 +272,21 @@ impl TypeCheckInfo {
             receiver_span.end,
             method.to_string(),
         ));
+    }
+
+    /// Return rest-aware callable metadata recorded for the full call expression span, if any.
+    pub fn call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
+        self.call_site_callable_params
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
+    /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
+    pub(crate) fn record_call_site_callable_params(&mut self, span: Span, params: &[CallableParam]) {
+        if params.iter().any(|param| param.kind != ParamKind::Normal) {
+            self.call_site_callable_params
+                .insert((span.start, span.end), params.to_vec());
+        }
     }
 }
 
@@ -758,7 +797,7 @@ impl TypeChecker {
             .params
             .iter()
             .skip(skip)
-            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+            .map(|p| CallableParam::positional(self.resolved_type_from_rust_display(p.type_display.as_str())))
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
@@ -998,6 +1037,11 @@ impl TypeChecker {
 
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
         self.type_info.expr_types.insert((span.start, span.end), ty);
+    }
+
+    /// Record a typechecker-proven unpack binding plan for backend lowering.
+    pub(crate) fn record_fixed_unpack_plan(&mut self, span: Span, plan: FixedUnpackPlan) {
+        self.type_info.fixed_unpack_plans.insert((span.start, span.end), plan);
     }
 
     /// Look up a type by name and return its [`TypeInfo`], if known.
@@ -1536,15 +1580,31 @@ impl TypeChecker {
                 }
             }
             Expr::Closure(_, _) => {}
-            Expr::Tuple(items) | Expr::List(items) | Expr::Set(items) => {
+            Expr::Tuple(items) | Expr::Set(items) => {
                 for item in items {
                     self.collect_static_dependencies_from_expr(&item.node, deps, visiting_functions);
                 }
             }
+            Expr::List(items) => {
+                for item in items {
+                    match item {
+                        ListEntry::Element(value) | ListEntry::Spread(value) => {
+                            self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                        }
+                    }
+                }
+            }
             Expr::Dict(items) => {
-                for (key, value) in items {
-                    self.collect_static_dependencies_from_expr(&key.node, deps, visiting_functions);
-                    self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                for item in items {
+                    match item {
+                        DictEntry::Pair(key, value) => {
+                            self.collect_static_dependencies_from_expr(&key.node, deps, visiting_functions);
+                            self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                        }
+                        DictEntry::Spread(value) => {
+                            self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                        }
+                    }
                 }
             }
             Expr::Constructor(_, args) => {
@@ -1578,7 +1638,10 @@ impl TypeChecker {
     ) {
         for arg in args {
             match arg {
-                CallArg::Positional(expr) | CallArg::Named(_, expr) => {
+                CallArg::Positional(expr)
+                | CallArg::Named(_, expr)
+                | CallArg::PositionalUnpack(expr)
+                | CallArg::KeywordUnpack(expr) => {
                     self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
                 }
             }
@@ -1644,15 +1707,44 @@ impl TypeChecker {
             Expr::Field(object, _) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
             }
-            Expr::Tuple(items) | Expr::List(items) | Expr::Set(items) => {
+            Expr::Tuple(items) | Expr::Set(items) => {
                 for item in items {
                     self.collect_static_initializer_static_writes_from_expr(item, current_static, visiting_functions);
                 }
             }
+            Expr::List(items) => {
+                for item in items {
+                    match item {
+                        ListEntry::Element(value) | ListEntry::Spread(value) => self
+                            .collect_static_initializer_static_writes_from_expr(
+                                value,
+                                current_static,
+                                visiting_functions,
+                            ),
+                    }
+                }
+            }
             Expr::Dict(items) => {
-                for (key, value) in items {
-                    self.collect_static_initializer_static_writes_from_expr(key, current_static, visiting_functions);
-                    self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+                for item in items {
+                    match item {
+                        DictEntry::Pair(key, value) => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                key,
+                                current_static,
+                                visiting_functions,
+                            );
+                            self.collect_static_initializer_static_writes_from_expr(
+                                value,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                        DictEntry::Spread(value) => self.collect_static_initializer_static_writes_from_expr(
+                            value,
+                            current_static,
+                            visiting_functions,
+                        ),
+                    }
                 }
             }
             Expr::FString(parts) => {
@@ -1780,7 +1872,10 @@ impl TypeChecker {
     ) {
         for arg in args {
             match arg {
-                CallArg::Positional(expr) | CallArg::Named(_, expr) => {
+                CallArg::Positional(expr)
+                | CallArg::Named(_, expr)
+                | CallArg::PositionalUnpack(expr)
+                | CallArg::KeywordUnpack(expr) => {
                     self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
                 }
             }
@@ -2763,7 +2858,10 @@ impl TypeChecker {
             }
             (ResolvedType::Function(p1, r1), ResolvedType::Function(p2, r2)) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(t1, t2)| t1.kind == t2.kind && self.types_compatible(&t1.ty, &t2.ty))
                     && self.types_compatible(r1, r2)
             }
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {

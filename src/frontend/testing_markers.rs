@@ -46,20 +46,35 @@ impl std::error::Error for TestingMarkerLoadError {}
 /// Supported `std.testing` marker kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TestingMarkerKind {
+    Test,
     Fixture,
     Skip,
+    SkipIf,
     XFail,
+    XFailIf,
     Slow,
+    Mark,
+    Resource,
+    Serial,
+    Timeout,
     Parametrize,
 }
 
 impl TestingMarkerKind {
+    /// Convert the `kind` value from std.testing marker metadata into the runner enum.
     fn from_str(value: &str) -> Option<Self> {
         match value {
+            "test" => Some(Self::Test),
             "fixture" => Some(Self::Fixture),
             "skip" => Some(Self::Skip),
+            "skipif" => Some(Self::SkipIf),
             "xfail" => Some(Self::XFail),
+            "xfailif" => Some(Self::XFailIf),
             "slow" => Some(Self::Slow),
+            "mark" => Some(Self::Mark),
+            "resource" => Some(Self::Resource),
+            "serial" => Some(Self::Serial),
+            "timeout" => Some(Self::Timeout),
             "parametrize" => Some(Self::Parametrize),
             _ => None,
         }
@@ -78,12 +93,20 @@ pub struct TestingMarkerSemantics {
 }
 
 impl Default for TestingMarkerSemantics {
+    /// Return the built-in marker semantics used as the extraction baseline for stdlib metadata.
     fn default() -> Self {
         let mut marker_kinds = HashMap::new();
+        marker_kinds.insert("test".to_string(), TestingMarkerKind::Test);
         marker_kinds.insert("fixture".to_string(), TestingMarkerKind::Fixture);
         marker_kinds.insert("skip".to_string(), TestingMarkerKind::Skip);
+        marker_kinds.insert("skipif".to_string(), TestingMarkerKind::SkipIf);
         marker_kinds.insert("xfail".to_string(), TestingMarkerKind::XFail);
+        marker_kinds.insert("xfailif".to_string(), TestingMarkerKind::XFailIf);
         marker_kinds.insert("slow".to_string(), TestingMarkerKind::Slow);
+        marker_kinds.insert("mark".to_string(), TestingMarkerKind::Mark);
+        marker_kinds.insert("resource".to_string(), TestingMarkerKind::Resource);
+        marker_kinds.insert("serial".to_string(), TestingMarkerKind::Serial);
+        marker_kinds.insert("timeout".to_string(), TestingMarkerKind::Timeout);
         marker_kinds.insert("parametrize".to_string(), TestingMarkerKind::Parametrize);
 
         Self {
@@ -284,7 +307,12 @@ fn parse_testing_metadata_dict(
     let mut fixture_autouse_arg: Option<String> = None;
     let mut fixture_scopes: Option<[String; 3]> = None;
 
-    for (key_expr, value_expr) in entries {
+    for entry in entries {
+        let ast::DictEntry::Pair(key_expr, value_expr) = entry else {
+            return Err(TestingMarkerLoadError::new(
+                "malformed @rust.extern metadata for std.testing marker: spread entries are not supported",
+            ));
+        };
         let Some(key) = expr_as_string_literal(key_expr) else {
             return Err(TestingMarkerLoadError::new(
                 "malformed @rust.extern metadata for std.testing marker: non-string key",
@@ -384,9 +412,18 @@ fn expr_as_string_triplet(expr: &ast::Spanned<ast::Expr>) -> Option<[String; 3]>
         return None;
     }
 
-    let first = expr_as_string_literal(&items[0])?;
-    let second = expr_as_string_literal(&items[1])?;
-    let third = expr_as_string_literal(&items[2])?;
+    let ast::ListEntry::Element(first_expr) = &items[0] else {
+        return None;
+    };
+    let ast::ListEntry::Element(second_expr) = &items[1] else {
+        return None;
+    };
+    let ast::ListEntry::Element(third_expr) = &items[2] else {
+        return None;
+    };
+    let first = expr_as_string_literal(first_expr)?;
+    let second = expr_as_string_literal(second_expr)?;
+    let third = expr_as_string_literal(third_expr)?;
     Some([first, second, third])
 }
 

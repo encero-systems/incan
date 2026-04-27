@@ -273,9 +273,24 @@ pub struct SurfaceModifier {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub is_mut: bool,
+    pub kind: ParamKind,
     pub name: Ident,
     pub ty: Spanned<Type>,
     pub default: Option<Spanned<Expr>>,
+}
+
+/// Surface parameter kind.
+///
+/// Rest parameters use the annotated element/value type at the source level, but downstream semantic layers bind the
+/// local variable as the explicit container type described by RFC 038.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// Ordinary fixed-arity parameter: `name: T`.
+    Normal,
+    /// Positional rest capture: `*name: T`, bound inside the function as `List[T]`.
+    RestPositional,
+    /// Keyword rest capture: `**name: T`, bound inside the function as `Dict[str, T]`.
+    RestKeyword,
 }
 
 // ============================================================================

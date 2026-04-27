@@ -178,6 +178,13 @@ impl<'a> Parser<'a> {
         let start = self.current_span().start;
         // Check for optional 'mut' keyword
         let is_mut = self.match_token(&TokenKind::Keyword(KeywordId::Mut));
+        let kind = if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            ParamKind::RestKeyword
+        } else if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            ParamKind::RestPositional
+        } else {
+            ParamKind::Normal
+        };
         let name = self.identifier()?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
@@ -193,6 +200,7 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(
             Param {
                 is_mut,
+                kind,
                 name,
                 ty,
                 default,

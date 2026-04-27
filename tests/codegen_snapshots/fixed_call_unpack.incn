@@ -1,0 +1,17 @@
+def combine(a: int, b: str, *rest: int, **labels: str) -> str:
+    return labels["city"]
+
+def route(path: str, method: str) -> str:
+    return method + " " + path
+
+class Counter:
+    def add(self, left: int, right: int) -> int:
+        return left + right
+
+def main() -> None:
+    xy: tuple[int, str, int] = (1, "Ada", 7)
+    counter = Counter()
+    combine(*[1, "Ada", 7], **{"city": "London", "name": "Ada"})
+    combine(*xy, **{"city": "Paris", "name": "Grace"})
+    route(**{"path": "/status", "method": "GET"})
+    counter.add(*(5, 6))
