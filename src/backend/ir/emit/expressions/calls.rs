@@ -332,7 +332,7 @@ impl<'a> IrEmitter<'a> {
         // Order arguments only when keyword args are present (positional-only calls preserve previous behavior,
         // which is important for snapshots + for default-arg lowering work that happens elsewhere).
         let has_named_args = args.iter().any(|a| a.name.is_some());
-        let ordered_args: Vec<TypedExpr> = if has_named_args {
+        let ordered_args: Vec<(TypedExpr, bool)> = if has_named_args {
             if let Some(sig) = function_sig {
                 let mut positional: Vec<TypedExpr> = Vec::new();
                 let mut named: std::collections::HashMap<&str, TypedExpr> = std::collections::HashMap::new();
@@ -345,27 +345,27 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 let mut pos_idx = 0usize;
-                let mut out: Vec<TypedExpr> = Vec::new();
+                let mut out: Vec<(TypedExpr, bool)> = Vec::new();
                 for p in &sig.params {
                     if let Some(v) = named.get(p.name.as_str()) {
-                        out.push(v.clone());
+                        out.push((v.clone(), false));
                     } else if pos_idx < positional.len() {
-                        out.push(positional[pos_idx].clone());
+                        out.push((positional[pos_idx].clone(), false));
                         pos_idx += 1;
                     } else if let Some(default_arg) = &p.default {
-                        out.push(default_arg.clone());
+                        out.push((default_arg.clone(), true));
                     }
                 }
                 out
             } else {
-                args.iter().map(|a| a.expr.clone()).collect()
+                args.iter().map(|a| (a.expr.clone(), false)).collect()
             }
         } else {
-            let mut out: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
+            let mut out: Vec<(TypedExpr, bool)> = args.iter().map(|a| (a.expr.clone(), false)).collect();
             if let Some(sig) = function_sig {
                 for p in sig.params.iter().skip(out.len()) {
                     if let Some(default_arg) = &p.default {
-                        out.push(default_arg.clone());
+                        out.push((default_arg.clone(), true));
                     } else {
                         break;
                     }
@@ -378,7 +378,7 @@ impl<'a> IrEmitter<'a> {
         let arg_tokens: Vec<TokenStream> = ordered_args
             .iter()
             .enumerate()
-            .map(|(idx, a)| {
+            .map(|(idx, (a, from_default))| {
                 let target_ty = function_sig
                     .and_then(|sig| sig.params.get(idx))
                     .map(|param| &param.ty)
@@ -386,29 +386,41 @@ impl<'a> IrEmitter<'a> {
                         IrType::Function { params, .. } => params.get(idx),
                         _ => None,
                     });
-                let emitted = if let Some(target_ty) = target_ty {
-                    if let Some(seed) = self.emit_inference_seeded_literal_arg(a, target_ty)? {
-                        seed
-                    } else if Self::is_unresolved_call_seed_type(target_ty) {
-                        // Signature exists but leaves generics unresolved: fallback to the argument's own inferred IR
-                        // type to seed constructor literals.
+                let previous_qualify = if *from_default {
+                    Some(self.qualify_internal_canonical_paths.replace(true))
+                } else {
+                    None
+                };
+                let emitted = (|| {
+                    let emitted = if let Some(target_ty) = target_ty {
+                        if let Some(seed) = self.emit_inference_seeded_literal_arg(a, target_ty)? {
+                            seed
+                        } else if Self::is_unresolved_call_seed_type(target_ty) {
+                            // Signature exists but leaves generics unresolved: fallback to the argument's own inferred
+                            // IR type to seed constructor literals.
+                            if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
+                                seed
+                            } else {
+                                self.emit_expr(a)?
+                            }
+                        } else {
+                            self.emit_expr(a)?
+                        }
+                    } else {
+                        // No parameter type available (e.g. heavily generic paths): use the argument's own type as a
+                        // best-effort inference seed source.
                         if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
                             seed
                         } else {
                             self.emit_expr(a)?
                         }
-                    } else {
-                        self.emit_expr(a)?
-                    }
-                } else {
-                    // No parameter type available (e.g. heavily generic paths): use the argument's own type as a
-                    // best-effort inference seed source.
-                    if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
-                        seed
-                    } else {
-                        self.emit_expr(a)?
-                    }
-                };
+                    };
+                    Ok::<TokenStream, EmitError>(emitted)
+                })();
+                if let Some(previous) = previous_qualify {
+                    self.qualify_internal_canonical_paths.replace(previous);
+                }
+                let emitted = emitted?;
 
                 // Check VarAccess for explicit borrow requirements
                 if let IrExprKind::Var { access, .. } = &a.kind {
@@ -787,8 +799,14 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit a canonical callee path when the compiler knows how to materialize that namespace at the current call
+    /// site.
+    ///
+    /// Canonical stdlib calls route through the generated `crate::__incan_std` module. Canonical calls to internal
+    /// source modules route through an explicit `crate::...` path so imported helper calls remain valid when default
+    /// argument expressions are expanded outside the defining module.
     fn emit_canonical_callee_path(&self, canonical_path: &[String]) -> Result<Option<TokenStream>, EmitError> {
-        if canonical_path.len() < 3 || canonical_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+        if canonical_path.len() < 2 {
             return Ok(None);
         }
 
@@ -796,17 +814,28 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
-        if !stdlib::is_known_stdlib_module(&module_path) {
+        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+            if canonical_path.len() < 3 || !stdlib::is_known_stdlib_module(&module_path) {
+                return Ok(None);
+            }
+            let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+            let mut segments = vec![quote! { crate }, quote! { #ns }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if *self.qualify_internal_canonical_paths.borrow() && self.is_internal_module_path(&module_path) {
+            let mut segments = vec![quote! { crate }];
+            for seg in &module_path {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else {
             return Ok(None);
-        }
+        };
 
-        let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
-        let mut segments: Vec<TokenStream> = vec![quote! { crate }, quote! { #ns }];
-
-        for seg in module_path.iter().skip(1) {
-            let ident = Self::rust_ident(seg);
-            segments.push(quote! { #ident });
-        }
         let fn_ident = Self::rust_ident(function_name);
         segments.push(quote! { #fn_ident });
 
@@ -942,6 +971,77 @@ mod tests {
 
     fn canonical_testing_path(name: &str) -> Vec<String> {
         vec!["std".to_string(), "testing".to_string(), name.to_string()]
+    }
+
+    #[test]
+    fn emit_internal_canonical_call_preserves_local_binding_without_default_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_internal_module_roots(std::collections::HashSet::from(["defaults".to_string()]));
+        let func = rust_call_target("fallback");
+        let path = vec!["defaults".to_string(), "fallback".to_string()];
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[], Some(&path))
+            .map_err(|err| std::io::Error::other(format!("canonical internal call should emit: {err:?}")))?;
+        assert_eq!(render(tokens), "fallback()");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_default_arg_internal_canonical_call_uses_crate_qualified_path() -> Result<(), Box<dyn std::error::Error>> {
+        let default_expr = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(rust_call_target("fallback")),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                canonical_path: Some(vec!["defaults".to_string(), "fallback".to_string()]),
+            },
+            IrType::Int,
+        );
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "combine".to_string(),
+            vec![
+                FunctionParam {
+                    name: "left".to_string(),
+                    ty: IrType::Int,
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "middle".to_string(),
+                    ty: IrType::Int,
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    default: Some(default_expr),
+                },
+            ],
+            IrType::Int,
+        );
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_internal_module_roots(std::collections::HashSet::from(["defaults".to_string()]));
+        let func = local_arg(
+            "combine",
+            IrType::Function {
+                params: vec![IrType::Int, IrType::Int],
+                ret: Box::new(IrType::Int),
+            },
+        );
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[IrCallArg {
+                    name: None,
+                    expr: TypedExpr::new(IrExprKind::Int(1), IrType::Int),
+                }],
+                None,
+            )
+            .map_err(|err| std::io::Error::other(format!("default arg call should emit: {err:?}")))?;
+        assert_eq!(render(tokens), "combine(1,crate::defaults::fallback())");
+        Ok(())
     }
 
     #[test]

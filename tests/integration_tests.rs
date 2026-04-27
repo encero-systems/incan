@@ -3657,6 +3657,67 @@ def test_two() -> None:
     }
 
     #[test]
+    fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "default_expr_import_test_repro"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            src_dir.join("defaults.incn"),
+            r#"
+pub def fallback() -> int:
+    return 2
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("helper.incn"),
+            r#"
+from defaults import fallback
+
+pub def combine(left: int, middle: int = fallback(), right: int = 3) -> int:
+    return left + middle + right
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_default_expr_import.incn"),
+            r#"
+from std.testing import assert_eq
+from helper import combine
+
+def test_imported_default_expression_expands_with_required_imports() -> None:
+    assert_eq(combine(left=1, right=4), 7, "default expression helper should be available after expansion")
+"#,
+        )?;
+
+        let output = run_incan_test_relative(&dir, "tests");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected imported default expression test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains(
+                "test_default_expr_import.incn::test_imported_default_expression_expands_with_required_imports"
+            ),
+            "expected issue 395 test name in reporter output.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_sequential_single_file_runs_do_not_cross_wire_relative_paths() {
         let dir = write_test_project(
             "incan.toml",
