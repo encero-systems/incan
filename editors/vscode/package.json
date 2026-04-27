@@ -93,12 +93,12 @@
         "incan.lsp.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the incan-lsp binary. Leave empty to use 'incan-lsp' from PATH."
+          "description": "Literal path to the incan-lsp binary. Leave empty to use workspace binary discovery, then PATH."
         },
         "incan.compiler.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the incan compiler binary. Leave empty to use 'incan' from PATH."
+          "description": "Literal path to the incan compiler binary. Leave empty to use workspace binary discovery, then PATH."
         }
       }
     }
@@ -106,6 +106,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "test": "npm run compile && node --test out/binaryResolution.test.js",
     "watch": "tsc -watch -p ./"
   },
   "dependencies": {

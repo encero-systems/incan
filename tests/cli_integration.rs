@@ -232,6 +232,68 @@ fn build_frozen_rejects_missing_lockfile() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+
+    let text_output = run_incan(tmp.path(), &["tools", "doctor"])?;
+    assert_success(&text_output, "incan tools doctor");
+    let text = String::from_utf8_lossy(&text_output.stdout);
+    assert!(
+        text.contains("Incan tools doctor"),
+        "text report should include command heading, got:\n{text}"
+    );
+    assert!(
+        text.contains("PATH incan") && text.contains("PATH incan-lsp"),
+        "text report should include PATH resolution sections, got:\n{text}"
+    );
+    assert!(
+        text.contains("editor setup"),
+        "text report should include editor recovery guidance, got:\n{text}"
+    );
+
+    let json_output = run_incan(tmp.path(), &["tools", "doctor", "--format", "json"])?;
+    assert_success(&json_output, "incan tools doctor --format json");
+    let json: serde_json::Value = serde_json::from_slice(&json_output.stdout)?;
+    assert_eq!(
+        json.get("version").and_then(serde_json::Value::as_str),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    assert!(
+        json.get("current_exe").and_then(serde_json::Value::as_str).is_some(),
+        "doctor JSON should include current_exe: {json}"
+    );
+    assert!(
+        json.pointer("/path/incan")
+            .and_then(serde_json::Value::as_object)
+            .is_some(),
+        "doctor JSON should include path.incan: {json}"
+    );
+    assert!(
+        json.pointer("/path/incan_lsp")
+            .and_then(serde_json::Value::as_object)
+            .is_some(),
+        "doctor JSON should include path.incan_lsp: {json}"
+    );
+    assert!(
+        json.pointer("/cargo_bin/incan")
+            .and_then(serde_json::Value::as_object)
+            .is_some(),
+        "doctor JSON should include cargo_bin.incan: {json}"
+    );
+    assert_eq!(
+        json.pointer("/editor_setup/literal_path_settings")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        json.pointer("/editor_setup/reload_after_rebuild")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

@@ -132,9 +132,9 @@ Suggestions include:
 }
 ```
 
-| Setting             | Default | Description                                                                 |
-| ------------------- | ------- | --------------------------------------------------------------------------- |
-| `incan.lsp.enabled` | `true`  | Enable/disable the language server                                          |
+| Setting             | Default | Description                                                                                      |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------ |
+| `incan.lsp.enabled` | `true`  | Enable/disable the language server                                                               |
 | `incan.lsp.path`    | `""`    | Literal path to `incan-lsp`; when empty, the extension uses workspace binary discovery or `PATH` |
 
 `incan.lsp.path` is not a shell command. It is passed directly to the editor's language-client process launcher, so it does not expand `$HOME`, `~`, command substitutions, or other shell syntax. Use a concrete executable path:
