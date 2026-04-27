@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 035 (First-class named function references)
     - RFC 039 (`race` for awaitable concurrency)
-- **Issue:** [#322](https://github.com/dannys-code-corner/incan/issues/322)
+- **Issue:** [#83](https://github.com/dannys-code-corner/incan/issues/83)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** 0.3
@@ -594,7 +594,7 @@ Rejected because it makes the marker carry different meanings in different conte
 
 ### Spec / design
 
-- [x] Link RFC 038 to issue #322.
+- [x] Link RFC 038 to issue #83.
 - [x] Settle function-value behavior: rest metadata is preserved for rest-aware callable values.
 - [x] Include static call-site unpacking in RFC 038.
 - [x] Fold fixed-parameter call-site unpacking into RFC 038 instead of using a follow-up RFC.
