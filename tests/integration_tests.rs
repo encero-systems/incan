@@ -317,6 +317,29 @@ fn test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface() -> Resu
     Ok(())
 }
 
+#[test]
+fn test_cli_fmt_accepts_assert_identity_bool_literals() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("assert_identity_bool_literals.incn");
+    fs::write(
+        &path,
+        r#"
+def check_flags(ready: bool, done: bool) -> None:
+    assert ready is true, "ready should be true"
+    assert done is false
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary()).arg("fmt").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected `incan fmt` to accept assert identity checks against bool literals.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 /// Regression (GitHub #289): `incan fmt` must preserve escaped newlines in f-strings as textual `\\n`.
 #[test]
 fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -3906,6 +3929,53 @@ def test_two() -> None:
             "expected two passing results (per-test PASSED lines).\nstdout:\n{}",
             stdout,
         );
+    }
+
+    #[test]
+    fn e2e_cross_file_batch_falls_back_when_top_level_names_collide() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_a.incn",
+            r#"
+from std.testing import assert_eq
+
+model Order:
+    id: int
+
+def test_a() -> None:
+    order = Order(id=1)
+    assert_eq(order.id, 1)
+"#,
+        );
+        std::fs::write(
+            dir.join("test_b.incn"),
+            r#"
+from std.testing import assert_eq
+
+model Order:
+    id: int
+
+def test_b() -> None:
+    order = Order(id=2)
+    assert_eq(order.id, 2)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected same-named top-level declarations in different files to run in isolated harnesses.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_a.incn::test_a") && stdout.contains("test_b.incn::test_b"),
+            "expected both tests in reporter output.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
     }
 
     #[test]

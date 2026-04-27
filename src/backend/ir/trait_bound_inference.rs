@@ -258,12 +258,17 @@ fn propagate_trait_bounds_from_signature_maps(
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
     collect_current_callable_signature_maps(program, &mut function_bounds, &mut function_params);
+    let local_callable_keys = collect_current_callable_keys(program);
 
     for (key, bounds) in external_bounds {
-        function_bounds.entry(key.clone()).or_insert_with(|| bounds.clone());
+        if !local_callable_keys.contains(key) {
+            function_bounds.entry(key.clone()).or_insert_with(|| bounds.clone());
+        }
     }
     for (key, params) in external_params {
-        function_params.entry(key.clone()).or_insert_with(|| params.clone());
+        if !local_callable_keys.contains(key) {
+            function_params.entry(key.clone()).or_insert_with(|| params.clone());
+        }
     }
 
     let max_iterations = 20;
@@ -325,6 +330,39 @@ fn propagate_trait_bounds_from_signature_maps(
     }
 
     write_back_callable_bounds(program, &mut function_bounds);
+}
+
+/// Collect every local callable key, including non-generic functions.
+///
+/// External signatures are keyed by callable name for legacy cross-module propagation. Keeping a complete local key set
+/// prevents a same-named external generic helper from rewriting a local non-generic declaration's signature.
+fn collect_current_callable_keys(program: &IrProgram) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    for decl in &program.declarations {
+        match &decl.kind {
+            IrDeclKind::Function(func) => {
+                keys.insert(func.name.clone());
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for (index, method) in trait_decl.methods.iter().enumerate() {
+                    keys.insert(format!("trait:{}:{}:{}", trait_decl.name, index, method.name));
+                }
+            }
+            IrDeclKind::Impl(impl_block) => {
+                for (index, method) in impl_block.methods.iter().enumerate() {
+                    keys.insert(format!(
+                        "impl:{}:{}:{}:{}",
+                        impl_block.target_type,
+                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                        index,
+                        method.name
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
 }
 
 /// Collect the callable signatures that are already present on an IR program.
@@ -2161,4 +2199,76 @@ fn propagate_transitive_bounds(
     }
 
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::decl::{IrDecl, IrDeclKind, Visibility};
+
+    fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
+        IrFunction {
+            name: name.to_string(),
+            params: Vec::new(),
+            return_type: IrType::Unit,
+            body: Vec::new(),
+            is_async: false,
+            visibility: Visibility::Public,
+            type_params,
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        }
+    }
+
+    fn program(functions: Vec<IrFunction>) -> IrProgram {
+        IrProgram {
+            declarations: functions
+                .into_iter()
+                .map(|func| IrDecl::new(IrDeclKind::Function(func)))
+                .collect(),
+            entry_point: None,
+            function_registry: FunctionRegistry::new(),
+            rust_module_path: None,
+        }
+    }
+
+    #[test]
+    fn external_generic_bounds_do_not_rewrite_same_named_local_non_generic_function()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut local = program(vec![function("timeout", Vec::new())]);
+        let external = program(vec![function(
+            "timeout",
+            vec![
+                IrTypeParam::bare("T"),
+                IrTypeParam {
+                    name: "TaskFuture".to_string(),
+                    bounds: vec![IrTraitBound::with_type_args_classified(
+                        "RuntimeFuture".to_string(),
+                        vec![IrType::Generic("T".to_string())],
+                    )],
+                },
+            ],
+        )]);
+
+        propagate_trait_bounds_from_programs(&mut local, &[&external]);
+
+        let decl = local
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Function(func),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(
+            func.type_params.is_empty(),
+            "local non-generic timeout should not inherit external generic bounds"
+        );
+        Ok(())
+    }
 }
