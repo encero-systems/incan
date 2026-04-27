@@ -4488,9 +4488,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#boundary-with-scoped-dsl-glyph-surfaces" class="md-nav__link">
+  <a href="#boundary-with-scoped-dsl-surface-forms" class="md-nav__link">
     <span class="md-ellipsis">
-      Boundary with scoped DSL glyph surfaces
+      Boundary with scoped DSL surface forms
     </span>
   </a>
   
@@ -4674,7 +4674,7 @@
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL glyph surfaces), RFC 054 (explicit call-site generics)</li>
+<li><strong>Related:</strong> RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)</li>
 <li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/314</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
@@ -5058,9 +5058,9 @@
 <li>range operators such as <code>..</code> and <code>..=</code></li>
 </ul>
 <p><code>is</code> retains identity semantics. <code>in</code> / <code>not in</code> remain language-defined membership operators. <code>and</code> / <code>or</code> / <code>not</code> keep their built-in logical short-circuit semantics and are not aliases for <code>&amp;</code> / <code>|</code> / <code>~</code>. Ranges remain dedicated syntax rather than trait-dispatched operators.</p>
-<h3 id="boundary-with-scoped-dsl-glyph-surfaces">Boundary with scoped DSL glyph surfaces<a class="headerlink" href="#boundary-with-scoped-dsl-glyph-surfaces" title="Permanent link">&para;</a></h3>
+<h3 id="boundary-with-scoped-dsl-surface-forms">Boundary with scoped DSL surface forms<a class="headerlink" href="#boundary-with-scoped-dsl-surface-forms" title="Permanent link">&para;</a></h3>
 <p>This RFC defines ordinary global operator semantics. If <code>a &gt;&gt; b</code>, <code>a &lt;&lt; b</code>, <code>a |&gt; b</code>, or <code>a &lt;| b</code> is valid under this RFC, it is valid because the operand types expose the corresponding global operator surface (<code>Shr</code>, <code>Shl</code>, <code>PipeForward</code>, <code>PipeBackward</code>, or compatible dunders).</p>
-<p>Explicit DSL blocks may reuse the same glyphs with block-local meaning, but that scoped reuse is not defined here and does not imply that the operand types globally implement the corresponding operator trait. Imports alone do not change the meaning of operators in ordinary code. See RFC 040 for the scoped-glyph mechanism.</p>
+<p>Explicit DSL blocks may reuse the same glyphs or expression-form surfaces with block-local meaning, but that scoped reuse is not defined here and does not imply that the operand types globally implement the corresponding operator trait. Imports alone do not change the meaning of operators in ordinary code. See RFC 040 for the scoped-surface mechanism.</p>
 <h3 id="resolution-rules">Resolution rules<a class="headerlink" href="#resolution-rules" title="Permanent link">&para;</a></h3>
 <p>When the typechecker encounters <code>a + b</code> on a non-primitive or explicitly operator-driven path:</p>
 <ol>

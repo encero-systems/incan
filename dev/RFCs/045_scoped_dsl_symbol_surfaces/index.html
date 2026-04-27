@@ -4593,7 +4593,7 @@
 <li><strong>Related:</strong><ul>
 <li>RFC 027 (<code>incan-vocab</code> library registration and desugaring)</li>
 <li>RFC 028 (global operator overloading)</li>
-<li>RFC 040 (scoped DSL glyph surfaces)</li>
+<li>RFC 040 (scoped DSL surface forms)</li>
 <li>RFC 022 (namespaced stdlib and compiler handoff)</li>
 <li>RFC 031 (library system phase 1)</li>
 </ul>
@@ -4614,7 +4614,7 @@
 <li><strong>Mechanism C:</strong> core builtins remain globally available through explicit namespaced access even when scoped symbols reuse the same unqualified name.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan currently has globally recognized builtin names such as <code>sum</code>, and unqualified call resolution treats those names as core language vocabulary. This creates friction for DSLs that need concise, domain-specific meaning for the same symbols in constrained contexts. Query-like DSLs often need <code>sum(...)</code> and <code>count(...)</code> to express aggregate intent without import boilerplate or naming workarounds, while still preserving ordinary builtin behavior in non-DSL code. Without a scoped symbol mechanism, library authors must either pick awkward substitute names, force mandatory imports for common domain primitives, or ask the compiler for one-off special handling per DSL. Those options do not scale as more DSLs and libraries adopt concise, context-owned authoring surfaces. The language already has a scoped model for glyphs (RFC 040). Identifier symbols need the same class of capability so that DSL meaning can be explicit, local, and tooling-safe.</p>
+<p>Incan currently has globally recognized builtin names such as <code>sum</code>, and unqualified call resolution treats those names as core language vocabulary. This creates friction for DSLs that need concise, domain-specific meaning for the same symbols in constrained contexts. Query-like DSLs often need <code>sum(...)</code> and <code>count(...)</code> to express aggregate intent without import boilerplate or naming workarounds, while still preserving ordinary builtin behavior in non-DSL code. Without a scoped symbol mechanism, library authors must either pick awkward substitute names, force mandatory imports for common domain primitives, or ask the compiler for one-off special handling per DSL. Those options do not scale as more DSLs and libraries adopt concise, context-owned authoring surfaces. The language already has a scoped model for surface forms (RFC 040). Identifier symbols need the same class of capability so that DSL meaning can be explicit, local, and tooling-safe.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Allow libraries to register scoped identifier symbols (for example <code>sum</code>, <code>count</code>) as part of DSL surfaces.</li>
@@ -4631,7 +4631,7 @@
 <li>Making imports globally mutate language semantics outside explicit DSL activation.</li>
 <li>Defining one DSL-specific aggregate catalog in this RFC; symbol sets remain library-defined.</li>
 <li>Standardizing backend-specific execution semantics for any one domain library.</li>
-<li>Scoped glyph surfaces (<code>&gt;&gt;</code>, <code>|&gt;</code>, <code>:=</code>) or scoped expression forms (<code>.column</code>) — those belong to RFC 040.</li>
+<li>Scoped surface forms (<code>&gt;&gt;</code>, <code>|&gt;</code>, <code>:=</code>, <code>.column</code>) — those belong to RFC 040.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <p>A DSL can own short names in the places where that DSL has semantic authority.</p>
@@ -4677,7 +4677,7 @@
 <li><code>eligible_positions</code></li>
 <li><code>outside_scope_diagnostic</code> (optional)</li>
 </ul>
-<p>Field names intentionally mirror RFC 040 scoped surface descriptors so vocab registration and tooling can treat glyph surfaces and symbol surfaces as parallel, composable metadata. For symbols, <code>eligible_positions</code> describes <strong>name-resolution</strong> contexts (for example where an unqualified call target may be interpreted as a scoped DSL symbol), not parser-only glyph eligibility.</p>
+<p>Field names intentionally mirror RFC 040 scoped surface descriptors so vocab registration and tooling can treat syntax surfaces and symbol surfaces as parallel, composable metadata. For symbols, <code>eligible_positions</code> describes <strong>name-resolution</strong> contexts (for example where an unqualified call target may be interpreted as a scoped DSL symbol), not parser-only surface eligibility.</p>
 <p>Descriptor naming and shape should follow the same registry discipline used for other DSL metadata.</p>
 <h3 id="activation">Activation<a class="headerlink" href="#activation" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4724,7 +4724,7 @@
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>RFC 027 (<code>incan-vocab</code>)</strong>: scoped symbol descriptors should be registered through the same extension surface and activation pipeline.</li>
-<li><strong>RFC 040 (scoped DSL surfaces)</strong>: scoped symbols and scoped glyphs/expression forms are parallel mechanisms; neither replaces the other. Leading-dot field access (<code>.column</code>) is an RFC 040 expression-form surface, not an RFC 045 concern.</li>
+<li><strong>RFC 040 (scoped DSL surface forms)</strong>: scoped symbols and scoped syntax surfaces are parallel mechanisms; neither replaces the other. Leading-dot field access (<code>.column</code>) is an RFC 040 expression-form surface, not an RFC 045 concern.</li>
 <li><strong>RFC 028 (global operators)</strong>: scoped symbol semantics do not modify global operator contracts.</li>
 <li><strong>Imports/modules</strong>: explicit qualification remains the escape hatch for overlapping names.</li>
 <li><strong>LSP/formatter</strong>: tooling must reflect scoped symbol meaning in eligible positions and ordinary meaning elsewhere.</li>
@@ -4737,7 +4737,7 @@
 <li><strong>Require globally unique DSL symbol names.</strong> Rejected because it produces unnatural user-facing APIs (<code>inql_sum</code>, <code>hees_count</code>) and does not scale across independent DSL ecosystems that may reasonably want the same short names.</li>
 <li><strong>Allow global shadowing of builtins by libraries.</strong> Rejected because it is too broad and unsafe; it breaks predictability outside DSL contexts and makes it impossible for the compiler to provide helpful diagnostics about intent.</li>
 <li><strong>Use runtime dunder-like dispatch for function calls.</strong> Rejected because scoped language meaning should be compile-time and lexical, not ambient runtime magic; the enclosing DSL block owns the meaning, not a runtime inspection of "where am I."</li>
-<li><strong>Fold scoped symbols into RFC 040 (scoped glyph surfaces).</strong> Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs need parser-level token handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.</li>
+<li><strong>Fold scoped symbols into RFC 040 (scoped DSL surface forms).</strong> Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs and expression forms need parser-level handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>

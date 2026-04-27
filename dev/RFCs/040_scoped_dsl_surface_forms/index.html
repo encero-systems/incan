@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 040: Scoped DSL Glyph Surfaces - Incan Documentation</title>
+        <title>RFC 040: Scoped DSL Surface Forms - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-040-scoped-dsl-glyph-surfaces" class="md-skip">
+        <a href="#rfc-040-scoped-dsl-surface-forms" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 040: Scoped DSL Glyph Surfaces
+              RFC 040: Scoped DSL Surface Forms
             
           </span>
         </div>
@@ -4428,9 +4428,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#same-glyph-separate-semantic-namespace" class="md-nav__link">
+  <a href="#same-spelling-separate-semantic-namespace" class="md-nav__link">
     <span class="md-ellipsis">
-      Same glyph, separate semantic namespace
+      Same spelling, separate semantic namespace
     </span>
   </a>
   
@@ -4517,6 +4517,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#canonical-acceptance-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Canonical acceptance examples
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4587,6 +4596,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#nested-and-competing-descriptors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Nested and competing descriptors
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pairwise-chaining" class="md-nav__link">
     <span class="md-ellipsis">
       Pairwise chaining
@@ -4608,6 +4626,15 @@
   <a href="#diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
       Diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#formatter-and-lsp-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Formatter and LSP metadata
     </span>
   </a>
   
@@ -4688,9 +4715,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -4714,9 +4741,9 @@
   
 
 
-<h1 id="rfc-040-scoped-dsl-glyph-surfaces">RFC 040: Scoped DSL Glyph Surfaces<a class="headerlink" href="#rfc-040-scoped-dsl-glyph-surfaces" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-040-scoped-dsl-surface-forms">RFC 040: Scoped DSL Surface Forms<a class="headerlink" href="#rfc-040-scoped-dsl-surface-forms" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-03-08</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -4725,20 +4752,14 @@
 <li>RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/332</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/174</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <strong>scoped glyph surfaces</strong> for explicit DSL blocks and their registered subgrammars.</p>
-<p>A registered DSL may declare scoped glyph surfaces with two layers of effect:</p>
-<ul>
-<li><strong>positive meaning</strong> inside an explicit owning block and its eligible registered positions</li>
-<li><strong>negative misuse diagnostics</strong> across the activating file/module outside that block</li>
-</ul>
-<p>Operator-like glyphs such as <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>|&gt;</code>, <code>&lt;|</code>, <code>-&gt;</code>, <code>&lt;-</code>, or <code>+</code> can support chaining, routing, linking, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as <code>:=</code> are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot field access (<code>.column</code>) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.</p>
-<p>This RFC does <strong>not</strong> define a closed whitelist of legal DSL surfaces. It defines the registration, scoping, parsing-eligibility, and conflict rules that make scoped surfaces safe to use. The surface set is open-ended as long as a DSL registers the shape explicitly and it coexists cleanly with the core grammar and tooling.</p>
+<p>Introduce <strong>scoped DSL surface forms</strong> for explicit DSL blocks and their registered subgrammars: a registered DSL may give a local syntax shape positive meaning inside eligible positions of an owning block, while preserving negative misuse diagnostics outside that block in the activating file or module. Operator-like glyphs such as <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>|&gt;</code>, <code>&lt;|</code>, <code>-&gt;</code>, <code>&lt;-</code>, or <code>+</code> can support chaining, routing, linking, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as <code>:=</code> are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot paths (<code>.column</code>, <code>.order.amount</code>) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.</p>
+<p>This RFC does <strong>not</strong> define a closed whitelist of legal DSL surfaces. It defines the descriptor contract, scoping rules, parsing-eligibility rules, semantic artifact requirements, diagnostic rules, and conflict policy that make scoped surfaces safe to use. The surface set is open-ended as long as a DSL registers the shape explicitly and it coexists cleanly with the core grammar and tooling.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <h3 id="global-operator-overloading-is-not-the-right-model-for-every-dsl">Global operator overloading is not the right model for every DSL<a class="headerlink" href="#global-operator-overloading-is-not-the-right-model-for-every-dsl" title="Permanent link">&para;</a></h3>
 <p>RFC 028 defines ordinary global operator overloading. That is the right tool when a type truly supports an operator everywhere:</p>
@@ -4753,7 +4774,7 @@
     <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
 </code></pre></div>
 <p>The intent here is not necessarily that <code>Step</code> globally implements <code>Shr</code>. The real meaning may be "inside a <code>pipeline</code> block, register directed links between adjacent steps." Outside that block, <code>extract &gt;&gt; normalize</code> should be an error with a targeted message.</p>
-<p>If the types globally implement RFC 028 operator traits, the compiler can no longer honestly say "this is only valid inside a pipeline block." That is why block-local glyph meaning needs its own mechanism.</p>
+<p>If the types globally implement RFC 028 operator traits, the compiler can no longer honestly say "this is only valid inside a pipeline block." That is why block-local surface meaning needs its own mechanism.</p>
 <h3 id="rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model">RFC 027 already provides the right substrate, but not the full glyph model<a class="headerlink" href="#rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model" title="Permanent link">&para;</a></h3>
 <p>RFC 027 gives Incan an explicit DSL block model:</p>
 <ul>
@@ -4770,8 +4791,8 @@
 <li><code>-&gt;</code> / <code>&lt;-</code> for transitions, edges, mappings, or directional flow inside a block</li>
 </ul>
 <p>But the same family also needs room for future binding-like surfaces such as <code>:=</code>, where the glyph is not a global walrus operator, but a block-local alias or slot-binding form.</p>
-<p>Beyond operators and bindings, DSLs also need <strong>expression-form surfaces</strong>: syntax shapes that are only valid inside eligible DSL positions. The leading example is <code>.column</code> notation — a leading-dot field access with an implicit receiver supplied by the owning block's context. Outside DSL positions, <code>.field</code> at expression start is not valid Incan syntax and must be rejected. Inside a query or relational block, <code>.amount</code> means "the <code>amount</code> field of the primary relation" without needing a named receiver.</p>
-<p>This RFC therefore covers <strong>scoped DSL surfaces</strong> as a broader category, split into operator-like, binding-like, and expression-form families.</p>
+<p>Beyond operators and bindings, DSLs also need <strong>expression-form surfaces</strong>: syntax shapes that are only valid inside eligible DSL positions. The leading example is <code>.column</code> notation — a leading-dot path with an implicit receiver supplied by the owning block's context. Outside DSL positions, <code>.field</code> at expression start is not valid Incan syntax and must be rejected. Inside a query or relational block, <code>.amount</code> means "the <code>amount</code> field of the primary relation" without needing a named receiver.</p>
+<p>This RFC therefore covers <strong>scoped DSL surface forms</strong> as the parent category, split into operator-like glyph, binding-like glyph, and expression-form families.</p>
 <h3 id="the-real-restriction-is-not-the-glyph-but-the-contract">The real restriction is not the glyph, but the contract<a class="headerlink" href="#the-real-restriction-is-not-the-glyph-but-the-contract" title="Permanent link">&para;</a></h3>
 <p>The language does not need to pre-decide that only a handful of symbols are ever valid in DSLs. A DSL may reasonably want shapes like:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
@@ -4788,12 +4809,13 @@
 <p>That is the real safety boundary for this RFC.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define the registration, scoping, parsing-eligibility, and conflict rules under which explicit DSL blocks may own position-scoped glyph surfaces.</li>
+<li>Define the registration, scoping, parsing-eligibility, semantic artifact, diagnostic, and conflict rules under which explicit DSL blocks may own position-scoped surface forms.</li>
 <li>Cover three surface families: operator-like glyphs (e.g. <code>&gt;&gt;</code>, <code>|&gt;</code>), binding-like glyphs (e.g. <code>:=</code>), and expression-form surfaces (e.g. leading-dot <code>.field</code> access).</li>
-<li>Ensure scoped glyph meaning is block-local and position-scoped: glyphs gain DSL-owned semantics only inside eligible positions of an explicit owning block, not as blanket redefinition for the whole block body.</li>
-<li>Provide targeted misuse diagnostics when DSL-shaped glyphs appear outside eligible positions but inside an activating file or module.</li>
+<li>Ensure scoped surface meaning is block-local and position-scoped: a surface gains DSL-owned semantics only inside eligible positions of an explicit owning block, not as a blanket redefinition for the whole block body.</li>
+<li>Require accepted scoped-surface occurrences to carry descriptor identity, owning block identity, eligible-position identity, parsed payload, source span, and lowering/tooling handoff metadata through later phases.</li>
+<li>Provide targeted misuse diagnostics when DSL-shaped surfaces appear outside eligible positions but inside an activating file or module.</li>
 <li>Coexist cleanly with RFC 028 global operator overloading and the rest of the core grammar.</li>
-<li>Keep the surface set open-ended: any glyph that satisfies the registration and conflict rules is valid, with no pre-closed whitelist.</li>
+<li>Keep the surface set open-ended: any surface form that satisfies the registration and conflict rules is valid, with no pre-closed whitelist.</li>
 </ul>
 <h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4802,16 +4824,17 @@
 <li>Hidden ambient runtime state as the source of block-local meaning</li>
 <li>A global walrus operator for ordinary Incan code</li>
 <li>Scoped identifier symbol semantics (e.g. <code>sum</code>, <code>count</code> gaining DSL-specific meaning by position) — that belongs to RFC 045</li>
+<li>One-off parser exceptions for individual libraries without a registered descriptor</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="same-glyph-separate-semantic-namespace">Same glyph, separate semantic namespace<a class="headerlink" href="#same-glyph-separate-semantic-namespace" title="Permanent link">&para;</a></h3>
+<h3 id="same-spelling-separate-semantic-namespace">Same spelling, separate semantic namespace<a class="headerlink" href="#same-spelling-separate-semantic-namespace" title="Permanent link">&para;</a></h3>
 <p>The central rule is:</p>
 <ul>
-<li>the <strong>glyph</strong> may be the same</li>
+<li>the <strong>surface spelling</strong> may be the same</li>
 <li>the <strong>owner of the meaning</strong> is different</li>
 </ul>
-<p>Outside an owning DSL block, or outside the DSL positions that block explicitly marks as eligible, the glyph falls back to the ordinary language surface and is interpreted according to RFC 028 and the rest of the core grammar.</p>
-<p>Inside an explicit DSL block, the enclosing block may own a position-scoped meaning for the same glyph.</p>
+<p>Outside an owning DSL block, or outside the DSL positions that block explicitly marks as eligible, the surface falls back to the ordinary language surface and is interpreted according to RFC 028 and the rest of the core grammar.</p>
+<p>Inside an explicit DSL block, the enclosing block may own a position-scoped meaning for the same surface spelling.</p>
 <p>That means:</p>
 <ul>
 <li><code>a &gt;&gt; b</code> in ordinary code uses global operator resolution</li>
@@ -4854,7 +4877,7 @@
 <li><code>+</code> combines route verbs</li>
 <li><code>-&gt;</code> maps the route specification to its handler/body</li>
 </ul>
-<p>The same <code>api</code> block may still contain ordinary Incan expressions elsewhere. That is why this RFC models scoped glyphs as block-owned but position-scoped, not as blanket operator redefinition for the whole block body.</p>
+<p>The same <code>api</code> block may still contain ordinary Incan expressions elsewhere. That is why this RFC models scoped surfaces as block-owned but position-scoped, not as blanket operator redefinition for the whole block body.</p>
 <h3 id="example-rails-style-routing-families">Example: Rails-style routing families<a class="headerlink" href="#example-rails-style-routing-families" title="Permanent link">&para;</a></h3>
 <p>Ruby on Rails routing shows how much mileage a DSL can get from a small amount of declarative syntax. Incan should be able to support similarly expressive surfaces:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
@@ -4895,7 +4918,7 @@
 </ul>
 <p>That combination only works cleanly if the glyph semantics are position-scoped rather than whole-block overrides.</p>
 <h3 id="example-matillion-style-orchestration-graphs">Example: Matillion-style orchestration graphs<a class="headerlink" href="#example-matillion-style-orchestration-graphs" title="Permanent link">&para;</a></h3>
-<p>Matillion-style orchestration and transformation flows are another strong fit for scoped glyph surfaces:</p>
+<p>Matillion-style orchestration and transformation flows are another strong fit for scoped surface forms:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">orchestration</span> <span class="n">nightly_sales</span><span class="p">:</span>
     <span class="n">extract_sales</span> <span class="o">-&gt;</span> <span class="n">stage_raw</span> <span class="o">-&gt;</span> <span class="n">run</span> <span class="n">transform_sales</span> <span class="o">-&gt;</span> <span class="n">publish_dashboard</span>
     <span class="n">on_failure</span> <span class="o">&lt;-</span> <span class="n">notify_slack</span>
@@ -4948,29 +4971,59 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">_relation_ctx</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, <code>.field</code> at expression start must be rejected.</p>
+<h3 id="canonical-acceptance-examples">Canonical acceptance examples<a class="headerlink" href="#canonical-acceptance-examples" title="Permanent link">&para;</a></h3>
+<p>A conforming implementation must be able to preserve the local meaning of each accepted surface without treating it as ordinary syntax that later phases rediscover by string matching.</p>
+<p>For a pipeline block:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
+    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
+</code></pre></div>
+<p>The <code>&gt;&gt;</code> occurrences are accepted only in the registered pipeline step-chain position. If the descriptor declares pairwise chaining, the semantic payload is the adjacent pairs <code>(extract, normalize)</code>, <code>(normalize, validate)</code>, and <code>(validate, store)</code>, with descriptor identity and source spans preserved for lowering, formatting, and diagnostics.</p>
+<p>For a query block:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_orders</span><span class="p">:</span>
+    <span class="nc">FROM</span> <span class="n">orders</span>
+    <span class="nc">WHERE</span> <span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span> <span class="ow">and</span> <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
+    <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">order</span><span class="o">.</span><span class="n">amount</span>
+</code></pre></div>
+<p>The leading-dot paths are accepted only in registered query predicate and projection positions. Their semantic payload is the path segments (<code>["status"]</code>, <code>["amount"]</code>, <code>["customer_id"]</code>, <code>["order", "amount"]</code>) plus the descriptor-provided receiver derivation, such as the primary relation introduced by <code>FROM orders</code>.</p>
+<p>For an API block:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
+    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">destroy</span>
+</code></pre></div>
+<p>The <code>+</code> and <code>-&gt;</code> occurrences are accepted only in the registered route-head and route-mapping positions. The same glyphs remain ordinary Incan syntax elsewhere.</p>
+<p>Negative examples must also be precise:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.query</span><span class="w"> </span><span class="kn">import</span> <span class="n">query</span>
+
+<span class="n">value</span> <span class="o">=</span> <span class="o">.</span><span class="n">amount</span>
+</code></pre></div>
+<p>If the query DSL is active but the occurrence is not in an eligible query position, the compiler emits the descriptor's outside-scope diagnostic for the leading-dot surface. Without the active query descriptor, ordinary parser diagnostics apply.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">pipeline</span>
+
+<span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
+</code></pre></div>
+<p>If ordinary <code>&gt;&gt;</code> resolution fails and the active pipeline descriptor exactly matches the surface shape, the compiler emits the descriptor's outside-scope diagnostic rather than a generic unknown-operator error.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="core-rule">Core rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h3>
-<p>Scoped glyphs are owned by the enclosing explicit DSL block, not by the operand types alone.</p>
-<p>Their semantics are <strong>position-scoped</strong> within that block. A DSL does not claim a glyph for every expression in the block body; it claims the glyph only for the eligible positions or subgrammars it explicitly registers.</p>
-<p>Scoped glyph activation has two scopes:</p>
+<p>Scoped surface forms are owned by the enclosing explicit DSL block, not by operand types alone and not by ambient runtime state.</p>
+<p>Their semantics are <strong>position-scoped</strong> within that block. A DSL does not claim a surface for every expression in the block body; it claims the surface only for the eligible positions or subgrammars it explicitly registers.</p>
+<p>Scoped surface activation has two scopes:</p>
 <ul>
-<li><strong>positive scope</strong>: entering a registered block may activate DSL-owned glyph meaning for eligible positions in that block body</li>
-<li><strong>negative scope</strong>: activating the DSL in a file/module may enable targeted misuse diagnostics for that glyph family elsewhere in that same file/module</li>
+<li><strong>positive scope</strong>: entering a registered block may activate DSL-owned surface meaning for eligible positions in that block body</li>
+<li><strong>negative scope</strong>: activating the DSL in a file/module may enable targeted misuse diagnostics for that surface family elsewhere in that same file/module</li>
 </ul>
-<p>Imports or other activation hooks do <strong>not</strong> globally change operator meaning. They only make the DSL's glyph descriptors available to the current file/module so the compiler can:</p>
+<p>Imports or other activation hooks do <strong>not</strong> globally change operator meaning. They only make the DSL's surface descriptors available to the current file/module so the compiler can:</p>
 <ul>
 <li>apply DSL-owned meaning inside eligible positions in eligible blocks</li>
-<li>emit better diagnostics for misplaced DSL-shaped glyph use outside those blocks</li>
+<li>emit better diagnostics for misplaced DSL-shaped surface use outside those blocks</li>
 </ul>
 <p>This is analogous to method bodies having an implicit <code>self</code>: the body gets extra meaning from the enclosing construct, not from ambient runtime state. The difference here is that the DSL may also reserve a file-local "negative space" for misuse diagnostics.</p>
 <h3 id="registration-and-conflict-policy">Registration and conflict policy<a class="headerlink" href="#registration-and-conflict-policy" title="Permanent link">&para;</a></h3>
-<p>This RFC does <strong>not</strong> standardize a permanently closed glyph inventory. Instead, it standardizes the rules under which a DSL may claim block-owned, position-scoped glyph meaning.</p>
-<p>A scoped glyph is allowed if all of the following hold:</p>
+<p>This RFC does <strong>not</strong> standardize a permanently closed surface inventory. Instead, it standardizes the rules under which a DSL may claim block-owned, position-scoped surface meaning.</p>
+<p>A scoped surface is allowed if all of the following hold:</p>
 <ul>
-<li>the glyph is explicitly registered by the DSL</li>
+<li>the surface is explicitly registered by the DSL</li>
 <li>the surface shape is explicitly declared (symbolic glyph for operator-like or binding-like forms, or a declared expression-form shape such as leading-dot access)</li>
 <li>the surface declares its family (<code>OperatorLike</code>, <code>BindingLike</code>, or <code>ExpressionForm</code>)</li>
-<li>the glyph does not collide with a core grammar form in the same position unless the DSL also declares an explicit eligibility/disambiguation rule</li>
+<li>the surface does not collide with a core grammar form in the same position unless the DSL also declares an explicit eligibility/disambiguation rule</li>
 <li>the formatter and tooling can preserve it without ad-hoc special cases</li>
 </ul>
 <p>Common operator-like examples include:</p>
@@ -4984,14 +5037,14 @@
 <li><code>+</code></li>
 </ul>
 <p>These are infix glyphs with operator-like shape. A DSL may interpret them as linking, piping, chaining, directional flow, verb composition, or other block-local relations.</p>
-<p>Arrow-shaped glyphs deserve one extra constraint: scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve <code>-&gt;</code>. They are valid only where the enclosing block grammar explicitly admits a scoped glyph occurrence.</p>
+<p>Arrow-shaped glyphs deserve one extra constraint: scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve <code>-&gt;</code>. They are valid only where the enclosing block grammar explicitly admits a scoped surface occurrence.</p>
 <p>Common binding-like examples include:</p>
 <ul>
 <li><code>:=</code></li>
 </ul>
 <p>This is a binding-shaped glyph family, not an RFC 028 global operator. A DSL may interpret it as aliasing, named slots, or block-local binding according to its own surface contract.</p>
 <h3 id="expression-form-surfaces">Expression-form surfaces<a class="headerlink" href="#expression-form-surfaces" title="Permanent link">&para;</a></h3>
-<p>An expression-form surface is a syntax shape that is only valid inside eligible DSL positions and relies on an implicit receiver or context supplied by the owning block. The leading example is <code>.field</code> — leading-dot field access.</p>
+<p>An expression-form surface is a syntax shape that is only valid inside eligible DSL positions and relies on an implicit receiver or context supplied by the owning block. The leading example is <code>.field</code> or <code>.path.to.field</code> — leading-dot field-path access.</p>
 <p>Expression-form surfaces follow the same scoping contract as operator-like and binding-like surfaces:</p>
 <ul>
 <li><strong>positive scope</strong>: inside eligible positions of an owning block, the expression form is parsed and resolved against the block-supplied implicit context.</li>
@@ -5000,52 +5053,80 @@
 </ul>
 <p>A DSL registering an expression-form surface must declare:</p>
 <ul>
-<li>the syntactic shape (e.g. leading-dot followed by identifier)</li>
+<li>the syntactic shape (e.g. leading-dot followed by one or more identifiers)</li>
 <li>the eligible positions where it is valid</li>
 <li>how the implicit receiver/context is determined (e.g. primary relation from <code>FROM</code>, dataset value from method receiver)</li>
+<li>whether chained path segments are supported and how those segments are interpreted</li>
 </ul>
 <p>Expression-form surfaces do not use <code>chain_mode</code> or <code>inherits_core_precedence</code>; those fields apply only to operator-like surfaces.</p>
 <h3 id="registration-model">Registration model<a class="headerlink" href="#registration-model" title="Permanent link">&para;</a></h3>
-<p>A vocab provider that registers a block keyword may also register scoped glyph surfaces for that block.</p>
-<p>Conceptually, a scoped glyph descriptor needs to capture:</p>
+<p>A vocab provider that registers a block keyword may also register scoped surface forms for that block.</p>
+<p>Conceptually, a scoped surface descriptor needs to capture:</p>
 <ul>
-<li><code>surface</code>: the glyph or expression-form shape being claimed</li>
-<li><code>family</code>: whether the surface is operator-like, binding-like, or expression-form</li>
+<li><code>surface</code>: the glyph spelling or expression-form shape being claimed</li>
+<li><code>family</code>: whether the surface is <code>OperatorLikeGlyph</code>, <code>BindingLikeGlyph</code>, or <code>ExpressionForm</code></li>
 <li><code>owning_block</code>: which explicit block kind owns the surface</li>
-<li><code>positive_scope</code>: where the surface gains DSL-owned meaning</li>
-<li><code>misuse_scope</code>: where targeted misuse diagnostics may fire</li>
 <li><code>eligible_positions</code>: which positions within the owning block are allowed to interpret the surface specially</li>
+<li><code>misuse_scope</code>: where targeted misuse diagnostics may fire outside eligible positions</li>
+<li><code>payload_shape</code>: what parsed data the accepted surface contributes, such as ordered operands or leading-dot path segments</li>
+<li><code>receiver_context</code>: for expression-form surfaces, how the implicit receiver or context is derived</li>
 <li><code>chain_mode</code>: whether repeated use is nested, pairwise, or not chainable</li>
 <li>precedence/disambiguation policy: whether the surface reuses ordinary token precedence or requires a narrower DSL-specific rule</li>
 <li>operand or target constraints: used for validation and diagnostics</li>
-<li><code>outside_scope_diagnostic</code>: optional targeted messaging for likely misuse</li>
+<li>diagnostic templates: author-provided messages for outside-scope use, wrong operand kinds, invalid binding targets, ambiguous surface ownership, and related failures</li>
+<li>lowering/desugaring handoff identity: the stable identity later phases use to dispatch to the owning DSL behavior</li>
 </ul>
+<p>The descriptor is the single source of truth for surface ownership. Later compiler phases, the formatter, and the LSP must not infer DSL-owned meaning by re-parsing source text or by string-matching raw glyphs.</p>
 <h3 id="surface-recognition">Surface recognition<a class="headerlink" href="#surface-recognition" title="Permanent link">&para;</a></h3>
-<p>Scoped glyphs should remain distinguishable from ordinary language surfaces when they are used with DSL-owned meaning.</p>
-<p>The semantic requirement is simple:</p>
+<p>Scoped surfaces must remain distinguishable from ordinary language surfaces when they are used with DSL-owned meaning.</p>
+<p>The semantic artifact requirement is simple:</p>
 <ul>
 <li>global operator expressions remain global operator expressions</li>
 <li>DSL-owned glyph occurrences remain identifiable as DSL-owned glyph occurrences</li>
 <li>expression-form surfaces such as leading-dot access remain identifiable as DSL-owned forms, not as newly general-purpose Incan syntax</li>
 </ul>
-<p>How a frontend chooses to represent that distinction internally is an implementation detail. The requirement is that later phases and tooling can still tell which semantic path the user invoked.</p>
+<p>Every accepted scoped-surface occurrence must carry at least:</p>
+<ul>
+<li>descriptor identity</li>
+<li>owning block identity</li>
+<li>eligible-position identity</li>
+<li>parsed payload</li>
+<li>receiver/context derivation, when applicable</li>
+<li>source span</li>
+<li>diagnostic identity</li>
+<li>lowering/desugaring handoff identity</li>
+</ul>
+<p>The concrete AST or IR representation is an implementation detail, but the information above is not optional. Typechecking, lowering, formatting, and LSP features must receive enough metadata to preserve the DSL-owned meaning without rediscovering it from raw text.</p>
 <h3 id="resolution-order">Resolution order<a class="headerlink" href="#resolution-order" title="Permanent link">&para;</a></h3>
-<p>For a glyph-shaped form such as <code>a &gt;&gt; b</code>:</p>
+<p>Resolution is deterministic:</p>
 <ol>
-<li>If the current file/module has activated a DSL that declares this glyph family, keep its descriptor available for diagnostics and scoped parsing eligibility.</li>
-<li>If the current occurrence is inside an eligible owning block and an eligible registered DSL position, and it matches that block's scoped glyph descriptor, use the DSL-owned glyph resolution path.</li>
-<li>Otherwise use the ordinary language path (including RFC 028 global operator resolution where applicable).</li>
-<li>If ordinary resolution fails, and an active file-local descriptor matches the operand constraints or shape closely enough, emit that descriptor's outside-scope diagnostic instead of a generic operator error.</li>
+<li>Core grammar wins in core-only positions.</li>
+<li>In eligible DSL positions, the innermost eligible owning block wins.</li>
+<li>Same-depth competing descriptors for the same surface in the same eligible position are an ambiguity diagnostic.</li>
+<li>Outside eligible DSL positions, ordinary Incan semantics apply, including RFC 028 global operator resolution where applicable.</li>
+<li>If ordinary semantics fail and an active descriptor exactly matches the surface shape, the compiler may emit that descriptor's outside-scope diagnostic instead of a generic parser/operator error.</li>
 </ol>
 <p>This yields the intended behavior:</p>
 <ul>
 <li>inside the owning block and an eligible position: DSL-owned meaning</li>
-<li>outside the owning block but inside the activating file/module: targeted diagnostic when the DSL can recognize likely misuse</li>
+<li>outside the owning block but inside the activating file/module: targeted diagnostic when the DSL can exactly recognize the surface shape</li>
 <li>ordinary code elsewhere: ordinary global operator semantics</li>
 </ul>
 <p>For glyphs that already have a core syntactic role, such as <code>-&gt;</code>, ordinary language meaning remains authoritative outside positions the enclosing block has explicitly marked as eligible for DSL-owned interpretation.</p>
+<h3 id="nested-and-competing-descriptors">Nested and competing descriptors<a class="headerlink" href="#nested-and-competing-descriptors" title="Permanent link">&para;</a></h3>
+<p>Nested DSL blocks compose through an active descriptor stack.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">nightly</span><span class="p">:</span>
+    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
+
+    <span class="n">query</span> <span class="n">orders</span><span class="p">:</span>
+        <span class="nc">FROM</span> <span class="n">orders</span>
+        <span class="nc">WHERE</span> <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
+        <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span>
+</code></pre></div>
+<p>Inside <code>query orders</code>, leading-dot expression forms are owned by the <code>query</code> descriptor if the current position is an eligible query predicate or projection position. The surrounding <code>pipeline</code> block does not claim that surface there merely because it is lexically active outside the nested block.</p>
+<p>If both <code>pipeline</code> and <code>query</code> register <code>|&gt;</code>, the innermost eligible block wins inside eligible query positions, and the pipeline descriptor wins inside eligible pipeline positions. If two active descriptors at the same lexical depth both claim <code>|&gt;</code> for the same eligible position and neither is more specific, the occurrence is rejected as ambiguous rather than resolved by declaration order.</p>
 <h3 id="pairwise-chaining">Pairwise chaining<a class="headerlink" href="#pairwise-chaining" title="Permanent link">&para;</a></h3>
-<p>Operator-like scoped glyphs may opt into pairwise chaining.</p>
+<p>Operator-like scoped surfaces may opt into pairwise chaining.</p>
 <p>In pairwise mode:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">a</span> <span class="o">&gt;&gt;</span> <span class="n">b</span> <span class="o">&gt;&gt;</span> <span class="n">c</span> <span class="o">&gt;&gt;</span> <span class="n">d</span>
 </code></pre></div>
@@ -5062,8 +5143,8 @@
 <p>This is important for DSLs that describe edges, links, or dataflow between adjacent stages.</p>
 <p>In nested mode, the DSL receives the ordinary nested parse shape instead.</p>
 <h3 id="implicit-block-receivercontext">Implicit block receiver/context<a class="headerlink" href="#implicit-block-receivercontext" title="Permanent link">&para;</a></h3>
-<p>Scoped glyph semantics are not ambient runtime magic. They are lexical semantics supplied by the enclosing block and the specific DSL position being parsed.</p>
-<p>Conceptually, a DSL-owned glyph acts against an implicit block context such as:</p>
+<p>Scoped surface semantics are not ambient runtime magic. They are lexical semantics supplied by the enclosing block and the specific DSL position being parsed.</p>
+<p>Conceptually, a DSL-owned surface acts against an implicit block context such as:</p>
 <ul>
 <li><code>_pipeline_ctx</code></li>
 <li><code>_query_ctx</code></li>
@@ -5081,7 +5162,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">extract</span><span class="o">.</span><span class="fm">__rshift__</span><span class="p">(</span><span class="n">normalize</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>This RFC requires targeted diagnostics for scoped glyph misuse.</p>
+<p>This RFC requires targeted diagnostics for scoped surface misuse.</p>
 <p>Required classes:</p>
 <ul>
 <li>outside-scope use<ul>
@@ -5096,8 +5177,16 @@
 <li>example: "<code>:=</code> in a <code>query</code> block expects an identifier on the left-hand side"</li>
 </ul>
 </li>
+<li>ambiguous surface ownership<ul>
+<li>example: "<code>|&gt;</code> is ambiguous here: both <code>query</code> and <code>pipeline</code> register it for this position"</li>
 </ul>
-<p>These should be preferred over generic "unknown operator" or "type mismatch" messages when the compiler has enough information to recognize the scoped intent.</p>
+</li>
+</ul>
+<p>DSL authors may provide diagnostic templates for these classes as part of the descriptor. The compiler controls when those templates may fire: an outside-scope diagnostic requires an active descriptor, an exact surface-shape match, and failure of ordinary parsing or ordinary operator resolution. The compiler must not use a DSL-authored message merely because the operands are vaguely similar to a DSL example.</p>
+<h3 id="formatter-and-lsp-metadata">Formatter and LSP metadata<a class="headerlink" href="#formatter-and-lsp-metadata" title="Permanent link">&para;</a></h3>
+<p>The formatter and LSP consume scoped-surface metadata; they do not infer DSL semantics from punctuation alone.</p>
+<p>For a leading-dot path such as <code>.order.amount</code>, tooling receives the descriptor family, path segments, owning DSL, eligible position, source span, and receiver/context derivation. A hover can therefore report that <code>.amount</code> is a query field reference resolved against the active relation, while the formatter can preserve the leading-dot path without treating it as ordinary field access.</p>
+<p>For operator-like glyphs, the descriptor provides semantic hints such as <code>chain_mode = pairwise</code>, but line-breaking remains formatter policy. The formatter may consult <code>chain_mode</code> to avoid rewriting a pairwise chain as if it were an ordinary nested binary expression, but the descriptor does not prescribe exact line width or wrapping layout.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="interaction-with-rfc-028">Interaction with RFC 028<a class="headerlink" href="#interaction-with-rfc-028" title="Permanent link">&para;</a></h3>
 <p>RFC 028 defines ordinary global operator semantics.</p>
@@ -5116,10 +5205,10 @@
 <li>scoped functions</li>
 <li>block desugaring</li>
 </ul>
-<p>This RFC extends that world with block-owned, position-scoped glyph surfaces. It does not replace RFC 027; it builds on it.</p>
+<p>This RFC extends that world with block-owned, position-scoped surface forms. It does not replace RFC 027; it builds on it.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Non-breaking</strong>: no existing syntax or semantics change. Scoped glyph surfaces are additive and only activate inside explicit DSL blocks that register them.</li>
+<li><strong>Non-breaking</strong>: no existing syntax or semantics change. Scoped surface forms are additive and only activate inside explicit DSL blocks that register them.</li>
 <li><strong>No migration needed</strong>: code that does not use scoped DSL blocks is unaffected.</li>
 <li><strong>Library adoption</strong>: DSL authors opt in by registering scoped surface descriptors alongside their block keywords.</li>
 </ul>
@@ -5131,7 +5220,7 @@
 </li>
 <li>
 <p>Let plain global dunder methods inspect ambient block state
-    Rejected because it turns lexical language context into hidden runtime magic. Scoped glyph meaning should come from the compiler's explicit block context, similar to how method bodies get <code>self</code>, not from "look around and see where I am" behavior.</p>
+    Rejected because it turns lexical language context into hidden runtime magic. Scoped surface meaning should come from the compiler's explicit block context, similar to how method bodies get <code>self</code>, not from "look around and see where I am" behavior.</p>
 </li>
 <li>
 <p>Allow glyph semantics without explicit registration or conflict rules
@@ -5142,29 +5231,50 @@
 <ul>
 <li>Parser and formatter complexity increase because some glyphs can now be block-local as well as global.</li>
 <li>Readers must understand that the same glyph can mean different things in ordinary code versus an explicit DSL block.</li>
-<li>Libraries and tooling need good diagnostics and clear docs; otherwise scoped glyphs can become opaque.</li>
+<li>Libraries and tooling need good diagnostics and clear docs; otherwise scoped surfaces can become opaque.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Frontend recognition</strong> — the language frontend must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; <code>-&gt;</code> and other glyphs with existing core meanings must continue to mean their ordinary language form outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere</li>
-<li><strong>Semantic analysis</strong> — block-local glyph resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); active DSL descriptors must remain available to the current file/module</li>
-<li><strong>Lowering / execution handoff</strong> — DSL-owned glyph occurrences must preserve their block-owned meaning through later compilation stages; pairwise chaining must be expanded correctly</li>
-<li><strong>RFC 027 extension</strong> — the vocab registration surface needs a scoped-glyph descriptor so DSL authors can declare glyphs alongside block keywords; expression-position block kinds may need a small extension to support forms such as <code>race for value:</code></li>
-<li><strong>Formatter</strong> — must preserve scoped glyph markers without ad-hoc special-casing; repeated chainable surfaces should format coherently</li>
+<li><strong>Semantic analysis</strong> — block-local surface resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); active DSL descriptors must remain available to the current file/module</li>
+<li><strong>Lowering / execution handoff</strong> — DSL-owned surface occurrences must preserve their block-owned meaning through later compilation stages; pairwise chaining must be expanded correctly</li>
+<li><strong>RFC 027 extension</strong> — the vocab registration surface needs a scoped-surface descriptor so DSL authors can declare surfaces alongside block keywords; expression-position block kinds may need a small extension to support forms such as <code>race for value:</code></li>
+<li><strong>Formatter</strong> — must preserve scoped surface markers without ad-hoc special-casing; repeated chainable surfaces should format coherently</li>
 <li><strong>LSP</strong> — hover and syntax highlighting should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>What are the exact APIs for <code>PositiveScope</code> and <code>MisuseScope</code>? These types appear in <code>ScopedGlyphDescriptor</code> but are not fully defined in this RFC.</li>
-<li>Can scoped glyph registrations nest? If a DSL block contains a nested DSL sub-block, and both register <code>|&gt;</code>, which descriptor wins inside the inner block?</li>
-<li>How does the formatter determine when to line-break a pairwise chain vs. keep it inline? Is that a formatter config or part of the glyph descriptor?</li>
-<li>Should <code>PositiveScope</code> and <code>MisuseScope</code> be separate concerns, or should a single <code>ScopeDescriptor</code> express both simultaneously?</li>
-<li>How does the LSP communicate the block-local vs global semantic distinction in completions and hover? Does the language server need access to which DSL blocks are active in the current file?</li>
-<li>Does this RFC need to define how a DSL explicitly opts <code>-&gt;</code> out of core function-return-annotation parsing in a position that admits both?</li>
-<li>For expression-form surfaces, should the implicit receiver be a single well-known concept (e.g. "primary relation") or should DSLs be able to register arbitrary implicit receiver shapes?</li>
-<li>Should expression-form surfaces support chained leading-dot access (e.g. <code>.order.amount</code>) or only single-level <code>.field</code>? If chained, how does the parser distinguish DSL-owned chained access from ordinary Incan field access on the resolved value?</li>
+<li>
+<p><strong>Scoped surface forms are the parent model.</strong> Operator-like glyphs, binding-like glyphs, and expression-form shapes such as leading-dot paths are all registered scoped surface forms. The RFC keeps these families together because they share the same ownership, eligibility, diagnostic, semantic artifact, formatting, and tooling contracts.</p>
+</li>
+<li>
+<p><strong>Positive scope and misuse scope are separate descriptor concerns.</strong> A descriptor declares the eligible positions where a surface gains positive DSL-owned meaning and separately declares the misuse scope where targeted diagnostics may fire. Keeping those concerns separate lets a DSL accept a surface narrowly while still offering helpful file- or module-local diagnostics outside the owning block.</p>
+</li>
+<li>
+<p><strong>Accepted scoped surfaces produce durable semantic artifacts.</strong> The compiler must preserve descriptor identity, owning block identity, eligible-position identity, parsed payload, receiver/context derivation when applicable, source span, diagnostic identity, and lowering/desugaring handoff identity. Later phases and tooling must not rediscover scoped surface meaning by matching raw punctuation.</p>
+</li>
+<li>
+<p><strong>Nested DSL ownership is lexical and deterministic.</strong> In eligible DSL positions, the innermost eligible owning block wins. Same-depth competing descriptors for the same surface in the same eligible position are rejected as ambiguous. Core grammar remains authoritative in core-only positions.</p>
+</li>
+<li>
+<p><strong>Formatter layout is formatter policy, but semantic hints come from descriptors.</strong> A descriptor may expose <code>chain_mode</code>, payload shape, and surface family so the formatter preserves semantics. Exact line-breaking, wrapping, and width decisions remain formatter policy rather than descriptor metadata.</p>
+</li>
+<li>
+<p><strong>LSP and formatter consume scoped-surface metadata.</strong> Hover, highlighting, completions, formatting, and diagnostics receive the same scoped-surface identity and payload metadata as later compiler phases. Tooling must be able to distinguish block-local surface use from ordinary global operator or field-access syntax.</p>
+</li>
+<li>
+<p><strong>Arrow-shaped glyphs require explicit eligible positions.</strong> Scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> cannot opt out of core grammar globally. It is valid only where the owning block grammar explicitly admits a scoped surface occurrence; ordinary language meaning remains authoritative elsewhere.</p>
+</li>
+<li>
+<p><strong>Expression-form receivers are descriptor-defined.</strong> The language does not hardcode a single "primary relation" concept. A DSL registering an expression-form surface must declare how the implicit receiver/context is derived, such as a <code>FROM</code> clause or a method receiver.</p>
+</li>
+<li>
+<p><strong>Leading-dot expression forms may support chained paths.</strong> A descriptor may register leading-dot paths with one or more segments. Once a leading-dot path is accepted in an eligible DSL position, subsequent <code>.name</code> segments belong to that DSL-owned expression-form payload rather than ordinary field access on an already-resolved value.</p>
+</li>
+<li>
+<p><strong>Targeted diagnostics are author-provided but compiler-gated.</strong> DSL authors may provide diagnostic templates for outside-scope use, wrong operands, invalid binding targets, ambiguous ownership, and related failures. The compiler decides when those templates may fire; outside-scope diagnostics require an active descriptor, exact surface-shape match, and ordinary parsing or operator-resolution failure.</p>
+</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

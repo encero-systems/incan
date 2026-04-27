@@ -5272,7 +5272,7 @@
 <li>RFC 022 (stdlib namespacing)</li>
 <li>RFC 023 (compilable stdlib and Rust module binding)</li>
 <li>RFC 031 (library system phase 1)</li>
-<li>RFC 040 (scoped DSL glyph surfaces)</li>
+<li>RFC 040 (scoped DSL surface forms)</li>
 </ul>
 </li>
 <li><strong>Written against:</strong> v0.1</li>
@@ -5305,7 +5305,7 @@
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Defining the global meaning of operators (<code>+</code>, <code>&gt;&gt;</code>, <code>|&gt;</code>, etc.) — that belongs to RFC 028.</li>
-<li>Defining scoped glyph surfaces for explicit DSL blocks — that belongs to RFC 040.</li>
+<li>Defining scoped surface forms for explicit DSL blocks — that belongs to RFC 040.</li>
 <li>External plugin loading via dynamic libraries (<code>cdylib</code>/<code>libloading</code>) — desugarers for external libraries use WASM (Phase 4+), not native shared libraries.</li>
 <li>Implementing the <code>incan.pub</code> registry or git-based dependency resolution — those are Phase 2/3 concerns addressed by RFC 034.</li>
 <li>Replacing the existing <code>[rust-dependencies]</code>/Cargo wiring — that is RFC 031's concern.</li>
@@ -6919,7 +6919,7 @@ Phase 2 collapses lexer token types into <code>Token::Ident</code> once the regi
 <ul>
 <li>RFC 027 defines how a library introduces an activated DSL surface and desugars it.</li>
 <li>RFC 028 defines ordinary global operator overloading.</li>
-<li>RFC 040 defines how an explicit DSL surface may own scoped glyph behavior without implying global operator support.</li>
+<li>RFC 040 defines how an explicit DSL surface may own scoped surface behavior without implying global operator support.</li>
 </ul>
 <p>Imports alone do not change the meaning of <code>a &gt;&gt; b</code> or <code>a |&gt; b</code> in ordinary code. Any future glyph support must remain explicitly scoped by the surrounding DSL surface rather than becoming an ambient global operator change.</p>
 <!-- The "Design decisions" section above was renamed from "Unresolved questions" once all open questions were resolved. If new unresolved questions arise during implementation, add an "Unresolved questions" section above "Design decisions" and move resolved items back down after resolution. -->
