@@ -1,0 +1,6 @@
+[project]
+name = "studiokit_consumer"
+version = "0.1.0"
+
+[dependencies]
+studiokit = { path = "../producer" }

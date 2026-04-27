@@ -1,0 +1,9 @@
+from pub::studiokit import studiokit_name
+
+def main() -> None:
+    let name = studiokit_name()
+    print(name)
+
+    workflow "daily":
+        extract >> normalize // fallback
+        result := check === expected
