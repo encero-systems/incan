@@ -317,6 +317,29 @@ fn test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface() -> Resu
     Ok(())
 }
 
+#[test]
+fn test_cli_fmt_accepts_assert_identity_bool_literals() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("assert_identity_bool_literals.incn");
+    fs::write(
+        &path,
+        r#"
+def check_flags(ready: bool, done: bool) -> None:
+    assert ready is true, "ready should be true"
+    assert done is false
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary()).arg("fmt").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected `incan fmt` to accept assert identity checks against bool literals.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 /// Regression (GitHub #289): `incan fmt` must preserve escaped newlines in f-strings as textual `\\n`.
 #[test]
 fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
