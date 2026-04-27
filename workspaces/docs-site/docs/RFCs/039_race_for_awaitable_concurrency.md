@@ -147,6 +147,8 @@ Think of `race` as the async cousin of `match`.
 
 The winning branch gets a value binding. The losing branches are cancelled.
 
+That cancellation is part of the contract, not an optimization. Write race arms so that losing arms can be abandoned safely. Do not put required side effects, final writes, channel sends, barrier waits, or other must-run work after an `await` inside an arm unless that operation is independently cancellation-safe or the work has been made durable by spawning it before the race.
+
 ### Basic syntax
 
 ```incan
@@ -209,6 +211,8 @@ pub async def timeout_option[T, F with Awaitable[T]](seconds: float, task: F) ->
 
 The public surface is plain Incan. The helper is described in Incan terms, even if its eventual backend realization uses Tokio or another runtime.
 
+In this example, when the sleep arm wins, `task` is cancelled. That is the desired timeout contract for ordinary cancel-safe request work. It is not a durable timeout; use a spawned task handle when the timed operation must continue after the timeout result is returned.
+
 ### Helper model
 
 The intended long-term helper model is variadic:
@@ -268,6 +272,43 @@ result = race for msg:
 ```
 
 That keeps `race` focused on concurrency while letting `match` keep its existing role as the value-shape construct.
+
+### Keep loser arms cancellation-safe
+
+Losing race arms are cancelled by dropping their awaitable. If a losing arm needs cleanup, the cleanup must be owned by a cancellation-safe resource or a spawned task that is intentionally durable.
+
+Prefer arms whose awaited operation can be abandoned:
+
+```incan
+result = race for value:
+    await fetch_primary() => value
+    await fetch_replica() => value
+```
+
+Avoid relying on loser-arm side effects:
+
+```incan
+# Avoid: if `slow_write()` loses, its final write may never happen.
+result = race for value:
+    await fast_read() => value
+    await slow_write() => value
+```
+
+For must-run work, spawn it before the race and make the lifetime explicit:
+
+```incan
+handle = spawn(slow_write())
+
+result = race for value:
+    await fast_read() => value
+    await timeout_signal() => fallback_value()
+
+match await handle:
+    Ok(_) => println("write finished")
+    Err(err) => println(err.message())
+```
+
+Dropping the handle would detach the spawned task and lose its result; call `abort()` only when cancellation is intended.
 
 ## Reference-level explanation
 
@@ -432,6 +473,10 @@ Cancellation is cooperative:
 - losing arms do not continue running to completion
 - dropping a losing awaitable triggers whatever cleanup that awaitable normally performs
 - code must not assume side effects after the final suspension point of a losing arm will still happen
+- `race` arms that wait on channel receives or one-shot receives are safe to abandon because cancellation does not consume the message
+- `race` arms that wait on channel sends are cancel-safe-but-lossy because the unsent value can be dropped
+- `race` arms that wait on mutexes, read-write locks, or semaphores are cancel-safe-but-lossy because the waiter loses queue position
+- `race` arms that wait at a barrier are not cancel-safe and must be avoided unless the entire barrier generation is abandoned
 
 This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.
 
@@ -457,6 +502,8 @@ async def fetch_file() -> bytes:
         await http_get(PRIMARY_URL) => data
         await http_get(MIRROR_URL) => data
 ```
+
+This is safe when either request may be abandoned after the other request wins.
 
 ### Heterogeneous winner
 

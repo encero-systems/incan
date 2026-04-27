@@ -2521,9 +2521,31 @@ async def main() -> None:
         Some(value) => println(value)
         None => println("closed")
 
+    match await tx.reserve():
+        Ok(permit) =>
+            match permit.send(4):
+                Ok(_) => println("reserved")
+                Err(err) => println(err.message())
+        Err(err) => println(err.message())
+
+    match await rx.recv():
+        Some(value) => println(value)
+        None => println("closed")
+
     tx2, rx2 = unbounded_channel()
     match await tx2.send(2):
         Ok(_) => println("sent")
+        Err(err) => println(err.message())
+
+    match rx2.try_recv():
+        Some(value) => println(value)
+        None => println("empty")
+
+    match await tx2.reserve():
+        Ok(permit) =>
+            match permit.send(5):
+                Ok(_) => println("unbounded reserved")
+                Err(err) => println(err.message())
         Err(err) => println(err.message())
 
     match rx2.try_recv():
@@ -2571,6 +2593,26 @@ async def main() -> None:
         assert!(
             stdout.contains("2"),
             "expected unbounded receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("reserved"),
+            "expected bounded reserve output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("4"),
+            "expected bounded permit receive output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("unbounded reserved"),
+            "expected unbounded reserve output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("5"),
+            "expected unbounded permit receive output; got:\n{}",
             stdout
         );
         assert!(
