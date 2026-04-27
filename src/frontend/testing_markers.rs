@@ -284,7 +284,12 @@ fn parse_testing_metadata_dict(
     let mut fixture_autouse_arg: Option<String> = None;
     let mut fixture_scopes: Option<[String; 3]> = None;
 
-    for (key_expr, value_expr) in entries {
+    for entry in entries {
+        let ast::DictEntry::Pair(key_expr, value_expr) = entry else {
+            return Err(TestingMarkerLoadError::new(
+                "malformed @rust.extern metadata for std.testing marker: spread entries are not supported",
+            ));
+        };
         let Some(key) = expr_as_string_literal(key_expr) else {
             return Err(TestingMarkerLoadError::new(
                 "malformed @rust.extern metadata for std.testing marker: non-string key",
@@ -384,9 +389,18 @@ fn expr_as_string_triplet(expr: &ast::Spanned<ast::Expr>) -> Option<[String; 3]>
         return None;
     }
 
-    let first = expr_as_string_literal(&items[0])?;
-    let second = expr_as_string_literal(&items[1])?;
-    let third = expr_as_string_literal(&items[2])?;
+    let ast::ListEntry::Element(first_expr) = &items[0] else {
+        return None;
+    };
+    let ast::ListEntry::Element(second_expr) = &items[1] else {
+        return None;
+    };
+    let ast::ListEntry::Element(third_expr) = &items[2] else {
+        return None;
+    };
+    let first = expr_as_string_literal(first_expr)?;
+    let second = expr_as_string_literal(second_expr)?;
+    let third = expr_as_string_literal(third_expr)?;
     Some([first, second, third])
 }
 

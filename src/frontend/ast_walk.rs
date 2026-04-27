@@ -23,8 +23,8 @@
 //! - import-path traversal
 
 use crate::frontend::ast::{
-    AssertKind, CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, Expr, MatchBody, Program, Spanned,
-    Statement,
+    AssertKind, CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr, ListEntry,
+    MatchBody, Program, Spanned, Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -336,12 +336,14 @@ where
         },
 
         // ---- Context: collection / interpolation expressions ----
-        Expr::Tuple(items) | Expr::List(items) | Expr::Set(items) => {
-            items.iter().any(|item| expr_has(&item.node, pred))
-        }
-        Expr::Dict(entries) => entries
-            .iter()
-            .any(|(key, value)| expr_has(&key.node, pred) || expr_has(&value.node, pred)),
+        Expr::Tuple(items) | Expr::Set(items) => items.iter().any(|item| expr_has(&item.node, pred)),
+        Expr::List(entries) => entries.iter().any(|entry| match entry {
+            ListEntry::Element(value) | ListEntry::Spread(value) => expr_has(&value.node, pred),
+        }),
+        Expr::Dict(entries) => entries.iter().any(|entry| match entry {
+            DictEntry::Pair(key, value) => expr_has(&key.node, pred) || expr_has(&value.node, pred),
+            DictEntry::Spread(value) => expr_has(&value.node, pred),
+        }),
         Expr::FString(parts) => parts.iter().any(|part| match part {
             crate::frontend::ast::FStringPart::Literal(_) => false,
             crate::frontend::ast::FStringPart::Expr(expr) => expr_has(&expr.node, pred),

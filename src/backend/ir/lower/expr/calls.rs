@@ -3,8 +3,8 @@
 
 use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{
-    BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, IrInteropCoercionKind, Literal as IrLiteral, MatchArm,
-    MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
+    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
 };
 use super::super::super::types::IrType;
 use super::super::super::{FunctionSignature, TypedExpr};
@@ -12,7 +12,7 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::RustArgCoercionKind;
+use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
@@ -464,28 +464,109 @@ impl AstLowering {
         &mut self,
         args: &[ast::CallArg],
     ) -> Result<Vec<IrCallArg>, LoweringError> {
-        args.iter()
-            .map(|a| match a {
-                ast::CallArg::Positional(e) => Ok(IrCallArg {
+        let mut lowered = Vec::new();
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(e) => lowered.push(IrCallArg {
                     name: None,
                     kind: IrCallArgKind::Positional,
                     expr: self.lower_expr_spanned(e)?,
                 }),
-                ast::CallArg::Named(name, e) => Ok(IrCallArg {
+                ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
                     name: Some(name.clone()),
                     kind: IrCallArgKind::Named,
                     expr: self.lower_expr_spanned(e)?,
                 }),
-                ast::CallArg::PositionalUnpack(e) => Ok(IrCallArg {
-                    name: None,
-                    kind: IrCallArgKind::PositionalUnpack,
-                    expr: self.lower_expr_spanned(e)?,
+                ast::CallArg::PositionalUnpack(e) => {
+                    let expr = self.lower_expr_spanned(e)?;
+                    if let Some(FixedUnpackPlan::Positional(item_types)) =
+                        self.type_info.as_ref().and_then(|info| info.fixed_unpack_plan(e.span))
+                    {
+                        lowered.extend(self.lower_fixed_positional_unpack_args(&expr, item_types));
+                    } else {
+                        lowered.push(IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::PositionalUnpack,
+                            expr,
+                        });
+                    }
+                }
+                ast::CallArg::KeywordUnpack(e) => {
+                    let expr = self.lower_expr_spanned(e)?;
+                    if let Some(FixedUnpackPlan::Keyword(keys)) =
+                        self.type_info.as_ref().and_then(|info| info.fixed_unpack_plan(e.span))
+                    {
+                        lowered.extend(self.lower_fixed_keyword_unpack_args(&expr, keys));
+                    } else {
+                        lowered.push(IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::KeywordUnpack,
+                            expr,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(lowered)
+    }
+
+    /// Expand a typechecker-proven `*expr` shape into ordinary positional IR arguments.
+    fn lower_fixed_positional_unpack_args(&self, expr: &TypedExpr, item_types: &[ResolvedType]) -> Vec<IrCallArg> {
+        let items = match &expr.kind {
+            IrExprKind::Tuple(items) => items.clone(),
+            IrExprKind::List(items) => items
+                .iter()
+                .filter_map(|item| match item {
+                    IrListEntry::Element(value) => Some(value.clone()),
+                    IrListEntry::Spread(_) => None,
+                })
+                .collect(),
+            _ => item_types
+                .iter()
+                .enumerate()
+                .map(|(idx, ty)| {
+                    TypedExpr::new(
+                        IrExprKind::Field {
+                            object: Box::new(expr.clone()),
+                            field: idx.to_string(),
+                        },
+                        self.lower_resolved_type(ty),
+                    )
+                    .with_span(expr.span)
+                })
+                .collect(),
+        };
+
+        items
+            .into_iter()
+            .map(|expr| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr,
+            })
+            .collect()
+    }
+
+    /// Expand a typechecker-proven `**expr` key set into ordinary named IR arguments.
+    fn lower_fixed_keyword_unpack_args(&self, expr: &TypedExpr, keys: &[String]) -> Vec<IrCallArg> {
+        let IrExprKind::Dict(entries) = &expr.kind else {
+            return vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::KeywordUnpack,
+                expr: expr.clone(),
+            }];
+        };
+
+        entries
+            .iter()
+            .zip(keys.iter())
+            .filter_map(|(entry, name)| match entry {
+                IrDictEntry::Pair(_, value) => Some(IrCallArg {
+                    name: Some(name.clone()),
+                    kind: IrCallArgKind::Named,
+                    expr: value.as_ref().clone(),
                 }),
-                ast::CallArg::KeywordUnpack(e) => Ok(IrCallArg {
-                    name: None,
-                    kind: IrCallArgKind::KeywordUnpack,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
+                IrDictEntry::Spread(_) => None,
             })
             .collect()
     }

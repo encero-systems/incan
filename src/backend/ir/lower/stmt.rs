@@ -1106,6 +1106,7 @@ impl AstLowering {
         }
     }
 
+    /// Count identifier reads inside an expression so lowering can plan moves, borrows, and clones.
     fn count_expr_ident_reads(&self, expr: &ast::Expr, counts: &mut HashMap<String, usize>) {
         match expr {
             ast::Expr::Ident(name) => Self::bump_ident_read(counts, name),
@@ -1194,15 +1195,29 @@ impl AstLowering {
                 }
             }
             ast::Expr::Closure(_, body) => self.count_expr_ident_reads(&body.node, counts),
-            ast::Expr::Tuple(items) | ast::Expr::List(items) | ast::Expr::Set(items) => {
+            ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
                 for item in items {
                     self.count_expr_ident_reads(&item.node, counts);
                 }
             }
+            ast::Expr::List(items) => {
+                for item in items {
+                    match item {
+                        ast::ListEntry::Element(value) | ast::ListEntry::Spread(value) => {
+                            self.count_expr_ident_reads(&value.node, counts);
+                        }
+                    }
+                }
+            }
             ast::Expr::Dict(pairs) => {
-                for (key, value) in pairs {
-                    self.count_expr_ident_reads(&key.node, counts);
-                    self.count_expr_ident_reads(&value.node, counts);
+                for entry in pairs {
+                    match entry {
+                        ast::DictEntry::Pair(key, value) => {
+                            self.count_expr_ident_reads(&key.node, counts);
+                            self.count_expr_ident_reads(&value.node, counts);
+                        }
+                        ast::DictEntry::Spread(value) => self.count_expr_ident_reads(&value.node, counts),
+                    }
                 }
             }
             ast::Expr::Constructor(_, args) => self.count_call_args_ident_reads(args, counts),

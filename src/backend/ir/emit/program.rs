@@ -23,7 +23,7 @@ use quote::quote;
 use std::collections::{HashMap, HashSet};
 
 use super::super::decl::IrDeclKind;
-use super::super::expr::IrExprKind;
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
 use super::super::types::IrType;
 use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{EmitError, IrEmitter};
@@ -107,13 +107,19 @@ impl ImportTracker {
         }
     }
 
+    /// Scan an IR expression tree for emitted support imports such as `HashMap` and `HashSet`.
     fn scan_expr(&mut self, expr: &TypedExpr) {
         match &expr.kind {
             IrExprKind::Dict(pairs) => {
                 self.needs_hashmap = true;
-                for (k, v) in pairs {
-                    self.scan_expr(k);
-                    self.scan_expr(v);
+                for entry in pairs {
+                    match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            self.scan_expr(k);
+                            self.scan_expr(v);
+                        }
+                        IrDictEntry::Spread(value) => self.scan_expr(value),
+                    }
                 }
             }
             IrExprKind::Set(items) => {
@@ -124,7 +130,9 @@ impl ImportTracker {
             }
             IrExprKind::List(items) => {
                 for item in items {
-                    self.scan_expr(item);
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => self.scan_expr(value),
+                    }
                 }
             }
             IrExprKind::Call { func, args, .. } => {

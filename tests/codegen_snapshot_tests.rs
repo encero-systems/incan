@@ -1421,6 +1421,56 @@ fn test_issue389_for_tuple_unpack_enumerate_codegen() {
 }
 
 #[test]
+fn test_fixed_call_unpack_codegen() {
+    let source = load_test_file("fixed_call_unpack");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("fixed_call_unpack", rust_code);
+    assert!(
+        rust_code.contains("combine(\n        1,\n        \"Ada\".to_string()"),
+        "expected shaped positional unpack to emit ordinary fixed arguments"
+    );
+    assert!(
+        rust_code.contains("__incan_rest_args.push(7);"),
+        "expected leftover shaped positional entries to feed *rest"
+    );
+    assert!(
+        rust_code.contains("__incan_rest_kwargs.insert(\"city\".to_string(), \"London\".to_string());"),
+        "expected unknown shaped keyword entries to feed **kwargs"
+    );
+    assert!(
+        rust_code.contains("route(\"/status\".to_string(), \"GET\".to_string())"),
+        "expected shaped keyword unpack to emit ordinary fixed keyword arguments"
+    );
+    assert!(
+        rust_code.contains("counter.add(5, 6)"),
+        "expected fixed method unpack to emit ordinary method arguments"
+    );
+}
+
+#[test]
+fn test_collection_literal_spread_codegen() {
+    let source = load_test_file("collection_literal_spread");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("collection_literal_spread", rust_code);
+    assert!(
+        rust_code.contains("__incan_list.extend((vec![2, 3]).into_iter());"),
+        "expected list literal spread to emit Vec::extend"
+    );
+    assert!(
+        rust_code.contains("__incan_list.push(tail.0);") && rust_code.contains("__incan_list.push(tail.1);"),
+        "expected tuple-shaped list spread to emit field pushes"
+    );
+    assert!(
+        rust_code.contains("for (__incan_key, __incan_value) in (defaults).into_iter()"),
+        "expected dict literal spread to emit insertion loop"
+    );
+    assert!(
+        rust_code.contains("__incan_dict.insert(\"trace\".to_string(), \"enabled\".to_string());"),
+        "expected later direct dict entry to overwrite earlier spread entry"
+    );
+}
+
+#[test]
 fn test_issue391_list_str_append_literal_codegen() {
     let source = load_test_file("issue391_list_str_append_literal");
     let rust_code = generate_rust(&source);

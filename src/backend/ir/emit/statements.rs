@@ -7,7 +7,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
 
-use super::super::expr::{IrExprKind, Pattern, TypedExpr};
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, Pattern, TypedExpr};
 use super::super::ownership::{ValueUseSite, plan_for_loop_iteration, plan_value_use};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
@@ -194,15 +194,29 @@ fn expr_mutates_storage_binding(expr: &super::super::expr::IrExpr, names: &mut H
                 expr_mutates_storage_binding(step, names);
             }
         }
-        IrExprKind::List(items) | IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+        IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
             for item in items {
                 expr_mutates_storage_binding(item, names);
             }
         }
+        IrExprKind::List(items) => {
+            for item in items {
+                match item {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        expr_mutates_storage_binding(value, names);
+                    }
+                }
+            }
+        }
         IrExprKind::Dict(pairs) => {
-            for (key, value) in pairs {
-                expr_mutates_storage_binding(key, names);
-                expr_mutates_storage_binding(value, names);
+            for entry in pairs {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        expr_mutates_storage_binding(key, names);
+                        expr_mutates_storage_binding(value, names);
+                    }
+                    IrDictEntry::Spread(value) => expr_mutates_storage_binding(value, names),
+                }
             }
         }
         IrExprKind::Struct { fields, .. } => {

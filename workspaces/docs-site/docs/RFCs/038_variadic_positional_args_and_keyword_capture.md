@@ -1,6 +1,6 @@
-# RFC 038: Variadic Args and Call-Site Unpacking (`*args` / `**kwargs`)
+# RFC 038: Variadic Args and Unpacking (`*args` / `**kwargs`)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-07
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -9,16 +9,20 @@
 - **Issue:** [#322](https://github.com/dannys-code-corner/incan/issues/322)
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** 0.3
 
 ## Summary
 
-Add Python-style rest parameters (`*args` / `**kwargs`) to Incan function definitions and the matching call-site unpacking model:
+Add Python-style rest parameters and unpacking to Incan as one static, type-directed binding model: functions may capture extra positional and keyword arguments with `*args` and `**kwargs`, calls may unpack positional and keyword values with `f(*xs)` and `f(**kw)`, and collection literals may spread existing lists and dictionaries with `[*xs]` and `{**kw}` while lowering to explicit typed containers rather than runtime reflection.
+
+## Core model
 
 - `*name: T` captures extra positional arguments and binds `name` as a `List[T]`
 - `**name: V` captures extra named arguments and binds `name` as a `Dict[str, V]`
-- `f(*xs)` expands a list-like or statically shaped positional value into the call
-- `f(**kw)` expands a dict-like or statically shaped keyword value into the call
+- `f(*xs)` expands an ordinary list or statically shaped positional value into the call
+- `f(**kw)` expands an ordinary dictionary or statically shaped keyword value into the call
+- `[*xs]` expands ordinary lists or statically shaped positional values into a list literal
+- `{**kw}` expands ordinary dictionaries or statically shaped keyword values into a dict literal
 
 This is compile-time sugar. The surface syntax is ergonomic, but the lowered model stays explicit:
 
@@ -26,7 +30,10 @@ This is compile-time sugar. The surface syntax is ergonomic, but the lowered mod
 - a rest keyword parameter lowers to an ordinary trailing `Dict[str, V]` parameter
 - rest-aware call sites are rewritten to construct those containers explicitly
 - fixed-parameter unpacking is rewritten to an ordinary ordered call after the compiler proves the unpacked shape
+- collection-literal spread is rewritten to explicit list or dictionary construction in source order
 - call-site unpacking is accepted only when the callee type/signature and unpacked value shape provide a deterministic compile-time binding plan
+
+Collection-literal spread applies to ordinary runtime list and dictionary literals. Const frozen collection initializers remain direct-entry-only until const emission can represent spread entries without changing frozen-storage semantics.
 
 This RFC is not only about Python-style convenience. It is also a foundational library-design feature. It lets Incan express APIs that naturally accept a variable number of homogeneous inputs without proliferating fixed-arity helper families. A good example is the helper surface proposed in RFC 039, where a variadic `std.async.race(*arms: RaceArm[R])` is cleaner than a permanent `race2` / `race3` / `race4` ladder.
 
@@ -87,18 +94,21 @@ That distinction is important. This RFC is about giving Incan a clean homogeneou
 
 ### Call-site unpacking is part of the same feature
 
-Python users do not experience `*args`, `**kwargs`, `f(*xs)`, and `f(**kw)` as four unrelated features. They are one call-binding model with two directions:
+Python users do not experience `*args`, `**kwargs`, `f(*xs)`, `f(**kw)`, `[*xs]`, and `{**kw}` as unrelated features. They are one unpacking model with three related contexts:
 
 - function definitions may capture extra positional or named arguments
 - function calls may unpack existing positional or named values
+- list and dictionary literals may build new containers by spreading existing containers
 
-Incan should keep that conceptual model. The implementation may still phase the work, but the RFC should define the full call-binding surface instead of splitting fixed-parameter unpacking into a second RFC.
+Incan should keep that conceptual model while making each destination explicit. The implementation may still phase the work, but the RFC should define the full unpacking surface instead of splitting fixed-parameter or collection-literal unpacking into separate follow-up RFCs.
 
 ## Goals
 
 - Add `*name: T` and `**name: V` parameter forms.
 - Add `f(*xs)` and `f(**kw)` call-site unpacking for calls to rest-aware callables.
 - Add `f(*xs)` and `f(**kw)` call-site unpacking for ordinary fixed-parameter callables when the compiler can prove the unpacked shape.
+- Add list literal spread with `[*xs]` and mixed forms such as `[head, *tail, last]`.
+- Add dict literal spread with `{**kw}` and mixed forms such as `{"accept": "json", **headers}`.
 - Specify them as compile-time sugar over explicit trailing container parameters.
 - Preserve rest-parameter structure in callable metadata so named function values keep the same rest-call behavior as direct calls.
 - Keep the semantics deterministic and type-directed.
@@ -112,7 +122,8 @@ Incan should keep that conceptual model. The implementation may still phase the 
 - Heterogeneous positional capture without packaging.
 - An `Any` type for untyped keyword captures.
 - A richer structured-options container for captured keyword arguments beyond `Dict[str, V]`.
-- Collection-literal spread such as `[*xs]` or `{**kw}`. This RFC only defines unpacking inside function call argument lists.
+- Set literal spread. This RFC covers list and dictionary literal spread because they correspond directly to positional and keyword unpacking.
+- Treating `[**xs]` as valid syntax. `**` is keyword or mapping unpacking, not sequence expansion.
 
 ### Why fixed-parameter unpacking belongs here
 
@@ -122,7 +133,7 @@ The static typing problems are different, so the rules must be explicit. Rest-di
 
 Fixed-parameter unpacking has no such destination container. The compiler must prove the unpacked value's arity, parameter order, named-key set, duplicate bindings, defaults, and per-field types before it can lower the call. Lists do not normally carry length in their type, and ordinary dictionaries do not normally carry a statically known key set. That means fixed-parameter unpacking needs stricter shape-proof rules, not a separate RFC.
 
-Collection-literal spread is also separate. If Incan adds it later, `[*xs]` would be the natural list-spread shape and `{**kw}` would be the natural dictionary-spread shape. `[**xs]` should remain invalid: `**` means keyword or mapping unpacking, not sequence expansion.
+Collection-literal spread follows the same destination rule. `[*xs]` is list spread because `*` expands positional values into a sequence destination. `{**kw}` is dictionary spread because `**` expands mapping entries into a mapping destination. `[**xs]` must remain invalid because `**` has no coherent list destination.
 
 ## Guide-level explanation
 
@@ -154,9 +165,7 @@ def main() -> None:
     connect("localhost", 5432)  # ok: opts is {}
 ```
 
-This is especially valuable for boundary-style APIs that intentionally forward option bags to another system: readers, writers, HTTP clients, framework adapters, and plugin hooks.
-
-A useful real-world analogy is Koheesio's `ExtraParamsMixin`, which separates declared model fields from pass-through extra options while keeping call sites ergonomic. This is quite a common pattern in Python libraries.
+This is especially valuable for boundary-style APIs that intentionally forward option bags to another system: readers, writers, HTTP clients, framework adapters, and plugin hooks. Python libraries commonly separate declared parameters from pass-through extra options for this kind of adapter boundary.
 
 The important difference in Incan is that `**kwargs` remains explicit and typed:
 
@@ -176,7 +185,7 @@ def render(template: str, *values: str, **opts: str) -> str:
 
 ### Call-site unpacking
 
-Use `*expr` at a call site to pass an existing list-like value into a positional rest parameter. Use `**expr` to pass an existing dict-like value into a keyword rest parameter.
+Use `*expr` at a call site to pass an existing ordinary list value into a positional rest parameter. Use `**expr` to pass an existing ordinary dictionary value into a keyword rest parameter.
 
 ```incan
 def log(level: str, *msgs: str) -> None:
@@ -211,18 +220,43 @@ def main() -> str:
     return point(*xy)
 ```
 
-For keyword unpacking into fixed parameters, the compiler must know the available keys and their value types:
+For keyword unpacking into fixed parameters, the compiler must know the available keys and their value types. Inline dictionary literals with string literal keys are the minimum accepted shape:
 
 ```incan
-def user(name: str, age: int) -> str:
-    return f"{name}:{age}"
+def route(path: str, method: str) -> str:
+    return f"{method} {path}"
 
 def main() -> str:
-    fields = {name="Ada", age=37}
-    return user(**fields)
+    return route(**{"path": "/status", "method": "GET"})
 ```
 
-The exact shaped-key syntax in the second example is illustrative until Incan has a settled static key-shape surface. Ordinary `Dict[str, T]` values are still valid for feeding `**kwargs`; they are not enough by themselves to prove that fixed parameters such as `name` and `age` are present.
+Ordinary `Dict[str, T]` values are still valid for feeding `**kwargs`; they are not enough by themselves to prove that fixed parameters such as `path` and `method` are present unless the compiler can preserve a statically known key shape for that value.
+
+### List and dictionary literal spread
+
+Use `*expr` inside a list literal when the destination is a new list:
+
+```incan
+def main() -> int:
+    middle = [2, 3]
+    values = [1, *middle, 4]
+    return len(values)
+```
+
+The result preserves source order. Direct elements are inserted where they appear, and spread values contribute their elements at that position. `[*items]` therefore creates a shallow list copy, and `[head, *tail]` is the literal-spread form of prefixing an existing list.
+
+Use `**expr` inside a dictionary literal when the destination is a new dictionary:
+
+```incan
+def main() -> int:
+    defaults = {"accept": "json"}
+    headers = {**defaults, "trace": "enabled"}
+    return len(headers)
+```
+
+Dictionary spread preserves source order for insertion. If the same key appears more than once, the later entry wins, matching ordinary dictionary construction and `**kwargs` capture behavior.
+
+The markers are destination-specific. `[*items]` is valid because a list is a sequence destination. `{**headers}` is valid because a dictionary is a mapping destination. `[**items]` is invalid even if `items` is a list, because `**` expands mappings into keyword or dictionary destinations, not sequences.
 
 ### Higher-order helper APIs
 
@@ -261,14 +295,16 @@ If a callable type is written without rest markers, the compiler treats it as an
 
 ### Definitions
 
-This RFC introduces two new parameter kinds:
+This RFC introduces two new parameter kinds and four unpacking forms:
 
 1. **Rest positional parameter**: `*name: T`: Binds `name` as `List[T]` within the function body
 2. **Rest keyword parameter**: `**name: V`: Binds `name` as `Dict[str, V]` within the function body
-3. **Positional unpack argument**: `*expr`: Supplies elements of a list-like or statically shaped positional value to the call
-4. **Keyword unpack argument**: `**expr`: Supplies entries of a dict-like or statically shaped keyword value to the call
+3. **Positional unpack argument**: `*expr`: Supplies elements of an ordinary list or statically shaped positional value to the call
+4. **Keyword unpack argument**: `**expr`: Supplies entries of an ordinary dictionary or statically shaped keyword value to the call
+5. **List spread element**: `*expr`: Supplies elements of an ordinary list or statically shaped positional value to a list literal
+6. **Dictionary spread entry**: `**expr`: Supplies entries of an ordinary dictionary or statically shaped keyword value to a dictionary literal
 
-In both cases, the annotation specifies the element type (`T`) or value type (`V`), not the container type.
+For rest parameters, the annotation specifies the element type (`T`) or value type (`V`), not the container type.
 
 ### Placement rules
 
@@ -294,11 +330,12 @@ Binding a call `f(<args...>)` proceeds by building one deterministic binding pla
 
 For positional arguments:
 
-1. Direct positional arguments bind ordinary positional parameters left-to-right until those parameters are exhausted.
-2. Surplus direct positional arguments are appended to `*rest` if present; otherwise they are errors.
-3. `*expr` may bind ordinary fixed positional parameters only when `expr` has a statically known ordered shape. The minimum accepted shape is `tuple[T1, T2, ...]`.
-4. If a positional rest parameter exists, any part of a positional unpack expression that is not consumed by fixed parameters may extend that rest list when its element type is compatible with `R`.
-5. Homogeneous `List[T]` is valid for extending `*rest`. It is not valid for filling a fixed number of ordinary parameters unless the language gains a separate way to prove list length statically.
+1. Positional call items are processed left to right.
+2. Direct positional arguments bind ordinary positional parameters left-to-right until those parameters are exhausted.
+3. Surplus direct positional arguments are appended to `*rest` if present; otherwise they are errors.
+4. `*expr` may bind ordinary fixed positional parameters only when `expr` has a statically known ordered shape. The minimum accepted shapes are fixed-length tuples and list literals.
+5. A shaped `*expr` is expanded element by element. Elements bind remaining fixed positional parameters first, then extend `*rest` if present.
+6. Homogeneous `List[T]` values with no known length are valid for extending `*rest` only when no fixed positional parameter still needs to be bound. They must not be used to fill a fixed number of ordinary parameters unless the language gains a separate way to prove list length statically.
 
 For named arguments:
 
@@ -311,6 +348,26 @@ For named arguments:
 
 If an unpacked value would bind a parameter that is already bound, the compiler reports a duplicate-argument error. If a required fixed parameter remains unbound after all direct and unpacked arguments are processed, the compiler reports a missing-argument error.
 
+### Collection literal binding
+
+List literal binding must evaluate direct elements and spread elements from left to right:
+
+1. A direct element contributes one value to the resulting list.
+2. A `*expr` element contributes zero or more values at its source position.
+3. Every contributed value must be compatible with the list element type.
+4. `**expr` must not be accepted in a list literal.
+
+Dictionary literal binding must evaluate direct entries and spread entries from left to right:
+
+1. A direct key-value entry inserts or overwrites one key in the resulting dictionary.
+2. A `**expr` entry contributes zero or more key-value pairs at its source position.
+3. Every contributed key must be compatible with the dictionary key type.
+4. Every contributed value must be compatible with the dictionary value type.
+5. Duplicate keys are resolved by source order: later entries overwrite earlier entries.
+6. `*expr` must not be accepted in a dictionary literal.
+
+Const frozen collection initializers are not part of collection spread in this RFC implementation. They continue to require direct entries so const evaluation and backend frozen-storage emission stay aligned.
+
 ### Type checking rules
 
 - each extra positional argument bound into `*rest: R` must be type-compatible with `R`
@@ -319,6 +376,8 @@ If an unpacked value would bind a parameter that is already bound, the compiler 
 - each `**expr` unpack argument must be type-compatible with `Dict[str, K]` for the resolved rest keyword parameter
 - each `*expr` that binds fixed parameters must have a statically known ordered shape with per-position types compatible with the target parameters
 - each `**expr` that binds fixed parameters must have a statically known key set with per-key value types compatible with the target parameters
+- each `*expr` inside a list literal must be compatible with the list element type, either as a homogeneous ordinary list value or as a statically shaped positional value whose elements are each compatible
+- each `**expr` inside a dictionary literal must be compatible with the dictionary key and value types, either as a homogeneous `Dict[K, V]` or as a statically shaped mapping whose keys and values are each compatible
 - `rest` is typechecked as `List[R]` within the function
 - `kw` is typechecked as `Dict[str, K]` within the function
 - callable values must preserve rest structure in their function type when they originate from a rest-aware declaration
@@ -331,6 +390,8 @@ This feature is specified as pure compile-time lowering:
 - calls that use rest-capture sugar are rewritten by the compiler to construct those values at the call site
 - unpack arguments that feed rest parameters are lowered into the same explicit list/dict construction path rather than into runtime reflection or dynamic dispatch
 - unpack arguments that feed fixed parameters are lowered to ordinary positional Rust arguments after binding is resolved
+- list literal spread is lowered to explicit list construction and extension in source order
+- dictionary literal spread is lowered to explicit dictionary construction and insertion/extension in source order
 
 Conceptually:
 
@@ -382,6 +443,7 @@ A plain fixed-arity function type such as `(str, List[str]) -> None` does not im
 
 - **async/await**: no special interaction; captured list/dict values are ordinary values
 - **traits/derives**: methods may also use `*` / `**` under the same rules
+- **collection literals**: list and dictionary literals gain spread elements that follow the same positional-vs-mapping marker distinction as call arguments
 - **imports/modules**: no special interaction
 - **Rust interop**:
     - the sugar should not be applied to external Rust calls unless the compiler has an Incan-level signature describing the trailing parameters as `List[...]` / `Dict[...]`
@@ -402,9 +464,17 @@ call_arg ::= Expr
            | IDENT "=" Expr
            | "*" Expr
            | "**" Expr
+
+list_elem ::= Expr
+            | "*" Expr
+
+dict_entry ::= Expr ":" Expr
+             | "**" Expr
 ```
 
 Call-site unpacking is part of this RFC for both statically rest-aware callees and fixed-parameter callees whose unpacked value shapes are statically provable.
+
+Collection-literal spread is part of this RFC for list and dictionary literals. `*expr` is valid only where the destination is sequence-like. `**expr` is valid only where the destination is mapping-like.
 
 ### Semantics
 
@@ -416,6 +486,7 @@ Key invariants:
 - callable metadata preserves rest markers so function values can keep rest-aware call behavior
 - unpacking is accepted only when the compiler can resolve every destination it feeds
 - fixed-parameter unpacking requires shape proof; rest-parameter unpacking requires container compatibility
+- collection-literal spread preserves source order and does not introduce a new runtime container protocol
 
 ### Compatibility and migration
 
@@ -463,28 +534,38 @@ Rejected for this RFC.
 
 The homogeneous model is clearer, easier to typecheck, and already sufficient for many important APIs once repeated inputs are packaged into a common type.
 
+### 5. Keep collection-literal spread separate
+
+Rejected because list and dictionary literal spread are the collection-building counterpart to call-site unpacking. Splitting them would leave users with `f(*xs)` but no direct way to build `[prefix, *xs]`, and with `f(**kw)` but no direct way to build `{"trace": "on", **kw}`. The implementation can phase these surfaces, but the RFC should define the full unpacking model.
+
+### 6. Permit `[**xs]` as a list flattening shortcut
+
+Rejected because it makes the marker carry different meanings in different contexts. `**` means mapping or keyword expansion. List destinations must use `*`, so `[**xs]` remains invalid even when `xs` is a list.
+
 ## Drawbacks
 
 - adds syntax, typing, and diagnostics complexity
 - increases the number of ways to express APIs, which can fragment style
 - requires callable metadata to carry more than a flat list of parameter types
+- requires list and dictionary literal lowering to handle mixed direct and spread elements
 - may encourage over-flexible APIs if used without discipline
 
 ## Layers affected
 
-- **Language surface** — `*` and `**` parameter forms in function signatures must be supported and remain distinct from ordinary parameters.
-- **Type system** — rest-parameter metadata, callable rest structure, binding rules for extra positional or named arguments, fixed-parameter unpack shape proof, unpacking rules, and element or value type mismatches must be validated.
-- **Execution handoff** — implementations may rewrite extra positionals into `List[...]` values and extra named arguments into `Dict[str, ...]` values, but the observable call semantics must match this RFC.
-- **Formatter** — `*` and `**` markers on rest parameters should print predictably.
-- **LSP** — rest parameter variables should display as `List[T]` and `Dict[str, V]` on hover and in completions.
+- **Language surface** — `*` and `**` parameter forms, call arguments, and collection-literal spread elements must be parsed distinctly from ordinary expressions.
+- **Type system** — rest-parameter metadata, callable rest structure, binding rules for extra positional or named arguments, fixed-parameter unpack shape proof, collection spread typing, and element or value type mismatches must be validated.
+- **Execution handoff** — implementations may rewrite extra positionals into `List[...]` values, extra named arguments into `Dict[str, ...]` values, fixed-parameter unpacking into ordinary ordered calls, and collection spread into explicit list/dict construction, but the observable semantics must match this RFC.
+- **Formatter** — `*` and `**` markers on rest parameters, call arguments, and collection literal spread entries should print predictably.
+- **LSP** — rest parameter variables should display as `List[T]` and `Dict[str, V]` on hover and in completions, and diagnostics/completions should understand valid unpacking contexts.
 
 ## Implementation Plan
 
 ### Phase 1: Syntax, AST, and formatter
 
 - Parse rest parameters and unpack call arguments.
+- Parse list spread elements and dictionary spread entries.
 - Preserve rest parameter and unpack argument kinds in the AST.
-- Format rest markers and unpack arguments predictably.
+- Format rest markers, unpack arguments, and collection spread entries predictably.
 
 ### Phase 2: Typechecker and callable metadata
 
@@ -492,6 +573,7 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - Validate rest parameter placement and duplicate rest forms.
 - Bind extra positional/named arguments and unpack arguments against the resolved rest targets.
 - Bind fixed parameters from unpack arguments when the unpacked value shape is statically known.
+- Typecheck list and dictionary literal spread in source order.
 - Preserve rest-aware callable behavior through first-class function values.
 
 ### Phase 3: Lowering, IR, and emission
@@ -499,13 +581,14 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - Lower rest parameters to explicit trailing list/dict parameters.
 - Lower rest-aware calls to explicit list/dict construction in source order.
 - Lower fixed-parameter unpacking to ordinary ordered calls after binding is resolved.
-- Emit Rust that preserves ordinary fixed-arity calls, rest capture calls, unpacked rest calls, and fixed-parameter unpacking.
+- Lower list and dictionary literal spread to explicit container construction in source order.
+- Emit Rust that preserves ordinary fixed-arity calls, rest capture calls, unpacked rest calls, fixed-parameter unpacking, and collection literal spread.
 
 ### Phase 4: Tooling, tests, and docs
 
 - Add parser, formatter, typechecker, codegen snapshot, and integration coverage.
 - Update user-facing language docs and release notes.
-- Document the rest-directed subset and the full fixed-parameter north star without splitting the design across RFCs.
+- Document the rest-directed subset and the full unpacking north star without splitting the design across RFCs.
 
 ## Progress Checklist
 
@@ -515,6 +598,7 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - [x] Settle function-value behavior: rest metadata is preserved for rest-aware callable values.
 - [x] Include static call-site unpacking in RFC 038.
 - [x] Fold fixed-parameter call-site unpacking into RFC 038 instead of using a follow-up RFC.
+- [x] Include list and dictionary literal spread in RFC 038.
 
 ### Parser / AST / formatter
 
@@ -522,6 +606,10 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - [x] Parse `*expr` and `**expr` call arguments.
 - [x] Preserve rest and unpack kinds in AST nodes.
 - [x] Format rest parameters and unpack arguments stably.
+- [x] Parse and preserve `*expr` list literal spread.
+- [x] Parse and preserve `**expr` dictionary literal spread.
+- [x] Reject `**expr` in list literals and `*expr` in dictionary literals.
+- [x] Format collection literal spread stably.
 
 ### Typechecker
 
@@ -529,9 +617,11 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - [x] Validate rest parameter placement and duplicates.
 - [x] Validate extra direct positional/named arguments against rest element/value types.
 - [x] Validate `*expr` and `**expr` against rest container types.
-- [ ] Validate `*expr` against statically known ordered shapes for fixed positional parameters.
-- [ ] Validate `**expr` against statically known key shapes for fixed named parameters.
-- [ ] Diagnose duplicate and missing fixed-parameter bindings across direct and unpacked arguments.
+- [x] Validate `*expr` against statically known ordered shapes for fixed positional parameters.
+- [x] Validate `**expr` against statically known key shapes for fixed named parameters.
+- [x] Diagnose duplicate and missing fixed-parameter bindings across direct and unpacked arguments.
+- [x] Typecheck `*expr` list literal spread against the list element type.
+- [x] Typecheck `**expr` dictionary literal spread against the dictionary key/value types.
 - [x] Preserve rest metadata through first-class function values.
 
 ### Lowering / IR / emission
@@ -540,7 +630,9 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - [x] Lower rest-aware direct calls to explicit container arguments.
 - [x] Lower unpack call arguments into the same explicit container construction path.
 - [x] Emit correct Rust for direct rest calls, function-value rest calls, and unpacked rest calls.
-- [ ] Lower fixed-parameter unpacking to ordinary ordered calls.
+- [x] Lower fixed-parameter unpacking to ordinary ordered calls.
+- [x] Lower list literal spread to explicit list construction and extension.
+- [x] Lower dictionary literal spread to explicit dictionary construction and insertion/extension.
 
 ### Tests
 
@@ -549,17 +641,19 @@ The homogeneous model is clearer, easier to typecheck, and already sufficient fo
 - [x] Typechecker tests for valid rest calls, invalid placement, invalid element/value types, and invalid unpack usage.
 - [x] Codegen snapshot tests for rest capture, callable-value rest calls, and unpacked rest calls.
 - [x] Integration tests for compiled rest calls.
-- [ ] Typechecker and codegen tests for fixed-parameter unpacking once shape proof lands.
+- [x] Typechecker and codegen tests for fixed-parameter unpacking once shape proof lands.
+- [x] Parser, formatter, typechecker, codegen, and integration tests for list and dictionary literal spread.
 
 ### Docs
 
 - [x] Update authored language reference/user docs.
 - [x] Add release notes entry.
-- [x] Keep the full call-site unpacking design in RFC 038.
+- [x] Keep the full unpacking design in RFC 038.
 
 ## Design Decisions
 
 - Rest-call sugar applies through function values when the callable metadata preserves rest parameter structure.
 - RFC 038 adds call-site unpacking for statically rest-aware callees: `f(*xs)` feeds the callee's positional rest parameter and `f(**kw)` feeds the callee's keyword rest parameter.
 - RFC 038 also owns fixed-parameter call-site unpacking: `f(*xs)` and `f(**kw)` may bind ordinary parameters when the compiler can prove the unpacked shape.
+- RFC 038 owns list and dictionary literal spread: `[*xs]` spreads sequence values into list literals, `{**kw}` spreads mapping values into dictionary literals, and `[**xs]` remains invalid.
 - Captured keyword arguments use `Dict[str, V]`; richer structured-options containers are speculative and out of scope.

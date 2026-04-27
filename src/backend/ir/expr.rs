@@ -221,10 +221,10 @@ pub enum IrExprKind {
     },
 
     // List literal
-    List(Vec<IrExpr>),
+    List(Vec<IrListEntry>),
 
     // Dict literal
-    Dict(Vec<(IrExpr, IrExpr)>),
+    Dict(Vec<IrDictEntry>),
 
     // Set literal
     Set(Vec<IrExpr>),
@@ -312,6 +312,24 @@ pub enum IrExprKind {
 
     // serde_json::from_str(s) - contains the target type name
     SerdeFromJson(String),
+}
+
+/// One lowered entry in a list literal.
+#[derive(Debug, Clone)]
+pub enum IrListEntry {
+    /// Direct element expression.
+    Element(IrExpr),
+    /// Spread list expression.
+    Spread(IrExpr),
+}
+
+/// One lowered entry in a dict literal.
+#[derive(Debug, Clone)]
+pub enum IrDictEntry {
+    /// Direct key/value pair.
+    Pair(IrExpr, Box<IrExpr>),
+    /// Spread dict expression.
+    Spread(IrExpr),
 }
 
 /// Coercion strategy at a Rust interop boundary.

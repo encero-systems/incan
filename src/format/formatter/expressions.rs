@@ -51,6 +51,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format one expression node, preserving source-order entry structure for calls and collection literals.
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => self.writer.write(name),
@@ -191,19 +192,33 @@ impl Formatter {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_expr(&item.node);
+                    match item {
+                        ListEntry::Element(value) => self.format_expr(&value.node),
+                        ListEntry::Spread(value) => {
+                            self.writer.write("*");
+                            self.format_expr(&value.node);
+                        }
+                    }
                 }
                 self.writer.write("]");
             }
             Expr::Dict(pairs) => {
                 self.writer.write("{");
-                for (i, (k, v)) in pairs.iter().enumerate() {
+                for (i, entry) in pairs.iter().enumerate() {
                     if i > 0 {
                         self.writer.write(", ");
                     }
-                    self.format_expr(&k.node);
-                    self.writer.write(": ");
-                    self.format_expr(&v.node);
+                    match entry {
+                        DictEntry::Pair(k, v) => {
+                            self.format_expr(&k.node);
+                            self.writer.write(": ");
+                            self.format_expr(&v.node);
+                        }
+                        DictEntry::Spread(value) => {
+                            self.writer.write("**");
+                            self.format_expr(&value.node);
+                        }
+                    }
                 }
                 self.writer.write("}");
             }

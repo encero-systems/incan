@@ -460,16 +460,30 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             .map(incan_vocab::IncanExpr::Tuple),
         ast::Expr::List(values) => values
             .iter()
-            .map(|value| internal_expr_to_public(&value.node))
+            .map(|entry| match entry {
+                ast::ListEntry::Element(value) => internal_expr_to_public(&value.node),
+                ast::ListEntry::Spread(_) => Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                    "list spread entries are not supported by public vocab AST bridge",
+                )),
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(incan_vocab::IncanExpr::List),
         ast::Expr::Dict(entries) => {
             let mut mapped = Vec::with_capacity(entries.len());
-            for (key, value) in entries {
-                mapped.push((
-                    internal_expr_to_public(&key.node)?,
-                    internal_expr_to_public(&value.node)?,
-                ));
+            for entry in entries {
+                match entry {
+                    ast::DictEntry::Pair(key, value) => {
+                        mapped.push((
+                            internal_expr_to_public(&key.node)?,
+                            internal_expr_to_public(&value.node)?,
+                        ));
+                    }
+                    ast::DictEntry::Spread(_) => {
+                        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                            "dict spread entries are not supported by public vocab AST bridge",
+                        ));
+                    }
+                }
             }
             Ok(incan_vocab::IncanExpr::Dict(mapped))
         }
@@ -558,13 +572,16 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             .map(ast::Expr::Tuple),
         incan_vocab::IncanExpr::List(values) => values
             .iter()
-            .map(|value| public_expr_to_internal(value).map(|node| ast::Spanned::new(node, ast::Span::default())))
+            .map(|value| {
+                public_expr_to_internal(value)
+                    .map(|node| ast::ListEntry::Element(ast::Spanned::new(node, ast::Span::default())))
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(ast::Expr::List),
         incan_vocab::IncanExpr::Dict(entries) => {
             let mut mapped = Vec::with_capacity(entries.len());
             for (key, value) in entries {
-                mapped.push((
+                mapped.push(ast::DictEntry::Pair(
                     ast::Spanned::new(public_expr_to_internal(key)?, ast::Span::default()),
                     ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default()),
                 ));

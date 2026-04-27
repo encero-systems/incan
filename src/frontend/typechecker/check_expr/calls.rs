@@ -27,7 +27,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
-use crate::frontend::typechecker::{IdentKind, RustArgCoercionInfo, RustArgCoercionKind};
+use crate::frontend::typechecker::{FixedUnpackPlan, IdentKind, RustArgCoercionInfo, RustArgCoercionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -464,6 +464,65 @@ impl TypeChecker {
         }
     }
 
+    /// Return statically shaped positional unpack items for call binding.
+    ///
+    /// Fixed-parameter unpacking may only consume surface syntax whose arity is visible before lowering. Parentheses
+    /// are transparent, while ordinary list variables remain unshaped and therefore rest-only.
+    fn shaped_positional_unpack_items(expr: &Spanned<Expr>) -> Option<Vec<&Spanned<Expr>>> {
+        match &expr.node {
+            Expr::Tuple(items) => Some(items.iter().collect()),
+            Expr::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    ListEntry::Element(value) => Some(value),
+                    ListEntry::Spread(_) => None,
+                })
+                .collect(),
+            Expr::Paren(inner) => Self::shaped_positional_unpack_items(inner),
+            _ => None,
+        }
+    }
+
+    /// Return the fixed positional item types for a tuple-typed unpack operand.
+    fn shaped_positional_unpack_types(ty: &ResolvedType) -> Option<&[ResolvedType]> {
+        match ty {
+            ResolvedType::Tuple(items) => Some(items.as_slice()),
+            ResolvedType::Generic(name, items)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
+            {
+                Some(items.as_slice())
+            }
+            _ => None,
+        }
+    }
+
+    /// Return statically shaped keyword unpack entries for call binding.
+    ///
+    /// The fixed-keyword path accepts inline dictionary literals only when every key is statically known. Dynamic-key
+    /// dictionary literals stay on the existing rest-only path.
+    fn shaped_keyword_unpack_entries(expr: &Spanned<Expr>) -> Option<Vec<(&Spanned<Expr>, &Spanned<Expr>)>> {
+        match &expr.node {
+            Expr::Dict(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    DictEntry::Pair(key, value) if Self::static_string_key(key).is_some() => Some((key, value)),
+                    DictEntry::Pair(_, _) | DictEntry::Spread(_) => None,
+                })
+                .collect(),
+            Expr::Paren(inner) => Self::shaped_keyword_unpack_entries(inner),
+            _ => None,
+        }
+    }
+
+    /// Extract a statically known string key from an inline keyword-unpack dictionary entry.
+    fn static_string_key(expr: &Spanned<Expr>) -> Option<&str> {
+        match &expr.node {
+            Expr::Literal(Literal::String(key)) => Some(key.as_str()),
+            Expr::Paren(inner) => Self::static_string_key(inner),
+            _ => None,
+        }
+    }
+
     /// Type-check all call arguments, including unpack arguments.
     pub(in crate::frontend::typechecker::check_expr) fn check_call_args(&mut self, args: &[CallArg]) {
         for arg in args {
@@ -546,28 +605,87 @@ impl TypeChecker {
         let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
         let mut positional_index = 0usize;
 
-        args.iter()
-            .map(|arg| {
-                let expected = match arg {
-                    CallArg::Positional(_) => {
-                        let expected = normal_params
-                            .get(positional_index)
-                            .map(|param| param.ty.clone())
-                            .or_else(|| rest_positional.map(|param| param.ty.clone()));
-                        positional_index += 1;
-                        expected
-                    }
-                    CallArg::Named(name, _) => normal_params
+        let mut arg_types = Vec::with_capacity(args.len());
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let expected = normal_params
+                        .get(positional_index)
+                        .map(|param| param.ty.clone())
+                        .or_else(|| rest_positional.map(|param| param.ty.clone()));
+                    positional_index += 1;
+                    arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                }
+                CallArg::Named(name, expr) => {
+                    let expected = normal_params
                         .iter()
                         .find(|param| param.name() == Some(name.as_str()))
                         .map(|param| param.ty.clone())
-                        .or_else(|| rest_keyword.map(|param| param.ty.clone())),
-                    CallArg::PositionalUnpack(_) => rest_positional.map(|param| list_ty(param.ty.clone())),
-                    CallArg::KeywordUnpack(_) => rest_keyword.map(|param| dict_ty(ResolvedType::Str, param.ty.clone())),
-                };
-                self.check_expr_with_expected(Self::call_arg_expr(arg), expected.as_ref())
-            })
-            .collect()
+                        .or_else(|| rest_keyword.map(|param| param.ty.clone()));
+                    arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    if let Some(items) = Self::shaped_positional_unpack_items(expr) {
+                        let mut item_types = Vec::with_capacity(items.len());
+                        for item in items {
+                            let expected = normal_params
+                                .get(positional_index)
+                                .map(|param| param.ty.clone())
+                                .or_else(|| rest_positional.map(|param| param.ty.clone()));
+                            if positional_index < normal_params.len() {
+                                positional_index += 1;
+                            }
+                            item_types.push(self.check_expr_with_expected(item, expected.as_ref()));
+                        }
+                        let plan_item_types = item_types.clone();
+                        let ty = ResolvedType::Tuple(item_types);
+                        self.record_expr_type(expr.span, ty.clone());
+                        self.record_fixed_unpack_plan(expr.span, FixedUnpackPlan::Positional(plan_item_types));
+                        arg_types.push(ty);
+                    } else {
+                        let expected = rest_positional.map(|param| list_ty(param.ty.clone()));
+                        let ty = self.check_expr_with_expected(expr, expected.as_ref());
+                        if let Some(item_types) = Self::shaped_positional_unpack_types(&ty) {
+                            self.record_fixed_unpack_plan(expr.span, FixedUnpackPlan::Positional(item_types.to_vec()));
+                        }
+                        arg_types.push(ty);
+                    }
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    if let Some(entries) = Self::shaped_keyword_unpack_entries(expr) {
+                        let mut value_types = Vec::with_capacity(entries.len());
+                        for (key, value) in &entries {
+                            self.check_expr(key);
+                            let expected = Self::static_string_key(key)
+                                .and_then(|name| {
+                                    normal_params
+                                        .iter()
+                                        .find(|param| param.name() == Some(name))
+                                        .map(|param| param.ty.clone())
+                                })
+                                .or_else(|| rest_keyword.map(|param| param.ty.clone()));
+                            value_types.push(self.check_expr_with_expected(value, expected.as_ref()));
+                        }
+                        let value_ty = value_types.first().cloned().unwrap_or(ResolvedType::Unknown);
+                        self.record_expr_type(expr.span, dict_ty(ResolvedType::Str, value_ty));
+                        self.record_fixed_unpack_plan(
+                            expr.span,
+                            FixedUnpackPlan::Keyword(
+                                entries
+                                    .iter()
+                                    .filter_map(|(key, _)| Self::static_string_key(key).map(str::to_string))
+                                    .collect(),
+                            ),
+                        );
+                        arg_types.push(ResolvedType::Tuple(value_types));
+                    } else {
+                        let expected = rest_keyword.map(|param| dict_ty(ResolvedType::Str, param.ty.clone()));
+                        arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                    }
+                }
+            }
+        }
+        arg_types
     }
 
     /// Return whether a callee base expression names an enum type for static helper calls.
@@ -644,6 +762,7 @@ impl TypeChecker {
         value_enum.value_type.resolved_type()
     }
 
+    /// Validate call arguments against callable parameters, including rest captures and statically shaped unpacking.
     pub(in crate::frontend::typechecker::check_expr) fn validate_callable_arg_bindings(
         &mut self,
         callee: &str,
@@ -683,7 +802,47 @@ impl TypeChecker {
                     }
                 }
                 CallArg::PositionalUnpack(_) => {
-                    if let Some(param) = rest_positional {
+                    if let Some(items) = Self::shaped_positional_unpack_items(Self::call_arg_expr(arg)) {
+                        let fallback_item_types;
+                        let item_types = match arg_ty {
+                            ResolvedType::Tuple(item_types) => item_types.as_slice(),
+                            _ => {
+                                fallback_item_types =
+                                    items.iter().map(|item| self.check_expr(item)).collect::<Vec<_>>();
+                                fallback_item_types.as_slice()
+                            }
+                        };
+                        self.record_fixed_unpack_plan(arg_span, FixedUnpackPlan::Positional(item_types.to_vec()));
+                        for (item, item_ty) in items.iter().zip(item_types.iter()) {
+                            let item_span = item.span;
+                            if let Some((_, param)) = normal_params.get(positional_index) {
+                                normal_bound_spans[positional_index] = Some(item_span);
+                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, item_span);
+                                positional_index += 1;
+                            } else if let Some(param) = rest_positional {
+                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, item_span);
+                            } else {
+                                unexpected_positional += 1;
+                            }
+                        }
+                    } else if let Some(item_types) = Self::shaped_positional_unpack_types(arg_ty) {
+                        self.record_fixed_unpack_plan(arg_span, FixedUnpackPlan::Positional(item_types.to_vec()));
+                        for item_ty in item_types {
+                            if let Some((_, param)) = normal_params.get(positional_index) {
+                                normal_bound_spans[positional_index] = Some(arg_span);
+                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, arg_span);
+                                positional_index += 1;
+                            } else if let Some(param) = rest_positional {
+                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, arg_span);
+                            } else {
+                                unexpected_positional += 1;
+                            }
+                        }
+                    } else if let Some(param) = rest_positional {
                         let expected = list_ty(param.ty.clone());
                         self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);
@@ -720,7 +879,63 @@ impl TypeChecker {
                     }
                 }
                 CallArg::KeywordUnpack(_) => {
-                    if let Some(param) = rest_keyword {
+                    if let Some(entries) = Self::shaped_keyword_unpack_entries(Self::call_arg_expr(arg)) {
+                        let fallback_value_types;
+                        let value_types = match arg_ty {
+                            ResolvedType::Tuple(value_types) => value_types.as_slice(),
+                            _ => {
+                                fallback_value_types = entries
+                                    .iter()
+                                    .map(|(_, value)| self.check_expr(value))
+                                    .collect::<Vec<_>>();
+                                fallback_value_types.as_slice()
+                            }
+                        };
+                        self.record_fixed_unpack_plan(
+                            arg_span,
+                            FixedUnpackPlan::Keyword(
+                                entries
+                                    .iter()
+                                    .filter_map(|(key, _)| Self::static_string_key(key).map(str::to_string))
+                                    .collect(),
+                            ),
+                        );
+                        for ((key, value), value_ty) in entries.iter().zip(value_types.iter()) {
+                            if let Some(name) = Self::static_string_key(key) {
+                                if let Some(first_span) = named_seen.insert(name, key.span) {
+                                    self.errors
+                                        .push(errors::duplicate_call_argument(callee, name, first_span));
+                                }
+
+                                if let Some((normal_idx, (_, param))) = normal_params
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, (_, param))| param.name() == Some(name))
+                                {
+                                    if normal_bound_spans[normal_idx].is_some() {
+                                        self.errors
+                                            .push(errors::duplicate_call_argument(callee, name, key.span));
+                                        continue;
+                                    }
+                                    normal_bound_spans[normal_idx] = Some(value.span);
+                                    self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                    self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                                } else if let Some(param) = rest_keyword {
+                                    self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                    self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                                } else {
+                                    self.errors
+                                        .push(errors::unknown_keyword_argument(callee, name, key.span));
+                                }
+                            } else if let Some(param) = rest_keyword {
+                                self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                            } else {
+                                self.errors
+                                    .push(errors::call_unpack_without_rest(callee, "**", key.span));
+                            }
+                        }
+                    } else if let Some(param) = rest_keyword {
                         let expected = dict_ty(ResolvedType::Str, param.ty.clone());
                         self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);

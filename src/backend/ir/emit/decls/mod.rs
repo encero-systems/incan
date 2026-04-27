@@ -27,7 +27,7 @@ use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
-use super::super::expr::IrExprKind;
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
 use super::super::ownership::{ValueUseSite, plan_value_use};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -118,6 +118,7 @@ impl<'a> IrEmitter<'a> {
 
     // ---- Const emission (RFC 008) ----
 
+    /// Emit one module-level constant declaration after validating the value is const-emittable.
     fn emit_const(
         &self,
         visibility: &super::super::decl::Visibility,
@@ -138,7 +139,15 @@ impl<'a> IrEmitter<'a> {
             (T::NamedGeneric(n, args), IrExprKind::List(items))
                 if n == collections::as_str(CollectionTypeId::FrozenList) && args.len() == 1 =>
             {
-                let elems: Result<Vec<_>, EmitError> = items.iter().map(|i| self.emit_expr(i)).collect();
+                let elems: Result<Vec<_>, EmitError> = items
+                    .iter()
+                    .map(|entry| match entry {
+                        IrListEntry::Element(value) => self.emit_expr(value),
+                        IrListEntry::Spread(_) => Err(EmitError::Unsupported(
+                            "FrozenList const spread emission is not supported".to_string(),
+                        )),
+                    })
+                    .collect();
                 let elems = elems?;
                 Some(quote! { FrozenList::new(&[ #(#elems),* ]) })
             }
@@ -154,10 +163,15 @@ impl<'a> IrEmitter<'a> {
             {
                 let kvs: Result<Vec<_>, EmitError> = pairs
                     .iter()
-                    .map(|(k, v)| {
-                        let kk = self.emit_expr(k)?;
-                        let vv = self.emit_expr(v)?;
-                        Ok(quote! { ( #kk , #vv ) })
+                    .map(|entry| match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            let kk = self.emit_expr(k)?;
+                            let vv = self.emit_expr(v)?;
+                            Ok(quote! { ( #kk , #vv ) })
+                        }
+                        IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
+                            "FrozenDict const spread emission is not supported".to_string(),
+                        )),
                     })
                     .collect();
                 let kvs = kvs?;

@@ -1136,6 +1136,49 @@ fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
 }
 
 #[test]
+fn fixed_call_unpack_runs_for_positional_and_keyword_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def total(a: int, b: int, *rest: int, **labels: str) -> int:
+  println(labels["city"])
+  return a + b + rest[0]
+
+def route(path: str, method: str) -> str:
+  return method + " " + path
+
+class Counter:
+  def add(self, left: int, right: int) -> int:
+    return left + right
+
+def main() -> None:
+  xy: tuple[int, int] = (2, 3)
+  counter = Counter()
+  println(total(*xy, *[4], **{"city": "London"}))
+  println(route(**{"path": "/status", "method": "GET"}))
+  println(counter.add(*(5, 6)))
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected fixed call unpack program to run, status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(
+        lines,
+        vec!["London", "9", "GET /status", "11"],
+        "unexpected fixed unpack runtime output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn runtime_error_missing_dict_key_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
     assert_runtime_error_cli(
         "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",
@@ -1920,6 +1963,42 @@ def main() -> None:
         let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
         let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
         assert_eq!(lines, vec!["25"], "unexpected variadic rest output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    tail: tuple[int, int] = (4, 5)
+    values = [1, *[2, 3], *tail]
+    defaults = {"trace": "disabled", "accept": "json"}
+    merged = {**defaults, "trace": "enabled"}
+    println(values[0] + values[1] + values[2] + values[3] + values[4])
+    println(merged["trace"])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "collection literal spread run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["15", "enabled"],
+            "unexpected collection spread output:\n{stdout}"
+        );
         Ok(())
     }
 

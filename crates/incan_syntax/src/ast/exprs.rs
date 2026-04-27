@@ -57,10 +57,10 @@ pub enum Expr {
     Closure(Vec<Spanned<Param>>, Box<Spanned<Expr>>),
     /// Tuple: `(a, b)`
     Tuple(Vec<Spanned<Expr>>),
-    /// List literal: `[a, b, c]`
-    List(Vec<Spanned<Expr>>),
-    /// Dict literal: `{k: v, ...}`
-    Dict(Vec<(Spanned<Expr>, Spanned<Expr>)>),
+    /// List literal: `[a, *b, c]`
+    List(Vec<ListEntry>),
+    /// Dict literal: `{k: v, **other}`
+    Dict(Vec<DictEntry>),
     /// Set literal: `{a, b, c}`
     Set(Vec<Spanned<Expr>>),
     /// Parenthesized expression
@@ -79,6 +79,24 @@ pub enum Expr {
     },
     /// Generic surface expression routed to semantics handlers.
     Surface(Box<SurfaceExpr>),
+}
+
+/// One entry in a list literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListEntry {
+    /// Direct element expression.
+    Element(Spanned<Expr>),
+    /// Spread another list into the literal at this position.
+    Spread(Spanned<Expr>),
+}
+
+/// One entry in a dict literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DictEntry {
+    /// Direct key/value pair.
+    Pair(Spanned<Expr>, Spanned<Expr>),
+    /// Spread another dict into the literal at this position.
+    Spread(Spanned<Expr>),
 }
 
 /// Generic surface expression node emitted by parser handoff.

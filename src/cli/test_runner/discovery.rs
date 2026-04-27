@@ -310,7 +310,13 @@ fn extract_parametrize_argvalues(args: &[crate::frontend::ast::DecoratorArg]) ->
         return Vec::new();
     };
 
-    items.iter().map(build_parametrize_case).collect()
+    items
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::frontend::ast::ListEntry::Element(value) => Some(build_parametrize_case(value)),
+            crate::frontend::ast::ListEntry::Spread(_) => None,
+        })
+        .collect()
 }
 
 /// Build a [`ParametrizeCase`] from a single parameter-set expression.

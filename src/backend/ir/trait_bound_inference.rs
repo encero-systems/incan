@@ -30,7 +30,9 @@ use incan_core::lang::trait_bounds::rust as tb;
 
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
-use super::expr::{BinOp, FormatPart, IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+use super::expr::{
+    BinOp, FormatPart, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind,
+};
 use super::ownership::{ValueUseSite, plan_value_use};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
@@ -596,16 +598,9 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
     }
 
     match &expr.kind {
-        IrExprKind::Tuple(items) | IrExprKind::List(items) | IrExprKind::Set(items) => {
+        IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
             let item_target_ty = match &expr.kind {
                 IrExprKind::Tuple(_) => None,
-                IrExprKind::List(_) => match value_use_site_target_ty(site) {
-                    Some(IrType::List(elem)) => Some(elem.as_ref()),
-                    _ => match &expr.ty {
-                        IrType::List(elem) => Some(elem.as_ref()),
-                        _ => None,
-                    },
-                },
                 IrExprKind::Set(_) => match value_use_site_target_ty(site) {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
                     _ => match &expr.ty {
@@ -640,6 +635,31 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                 );
             }
         }
+        IrExprKind::List(items) => {
+            let item_target_ty = match value_use_site_target_ty(site) {
+                Some(IrType::List(elem)) => Some(elem.as_ref()),
+                _ => match &expr.ty {
+                    IrType::List(elem) => Some(elem.as_ref()),
+                    _ => None,
+                },
+            };
+            for item in items {
+                match item {
+                    IrListEntry::Element(value) => collect_backend_clone_bounds_for_value_use(
+                        value,
+                        ValueUseSite::CollectionElement {
+                            target_ty: item_target_ty,
+                        },
+                        type_param_names,
+                        self_clone_params,
+                        clone_params,
+                    ),
+                    IrListEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
+            }
+        }
         IrExprKind::Dict(entries) => {
             let (key_target_ty, value_target_ty) = match value_use_site_target_ty(site) {
                 Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
@@ -648,25 +668,32 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                     _ => (None, None),
                 },
             };
-            for (key, value) in entries {
-                collect_backend_clone_bounds_for_value_use(
-                    key,
-                    ValueUseSite::CollectionElement {
-                        target_ty: key_target_ty,
-                    },
-                    type_param_names,
-                    self_clone_params,
-                    clone_params,
-                );
-                collect_backend_clone_bounds_for_value_use(
-                    value,
-                    ValueUseSite::CollectionElement {
-                        target_ty: value_target_ty,
-                    },
-                    type_param_names,
-                    self_clone_params,
-                    clone_params,
-                );
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        collect_backend_clone_bounds_for_value_use(
+                            key,
+                            ValueUseSite::CollectionElement {
+                                target_ty: key_target_ty,
+                            },
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                        collect_backend_clone_bounds_for_value_use(
+                            value,
+                            ValueUseSite::CollectionElement {
+                                target_ty: value_target_ty,
+                            },
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    IrDictEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
             }
         }
         IrExprKind::Struct { fields, .. } => {
@@ -746,15 +773,31 @@ fn collect_backend_clone_bounds_in_expr(
             }
             collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
         }
-        IrExprKind::BuiltinCall { args, .. } | IrExprKind::List(args) | IrExprKind::Tuple(args) => {
+        IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) => {
             for arg in args {
                 collect_backend_clone_bounds_in_expr(arg, type_param_names, self_clone_params, clone_params);
             }
         }
+        IrExprKind::List(args) => {
+            for arg in args {
+                match arg {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
+            }
+        }
         IrExprKind::Dict(entries) => {
-            for (key, value) in entries {
-                collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
-                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                    IrDictEntry::Spread(value) => {
+                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                    }
+                }
             }
         }
         IrExprKind::Set(items) => {
@@ -1322,13 +1365,20 @@ fn scan_expr_for_bounds(
         // ---- Dict literal: keys that are generic require Eq + Hash ----
         // Note: `Eq: PartialEq` in Rust, so we only need `Eq` (not redundant `PartialEq`).
         IrExprKind::Dict(entries) => {
-            for (key, value) in entries {
-                if let Some(tp_name) = expr_type_param_name(key, type_params, params) {
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
-                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        if let Some(tp_name) = expr_type_param_name(key, type_params, params) {
+                            add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+                            add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+                        }
+                        scan_expr_for_bounds(key, type_params, params, bounds_map);
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
+                    IrDictEntry::Spread(value) => {
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
                 }
-                scan_expr_for_bounds(key, type_params, params, bounds_map);
-                scan_expr_for_bounds(value, type_params, params, bounds_map);
             }
         }
 
@@ -1369,9 +1419,18 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Collections: recurse ----
-        IrExprKind::List(elems) | IrExprKind::Tuple(elems) => {
+        IrExprKind::Tuple(elems) => {
             for elem in elems {
                 scan_expr_for_bounds(elem, type_params, params, bounds_map);
+            }
+        }
+        IrExprKind::List(elems) => {
+            for elem in elems {
+                match elem {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        scan_expr_for_bounds(value, type_params, params, bounds_map);
+                    }
+                }
             }
         }
 

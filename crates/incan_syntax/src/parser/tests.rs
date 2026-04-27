@@ -711,6 +711,64 @@ def use(xs: list[int], kw: dict[str, str]) -> int:
     }
 
     #[test]
+    fn test_parse_list_and_dict_literal_spread_entries() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def use(xs: list[int], headers: dict[str, str]) -> None:
+  values = [1, *xs, 4]
+  merged = {"accept": "json", **headers}
+"#;
+        let program = parse_str(source)?;
+        let use_fn = require_function_decl(&program.declarations[0])?;
+
+        let list_entries = match &use_fn.body[0].node {
+            Statement::Assignment(stmt) => match &stmt.value.node {
+                Expr::List(entries) => entries,
+                _ => panic!("expected list literal"),
+            },
+            _ => panic!("expected assignment statement"),
+        };
+        assert!(matches!(list_entries[0], ListEntry::Element(_)));
+        assert!(matches!(list_entries[1], ListEntry::Spread(_)));
+        assert!(matches!(list_entries[2], ListEntry::Element(_)));
+
+        let dict_entries = match &use_fn.body[1].node {
+            Statement::Assignment(stmt) => match &stmt.value.node {
+                Expr::Dict(entries) => entries,
+                _ => panic!("expected dict literal"),
+            },
+            _ => panic!("expected assignment statement"),
+        };
+        assert!(matches!(dict_entries[0], DictEntry::Pair(_, _)));
+        assert!(matches!(dict_entries[1], DictEntry::Spread(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_collection_literal_spread_invalid_markers() {
+        let list_errs = parse_str_err(
+            "def f(xs: list[int]) -> None:\n  values = [**xs]\n",
+            "list literal should reject dictionary spread marker",
+        );
+        assert!(
+            list_errs
+                .iter()
+                .any(|err| err.message.contains("Invalid list spread marker `**`")),
+            "expected invalid list spread marker diagnostic, got: {list_errs:?}"
+        );
+
+        let dict_errs = parse_str_err(
+            "def f(xs: list[int]) -> None:\n  values = {*xs}\n",
+            "dict literal should reject list spread marker",
+        );
+        assert!(
+            dict_errs
+                .iter()
+                .any(|err| err.message.contains("Invalid dictionary spread marker `*`")),
+            "expected invalid dictionary spread marker diagnostic, got: {dict_errs:?}"
+        );
+    }
+
+    #[test]
     fn test_parse_pattern_named_key_keyword() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(a: Foo) -> int:

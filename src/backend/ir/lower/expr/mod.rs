@@ -13,8 +13,8 @@ mod patterns;
 
 use super::super::TypedExpr;
 use super::super::expr::{
-    CollectionMethodKind, IrCallArg, IrCallArgKind, IrExpr, IrExprKind, MethodCallArgPolicy, MethodKind, UnaryOp,
-    VarAccess, VarRefKind,
+    CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy,
+    MethodKind, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -24,6 +24,22 @@ use crate::frontend::typechecker::IdentKind;
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return the element type carried by a lowered list spread operand.
+    fn lowered_list_spread_element_type(ty: &IrType) -> Option<IrType> {
+        match ty {
+            IrType::List(elem) => Some((**elem).clone()),
+            _ => None,
+        }
+    }
+
+    /// Return the key/value types carried by a lowered dict spread operand.
+    fn lowered_dict_spread_entry_types(ty: &IrType) -> Option<(IrType, IrType)> {
+        match ty {
+            IrType::Dict(key, value) => Some(((**key).clone(), (**value).clone())),
+            _ => None,
+        }
+    }
+
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: crate::frontend::ast::Span,
@@ -485,22 +501,40 @@ impl AstLowering {
             }
 
             ast::Expr::List(items) => {
-                let items_ir: Vec<TypedExpr> = items
+                let items_ir: Vec<IrListEntry> = items
                     .iter()
-                    .map(|i| self.lower_expr_spanned(i))
+                    .map(|i| match i {
+                        ast::ListEntry::Element(value) => self.lower_expr_spanned(value).map(IrListEntry::Element),
+                        ast::ListEntry::Spread(value) => self.lower_expr_spanned(value).map(IrListEntry::Spread),
+                    })
                     .collect::<Result<_, _>>()?;
-                let elem = items_ir.first().map(|i| i.ty.clone()).unwrap_or(IrType::Unknown);
+                let elem = items_ir
+                    .iter()
+                    .find_map(|entry| match entry {
+                        IrListEntry::Element(value) => Some(value.ty.clone()),
+                        IrListEntry::Spread(value) => Self::lowered_list_spread_element_type(&value.ty),
+                    })
+                    .unwrap_or(IrType::Unknown);
                 (IrExprKind::List(items_ir), IrType::List(Box::new(elem)))
             }
 
             ast::Expr::Dict(pairs) => {
-                let pairs_ir: Vec<(TypedExpr, TypedExpr)> = pairs
+                let pairs_ir: Vec<IrDictEntry> = pairs
                     .iter()
-                    .map(|(k, v)| Ok((self.lower_expr_spanned(k)?, self.lower_expr_spanned(v)?)))
+                    .map(|entry| match entry {
+                        ast::DictEntry::Pair(k, v) => Ok(IrDictEntry::Pair(
+                            self.lower_expr_spanned(k)?,
+                            Box::new(self.lower_expr_spanned(v)?),
+                        )),
+                        ast::DictEntry::Spread(value) => self.lower_expr_spanned(value).map(IrDictEntry::Spread),
+                    })
                     .collect::<Result<_, LoweringError>>()?;
                 let (k, v) = pairs_ir
-                    .first()
-                    .map(|(k, v)| (k.ty.clone(), v.ty.clone()))
+                    .iter()
+                    .find_map(|entry| match entry {
+                        IrDictEntry::Pair(key, value) => Some((key.ty.clone(), value.ty.clone())),
+                        IrDictEntry::Spread(value) => Self::lowered_dict_spread_entry_types(&value.ty),
+                    })
                     .unwrap_or((IrType::Unknown, IrType::Unknown));
                 (IrExprKind::Dict(pairs_ir), IrType::Dict(Box::new(k), Box::new(v)))
             }

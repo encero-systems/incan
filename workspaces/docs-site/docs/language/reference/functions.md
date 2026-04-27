@@ -1,6 +1,6 @@
 # Functions and Calls
 
-This page defines function signatures, ordinary call binding, rest parameters, and rest-aware call-site unpacking.
+This page defines function signatures, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread.
 
 For a step-by-step introduction, see [Functions](../tutorials/book/03_functions.md). For callable traits and callable type sugar, see [Callable objects](stdlib_traits/callable.md).
 
@@ -74,8 +74,10 @@ def main() -> int:
     - Python `*args` collects a tuple; Incan `*args: T` collects `List[T]`.
     - Python `**kwargs` collects a dict; Incan `**kwargs: T` collects `Dict[str, T]`.
     - Python `**kwargs` is often used as an untyped escape hatch; Incan keyword captures are typed.
-    - Python can unpack into ordinary fixed parameters at runtime; Incan currently allows `*expr` and `**expr` only when
-      the callee has a matching rest parameter.
+    - Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler
+      can prove the length or key set statically.
+    - `*expr` means "positional expansion" and is valid in calls and list literals. `**expr` means "mapping expansion"
+      and is valid in calls and dictionary literals.
 
 ## When to Use Rest Parameters
 
@@ -223,7 +225,7 @@ def also_bad(**opts: str, *rest: int) -> int:
 
 ## Call-Site Unpacking
 
-Use `*expr` at a call site to extend the callee's positional rest parameter from an existing list-like value:
+Use `*expr` at a call site to extend the callee's positional rest parameter from an existing ordinary list value:
 
 ```incan
 def sum_all(*values: int) -> int:
@@ -252,35 +254,71 @@ def main() -> int:
 
 The unpacked expression must typecheck as `Dict[str, T]` for the callee's `**name: T` parameter.
 
-The implemented subset is currently rest-directed: the callee must declare the matching rest parameter.
+Unpacking can also bind ordinary fixed parameters when the compiler can prove the unpacked value's shape:
 
 ```incan
-def fixed(a: int, b: int) -> int:
-    return a + b
+def fixed(x: int, y: int) -> int:
+    return x + y
 
 def needs_rest(*values: int) -> int:
     return len(values)
 
 def main() -> int:
-    xs = [1, 2]
-    ok = needs_rest(*xs)
-    # fixed(*xs) is rejected because fixed has no *values rest parameter.
-    return ok
+    ok_fixed = fixed(*[1, 2])
+    ok_rest = needs_rest(*[3, 4])
+    return ok_fixed + ok_rest
 ```
 
-RFC 038 also owns the full fixed-parameter unpacking design. That design is not a separate RFC: fixed-parameter unpacking must prove the unpacked value's length, key set, duplicate bindings, defaults, and per-field types before the compiler can lower the call.
+For fixed positional parameters, the minimum shaped values are tuple expressions and inline list literals. A variable with
+type `List[T]` is still a homogeneous list whose length is not part of the type, so it can feed a `*args` rest parameter
+but cannot silently satisfy a fixed pair such as `fixed(x: int, y: int)`.
 
-This syntax is only for function-call arguments. It does not add collection-literal spread:
+For fixed keyword parameters, the minimum shaped value is an inline dictionary literal with string literal keys:
 
-- Use `f(*xs)` to unpack a list-like value into a positional rest parameter.
-- Use `f(**kw)` to unpack a dictionary into a keyword rest parameter.
-- `[*xs]`, `{**kw}`, and `[**xs]` are not part of this feature.
+```incan
+def route(path: str, method: str) -> str:
+    return f"{method} {path}"
 
-If collection-literal spread is added later, `[*xs]` would be the list-spread form and `{**kw}` would be the dictionary-spread form. `[**xs]` should still be invalid because `**` is mapping or keyword unpacking, not sequence unpacking.
+def main() -> str:
+    return route(**{"path": "/status", "method": "GET"})
+```
+
+An ordinary `Dict[str, T]` value can feed `**kwargs`, but it cannot prove that every fixed keyword parameter is present.
+
+## List and Dictionary Literal Spread
+
+Use `*expr` inside a list literal to expand an existing ordinary list value into a new list:
+
+```incan
+def main() -> List[int]:
+    middle = [2, 3]
+    return [1, *middle, 4]
+```
+
+List spread preserves source order. Direct elements and spread elements must all be compatible with the resulting list
+element type.
+
+Use `**expr` inside a dictionary literal to expand an existing dictionary-like value into a new dictionary:
+
+```incan
+def main() -> Dict[str, str]:
+    defaults = {"trace": "off"}
+    return {**defaults, "trace": "enabled"}
+```
+
+Dictionary spread preserves source order, and later keys overwrite earlier keys just like ordinary dictionary insertion.
+That example returns a dictionary whose `"trace"` value is `"enabled"`.
+
+The destination decides the valid marker:
+
+- `[*xs]` is valid because `*` expands positional values into a sequence destination.
+- `{**xs}` is valid because `**` expands mapping entries into a mapping destination.
+- `[**xs]` is invalid because a list has no keyword or mapping destination.
+- `{*xs}` is invalid for dictionary literals; set literal spread is not part of RFC 038.
 
 ## Source Order and Duplicate Keys
 
-Positional rest values preserve source order. This call:
+Positional unpacking preserves source order. This call:
 
 ```incan
 sum_all(1, *extra, 4)
@@ -292,7 +330,9 @@ builds a rest list equivalent to:
 [1] + extra + [4]
 ```
 
-Keyword rest values are inserted into a dictionary in source order. Duplicate direct named arguments are rejected, but a duplicate key that arrives through `**dict_value` follows ordinary dictionary insertion behavior: later entries replace earlier entries.
+Keyword rest values and dictionary spread entries are inserted into a dictionary in source order. Duplicate direct named
+arguments are rejected, but a duplicate key that arrives through `**dict_value` follows ordinary dictionary insertion
+behavior: later entries replace earlier entries.
 
 ```incan
 def request(path: str, **headers: str) -> int:
@@ -347,6 +387,8 @@ Rest parameters are compile-time sugar over explicit container parameters:
 - Direct rest arguments are pushed into the generated list or inserted into the generated dictionary.
 - `*expr` extends the generated list.
 - `**expr` extends the generated dictionary.
+- Fixed-parameter unpacking lowers to an ordinary call after the compiler proves the positional length or keyword key set.
+- List and dictionary literal spread lower to explicit container construction in source order.
 
 For example:
 
@@ -356,11 +398,12 @@ collect("event", 1, *xs, kind="demo", **labels)
 
 lowers conceptually to a call with explicit rest containers:
 
-```incan
-collect("event", [1] + xs, {"kind": "demo"} + labels)
+```text
+collect("event", [1] + xs, <dict containing "kind": "demo" plus labels inserted in source order>)
 ```
 
 The emitted Rust uses ordinary `Vec` and `HashMap` construction; it does not use runtime reflection or Rust variadics.
+Collection literal spread is for runtime list and dictionary expressions; const frozen collection initializers still require direct entries.
 
 ## Type Errors
 
@@ -368,14 +411,19 @@ The compiler reports errors for these cases:
 
 - Extra positional arguments without `*args`.
 - Unknown named arguments without `**kwargs`.
-- `*expr` when the callee has no positional rest parameter.
-- `**expr` when the callee has no keyword rest parameter.
+- `*expr` when the callee has no positional rest parameter and the value cannot bind fixed positional parameters.
+- `**expr` when the callee has no keyword rest parameter and the value cannot bind fixed keyword parameters.
+- `*expr` for fixed parameters when the value's length is not statically known.
+- `**expr` for fixed parameters when the value's string-key set is not statically known.
 - A direct rest argument whose type is incompatible with the rest element type.
 - A `*expr` argument whose type is incompatible with `List[T]`.
 - A direct keyword rest value whose type is incompatible with the rest value type.
 - A `**expr` argument whose type is incompatible with `Dict[str, T]`.
 - Duplicate direct named arguments.
+- Duplicate fixed bindings across direct and unpacked arguments.
 - Missing required normal parameters.
+- `[**expr]` in a list literal.
+- `{*expr}` in a dictionary literal.
 
 ## Rust Interop
 

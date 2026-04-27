@@ -24,6 +24,65 @@ impl TypeChecker {
         }
     }
 
+    /// Extract key/value types from an expected `Dict[K, V]` destination, if one is already known.
+    fn dict_expected_entry_types(expected: Option<&ResolvedType>) -> (Option<ResolvedType>, Option<ResolvedType>) {
+        match expected {
+            Some(ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
+            {
+                (Some(args[0].clone()), Some(args[1].clone()))
+            }
+            _ => (None, None),
+        }
+    }
+
+    /// Extract the element type from a statically known list spread operand.
+    fn list_spread_element_type(ty: &ResolvedType) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
+            {
+                Some(args[0].clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract key/value types from a statically known dict spread operand.
+    fn dict_spread_entry_types(ty: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+        match ty {
+            ResolvedType::Generic(name, args)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
+            {
+                Some((args[0].clone(), args[1].clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Merge one observed collection member type into the literal's candidate member type.
+    fn merge_collection_member_type(&mut self, member_ty: &mut ResolvedType, value_ty: ResolvedType, span: Span) {
+        if matches!(member_ty, ResolvedType::Unknown) {
+            *member_ty = value_ty;
+            return;
+        }
+
+        if self.types_compatible(&value_ty, member_ty) {
+            return;
+        }
+
+        if self.types_compatible(member_ty, &value_ty) {
+            *member_ty = value_ty;
+            return;
+        }
+
+        self.errors.push(errors::type_mismatch(
+            &member_ty.to_string(),
+            &value_ty.to_string(),
+            span,
+        ));
+    }
+
     /// Type-check a list literal with an optional destination-type hint.
     ///
     /// When a surrounding context already expects `List[T]`, empty lists adopt `T` directly and non-empty lists
@@ -31,34 +90,42 @@ impl TypeChecker {
     /// element type, but later elements must remain compatible instead of being ignored.
     pub(in crate::frontend::typechecker::check_expr) fn check_list_with_expected(
         &mut self,
-        elems: &[Spanned<Expr>],
+        elems: &[ListEntry],
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let hinted_elem_ty = Self::list_expected_element_type(expected);
         let mut elem_ty = hinted_elem_ty.clone().unwrap_or(ResolvedType::Unknown);
 
-        for (index, elem) in elems.iter().enumerate() {
-            let value_ty = self.check_expr_with_expected(elem, hinted_elem_ty.as_ref());
-
-            if index == 0 && hinted_elem_ty.is_none() {
-                elem_ty = value_ty.clone();
-                continue;
+        for elem in elems {
+            match elem {
+                ListEntry::Element(value) => {
+                    let value_ty = self.check_expr_with_expected(value, hinted_elem_ty.as_ref());
+                    self.merge_collection_member_type(&mut elem_ty, value_ty, value.span);
+                }
+                ListEntry::Spread(value) => {
+                    let expected_spread = hinted_elem_ty.clone().map(list_ty);
+                    let spread_ty = self.check_expr_with_expected(value, expected_spread.as_ref());
+                    if let ResolvedType::Tuple(item_types) = spread_ty {
+                        for item_ty in item_types {
+                            self.merge_collection_member_type(&mut elem_ty, item_ty, value.span);
+                        }
+                    } else if let ResolvedType::Generic(name, item_types) = &spread_ty
+                        && collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple)
+                    {
+                        for item_ty in item_types {
+                            self.merge_collection_member_type(&mut elem_ty, item_ty.clone(), value.span);
+                        }
+                    } else if let Some(value_ty) = Self::list_spread_element_type(&spread_ty) {
+                        self.merge_collection_member_type(&mut elem_ty, value_ty, value.span);
+                    } else {
+                        self.errors.push(errors::type_mismatch(
+                            "List[_] or tuple[...]",
+                            &spread_ty.to_string(),
+                            value.span,
+                        ));
+                    }
+                }
             }
-
-            if self.types_compatible(&value_ty, &elem_ty) {
-                continue;
-            }
-
-            if self.types_compatible(&elem_ty, &value_ty) {
-                elem_ty = value_ty;
-                continue;
-            }
-
-            self.errors.push(errors::type_mismatch(
-                &elem_ty.to_string(),
-                &value_ty.to_string(),
-                elem.span,
-            ));
         }
 
         list_ty(elem_ty)
@@ -74,24 +141,48 @@ impl TypeChecker {
     }
 
     /// Type-check a list literal.
-    pub(in crate::frontend::typechecker::check_expr) fn check_list(&mut self, elems: &[Spanned<Expr>]) -> ResolvedType {
+    pub(in crate::frontend::typechecker::check_expr) fn check_list(&mut self, elems: &[ListEntry]) -> ResolvedType {
         self.check_list_with_expected(elems, None)
     }
 
     /// Type-check a dict literal.
-    pub(in crate::frontend::typechecker::check_expr) fn check_dict(
-        &mut self,
-        entries: &[(Spanned<Expr>, Spanned<Expr>)],
-    ) -> ResolvedType {
-        let (key_ty, val_ty) = if let Some((k, v)) = entries.first() {
-            (self.check_expr(k), self.check_expr(v))
-        } else {
-            (ResolvedType::Unknown, ResolvedType::Unknown)
-        };
+    pub(in crate::frontend::typechecker::check_expr) fn check_dict(&mut self, entries: &[DictEntry]) -> ResolvedType {
+        self.check_dict_with_expected(entries, None)
+    }
 
-        for (k, v) in entries.iter().skip(1) {
-            self.check_expr(k);
-            self.check_expr(v);
+    /// Type-check a dict literal with an optional destination-type hint.
+    pub(in crate::frontend::typechecker::check_expr) fn check_dict_with_expected(
+        &mut self,
+        entries: &[DictEntry],
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let (hinted_key_ty, hinted_value_ty) = Self::dict_expected_entry_types(expected);
+        let mut key_ty = hinted_key_ty.clone().unwrap_or(ResolvedType::Unknown);
+        let mut val_ty = hinted_value_ty.clone().unwrap_or(ResolvedType::Unknown);
+
+        for entry in entries {
+            match entry {
+                DictEntry::Pair(key, value) => {
+                    let observed_key_ty = self.check_expr_with_expected(key, hinted_key_ty.as_ref());
+                    let observed_value_ty = self.check_expr_with_expected(value, hinted_value_ty.as_ref());
+                    self.merge_collection_member_type(&mut key_ty, observed_key_ty, key.span);
+                    self.merge_collection_member_type(&mut val_ty, observed_value_ty, value.span);
+                }
+                DictEntry::Spread(value) => {
+                    let expected_spread = match (hinted_key_ty.clone(), hinted_value_ty.clone()) {
+                        (Some(key), Some(value)) => Some(dict_ty(key, value)),
+                        _ => None,
+                    };
+                    let spread_ty = self.check_expr_with_expected(value, expected_spread.as_ref());
+                    let Some((observed_key_ty, observed_value_ty)) = Self::dict_spread_entry_types(&spread_ty) else {
+                        self.errors
+                            .push(errors::type_mismatch("Dict[_, _]", &spread_ty.to_string(), value.span));
+                        continue;
+                    };
+                    self.merge_collection_member_type(&mut key_ty, observed_key_ty, value.span);
+                    self.merge_collection_member_type(&mut val_ty, observed_value_ty, value.span);
+                }
+            }
         }
 
         dict_ty(key_ty, val_ty)
