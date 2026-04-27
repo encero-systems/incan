@@ -3482,6 +3482,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-tools-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools doctor
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4687,6 +4696,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-tools-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools doctor
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4780,6 +4798,7 @@
 <li><code>version</code> - Update the project version in <code>incan.toml</code></li>
 <li><code>env</code> - List, inspect, or run configured project environments</li>
 <li><code>lock</code> - Generate or update <code>incan.lock</code></li>
+<li><code>tools</code> - Inspect local toolchain and editor integration state</li>
 </ul>
 <h2 id="global-options">Global options<a class="headerlink" href="#global-options" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5113,6 +5132,26 @@ incan<span class="w"> </span>lock<span class="w"> </span>--cargo-features<span c
 <p>The generated <code>incan.lock</code> contains an embedded <code>Cargo.lock</code> payload and a fingerprint of your dependency
 inputs. Commit it to version control for reproducible builds.</p>
 <p>See: <a href="../../how-to/dependencies/">Managing dependencies</a> for practical guidance.</p>
+<h3 id="incan-tools-doctor"><code>incan tools doctor</code><a class="headerlink" href="#incan-tools-doctor" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools doctor [OPTIONS]
+</code></pre></div>
+<p>Inspects local CLI/LSP/editor pathing. Use this when the terminal and editor appear to be using different <code>incan</code> or <code>incan-lsp</code> binaries, or when diagnostics look stale after rebuilding.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output format (default: <code>text</code>).</li>
+</ul>
+<p>The report includes:</p>
+<ul>
+<li>the running <code>incan</code> version and executable path</li>
+<li><code>incan</code> and <code>incan-lsp</code> resolution from <code>PATH</code></li>
+<li><code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> existence, executable status, and symlink targets</li>
+<li>editor setup guidance for <code>incan.lsp.path</code>, <code>incan.compiler.path</code>, and reload behavior</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
+incan<span class="w"> </span>tools<span class="w"> </span>doctor<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
 <h2 id="outputs-and-paths">Outputs and paths<a class="headerlink" href="#outputs-and-paths" title="Permanent link">&para;</a></h2>
 <p>Build outputs:</p>
 <ul>
@@ -5150,7 +5189,7 @@ inputs. Commit it to version control for reproducible builds.</p>
 <h2 id="drift-prevention-maintainers">Drift prevention (maintainers)<a class="headerlink" href="#drift-prevention-maintainers" title="Permanent link">&para;</a></h2>
 <p>Before a release, verify the docs stay aligned with the real CLI surface:</p>
 <ul>
-<li>Compare <code>incan --help</code> and <code>incan {build,run,fmt,test,init,lock} --help</code> against this page.</li>
+<li>Compare <code>incan --help</code> and <code>incan {build,run,fmt,test,init,lock,tools} --help</code> against this page.</li>
 </ul>
 
 

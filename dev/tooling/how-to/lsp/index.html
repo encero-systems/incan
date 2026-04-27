@@ -4818,7 +4818,25 @@
 make<span class="w"> </span>build
 </code></pre></div>
 <p>This runs <code>cargo build --features lsp</code> and then links <code>~/.cargo/bin/incan</code> → <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> → <code>target/debug/incan-lsp</code> when that binary exists. Set <code>INCAN_SKIP_CARGO_BIN_LINK=1</code> to skip linking, or rely on CI defaults (linking is off when <code>CI</code> is set).</p>
-<p>After upgrading the compiler, <strong>reload the editor window</strong> (or restart the Incan language server) so the IDE spawns a fresh <code>incan-lsp</code> process.</p>
+<p>Use this path when you are developing the compiler itself or testing behavior from a checkout. It avoids the common split-brain state where your terminal runs one <code>incan</code> binary while VS Code or Cursor keeps launching an older <code>incan-lsp</code>.</p>
+<p>Verify the shell side first:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan
+<span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan-lsp
+ls<span class="w"> </span>-l<span class="w"> </span>~/.cargo/bin/incan<span class="w"> </span>~/.cargo/bin/incan-lsp
+incan<span class="w"> </span>--version
+</code></pre></div>
+<p>The <code>command -v</code> output should resolve to <code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> unless you deliberately configured absolute paths. The <code>ls -l</code> targets should point into the checkout you just built, usually <code>target/debug/incan</code> and <code>target/debug/incan-lsp</code>.</p>
+<p>Then verify the editor side:</p>
+<ol>
+<li>Open the Incan checkout or an Incan project in VS Code/Cursor.</li>
+<li>Run <strong>Incan: Doctor</strong> from the command palette.</li>
+<li>Open <strong>View → Output</strong> and select <strong>Incan</strong>.</li>
+<li>Confirm the report shows the intended <code>incan</code> and <code>incan-lsp</code> paths, plus the source of each path (<code>setting</code>, <code>workspace</code>, or <code>path</code>).</li>
+<li>Confirm the language server starts after opening a <code>.incn</code> file.</li>
+<li>If diagnostics still look stale, run <strong>Developer: Reload Window</strong> from the command palette, or disable and re-enable the Incan extension so the editor starts a fresh <code>incan-lsp</code> process.</li>
+</ol>
+<p>From a terminal, <code>incan tools doctor</code> prints the same local toolchain checks. Use <code>incan tools doctor --format json</code> when you need machine-readable output for an issue report or editor integration.</p>
+<p>After upgrading the compiler or changing either binary path, reload the editor window or restart the Incan language server. Existing editor processes keep the executable they already launched; rebuilding on disk does not automatically replace a running language server.</p>
 <h3 id="alternative-release-binary-on-path">Alternative: release binary on <code>PATH</code><a class="headerlink" href="#alternative-release-binary-on-path" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan-programming-language
 make<span class="w"> </span>lsp
@@ -4894,24 +4912,49 @@ hint:<span class="w"> </span>Wrap<span class="w"> </span>the<span class="w"> </s
 <tr>
 <td><code>incan.lsp.path</code></td>
 <td><code>""</code></td>
-<td>Custom path to incan-lsp (uses PATH if empty)</td>
+<td>Literal path to <code>incan-lsp</code>; when empty, the extension uses workspace binary discovery or <code>PATH</code></td>
 </tr>
 </tbody>
 </table>
+<p><code>incan.lsp.path</code> is not a shell command. It is passed directly to the editor's language-client process launcher, so it does not expand <code>$HOME</code>, <code>~</code>, command substitutions, or other shell syntax. Use a concrete executable path:</p>
+<div class="language-json highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;incan.lsp.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/path/to/incan/target/debug/incan-lsp&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Avoid shell-style values:</p>
+<div class="language-json highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;incan.lsp.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;$HOME/dev/incan/target/debug/incan-lsp&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>For most local development, leave <code>incan.lsp.path</code> empty and let <code>make build</code> keep <code>~/.cargo/bin/incan-lsp</code> pointed at the checkout. Set an explicit absolute path only when you intentionally want that workspace to use a specific binary.</p>
+<p>The extension validates configured paths before starting the language server. If <code>incan.lsp.path</code> or <code>incan.compiler.path</code> contains shell syntax, points at a missing file, or points at a non-executable file, the extension writes the problem to the <strong>Incan</strong> output channel and shows a warning.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="lsp-not-starting">LSP Not Starting<a class="headerlink" href="#lsp-not-starting" title="Permanent link">&para;</a></h3>
 <ol>
 <li>
 <p><strong>Check binary exists:</strong></p>
 <div class="language-bash highlight"><pre><span></span><code>which<span class="w"> </span>incan-lsp
-<span class="c1"># or</span>
-incan-lsp<span class="w"> </span>--version
+ls<span class="w"> </span>-l<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>which<span class="w"> </span>incan-lsp<span class="k">)</span><span class="s2">&quot;</span>
 </code></pre></div>
+</li>
+<li>
+<p><strong>Check configured path:</strong></p>
+<ul>
+<li>If <code>incan.lsp.path</code> is set, make sure it is a literal executable path, not <code>$HOME/...</code>, <code>~/...</code>, or another shell expression.</li>
+<li>If it is empty, the extension first tries a workspace-built <code>target/debug/incan-lsp</code> or <code>target/release/incan-lsp</code>, then falls back to <code>incan-lsp</code> from <code>PATH</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Run the doctor command:</strong></p>
+<ul>
+<li>Command palette → "Incan: Doctor"</li>
+<li>Or from a terminal: <code>incan tools doctor</code></li>
+</ul>
 </li>
 <li>
 <p><strong>Check VS Code output:</strong></p>
 <ul>
-<li>View → Output → Select "Incan Language Server"</li>
+<li>View → Output → Select "Incan"</li>
 </ul>
 </li>
 <li>

@@ -3123,6 +3123,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shell-or-editor-is-using-an-old-incan-incan-lsp" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shell or editor is using an old incan / incan-lsp
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#i-didnt-run-make-install-no-install-fallback" class="md-nav__link">
     <span class="md-ellipsis">
       I didn’t run make install (no-install fallback)
@@ -4474,6 +4483,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shell-or-editor-is-using-an-old-incan-incan-lsp" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shell or editor is using an old incan / incan-lsp
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#i-didnt-run-make-install-no-install-fallback" class="md-nav__link">
     <span class="md-ellipsis">
       I didn’t run make install (no-install fallback)
@@ -4548,6 +4566,33 @@
 <span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
 which<span class="w"> </span>incan<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">true</span>
 </code></pre></div>
+<h2 id="shell-or-editor-is-using-an-old-incan-incan-lsp">Shell or editor is using an old <code>incan</code> / <code>incan-lsp</code><a class="headerlink" href="#shell-or-editor-is-using-an-old-incan-incan-lsp" title="Permanent link">&para;</a></h2>
+<p>This usually means your shell and editor are resolving different binaries. For local development from a clone, prefer:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
+make<span class="w"> </span>build
+</code></pre></div>
+<p>On local machines, <code>make build</code> builds the compiler and LSP with <code>cargo build --features lsp</code>, then links <code>~/.cargo/bin/incan</code> to <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to <code>target/debug/incan-lsp</code>. Keep <code>~/.cargo/bin</code> early enough in your <code>PATH</code> that both tools resolve there:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan
+<span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan-lsp
+ls<span class="w"> </span>-l<span class="w"> </span>~/.cargo/bin/incan<span class="w"> </span>~/.cargo/bin/incan-lsp
+incan<span class="w"> </span>--version
+incan<span class="w"> </span>tools<span class="w"> </span>doctor
+</code></pre></div>
+<p>If <code>command -v incan</code> or <code>command -v incan-lsp</code> points somewhere unexpected, fix your <code>PATH</code> or remove the stale binary from the earlier location. If the <code>ls -l</code> target points at a different checkout, rerun <code>make build</code> from the checkout you want to use.</p>
+<p>For VS Code/Cursor, also check the Incan settings:</p>
+<div class="language-json highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;incan.lsp.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;incan.compiler.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Leaving these empty makes the extension use workspace binary discovery or <code>PATH</code>. If you set <code>incan.lsp.path</code>, use a literal executable path such as <code>/path/to/incan/target/debug/incan-lsp</code>; the setting does not expand <code>$HOME</code>, <code>~</code>, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.</p>
+<p>After changing paths or rebuilding, reload the editor window so it starts a new language-server process:</p>
+<ol>
+<li>Run <strong>Incan: Doctor</strong> from the command palette and check the <strong>Incan</strong> output channel.</li>
+<li>Run <strong>Developer: Reload Window</strong> from the command palette.</li>
+<li>Reopen a <code>.incn</code> file.</li>
+<li>Re-run <strong>Incan: Doctor</strong> if diagnostics still look stale.</li>
+</ol>
 <h2 id="i-didnt-run-make-install-no-install-fallback">I didn’t run <code>make install</code> (no-install fallback)<a class="headerlink" href="#i-didnt-run-make-install-no-install-fallback" title="Permanent link">&para;</a></h2>
 <p>If you’re using the no-install fallback, run commands from the repository root and invoke:</p>
 <div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>...
@@ -4570,6 +4615,9 @@ proxy/mirror).</p>
 <li>your OS and architecture</li>
 <li>the exact commands you ran</li>
 <li>the full error output</li>
+<li><code>command -v incan</code>, <code>command -v incan-lsp</code>, and <code>ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp</code></li>
+<li><code>incan tools doctor --format json</code></li>
+<li>whether <code>incan.lsp.path</code> or <code>incan.compiler.path</code> is set in VS Code/Cursor</li>
 </ul>
 
 
