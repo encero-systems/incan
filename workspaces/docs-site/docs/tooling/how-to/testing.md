@@ -397,7 +397,7 @@ def test_insert(database: Database) -> None:
 
 ### Fixture Scope
 
-Function-scoped fixtures are created each time a test needs them. Module fixtures are cached once per source file in a worker batch. Session fixtures are cached once per worker batch, so `--jobs 1` shares one session fixture instance across collected files and `--jobs N` shares one instance per worker.
+Function-scoped fixtures are created each time a test needs them. Module fixtures are cached once per source file in a worker batch. Session fixtures are cached once per worker batch, so `--jobs 1` can share one session fixture instance across compatible collected files and `--jobs N` shares one instance per worker.
 
 ```incan
 from std.testing import assert_eq, fixture

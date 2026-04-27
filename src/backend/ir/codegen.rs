@@ -1062,9 +1062,15 @@ mod tests {
         must_ok(parser::parse(&tokens))
     }
 
-    fn read_stdlib_program(path: &str) -> Program {
-        let source = must_ok(std::fs::read_to_string(path));
-        parse_program(&source)
+    fn parse_program_result(source: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        Ok(ast)
+    }
+
+    fn read_stdlib_program(path: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let source = std::fs::read_to_string(path)?;
+        parse_program_result(&source)
     }
 
     /// Parse and scan a source snippet to determine whether serde runtime support is required.
@@ -1475,8 +1481,9 @@ model Account:
     }
 
     #[test]
-    fn test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures() {
-        let main_module = parse_program(
+    fn test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let main_module = parse_program_result(
             r#"
 from std.testing import timeout
 from std.async.time import timeout as async_timeout
@@ -1484,11 +1491,11 @@ from std.async.time import timeout as async_timeout
 def main() -> None:
   return
 "#,
-        );
-        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn");
-        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn");
-        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn");
-        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn");
+        )?;
+        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn")?;
+        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn")?;
+        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn")?;
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
 
         let testing_path = vec!["__incan_std".to_string(), "testing".to_string()];
         let async_task_path = vec!["__incan_std".to_string(), "async".to_string(), "task".to_string()];
@@ -1505,7 +1512,7 @@ def main() -> None:
             traits_error_path.clone(),
         );
 
-        let (_main_code, rust_modules) = must_ok(codegen.try_generate_multi_file_nested(
+        let (_main_code, rust_modules) = codegen.try_generate_multi_file_nested(
             &main_module,
             &[
                 testing_path.clone(),
@@ -1513,8 +1520,10 @@ def main() -> None:
                 async_time_path,
                 traits_error_path,
             ],
-        ));
-        let testing_code = must_some(rust_modules.get(&testing_path), "missing generated std.testing module");
+        )?;
+        let testing_code = rust_modules
+            .get(&testing_path)
+            .ok_or_else(|| std::io::Error::other("missing generated std.testing module"))?;
 
         assert!(
             testing_code.contains("pub fn timeout(duration: String)"),
@@ -1524,6 +1533,7 @@ def main() -> None:
             !testing_code.contains("RuntimeFuture"),
             "std.testing wrapper should not inherit std.async.time.timeout bounds; got:\n{testing_code}"
         );
+        Ok(())
     }
 
     #[test]

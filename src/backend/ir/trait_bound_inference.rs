@@ -2176,7 +2176,8 @@ mod tests {
     }
 
     #[test]
-    fn external_generic_bounds_do_not_rewrite_same_named_local_non_generic_function() {
+    fn external_generic_bounds_do_not_rewrite_same_named_local_non_generic_function()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut local = program(vec![function("timeout", Vec::new())]);
         let external = program(vec![function(
             "timeout",
@@ -2194,16 +2195,21 @@ mod tests {
 
         propagate_trait_bounds_from_programs(&mut local, &[&external]);
 
-        let Some(IrDecl {
+        let decl = local
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
             kind: IrDeclKind::Function(func),
             ..
-        }) = local.declarations.first()
+        } = decl
         else {
-            panic!("expected function declaration");
+            return Err(std::io::Error::other("expected function declaration").into());
         };
         assert!(
             func.type_params.is_empty(),
             "local non-generic timeout should not inherit external generic bounds"
         );
+        Ok(())
     }
 }

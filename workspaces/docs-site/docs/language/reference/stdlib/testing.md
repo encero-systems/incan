@@ -131,6 +131,6 @@ Fixture scopes:
 
 - `@fixture` / `@fixture(scope="function")`: created for each test that uses it.
 - `@fixture(scope="module")`: cached once per source file inside a generated worker-batch harness.
-- `@fixture(scope="session")`: cached once per worker batch. With `--jobs 1`, one session fixture instance is shared across collected files; with `--jobs N`, each worker gets its own instance.
+- `@fixture(scope="session")`: cached once per worker batch. With `--jobs 1`, one session fixture instance can be shared across compatible collected files; with `--jobs N`, each worker gets its own instance.
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
