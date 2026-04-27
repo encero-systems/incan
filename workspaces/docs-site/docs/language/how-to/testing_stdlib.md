@@ -126,17 +126,41 @@ The mapping is semantic. The compiler may implement the language statement as an
 
 Test markers control how `incan test` discovers and runs tests:
 
-| Decorator                           | Effect                                                          |
-| ----------------------------------- | --------------------------------------------------------------- |
-| `@skip(reason?)`                    | Skips the test unconditionally.                                 |
-| `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).        |
-| `@slow`                             | Excludes the test by default; include with `incan test --slow`. |
-| `@fixture`                          | Declares a test fixture (see below).                            |
-| `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                           |
+| Decorator                           | Effect                                                               |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `@test`                             | Marks a non-`test_*` function as a test.                             |
+| `@skip(reason?)`                    | Skips the test unconditionally.                                      |
+| `@skipif(condition, reason?)`        | Skips the test when a collection-time condition is true.             |
+| `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).             |
+| `@xfailif(condition, reason?)`       | Marks the test expected-fail when a collection-time condition is true. |
+| `@slow`                             | Excludes the test by default; include with `incan test --slow`.      |
+| `@mark(name)`                       | Adds a custom marker for `incan test -m` selection.                  |
+| `@timeout(duration)`                | Overrides the timeout for the generated test batch.                  |
+| `@fixture`                          | Declares a test fixture (see below).                                 |
+| `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                                |
+| `param_case(..., id?, marks?)`      | Gives one parameter set an explicit id and/or marks.                 |
+| `@resource(name)` / `@serial`       | Applies runner scheduling constraints for shared or exclusive tests. |
+| `platform()` / `feature(name)`       | Collection-time probes for `skipif` / `xfailif`.                    |
 
 Unlike the language `assert` statement, markers are `std.testing` APIs. Import the marker decorators you use.
 
-Markers are declared in `testing.incn` with marker metadata, and `incan test` consumes that metadata during discovery. This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.
+Marker APIs in `std.testing` carry metadata that `incan test` consumes during discovery. This keeps marker behavior in the runner and prevents regular runtime calls to marker functions.
+
+Conditional markers run during collection:
+
+```incan
+from std.testing import assert_eq, feature, platform, skipif, xfailif
+
+@skipif(platform() == "windows", reason="path semantics differ")
+def test_posix_path() -> None:
+    assert_eq("/", "/")
+
+@xfailif(feature("new_parser"), reason="tracked parser bug")
+def test_new_parser_case() -> None:
+    assert_eq(parse("..."), expected)
+```
+
+Pass `incan test --feature new_parser` to make `feature("new_parser")` true during collection.
 
 ## Fixtures
 
@@ -164,7 +188,7 @@ This is tedious, error-prone (forget one `db.close()` and you leak a connection)
 
 A **fixture** is a function decorated with `@fixture` that produces a value your tests can reuse.
 
-Mark it with the `@fixture` decorator and return (or yield) the value:
+Mark it with the `@fixture` decorator and return the value:
 
 ```incan
 from std.testing import fixture
@@ -194,11 +218,31 @@ If your fixture needs cleanup after the test finishes, use `yield` instead of `r
 @fixture
 def database() -> Database:
     db = Database.connect("test.db")
-    yield db          # <-- test receives `db` here
-    db.close()        # <-- runs after the test finishes, even if it failed
+    yield db          # test receives `db` here
+    db.close()        # runs after the test finishes, even if it failed
 ```
 
-This guarantees cleanup runs regardless of whether the test passes or fails — no more leaked connections or orphaned temp files.
+Teardown can reference setup locals such as `db` and fixture parameters. If teardown fails, the test run fails. Timeout-enforced worker termination can still bypass teardown.
+
+### Fixture scopes
+
+By default, a fixture is created and torn down for **each test** that uses it. If the setup is expensive, share it across a wider scope with the `scope` argument:
+
+```incan
+@fixture(scope="module")
+def shared_client() -> Client:
+    client = Client.connect("https://api.example.com")
+    yield client
+    client.disconnect()
+```
+
+| Scope                      | Lifetime                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `"function"` (the default) | Created and torn down for each test.                                                              |
+| `"module"`                 | Shared across all tests from one source file inside a worker batch.                               |
+| `"session"`                | Shared across a worker batch; with `--jobs 1`, compatible tests can share it across source files. |
+
+Choose the narrowest scope that makes sense. `"function"` keeps tests fully isolated; wider scopes trade isolation for speed.
 
 ### Fixtures using other fixtures
 
@@ -222,26 +266,6 @@ def test_user_count(populated_db: Database) -> None:
 ```
 
 The test runner resolves the dependency chain for you: `populated_db` needs `database`, so `database()` runs first, then its result is passed into `populated_db()`.
-
-### Fixture scopes
-
-By default, a fixture is created and torn down for **each test** that uses it. If the setup is expensive (e.g., a database connection or a network client), you can share it across a wider scope with the `scope` argument:
-
-```incan
-@fixture(scope="module")
-def shared_client() -> Client:
-    client = Client.connect("https://api.example.com")
-    yield client
-    client.disconnect()
-```
-
-| Scope                      | Lifetime                                  |
-| -------------------------- | ----------------------------------------- |
-| `"function"` (the default) | Created and torn down for each test.      |
-| `"module"`                 | Shared across all tests in one test file. |
-| `"session"`                | Shared across the entire test session.    |
-
-Choose the narrowest scope that makes sense — `"function"` keeps tests fully isolated, while wider scopes trade isolation for speed. You have to decide what is best for your test suite and your use case.
 
 ## Parametrized tests
 
@@ -283,6 +307,19 @@ test_add[-1-1-0] ... PASSED
 ```
 
 Adding a new case is just one more tuple — no new function needed.
+
+Use `param_case(...)` when one parameter set needs a stable id or marker:
+
+```incan
+from std.testing import assert_eq, param_case, parametrize, xfail
+
+@parametrize("x, expected", [
+    param_case((1, 3), id="known-bug", marks=[xfail("tracked bug")]),
+    param_case((2, 4), id="happy-path"),
+])
+def test_double(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
+```
 
 ## Full example
 

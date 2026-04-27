@@ -387,8 +387,16 @@ impl<'a> Parser<'a> {
 
     /// Convert the parsed condition expression into a structured assertion form.
     fn assert_condition_kind(&self, condition: Spanned<Expr>) -> Result<AssertKind, CompileError> {
-        let Expr::Binary(left, BinaryOp::Is, right) = condition.node else {
+        let is_pattern_assert = matches!(
+            &condition.node,
+            Expr::Binary(_, BinaryOp::Is, right) if Self::is_assert_pattern_candidate(&right.node)
+        );
+        if !is_pattern_assert {
             return Ok(AssertKind::Condition(condition));
+        }
+
+        let Expr::Binary(left, BinaryOp::Is, right) = condition.node else {
+            unreachable!("pattern assertion candidates are filtered to `is` binary expressions")
         };
 
         let pattern = self.expr_to_assert_pattern(*right)?;
@@ -396,6 +404,17 @@ impl<'a> Parser<'a> {
             value: *left,
             pattern,
         })
+    }
+
+    /// Return true when the RHS of `assert value is <rhs>` is one of the RFC 018 pattern forms.
+    fn is_assert_pattern_candidate(expr: &Expr) -> bool {
+        match expr {
+            Expr::Literal(Literal::None) => true,
+            Expr::Call(callee, _, _) => {
+                matches!(&callee.node, Expr::Ident(name) if matches!(name.as_str(), "Some" | "Ok" | "Err"))
+            }
+            _ => false,
+        }
     }
 
     /// Parse the tail of `assert call() raises ErrorType`.
