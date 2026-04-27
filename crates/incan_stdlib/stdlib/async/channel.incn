@@ -196,8 +196,13 @@ pub type Receiver[T] = newtype RawReceiver[T]:
         """
         return rust_receiver_try_recv(self.0)
 
-    def close(self) -> None:
-        """Close the channel, preventing further sends."""
+    def close(self) -> bool:
+        """
+        Try to close the channel, preventing further sends.
+
+        Returns `true` when the channel was closed. Returns `false` if another cloned receiver is actively waiting in
+        `recv()` and owns the receiver state; retry after that wait completes or is cancelled.
+        """
         return rust_receiver_close(self.0)
 
 # ============================================================================

@@ -2502,7 +2502,7 @@ def main() -> None:
     }
 
     #[test]
-    fn test_run_async_channel_facade() {
+    fn test_run_async_channel_facade() -> Result<(), Box<dyn std::error::Error>> {
         let project_dir = make_temp_dir("incan_async_channel_facade_test");
         let source_path = project_dir.join("async_channel.incn");
         let source = r#"
@@ -2552,7 +2552,7 @@ async def main() -> None:
         Some(value) => println(value)
         None => println("empty")
 
-    rx2.close()
+    println(f"close:{rx2.close()}")
     println(tx2.is_closed())
 
     otx, orx = oneshot()
@@ -2564,17 +2564,12 @@ async def main() -> None:
         Ok(value) => println(value)
         Err(err) => println(err.message())
 "#;
-        let Ok(()) = std::fs::write(&source_path, source) else {
-            panic!("failed to write source file");
-        };
+        std::fs::write(&source_path, source)?;
 
-        let Ok(output) = Command::new(incan_debug_binary())
+        let output = Command::new(incan_debug_binary())
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
-            .output()
-        else {
-            panic!("failed to run incan");
-        };
+            .output()?;
 
         assert!(
             output.status.success(),
@@ -2616,6 +2611,11 @@ async def main() -> None:
             stdout
         );
         assert!(
+            stdout.contains("close:true"),
+            "expected receiver close output; got:\n{}",
+            stdout
+        );
+        assert!(
             stdout.contains("true"),
             "expected closed-state output; got:\n{}",
             stdout
@@ -2630,6 +2630,7 @@ async def main() -> None:
             "expected oneshot receive output; got:\n{}",
             stdout
         );
+        Ok(())
     }
 
     /// Regression (GitHub #289): `await expr?` must emit `.await?` (not `?.await`) in generated Rust.
@@ -2787,7 +2788,7 @@ def main() -> None:
     }
 
     #[test]
-    fn test_run_async_task_and_time_facade() {
+    fn test_run_async_task_and_time_facade() -> Result<(), Box<dyn std::error::Error>> {
         let project_dir = make_temp_dir("incan_async_task_time_facade_test");
         let source_path = project_dir.join("async_task_time.incn");
         let source = r#"
@@ -2850,17 +2851,12 @@ async def main() -> None:
                 Ok(value) => println(f"timeout_join_ms_later:{value}")
                 Err(err) => println(f"timeout_join_ms_later_err:{err.message()}")
 "#;
-        let Ok(()) = std::fs::write(&source_path, source) else {
-            panic!("failed to write source file");
-        };
+        std::fs::write(&source_path, source)?;
 
-        let Ok(output) = Command::new(incan_debug_binary())
+        let output = Command::new(incan_debug_binary())
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
-            .output()
-        else {
-            panic!("failed to run incan");
-        };
+            .output()?;
 
         assert!(
             output.status.success(),
@@ -2927,6 +2923,99 @@ async def main() -> None:
             "unexpected error/success fallback branch output; got:\n{}",
             stdout
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_async_barrier_cancellation_withdraws_waiter() -> Result<(), Box<dyn std::error::Error>> {
+        let project_dir = make_temp_dir("incan_async_barrier_cancel_test");
+        let source_path = project_dir.join("async_barrier_cancel.incn");
+        let source = r#"
+import std.async
+from std.async.sync import Barrier, Mutex
+from std.async.task import spawn, yield_now
+from std.async.time import timeout_join_ms, TimeoutJoinOutcome
+
+async def mark_ready(ready: Mutex[int]) -> None:
+    guard = await ready.lock()
+    guard.set(1)
+
+async def is_ready(ready: Mutex[int]) -> bool:
+    guard = await ready.lock()
+    return guard.get() == 1
+
+async def wait_until_ready(ready: Mutex[int]) -> None:
+    while True:
+        if await is_ready(ready):
+            return
+        await yield_now()
+
+async def wait_barrier(barrier: Barrier, ready: Mutex[int]) -> int:
+    await mark_ready(ready)
+    return await barrier.wait()
+
+async def main() -> None:
+    barrier = Barrier.new(2)
+
+    cancelled_ready = Mutex.new(0)
+    cancelled = spawn(wait_barrier(barrier, cancelled_ready))
+    await wait_until_ready(cancelled_ready)
+    cancelled.abort()
+    match await cancelled:
+        Ok(slot) => println(f"unexpected_cancelled_slot:{slot}")
+        Err(err) => println(f"cancelled:{err.message()}")
+
+    replacement_ready = Mutex.new(0)
+    replacement = spawn(wait_barrier(barrier, replacement_ready))
+    await wait_until_ready(replacement_ready)
+    match await timeout_join_ms(5, replacement):
+        TimeoutJoinOutcome.Completed(slot) => println(f"unexpected_replacement_completed:{slot}")
+        TimeoutJoinOutcome.JoinFailed(err) => println(f"unexpected_replacement_failed:{err.message()}")
+        TimeoutJoinOutcome.TimedOut(handle) =>
+            println("replacement_waiting")
+            current = await barrier.wait()
+            match await handle:
+                Ok(slot) => println(f"replacement_slot:{slot}")
+                Err(err) => println(f"unexpected_replacement_join_failed:{err.message()}")
+            println(f"current_slot:{current}")
+"#;
+        std::fs::write(&source_path, source)?;
+
+        let output = Command::new(incan_debug_binary())
+            .args(["run", source_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run async barrier cancellation failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("cancelled:task") && stdout.contains("was cancelled"),
+            "expected cancelled join output; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("replacement_waiting"),
+            "expected replacement to keep waiting until another active participant arrived; got:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains("replacement_slot:") && stdout.contains("current_slot:"),
+            "expected both active participants to complete after the second arrival; got:\n{}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("unexpected_"),
+            "unexpected fallback branch output; got:\n{}",
+            stdout
+        );
+
+        Ok(())
     }
 
     #[test]

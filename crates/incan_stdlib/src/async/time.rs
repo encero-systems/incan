@@ -103,6 +103,10 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::oneshot;
 
+    fn test_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
+        Box::new(std::io::Error::other(message.into()))
+    }
+
     #[tokio::test]
     async fn clamp_seconds_normalizes_negative_and_infinite() {
         assert_eq!(clamp_seconds(-1.0), Duration::from_secs(0));
@@ -118,27 +122,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_join_returns_completed_task_result() {
+    async fn timeout_join_returns_completed_task_result() -> Result<(), Box<dyn std::error::Error>> {
         let result = timeout_join(0.1, spawn(async { 7 })).await;
 
         match result {
             TimeoutJoinOutcome::Completed(value) => assert_eq!(value, 7),
-            TimeoutJoinOutcome::JoinFailed(err) => panic!("expected task value, got join error: {err}"),
-            TimeoutJoinOutcome::TimedOut(_) => panic!("expected task to complete before timeout"),
+            TimeoutJoinOutcome::JoinFailed(err) => {
+                return Err(test_error(format!("expected task value, got join error: {err}")));
+            }
+            TimeoutJoinOutcome::TimedOut(_) => {
+                return Err(test_error("expected task to complete before timeout"));
+            }
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn timeout_join_preserves_handle_when_deadline_wins() {
-        assert_timeout_preserves_handle(false, 11).await;
+    async fn timeout_join_preserves_handle_when_deadline_wins() -> Result<(), Box<dyn std::error::Error>> {
+        assert_timeout_preserves_handle(false, 11).await
     }
 
     #[tokio::test]
-    async fn timeout_join_ms_preserves_handle_when_deadline_wins() {
-        assert_timeout_preserves_handle(true, 13).await;
+    async fn timeout_join_ms_preserves_handle_when_deadline_wins() -> Result<(), Box<dyn std::error::Error>> {
+        assert_timeout_preserves_handle(true, 13).await
     }
 
-    async fn assert_timeout_preserves_handle(use_millis: bool, expected: i32) {
+    async fn assert_timeout_preserves_handle(
+        use_millis: bool,
+        expected: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (sender, receiver) = oneshot::channel::<i32>();
         let handle = spawn(async move { receiver.await.unwrap_or(0) });
         let result = if use_millis {
@@ -148,15 +160,24 @@ mod tests {
         };
 
         let handle = match result {
-            TimeoutJoinOutcome::Completed(value) => panic!("expected timeout, got completed value: {value}"),
-            TimeoutJoinOutcome::JoinFailed(err) => panic!("expected timeout, got join error: {err}"),
+            TimeoutJoinOutcome::Completed(value) => {
+                return Err(test_error(format!("expected timeout, got completed value: {value}")));
+            }
+            TimeoutJoinOutcome::JoinFailed(err) => {
+                return Err(test_error(format!("expected timeout, got join error: {err}")));
+            }
             TimeoutJoinOutcome::TimedOut(handle) => handle,
         };
 
         assert!(sender.send(expected).is_ok());
         match handle.await {
             Ok(value) => assert_eq!(value, expected),
-            Err(err) => panic!("expected preserved handle to finish, got join error: {err}"),
+            Err(err) => {
+                return Err(test_error(format!(
+                    "expected preserved handle to finish, got join error: {err}"
+                )));
+            }
         }
+        Ok(())
     }
 }

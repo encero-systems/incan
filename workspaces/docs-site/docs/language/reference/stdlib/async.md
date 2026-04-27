@@ -21,12 +21,12 @@ depends on native Rust adapter contracts.
 
 Async APIs on this page use these contract terms:
 
-| Term | Meaning |
-| ---- | ------- |
-| `cancel-safe` | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation. |
-| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost. |
-| `not cancel-safe` | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting. |
-| `durable once spawned` | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
+| Term                    | Meaning                                                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cancel-safe`           | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation.                            |
+| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost.                          |
+| `not cancel-safe`       | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting.                              |
+| `durable once spawned`  | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
 
 ## Module: `std.async.time`
 
@@ -38,14 +38,14 @@ from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJo
 
 **Functions**:
 
-| Function                                                                                                             | Returns                                            | Cancellation contract |
-| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------- |
-| `sleep(seconds: float) -> None`                                                                                      | `None`                                             | `cancel-safe` |
-| `sleep_ms(milliseconds: int) -> None`                                                                                | `None`                                             | `cancel-safe` |
-| `timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]`                                | `Result[T, TimeoutError]`                          | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
-| `timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]`                          | `Result[T, TimeoutError]`                          | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future. |
-| `timeout_join[T](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`                                  | `TimeoutJoinOutcome[T]` | Stops waiting when the deadline expires and returns the live handle in `TimedOut(handle)`; the task continues running unless explicitly aborted. |
-| `timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`                            | `TimeoutJoinOutcome[T]` | Millisecond form of `timeout_join`. |
+| Function                                                                                    | Returns                   | Cancellation contract                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sleep(seconds: float) -> None`                                                             | `None`                    | `cancel-safe`                                                                                                                                                                                                                                                                                                              |
+| `sleep_ms(milliseconds: int) -> None`                                                       | `None`                    | `cancel-safe`                                                                                                                                                                                                                                                                                                              |
+| `timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]`       | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.                                                                                                                                                                                                         |
+| `timeout_ms[T, TaskFuture](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]` | `Result[T, TimeoutError]` | Cancels the supplied future when the deadline expires; cancelling the timeout wait also drops the supplied future.                                                                                                                                                                                                         |
+| `timeout_join[T](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`           | `TimeoutJoinOutcome[T]`   | Stops waiting when the deadline expires and returns the live handle in `TimedOut(handle)`; the task continues running unless explicitly aborted. If the `timeout_join()` wait itself is cancelled by an outer boundary, the helper-owned handle is dropped and the task is detached unless another completion path exists. |
+| `timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]`     | `TimeoutJoinOutcome[T]`   | Millisecond form of `timeout_join`, with the same outer-cancellation caveat.                                                                                                                                                                                                                                               |
 
 **Types**:
 
@@ -65,8 +65,8 @@ from std.async.select import select_timeout
 
 **Functions**:
 
-| Function                                                                       | Returns     | Cancellation contract |
-| ------------------------------------------------------------------------------ | ----------- | --------------------- |
+| Function                                                                       | Returns     | Cancellation contract                                                                                                    |
+| ------------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `select_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Option[T]` | `Option[T]` | Cancels the supplied future when the deadline wins; cancelling the `select_timeout` wait also drops the supplied future. |
 
 ## Module: `std.async.task`
@@ -95,16 +95,17 @@ Top-level API:
 
 Cancellation contracts:
 
-| API | Contract |
-| --- | -------- |
-| `Sender.send(value)` | `cancel-safe-but-lossy`: if cancelled while waiting for bounded-channel capacity, the message is not sent and the value is dropped. |
-| `Sender.reserve()` | Waits for bounded-channel capacity before a value is committed. Cancelling it does not drop a message value, but it gives up the sender's current wait position. |
-| `SenderPermit.send(value)` | Immediate single-use send through reserved capacity; either delivers the value or returns it in `SendError[T]`. |
-| `Sender.try_send(value)` | Immediate operation; returns the value in `SendError[T]` on failure. |
-| `Receiver.recv()` | `cancel-safe`: cancelling a pending receive does not remove a message from the channel. |
-| `Receiver.try_recv()` | Immediate operation; no pending wait to cancel. |
-| `OneshotSender.send(value)` | Immediate operation; either delivers the value or returns it. |
-| `OneshotReceiver.recv()` | `cancel-safe`: cancelling a pending receive does not consume the one-shot value. |
+| API                         | Contract                                                                                                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Sender.send(value)`        | `cancel-safe-but-lossy`: if cancelled while waiting for bounded-channel capacity, the message is not sent and the value is dropped.                              |
+| `Sender.reserve()`          | Waits for bounded-channel capacity before a value is committed. Cancelling it does not drop a message value, but it gives up the sender's current wait position. |
+| `SenderPermit.send(value)`  | Immediate single-use send through reserved capacity; either delivers the value or returns it in `SendError[T]`.                                                  |
+| `Sender.try_send(value)`    | Immediate operation; returns the value in `SendError[T]` on failure.                                                                                             |
+| `Receiver.recv()`           | `cancel-safe`: cancelling a pending receive does not remove a message from the channel.                                                                          |
+| `Receiver.try_recv()`       | Immediate operation; no pending wait to cancel.                                                                                                                  |
+| `Receiver.close()`          | Immediate best-effort close from the receiving side. Returns `false` if another cloned receiver is actively waiting in `recv()` and owns the receiver state.     |
+| `OneshotSender.send(value)` | Immediate operation; either delivers the value or returns it.                                                                                                    |
+| `OneshotReceiver.recv()`    | `cancel-safe`: cancelling a pending receive does not consume the one-shot value.                                                                                 |
 
 ## Module: `std.async.sync`
 
@@ -118,13 +119,13 @@ Top-level API:
 
 Cancellation contracts:
 
-| API | Contract |
-| --- | -------- |
-| `Mutex.lock()` | `cancel-safe-but-lossy`: cancellation does not acquire the lock, but the waiter loses its queue position. |
-| `RwLock.read()` | `cancel-safe-but-lossy`: cancellation does not acquire the read lock, but the waiter loses its queue position. |
-| `RwLock.write()` | `cancel-safe-but-lossy`: cancellation does not acquire the write lock, but the waiter loses its queue position. |
-| `Semaphore.acquire()` | `cancel-safe-but-lossy`: cancellation does not acquire a permit, but the waiter loses its queue position. |
-| `Barrier.wait()` | `not cancel-safe`: cancellation can leave the barrier generation without the required participants. Do not put `wait()` directly in timeout or race arms unless the entire generation is being abandoned. |
+| API                   | Contract                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Mutex.lock()`        | `cancel-safe-but-lossy`: cancellation does not acquire the lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                            |
+| `RwLock.read()`       | `cancel-safe-but-lossy`: cancellation does not acquire the read lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                       |
+| `RwLock.write()`      | `cancel-safe-but-lossy`: cancellation does not acquire the write lock, but the waiter loses its queue position.                                                                                                                                                                                                                                                      |
+| `Semaphore.acquire()` | `cancel-safe-but-lossy`: cancellation does not acquire a permit, but the waiter loses its queue position.                                                                                                                                                                                                                                                            |
+| `Barrier.wait()`      | `cancellation-aware before release`: cancellation withdraws the pending participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation. The returned slot is unique within a completed generation but is not guaranteed to preserve chronological arrival order after cancellation. |
 
 ## Module: `std.async.prelude`
 

@@ -476,7 +476,7 @@ Cancellation is cooperative:
 - `race` arms that wait on channel receives or one-shot receives are safe to abandon because cancellation does not consume the message
 - `race` arms that wait on channel sends are cancel-safe-but-lossy because the unsent value can be dropped
 - `race` arms that wait on mutexes, read-write locks, or semaphores are cancel-safe-but-lossy because the waiter loses queue position
-- `race` arms that wait at a barrier are not cancel-safe and must be avoided unless the entire barrier generation is abandoned
+- `race` arms that wait at a barrier are cancellation-aware before release: dropping a pending wait withdraws that participant from the generation, but it does not complete the generation, so enough active participants must still arrive or the whole phase must be abandoned deliberately
 
 This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.
 
