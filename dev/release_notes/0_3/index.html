@@ -4631,11 +4631,12 @@ the raw representation for value enums.</p>
 <li><strong>Language/Testing</strong>: Inline <code>module tests:</code> blocks in production source files are now discovered and executed by <code>incan test</code>, while production build/run output still strips those test-only declarations and imports (<a href="/dev/RFCs/018_testing">RFC 018</a>, #76).</li>
 <li><strong>Runtime/Async</strong>: <code>std.async</code> now documents cancellation-safety contracts and exposes channel reservation APIs so critical sends can reserve capacity before committing messages (#415, #416).</li>
 <li><strong>Runtime/Async</strong>: <code>std.async.time</code> adds <code>timeout_join</code>, <code>timeout_join_ms</code>, and a must-use <code>TimeoutJoinOutcome</code> so spawned work can keep running after a deadline while callers retain the live <code>JoinHandle</code> for later observation or explicit abort (#417).</li>
+<li><strong>Runtime/Async</strong>: <code>std.async.sync.Barrier.wait()</code> now uses Incan-owned generation bookkeeping so cancelling a pending wait withdraws that participant and frees its arrival slot instead of corrupting barrier progress (#418).</li>
 </ul>
 <h3 id="versioning-and-release-track">Versioning and release track<a class="headerlink" href="#versioning-and-release-track" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.11</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.12</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>

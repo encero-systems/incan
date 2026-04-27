@@ -4632,12 +4632,12 @@ depends on native Rust adapter contracts.</p>
 <tr>
 <td><code>timeout_join[T](seconds: float, handle: JoinHandle[T]) -&gt; TimeoutJoinOutcome[T]</code></td>
 <td><code>TimeoutJoinOutcome[T]</code></td>
-<td>Stops waiting when the deadline expires and returns the live handle in <code>TimedOut(handle)</code>; the task continues running unless explicitly aborted.</td>
+<td>Stops waiting when the deadline expires and returns the live handle in <code>TimedOut(handle)</code>; the task continues running unless explicitly aborted. If the <code>timeout_join()</code> wait itself is cancelled by an outer boundary, the helper-owned handle is dropped and the task is detached unless another completion path exists.</td>
 </tr>
 <tr>
 <td><code>timeout_join_ms[T](milliseconds: int, handle: JoinHandle[T]) -&gt; TimeoutJoinOutcome[T]</code></td>
 <td><code>TimeoutJoinOutcome[T]</code></td>
-<td>Millisecond form of <code>timeout_join</code>.</td>
+<td>Millisecond form of <code>timeout_join</code>, with the same outer-cancellation caveat.</td>
 </tr>
 </tbody>
 </table>
@@ -4739,6 +4739,10 @@ depends on native Rust adapter contracts.</p>
 <td>Immediate operation; no pending wait to cancel.</td>
 </tr>
 <tr>
+<td><code>Receiver.close()</code></td>
+<td>Immediate best-effort close from the receiving side. Returns <code>false</code> if another cloned receiver is actively waiting in <code>recv()</code> and owns the receiver state.</td>
+</tr>
+<tr>
 <td><code>OneshotSender.send(value)</code></td>
 <td>Immediate operation; either delivers the value or returns it.</td>
 </tr>
@@ -4784,7 +4788,7 @@ depends on native Rust adapter contracts.</p>
 </tr>
 <tr>
 <td><code>Barrier.wait()</code></td>
-<td><code>not cancel-safe</code>: cancellation can leave the barrier generation without the required participants. Do not put <code>wait()</code> directly in timeout or race arms unless the entire generation is being abandoned.</td>
+<td><code>cancellation-aware before release</code>: cancellation withdraws the pending participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation. The returned slot is unique within a completed generation but is not guaranteed to preserve chronological arrival order after cancellation.</td>
 </tr>
 </tbody>
 </table>

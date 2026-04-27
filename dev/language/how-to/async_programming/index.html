@@ -5319,7 +5319,7 @@ with Rust-level async performance.</p>
     <span class="k">case</span> <span class="nc">TimeoutJoinOutcome</span><span class="o">.</span><span class="nc">TimedOut</span><span class="p">(</span><span class="n">live_handle</span><span class="p">):</span>
         <span class="n">remember</span><span class="p">(</span><span class="n">live_handle</span><span class="p">)</span>
 </code></pre></div>
-<p>Use <code>timeout_join()</code> for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and <code>TimeoutJoinOutcome.TimedOut(handle)</code> carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. For <code>spawn_blocking()</code> handles, <code>abort()</code> can only prevent queued work from starting; blocking work that has already started must finish on its own.</p>
+<p>Use <code>timeout_join()</code> for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and <code>TimeoutJoinOutcome.TimedOut(handle)</code> carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. If an outer cancellation boundary cancels the <code>timeout_join()</code> call itself before it returns, the helper-owned handle is dropped and the task is detached unless you arranged another completion path. For <code>spawn_blocking()</code> handles, <code>abort()</code> can only prevent queued work from starting; blocking work that has already started must finish on its own.</p>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
@@ -5640,7 +5640,7 @@ while Python's Lock is just a lock you use alongside your data.</p>
 <p><strong>When to use:</strong> Multiple tasks need to both read AND write shared state.</p>
 <p><strong>API:</strong></p>
 <ul>
-<li><code>Mutex(value)</code> — Create a mutex wrapping a value</li>
+<li><code>Mutex.new(value)</code> — Create a mutex wrapping a value</li>
 <li><code>await mutex.lock()</code> — Acquire lock, returns a guard</li>
 <li><code>guard.get()</code> — Read the value</li>
 <li><code>guard.set(new_value)</code> — Write a new value</li>
@@ -5648,7 +5648,7 @@ while Python's Lock is just a lock you use alongside your data.</p>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Mutex</span>
 
-<span class="n">shared_counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">shared_counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">increment</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">shared_counter</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span>  <span class="c1"># Blocks until lock acquired</span>
@@ -5672,7 +5672,7 @@ while Python's Lock is just a lock you use alongside your data.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Mutex</span>
 
 <span class="c1"># Incan - lock wraps the data</span>
-<span class="n">counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">counter</span> <span class="o">=</span> <span class="kt">Mutex</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">increment</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">counter</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span>
@@ -5684,7 +5684,7 @@ More efficient than Mutex when reads are frequent.</p>
 <p><strong>When to use:</strong> Many tasks read, few tasks write (e.g., configuration, caches).</p>
 <p><strong>API:</strong></p>
 <ul>
-<li><code>RwLock(value)</code> — Create an RwLock wrapping a value</li>
+<li><code>RwLock.new(value)</code> — Create an RwLock wrapping a value</li>
 <li><code>await rwlock.read()</code> — Acquire read lock (shared with other readers)</li>
 <li><code>await rwlock.write()</code> — Acquire write lock (exclusive)</li>
 <li><code>guard.get()</code> — Read the value</li>
@@ -5692,7 +5692,7 @@ More efficient than Mutex when reads are frequent.</p>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">RwLock</span>
 
-<span class="n">config</span> <span class="o">=</span> <span class="kt">RwLock</span><span class="p">(</span><span class="nc">Config</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+<span class="n">config</span> <span class="o">=</span> <span class="kt">RwLock</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="nc">Config</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">read_config</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
     <span class="n">guard</span> <span class="o">=</span> <span class="k">await</span> <span class="n">config</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>  <span class="c1"># Multiple readers allowed simultaneously</span>
@@ -5713,14 +5713,14 @@ More efficient than Mutex when reads are frequent.</p>
 <p><strong>When to use:</strong> Connection pools, rate limiting, bounding concurrent operations.</p>
 <p><strong>API:</strong></p>
 <ul>
-<li><code>Semaphore(n)</code> — Create with n permits</li>
+<li><code>Semaphore.new(n)</code> — Create with n permits</li>
 <li><code>await sem.acquire()</code> — Wait for and acquire a permit</li>
 <li>Permit auto-releases when it goes out of scope</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Semaphore</span>
 
 <span class="c1"># Allow max 3 concurrent connections</span>
-<span class="n">connection_limit</span> <span class="o">=</span> <span class="kt">Semaphore</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">connection_limit</span> <span class="o">=</span> <span class="kt">Semaphore</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">make_request</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
     <span class="n">permit</span> <span class="o">=</span> <span class="k">await</span> <span class="n">connection_limit</span><span class="o">.</span><span class="n">acquire</span><span class="p">()</span>  <span class="c1"># Blocks if no permits</span>
@@ -5738,12 +5738,12 @@ More efficient than Mutex when reads are frequent.</p>
 <p><strong>When to use:</strong> Phased algorithms, coordinating startup, map-reduce patterns.</p>
 <p><strong>API:</strong></p>
 <ul>
-<li><code>Barrier(n)</code> — Create barrier for n tasks</li>
+<li><code>Barrier.new(n)</code> — Create barrier for n tasks</li>
 <li><code>await barrier.wait()</code> — Wait until all n tasks reach this point</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.sync</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Barrier</span>
 
-<span class="n">barrier</span> <span class="o">=</span> <span class="kt">Barrier</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># Wait for 3 tasks</span>
+<span class="n">barrier</span> <span class="o">=</span> <span class="kt">Barrier</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># Wait for 3 tasks</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">worker</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Worker </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2"> starting phase 1&quot;</span><span class="p">)</span>
@@ -5753,7 +5753,7 @@ More efficient than Mutex when reads are frequent.</p>
 
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Worker </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2"> starting phase 2&quot;</span><span class="p">)</span>  <span class="c1"># All start phase 2 together</span>
 </code></pre></div>
-<p><code>barrier.wait()</code> is not cancel-safe. Do not place it directly inside a timeout or future race unless the whole barrier generation is being abandoned, because cancelling one participant can leave the remaining participants waiting for a task that will not arrive.</p>
+<p><code>barrier.wait()</code> is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.</p>
 <div class="admonition note">
 <p class="admonition-title">Python equivalent</p>
 <p><code>asyncio.Barrier(n)</code> (added in Python 3.11) works the same way.</p>

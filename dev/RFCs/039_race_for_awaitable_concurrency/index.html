@@ -5185,7 +5185,7 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
 <li><code>race</code> arms that wait on channel receives or one-shot receives are safe to abandon because cancellation does not consume the message</li>
 <li><code>race</code> arms that wait on channel sends are cancel-safe-but-lossy because the unsent value can be dropped</li>
 <li><code>race</code> arms that wait on mutexes, read-write locks, or semaphores are cancel-safe-but-lossy because the waiter loses queue position</li>
-<li><code>race</code> arms that wait at a barrier are not cancel-safe and must be avoided unless the entire barrier generation is abandoned</li>
+<li><code>race</code> arms that wait at a barrier are cancellation-aware before release: dropping a pending wait withdraws that participant from the generation, but it does not complete the generation, so enough active participants must still arrive or the whole phase must be abandoned deliberately</li>
 </ul>
 <p>This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.</p>
 <h3 id="tie-breaking">Tie-breaking<a class="headerlink" href="#tie-breaking" title="Permanent link">&para;</a></h3>
