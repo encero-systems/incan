@@ -560,7 +560,7 @@ Starter and capability descriptors may declare dependencies on other descriptors
 
 The CLI must resolve descriptor dependencies into a directed acyclic graph before planning file or manifest mutations. If the graph contains a cycle, incompatible version requirements, ambiguous providers, or a missing dependency, planning must fail before any project files are written.
 
-Dependency resolution must be visible in dry-run output. If applying `inql.project` also applies `inql.session`, `testing.basic`, and three templates, the dry run must show those transitive effects explicitly.
+Dependency resolution must be visible in dry-run output. If applying `sample_query.project` also applies `sample_query.session`, `testing.basic`, and three templates, the dry run must show those transitive effects explicitly.
 
 Descriptors should stay small enough that dependency graphs remain explainable. A large starter may compose smaller capability packs, but the user-facing plan must still make clear which concern contributes which files, manifest entries, scripts, and generated-file ownership policies.
 
@@ -639,7 +639,7 @@ The compact `enabled = [...]` form is sufficient for human-readable manifest sum
 
 If a capability pack is already recorded as enabled, `incan capability add <capability-id>` should be idempotent. It may revalidate that the expected project shape is still present, but it must not duplicate manifest entries or files.
 
-Capability provenance should preserve enough information to explain transitive additions. A project may record that a starter enabled `inql.project`, and that `inql.project` pulled in `inql.session` and `testing.basic`. Tooling should be able to show the user both the top-level request and the expanded capability graph.
+Capability provenance should preserve enough information to explain transitive additions. A project may record that a starter enabled `sample_query.project`, and that `sample_query.project` pulled in `sample_query.session` and `testing.basic`. Tooling should be able to show the user both the top-level request and the expanded capability graph.
 
 Capability provenance is also the anchor for future updates. A project that records `cli@1.3.0` can later ask for a reviewable update to `cli@1.6.0` only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, `incan capability update` must degrade to an explicit adoption or manual-migration flow rather than guessing.
 

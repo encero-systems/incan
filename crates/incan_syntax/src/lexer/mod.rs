@@ -137,6 +137,7 @@ impl<'a> Lexer<'a> {
     // Main scanning dispatch
     // ========================================================================
 
+    /// Scan the next logical token from the source stream.
     fn scan_token(&mut self) {
         // Handle pending dedents first
         if self.pending_dedents > 0 {
@@ -218,6 +219,7 @@ impl<'a> Lexer<'a> {
             '%' => self.operator(start, OperatorId::Percent, &[('=', OperatorId::PercentEq)]),
             '?' => self.add_punct(PunctuationId::Question, start),
             '@' => self.add_punct(PunctuationId::At, start),
+            '|' => self.add_punct(PunctuationId::Pipe, start),
             ',' => self.add_punct(PunctuationId::Comma, start),
             '(' => self.open_bracket(PunctuationId::LParen, start),
             ')' => self.close_bracket(PunctuationId::RParen, start),
@@ -473,6 +475,7 @@ mod tests {
                         PunctuationId::Colon => assert!(tokens[0].kind.is_punctuation(PunctuationId::Colon)),
                         PunctuationId::Question => assert!(tokens[0].kind.is_punctuation(PunctuationId::Question)),
                         PunctuationId::At => assert!(tokens[0].kind.is_punctuation(PunctuationId::At)),
+                        PunctuationId::Pipe => assert!(tokens[0].kind.is_punctuation(PunctuationId::Pipe)),
 
                         PunctuationId::Dot => assert!(tokens[0].kind.is_punctuation(PunctuationId::Dot)),
                         PunctuationId::ColonColon => assert!(tokens[0].kind.is_punctuation(PunctuationId::ColonColon)),
@@ -585,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_operators() {
-        let tokens = lex_ok("+ - * / :: => -> ? @ == !=");
+        let tokens = lex_ok("+ - * / :: => -> ? @ | == !=");
         assert!(matches!(tokens[0].kind, TokenKind::Operator(OperatorId::Plus)));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::Minus)));
         assert!(matches!(tokens[2].kind, TokenKind::Operator(OperatorId::Star)));
@@ -604,8 +607,9 @@ mod tests {
             TokenKind::Punctuation(PunctuationId::Question)
         ));
         assert!(matches!(tokens[8].kind, TokenKind::Punctuation(PunctuationId::At)));
-        assert!(matches!(tokens[9].kind, TokenKind::Operator(OperatorId::EqEq)));
-        assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::NotEq)));
+        assert!(matches!(tokens[9].kind, TokenKind::Punctuation(PunctuationId::Pipe)));
+        assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::EqEq)));
+        assert!(matches!(tokens[11].kind, TokenKind::Operator(OperatorId::NotEq)));
     }
 
     #[test]

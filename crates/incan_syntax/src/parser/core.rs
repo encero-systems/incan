@@ -24,6 +24,17 @@ struct ActiveImportedKeywordSpec {
     placement: incan_vocab::KeywordPlacement,
 }
 
+#[derive(Debug, Clone)]
+struct ActiveScopedSurfaceDescriptor {
+    dependency_key: String,
+    descriptor: incan_vocab::ScopedSurfaceDescriptor,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedCallArgumentContext {
+    call: String,
+}
+
 /// Parser state.
 ///
 /// ## Notes
@@ -41,6 +52,9 @@ pub struct Parser<'a> {
     vocab_block_stack: Vec<String>,
     module_path: Option<String>,
     library_imported_vocab: ImportedLibraryVocab,
+    library_imported_dsl_surfaces: ImportedLibraryDslSurfaces,
+    active_scoped_surface_descriptors: Vec<ActiveScopedSurfaceDescriptor>,
+    scoped_call_argument_stack: Vec<ScopedCallArgumentContext>,
     /// Blank-line intent consumed by an inner block immediately before its `Dedent`.
     ///
     /// The next outer statement should receive this as `leading_blank_lines`; otherwise a readable gap after a nested
@@ -69,12 +83,12 @@ impl<'a> Parser<'a> {
     /// ## Parameters
     /// - `tokens`: Token stream produced by `incan_syntax::lexer`.
     pub fn new(tokens: &'a [Token]) -> Self {
-        Self::new_with_context(tokens, None, None)
+        Self::new_with_context(tokens, None, None, None)
     }
 
     /// Create a new parser for a token stream with optional module path context.
     pub fn new_with_module_path(tokens: &'a [Token], module_path: Option<String>) -> Self {
-        Self::new_with_context(tokens, module_path, None)
+        Self::new_with_context(tokens, module_path, None, None)
     }
 
     /// Create a new parser for a token stream with optional module path and library keyword context.
@@ -82,6 +96,7 @@ impl<'a> Parser<'a> {
         tokens: &'a [Token],
         module_path: Option<String>,
         library_imported_vocab: Option<&ImportedLibraryVocab>,
+        library_imported_dsl_surfaces: Option<&ImportedLibraryDslSurfaces>,
     ) -> Self {
         Self {
             tokens,
@@ -93,6 +108,9 @@ impl<'a> Parser<'a> {
             vocab_block_stack: Vec::new(),
             module_path,
             library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
+            library_imported_dsl_surfaces: library_imported_dsl_surfaces.cloned().unwrap_or_default(),
+            active_scoped_surface_descriptors: Vec::new(),
+            scoped_call_argument_stack: Vec::new(),
             pending_dedent_blank_lines: 0,
         }
     }
@@ -267,6 +285,24 @@ impl<'a> Parser<'a> {
     /// - recording imported keyword surface specs in `active_imported_keyword_specs`
     ///   (for surface-kind checks driven by imported metadata).
     fn activate_imported_keywords_for_library(&mut self, library: &str) {
+        if let Some(surfaces) = self.library_imported_dsl_surfaces.get(library) {
+            for surface in surfaces {
+                if !dsl_surface_applies_to_pub_import(surface, library) {
+                    continue;
+                }
+                self.active_scoped_surface_descriptors.extend(
+                    surface
+                        .scoped_surfaces
+                        .iter()
+                        .cloned()
+                        .map(|descriptor| ActiveScopedSurfaceDescriptor {
+                            dependency_key: library.to_string(),
+                            descriptor,
+                        }),
+                );
+            }
+        }
+
         let Some(registrations) = self.library_imported_vocab.get(library) else {
             return;
         };
@@ -302,6 +338,15 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Return `true` when a DSL surface should activate for a `pub::library` import.
+fn dsl_surface_applies_to_pub_import(surface: &incan_vocab::DslSurface, library: &str) -> bool {
+    match &surface.activation {
+        incan_vocab::KeywordActivation::Always => true,
+        incan_vocab::KeywordActivation::OnImport { namespace } => namespace_matches_pub_library(namespace, library),
+        _ => false,
+    }
+}
+
 /// Return `true` when a registration should be activated for `pub::library` imports.
 ///
 /// `OnImport` namespaces match either the library key exactly (`widgets`) or one of its child namespaces
@@ -309,10 +354,13 @@ impl<'a> Parser<'a> {
 fn registration_applies_to_pub_import(registration: &incan_vocab::KeywordRegistration, library: &str) -> bool {
     match &registration.activation {
         incan_vocab::KeywordActivation::Always => true,
-        incan_vocab::KeywordActivation::OnImport { namespace } => {
-            let trimmed = namespace.trim();
-            !trimmed.is_empty() && (trimmed == library || trimmed.starts_with(&format!("{library}.")))
-        }
+        incan_vocab::KeywordActivation::OnImport { namespace } => namespace_matches_pub_library(namespace, library),
         _ => false,
     }
+}
+
+/// Return whether an `OnImport` namespace activates for a `pub::library` import.
+fn namespace_matches_pub_library(namespace: &str, library: &str) -> bool {
+    let trimmed = namespace.trim();
+    !trimmed.is_empty() && (trimmed == library || trimmed.starts_with(&format!("{library}.")))
 }

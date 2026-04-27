@@ -37,7 +37,7 @@
 
 mod desugar;
 
-use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, ScopedSurfaceDescriptor, VocabRegistration};
 
 pub use desugar::StudioKitDesugarer;
 
@@ -52,6 +52,18 @@ pub const STEP_KW: &str = "step";
 
 /// Top-level orchestration declaration that references steps and host bindings.
 pub const WORKFLOW_KW: &str = "workflow";
+
+/// Stable descriptor key for workflow fallback composition.
+pub const WORKFLOW_FALLBACK_DESCRIPTOR: &str = "workflow.fallback";
+
+/// Stable descriptor key for workflow step piping.
+pub const WORKFLOW_PIPE_DESCRIPTOR: &str = "workflow.pipe";
+
+/// Stable descriptor key for workflow-local binding.
+pub const WORKFLOW_BIND_DESCRIPTOR: &str = "workflow.bind";
+
+/// Stable descriptor key for workflow shape checks.
+pub const WORKFLOW_SHAPE_DESCRIPTOR: &str = "workflow.shape";
 
 /// Return the complete vocabulary registration for the surrogate companion crate.
 ///
@@ -89,7 +101,18 @@ pub fn library_vocab() -> VocabRegistration {
                     DeclarationSurface::named(WORKFLOW_KW)
                         .with_header_args()
                         .with_statement_body(),
-                ),
+                )
+                .with_scoped_surfaces([
+                    ScopedSurfaceDescriptor::operator(WORKFLOW_PIPE_DESCRIPTOR, ">>")
+                        .in_declaration_body(WORKFLOW_KW)
+                        .pairwise_chain(),
+                    ScopedSurfaceDescriptor::operator(WORKFLOW_FALLBACK_DESCRIPTOR, "//")
+                        .in_declaration_body(WORKFLOW_KW),
+                    ScopedSurfaceDescriptor::binding(WORKFLOW_BIND_DESCRIPTOR, ":=")
+                        .in_declaration_body(WORKFLOW_KW),
+                    ScopedSurfaceDescriptor::operator(WORKFLOW_SHAPE_DESCRIPTOR, "===")
+                        .in_declaration_body(WORKFLOW_KW),
+                ]),
         )
         .with_library_manifest(LibraryManifest::default())
         .with_desugarer(StudioKitDesugarer)

@@ -230,9 +230,9 @@ Illustrative shapes:
 
 ```text
 2026-04-23T21:18:04.221Z [INFO] starting query
-  target=inql.query trace=7f9c span=01 run=abc123
+  target=sample_query.query trace=7f9c span=01 run=abc123
 2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
-  target=inql.query.lowering trace=7f9c span=02 parent=01 run=abc123
+  target=sample_query.query.lowering trace=7f9c span=02 parent=01 run=abc123
 ```
 
 The exact spacing and glyphs are renderer choices, but the first line must stay message-first and terminal-readable. Human styles should not sacrifice readability for metadata density.

@@ -695,6 +695,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         })
         .unwrap_or_default();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
+    let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
@@ -727,7 +728,12 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             }
         };
 
-        let mut ast = match parser::parse_with_context(&tokens, Some(&file_path), Some(&library_imported_vocab)) {
+        let mut ast = match parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(&file_path),
+            Some(&library_imported_vocab),
+            Some(&library_imported_dsl_surfaces),
+        ) {
             Ok(a) => {
                 // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
                 // so they reach the user regardless of which build/run/debug command was invoked.

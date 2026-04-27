@@ -13,11 +13,11 @@
 
 ## Summary
 
-This RFC adds explicit call-site generic arguments for function and method calls, enabling ergonomic syntax like `id[int](1)` and `session.read_csv[Order]("orders.csv")`. This capability is essential for InQL's session APIs, which currently require value markers to select row type parameters which makes for a poor user experience that does not scale with wide schemas.
+This RFC adds explicit call-site generic arguments for function and method calls, enabling ergonomic syntax like `id[int](1)` and `session.read_csv[Order]("orders.csv")`. This capability is essential for typed session APIs that would otherwise require value markers to select row type parameters, which makes for a poor user experience that does not scale with wide schemas.
 
 ## Motivation
 
-InQL session APIs currently need value markers to select row type parameters (for example, passing a fake model instance just to choose `T`). This is poor DX and scales badly for wide schemas. Without explicit call-site generic arguments, APIs like `read_csv[T](...)` and `table[T](...)` cannot be expressed ergonomically in user code.
+Typed session APIs may otherwise need value markers to select row type parameters (for example, passing a fake model instance just to choose `T`). This is poor DX and scales badly for wide schemas. Without explicit call-site generic arguments, APIs like `read_csv[T](...)` and `table[T](...)` cannot be expressed ergonomically in user code.
 
 ## Goals
 

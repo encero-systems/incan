@@ -130,6 +130,52 @@ Key rules:
 - `LibraryManifest` is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.
 - `KeywordRegistration` remains available only as a lower-level escape hatch for especially simple or incremental cases.
 
+Scoped DSL surface forms can be registered alongside the declaration that owns them. Use scoped surfaces when a glyph or expression shape should have meaning only inside an explicit DSL block, while remaining ordinary syntax or an error elsewhere:
+
+```rust
+use incan_vocab::{
+    ClauseSurface, DeclarationSurface, DslSurface, ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind,
+    ScopedSurfaceDiagnosticTemplate, ScopedSurfaceMisuseScope, ScopedSurfaceReceiver, VocabRegistration,
+};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit")
+            .with_declaration(
+                DeclarationSurface::named("query")
+                    .with_clause_body()
+                    .with_clause(ClauseSurface::expr("SELECT").required()),
+            )
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::operator("query.pipe", "+")
+                    .in_declaration_body("query")
+                    .pairwise_chain(),
+            )
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                    .in_declaration_body("query")
+                    .with_receiver(ScopedSurfaceReceiver::OwningDeclaration)
+                    .with_misuse_scope(ScopedSurfaceMisuseScope::ActivatingFile)
+                    .with_diagnostic(
+                        ScopedSurfaceDiagnosticTemplate::new(
+                            "query-field-outside-scope",
+                            ScopedSurfaceDiagnosticKind::OutsideScope,
+                            "query field shorthand is only valid inside query blocks",
+                        )
+                        .with_help("move this expression into a `query:` block"),
+                    ),
+            ),
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::leading_dot_path("query.method_field")
+                    .in_call_argument("query", "filter")
+                    .with_receiver(ScopedSurfaceReceiver::custom("method-receiver")),
+            ),
+    )
+}
+```
+
+The descriptor `key` must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as `pairwise_chain()`. RFC 040 reserves room for non-core registered glyphs such as `|>`, `%>%`, and `===`, but those glyphs require descriptor-gated lexer support before a vocab crate can rely on them end to end.
+
 If your desugared output needs extra runtime requirements, declare them in `LibraryManifest`:
 
 ```rust

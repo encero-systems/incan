@@ -513,6 +513,7 @@ pub(super) fn run_file_tests_batch(
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
+    let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
 
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
@@ -530,8 +531,12 @@ pub(super) fn run_file_tests_batch(
     };
 
     let path_display = first.file_path.to_string_lossy();
-    let mut ast = match parser::parse_with_context(&tokens, Some(path_display.as_ref()), Some(&library_imported_vocab))
-    {
+    let mut ast = match parser::parse_with_context_and_surfaces(
+        &tokens,
+        Some(path_display.as_ref()),
+        Some(&library_imported_vocab),
+        Some(&library_imported_dsl_surfaces),
+    ) {
         Ok(a) => a,
         Err(e) => {
             return tests
@@ -578,6 +583,7 @@ pub(super) fn run_file_tests_batch(
         &runner_ast,
         &source_root,
         Some(&library_imported_vocab),
+        Some(&library_imported_dsl_surfaces),
         Some(&library_manifest_index),
     ) {
         Ok(m) => m,

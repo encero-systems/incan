@@ -40,6 +40,7 @@ pub enum PunctuationId {
     Colon,
     Question,
     At,
+    Pipe,
 
     // Access / path
     Dot,
@@ -104,6 +105,14 @@ pub const PUNCTUATION: &[PunctuationInfo] = &[
     info(
         PunctuationId::At,
         "@",
+        &[],
+        PunctuationCategory::Marker,
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        PunctuationId::Pipe,
+        "|",
         &[],
         PunctuationCategory::Marker,
         RFC::_000,
@@ -227,17 +236,18 @@ pub fn info_for(id: PunctuationId) -> PunctuationInfo {
         PunctuationId::Colon => PUNCTUATION[1],
         PunctuationId::Question => PUNCTUATION[2],
         PunctuationId::At => PUNCTUATION[3],
-        PunctuationId::Dot => PUNCTUATION[4],
-        PunctuationId::ColonColon => PUNCTUATION[5],
-        PunctuationId::Arrow => PUNCTUATION[6],
-        PunctuationId::FatArrow => PUNCTUATION[7],
-        PunctuationId::Ellipsis => PUNCTUATION[8],
-        PunctuationId::LParen => PUNCTUATION[9],
-        PunctuationId::RParen => PUNCTUATION[10],
-        PunctuationId::LBracket => PUNCTUATION[11],
-        PunctuationId::RBracket => PUNCTUATION[12],
-        PunctuationId::LBrace => PUNCTUATION[13],
-        PunctuationId::RBrace => PUNCTUATION[14],
+        PunctuationId::Pipe => PUNCTUATION[4],
+        PunctuationId::Dot => PUNCTUATION[5],
+        PunctuationId::ColonColon => PUNCTUATION[6],
+        PunctuationId::Arrow => PUNCTUATION[7],
+        PunctuationId::FatArrow => PUNCTUATION[8],
+        PunctuationId::Ellipsis => PUNCTUATION[9],
+        PunctuationId::LParen => PUNCTUATION[10],
+        PunctuationId::RParen => PUNCTUATION[11],
+        PunctuationId::LBracket => PUNCTUATION[12],
+        PunctuationId::RBracket => PUNCTUATION[13],
+        PunctuationId::LBrace => PUNCTUATION[14],
+        PunctuationId::RBrace => PUNCTUATION[15],
     }
 }
 

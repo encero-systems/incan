@@ -197,7 +197,7 @@ The default `int` and `float` aliases do still matter ergonomically, so `read_in
 
 Python's `BytesIO.getbuffer()` exposes a mutable view over the underlying buffer. That is powerful, but it also introduces aliasing and resize constraints that are not worth standardizing before Incan has a broader borrowed-buffer story. This RFC therefore keeps the safe extraction surface small: `getvalue()` for a snapshot and `into_bytes()` for ownership transfer.
 
-The same boundary applies to general `Reader` / `Writer` protocols. Those may well make sense later for `BytesIO`, `std.fs.File`, temporary files, network bodies, or InQL adapters. But that is a cross-cutting stream-abstraction RFC, not part of the in-memory byte-stream contract itself. RFC 056 should finish the concrete `BytesIO` design rather than smuggling in a second library proposal.
+The same boundary applies to general `Reader` / `Writer` protocols. Those may well make sense later for `BytesIO`, `std.fs.File`, temporary files, network bodies, or query adapters. But that is a cross-cutting stream-abstraction RFC, not part of the in-memory byte-stream contract itself. RFC 056 should finish the concrete `BytesIO` design rather than smuggling in a second library proposal.
 
 ### Interaction with temporary storage
 

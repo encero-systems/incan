@@ -139,6 +139,7 @@ fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     None
 }
 
+/// Return the call-site type argument that covers the given byte offset inside an expression.
 fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanned<Type>> {
     match &expr.node {
         Expr::Call(callee, type_args, args) => {
@@ -233,6 +234,10 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         }
         Expr::Surface(boxed) => match &boxed.payload {
             crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
+            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
+            }
         },
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }

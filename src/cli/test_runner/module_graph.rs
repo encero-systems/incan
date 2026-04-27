@@ -51,6 +51,7 @@ pub(super) fn collect_source_modules_for_test(
     test_ast: &Program,
     source_root: &Path,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
 ) -> Result<Vec<ParsedModule>, String> {
     let mut modules = Vec::new();
@@ -149,14 +150,19 @@ pub(super) fn collect_source_modules_for_test(
         })?;
 
         let fp = file_path.to_string_lossy();
-        let mut ast =
-            parser::parse_with_context(&tokens, Some(fp.as_ref()), library_imported_vocab).map_err(|errs| {
-                let mut msg = String::new();
-                for err in &errs {
-                    msg.push_str(&diagnostics::format_error(&fp, &source, err));
-                }
-                msg
-            })?;
+        let mut ast = parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(fp.as_ref()),
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+        )
+        .map_err(|errs| {
+            let mut msg = String::new();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(&fp, &source, err));
+            }
+            msg
+        })?;
         if let Some(index) = library_manifest_index {
             vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(fp.as_ref()), index).map_err(|errs| {
                 let mut msg = String::new();
@@ -277,7 +283,7 @@ mod tests {
         let ast = parser::parse_with_context(&tokens, Some("tests/test_dataset.incn"), None)
             .map_err(|errs| errs[0].message.clone())?;
 
-        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None)?;
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
 
         let dataset_mod = modules
             .iter()

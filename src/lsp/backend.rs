@@ -110,6 +110,7 @@ impl IncanLanguageServer {
         let module_path = uri.to_file_path().ok();
         let mut declared_crates = HashSet::new();
         let mut library_imported_vocab = HashMap::new();
+        let mut library_imported_dsl_surfaces = HashMap::new();
         let mut library_manifest_index = LibraryManifestIndex::default();
         #[cfg(feature = "rust_inspect")]
         let mut project_manifest: Option<ProjectManifest> = None;
@@ -126,6 +127,7 @@ impl IncanLanguageServer {
             declared_crates = manifest.declared_rust_crate_names();
             library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
             library_imported_vocab = library_manifest_index.library_imported_vocab();
+            library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
         }
 
         // Step 2: Parse
@@ -134,10 +136,11 @@ impl IncanLanguageServer {
         // In particular, `pub from ... import ...` is only accepted when this path resolves under `src/` (RFC 031 /
         // `incan_syntax` parser). If `uri.to_file_path()` fails, `module_path` is omitted and those rules are
         // skipped during parsing (prefer fixing the client URI scheme / workspace roots).
-        let mut ast = match parser::parse_with_context(
+        let mut ast = match parser::parse_with_context_and_surfaces(
             &tokens,
             module_path.as_deref().and_then(|path| path.to_str()),
             Some(&library_imported_vocab),
+            Some(&library_imported_dsl_surfaces),
         ) {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
@@ -176,8 +179,8 @@ impl IncanLanguageServer {
                 uri,
                 &ast,
                 source,
-                version,
                 Some(&library_imported_vocab),
+                Some(&library_imported_dsl_surfaces),
                 Some(&library_manifest_index),
             )
             .await;
@@ -293,8 +296,8 @@ impl IncanLanguageServer {
         uri: &Url,
         ast: &Program,
         entry_source: &str,
-        _entry_version: i32,
         library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+        library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
         library_manifest_index: Option<&LibraryManifestIndex>,
     ) -> (Vec<ParsedModule>, Vec<Diagnostic>) {
         let Ok(entry_path) = uri.to_file_path() else {
@@ -370,10 +373,11 @@ impl IncanLanguageServer {
                 }
             };
             let dep_path_display = canonical.to_string_lossy();
-            let mut dep_ast = match parser::parse_with_context(
+            let mut dep_ast = match parser::parse_with_context_and_surfaces(
                 &dep_tokens,
                 Some(dep_path_display.as_ref()),
                 library_imported_vocab,
+                library_imported_dsl_surfaces,
             ) {
                 Ok(a) => a,
                 Err(errors) => {
