@@ -1,13 +1,14 @@
 # RFC 019: test runner, CLI, and ecosystem
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-01-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 018 (language primitives for testing), RFC 007 (runner semantics; superseded), RFC 001 (runner portions; superseded), RFC 002 (runner portions; superseded)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/77
 - **RFC PR:** —
+- **Implementation PRs:** this PR
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -15,7 +16,7 @@ Define the test runner and CLI semantics for Incan (pytest-inspired), including:
 
 - discovery in test files and inline test contexts
 - fixtures (scopes, autouse, teardown via `yield`)
-- parametrized tests (`@parametrize`, `case(...)`, ids)
+- parametrized tests (`@parametrize`, `param_case(...)`, ids)
 - markers and selection (`-m`, `skip/xfail/slow`, strict markers)
 - parallel execution and resource locking (`--jobs`, `@resource`, `@serial`)
 - `tests/**/conftest.incn` auto-discovery and precedence rules
@@ -101,15 +102,15 @@ Quick CLI anchoring:
 | Rust         | ignored-by-default tests       | `@slow` + `incan test --slow` |
 | Rust         | show output (`-- --nocapture`) | `incan test --nocapture`      |
 
-### The `testing` module
+### The `std.testing` module
 
-Testing utilities are normal functions/decorators imported from the `testing` module:
+Testing utilities are normal functions/decorators imported from the `std.testing` module:
 
 ```incan
-from testing import assert_eq, assert_true, assert_false, fail
+from std.testing import assert_eq, assert_true, assert_false, fail
 ```
 
-Language-level `assert` semantics and the `testing.assert_*` mapping are defined in RFC 018.
+Language-level `assert` semantics and the `std.testing.assert_*` mapping are defined in RFC 018.
 
 ### Where tests can live (two test contexts)
 
@@ -125,7 +126,7 @@ Example:
 ```incan title="tests/test_math.incn"
 """Unit tests for math."""
 
-from testing import assert_eq
+from std.testing import assert_eq
 
 def add(a: int, b: int) -> int:
     return a + b
@@ -180,7 +181,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 module tests:
-    from testing import assert_eq, test
+    from std.testing import assert_eq, test
     
     # implicitly marked as a test because it is named `test_*`
     def test_by_name() -> None:
@@ -197,7 +198,7 @@ Fixtures are functions decorated with `@fixture` and injected by parameter name:
 
 ```incan
 module tests:
-    from testing import fixture, assert_eq
+    from std.testing import fixture, assert_eq
 
     @fixture
     def base() -> int:
@@ -217,7 +218,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 module tests:
-    from testing import parametrize, assert_eq, test
+    from std.testing import parametrize, assert_eq, test
 
     @parametrize("a, b, expected", [
         (1, 2, 3),
@@ -294,7 +295,7 @@ Example:
 
 ```incan
 module tests:
-    from testing import resource, serial
+    from std.testing import resource, serial
 
     @resource("db")
     def test_migrate_schema() -> None:
@@ -317,7 +318,7 @@ Beyond the built-in markers (`@skip`, `@xfail`, `@slow`), Incan supports user-de
 
 ```incan
 module tests:
-    from testing import mark
+    from std.testing import mark
 
     @mark("db")
     @mark("flaky")
@@ -352,7 +353,7 @@ Example file structure:
 `tests/integrations/conftest.incn`:
 
 ```incan title="tests/integrations/conftest.incn"
-from testing import fixture
+from std.testing import fixture
 
 const TEST_MARKS = ["integration"]
 
@@ -364,7 +365,7 @@ def base_url() -> str:
 `tests/integrations/test_some_things.incn`:
 
 ```incan title="tests/integrations/test_some_things.incn"
-from testing import assert_eq
+from std.testing import assert_eq
 
 const TEST_MARKS = ["smoke"]
 
@@ -386,7 +387,7 @@ Incan supports conditional skipping/xfail for platform- and feature-gated tests:
 ```incan
 
 module tests:
-    from testing import skipif, xfailif, platform, feature
+    from std.testing import skipif, xfailif, platform, feature
     
     @skipif(platform() == "windows", "path semantics differ")
     def test_paths() -> None:
@@ -399,16 +400,16 @@ module tests:
 
 ### Parametrize with per-case marks
 
-You can mark individual parameter cases (skip/xfail/etc.) via `case(...)`:
+You can mark individual parameter cases (skip/xfail/etc.) via `param_case(...)`:
 
 ```incan
 module tests:
-    from testing import parametrize, case, skip, xfail
+    from std.testing import parametrize, param_case, skip, xfail
 
     @parametrize("x", [
-        case(1),
-        case(2, marks=[xfail("bug #123")]),
-        case(3, marks=[skip("too slow")]),
+        param_case(1),
+        param_case(2, marks=[xfail("bug #123")]),
+        param_case(3, marks=[skip("too slow")]),
     ])
     def test_x(x: int) -> None:
         assert x > 0
@@ -421,7 +422,7 @@ To avoid repeating fixtures across many test files, any `conftest.incn` under `t
 Example:
 
 ```incan title="tests/conftest.incn"
-from testing import fixture
+from std.testing import fixture
 
 @fixture(scope="session")
 def base_url() -> str:
@@ -429,7 +430,7 @@ def base_url() -> str:
 ```
 
 ```incan title="tests/test_api.incn"
-from testing import assert_eq
+from std.testing import assert_eq
 
 def test_ping(base_url: str) -> None:
     assert_eq(base_url, "http://localhost:8080")
@@ -441,8 +442,8 @@ def test_ping(base_url: str) -> None:
 
 The test runner provides a small set of built-in fixtures:
 
-- `tmp_path: Path`: a unique temporary directory per test (cleaned up automatically)
-- `tmp_workdir: Path`: runs the test with the working directory set to a fresh temp directory (restored afterward)
+- `tmp_path: PathBuf`: a unique temporary directory per test (cleaned up automatically)
+- `tmp_workdir: PathBuf`: runs the test with the working directory set to a fresh temp directory (restored afterward)
 - `env: TestEnv`: a helper for temporary environment variables (restored afterward)
 
 Use `tmp_path` when you just need a scratch directory for files and don’t want to change process state. Use `tmp_workdir` when the code under test relies on relative paths; it switches the process working directory to a fresh temp directory and yields its path. Use `env` to temporarily set/unset environment variables for a test, with automatic restoration afterward.
@@ -451,24 +452,20 @@ Example:
 
 ```incan
 module tests:
-    from testing import fixture, tmp_workdir, tmp_path, env, TestEnv
+    from rust::incan_stdlib::testing import TestEnv
+    from rust::std::path import PathBuf
+    from std.testing import assert_eq, assert_is_some
 
-    def test_uses_tmp_path(tmp_path: Path) -> None:
-        let config = tmp_path / "config.json"
-        # write/read config using an absolute path (error handling omitted in examples)
-        config.write_text("{}")?
-        assert config.exists()
+    def test_uses_tmp_path(tmp_path: PathBuf) -> None:
+        assert_eq(tmp_path.exists(), true)
 
-    def test_relative_paths(tmp_workdir: Path) -> None:
+    def test_relative_paths(tmp_workdir: PathBuf) -> None:
         # current working directory is a fresh temp dir for this test
-        Path("output.txt").write_text("ok")
-        assert (tmp_workdir / "output.txt").exists()
+        assert_eq(tmp_workdir.exists(), true)
 
-    def test_env(env: TestEnv) -> None:
+    def test_env(mut env: TestEnv) -> None:
         env.set("MODE", "test")
-        mode = env.get("MODE")
-        assert mode is Some(v)
-        assert v == "test"
+        assert_eq(assert_is_some(env.get("MODE")), "test")
 ```
 
 ### Timeouts
@@ -494,7 +491,7 @@ Static constructors (explicit exceptions):
 
 - The following call-like forms are treated as **compile-time data constructors** and are allowed at collection time,
 as long as their arguments are themselves collection-time evaluatable:
-    - `case(...)`
+    - `param_case(...)`
     - `mark("name")`
     - `skip("reason")`
     - `xfail("reason")`
@@ -508,10 +505,13 @@ Guidance:
 - Example: pass a filename as `str` and construct a `Path` inside the test.
 
 ```incan
+from rust::std::path import PathBuf
+from std.testing import parametrize
+
 @parametrize("name", ["config.json", "defaults.json"])
-def test_config(tmp_path: Path, name: str) -> None:
-    let path = tmp_path / name
-    assert path.exists() == False
+def test_config(tmp_path: PathBuf, name: str) -> None:
+    assert tmp_path.exists()
+    assert name != ""
 ```
 
 If an expression required to be const-evaluable does not meet this, a **test collection error** (`TestCollectionError`) will be raised.
@@ -573,7 +573,7 @@ Rationale: a single inline test block keeps stripping rules, tooling, and scopin
 Within a test context, a function is a test if:
 
 - its name matches `test_*`, OR
-- it is decorated with `testing.test`
+- it is decorated with `std.testing.test`
 
 Markers and parametrization apply to tests as defined in their respective sections.
 
@@ -584,7 +584,7 @@ Test success criteria:
 
 ### What is a fixture?
 
-Within a test context, a function is a fixture if it is decorated with `testing.fixture`.
+Within a test context, a function is a fixture if it is decorated with `std.testing.fixture`.
 
 Fixture dependency injection matches test/fixture parameters to fixture names.
 
@@ -659,7 +659,7 @@ Rules:
 - Teardown timing is based on fixture scope:
     - **function**: teardown runs after each test case that used the fixture
     - **module**: teardown runs after all tests from that source file finish
-    - **session**: teardown runs at the end of the full test run
+    - **session**: teardown runs at the end of the generated worker batch
 
 Errors:
 
@@ -789,7 +789,7 @@ Interaction with `-m`:
 
 CLI:
 
-- `--jobs <n>` / `-j <n>`: maximum number of tests to execute concurrently.
+- `--jobs <n>` / `-j <n>`: maximum number of generated worker batches to execute concurrently.
 
 Rules:
 
@@ -798,11 +798,10 @@ Rules:
 
 Execution model (important for correctness):
 
-- Parallelism in this RFC refers to **multiple worker processes** (xdist-style), not concurrent execution within a single process. Each worker executes **one test case at a time**.
+- Parallelism in this RFC refers to **multiple worker processes** (xdist-style), not concurrent execution within a single process. Each generated worker batch runs its included tests with single-threaded libtest execution.
 - This keeps process-global state changes (e.g. current working directory, environment variables) isolated per worker and avoids flakiness from thread-level shared state.
 - Session-scoped fixtures under worker processes are a common source of surprises. In this RFC:
-    - Session-scoped fixtures are **per worker process** (i.e., created once per worker). This is simple, deterministic, and avoids cross-process coordination.
-    - A future extension may introduce a coordinator for truly global session fixtures (once per overall run).
+    - Session-scoped fixtures are **per worker process** (i.e., created once per worker batch). With `--jobs 1`, the runner plans one compatible worker batch, so session fixtures are reused across collected files in that run. With `--jobs N`, session fixtures are reused within each worker batch.
 
 #### Scheduling decorators
 
@@ -947,13 +946,13 @@ Feature enabling (CLI):
 
 ### Parametrization (reference rules)
 
-`@parametrize(argnames: str, argvalues: List[Tuple|case(...)], ids: List[str] | None = None)` expands a single test function into multiple test cases.
+`@parametrize(argnames: str, argvalues: List[Tuple|param_case(...)], ids: List[str] | None = None)` expands a single test function into multiple test cases.
 
 Collection-time evaluatability:
 
 - `argvalues` must be collection-time evaluatable:
     - literals, tuples, lists, dicts of literals (const-evaluable)
-    - `case(...)` values with const-evaluable payloads and marks
+    - `param_case(...)` values with const-evaluable payloads and marks
 - If `argvalues` is not evaluatable at collection time, it is a **test collection error** (`TestCollectionError`).
 
 Deliberate tightening vs earlier drafts:
@@ -995,17 +994,17 @@ Errors:
 
 ### Parametrize per-case marks
 
-`@parametrize` supports per-case marks via a `case(...)` helper from the `testing` module:
+`@parametrize` supports per-case marks via a `param_case(...)` helper from the `std.testing` module:
 
 ```incan
 @parametrize("x", [
-    case(1),
-    case(2, marks=[xfail("bug #123")]),
-    case(3, marks=[skip("too slow")]),
+    param_case(1),
+    param_case(2, marks=[xfail("bug #123")]),
+    param_case(3, marks=[skip("too slow")]),
 ])
 ```
 
-Allowed per-case marks (in `case(..., marks=[...])`):
+Allowed per-case marks (in `param_case(..., marks=[...])`):
 
 - `skip("reason")`
 - `xfail("reason")`
@@ -1049,10 +1048,10 @@ This provides a simple way to classify whole subtrees (e.g. all tests under `tes
 
 The test runner provides built-in fixtures (names reserved in the fixture namespace):
 
-- `tmp_path: Path`
+- `tmp_path: PathBuf`
     - Function-scoped by default (unique per test case)
     - Cleaned up automatically after the test
-- `tmp_workdir: Path`
+- `tmp_workdir: PathBuf`
     - Sets the process current working directory for the duration of the test (restored afterward)
 - `env: TestEnv`
     - A helper for temporary environment variables (restored afterward)
@@ -1148,45 +1147,40 @@ Out of scope (for now):
 
 ## Appendix: testing surface inventory (informative)
 
-This appendix is a contributor-oriented inventory of the testing surface **after this RFC is implemented**, with an informative snapshot of what exists **today** (at time of writing). It is **not normative**; the spec sections above are authoritative.
+This appendix is a contributor-oriented inventory of the testing surface after this RFC. It is **not normative**; the spec sections above are authoritative.
 
 Legend:
 
-- **Today**: implementation status in the current repository at RFC creation time
-    - **Yes**: implemented
-    - **Partial**: some pieces exist, but not the full RFC behavior
-    - **No**: not implemented
-- **After RFC 019**: whether this RFC introduces it (**New**), modifies semantics (**Changed**), or leaves it (**Unchanged**)
-
-> Note: this table should be used as a checkmark toward implementation completeness when this RFC is implemented.
+- **RFC 019 effect**: whether this RFC introduces the behavior (**New**), modifies existing semantics (**Changed**), or leaves existing semantics unchanged (**Unchanged**).
 
 ### Test runner + CLI surface
 
-| Item                                                   | Today              | After RFC 019 | Notes                                             | Implemented |
-| ------------------------------------------------------ | ------------------ | ------------- | ------------------------------------------------- | ----------- |
-| Test file discovery (`test_*.incn`, `*_test.incn`)     | Yes                | Unchanged     | Test file context                                 |             |
-| Inline test discovery (`module tests:`)                | No                 | New           | Inline test context                               |             |
-| Test discovery by name (`test_*`)                      | Yes                | Unchanged     | In test contexts                                  |             |
-| Test discovery by decorator (`@test`)                  | No                 | New           | In test contexts                                  |             |
-| Fixtures from same file                                | Partial            | Changed       | Injection + lifetimes + errors                    |             |
-| `tests/**/conftest.incn` fixtures                      | No                 | New           | Auto-discovery + precedence rules                 |             |
-| Built-in fixtures (`tmp_path`, `tmp_workdir`, `env`)   | No                 | New           | Runner-provided                                   |             |
-| `-k <substr>`                                          | Yes (fn-name)      | Changed       | RFC matches stable test id                        |             |
-| `-m <expr>`                                            | No                 | New           | Marker expression selection                       |             |
-| `--strict-markers`                                     | No                 | New           | Unknown marker is a collection-time error         |             |
-| `@slow` excluded by default + `--slow` opt-in          | Yes (basic)        | Unchanged     | RFC clarifies interaction with `-m`               |             |
-| `@xfail` / XPASS policy                                | Yes (basic)        | Changed       | XPASS fails; adds `--run-xfail`                   |             |
-| `--run-xfail`                                          | No                 | New           | Ignore xfail semantics                            |             |
-| `--timeout <duration>` + `@timeout(...)`               | No                 | New           | Timeouts (default + override)                     |             |
-| `--jobs/-j <n>`                                        | No                 | New           | Parallel execution limit (worker processes)       |             |
-| `--shuffle` / `--seed <n>`                             | No                 | New           | Reproducible order randomization                  |             |
-| `--durations <n>`                                      | No                 | New           | Report slowest N tests                            |             |
-| `--list`                                               | No                 | New           | List tests after filters; do not execute          |             |
-| `--format json`                                        | No                 | New           | One JSON record per test result                   |             |
-| `--junit <path>`                                       | No                 | New           | JUnit XML report                                  |             |
-| `--nocapture`                                          | Yes (default today)| Changed       | RFC makes capture default; `--nocapture` opts out |             |
-| Stable test id                                         | No                 | New           | Used by `--list`, `-k`, JSON, JUnit               |             |
-| `--feature <name>`                                     | No                 | New           | Enables `testing.feature(name)` probes            |             |
+| Item                                                   | RFC 019 effect | Notes                                             |
+| ------------------------------------------------------ | -------------- | ------------------------------------------------- |
+| Test file discovery (`test_*.incn`, `*_test.incn`)     | Unchanged      | Test file context                                 |
+| Inline test discovery (`module tests:`)                | New            | Inline test context                               |
+| Test discovery by name (`test_*`)                      | Unchanged      | In test contexts                                  |
+| Test discovery by decorator (`@test`)                  | New            | In test contexts                                  |
+| Fixtures from same file                                | Changed        | Injection + lifetimes + errors                    |
+| `tests/**/conftest.incn` fixtures                      | New            | Auto-discovery + precedence rules                 |
+| Built-in fixtures (`tmp_path`, `tmp_workdir`, `env`)   | New            | Runner-provided                                   |
+| `-k <substr>`                                          | Changed        | RFC matches stable test id                        |
+| `-m <expr>`                                            | New            | Marker expression selection                       |
+| `--strict-markers`                                     | New            | Unknown marker is a collection-time error         |
+| `@slow` excluded by default + `--slow` opt-in          | Unchanged      | RFC clarifies interaction with `-m`               |
+| `@xfail` / XPASS policy                                | Changed        | XPASS fails; adds `--run-xfail`                   |
+| `--run-xfail`                                          | New            | Ignore xfail semantics                            |
+| `--timeout <duration>` + `@timeout(...)`               | New            | Timeouts (default + override)                     |
+| `--jobs/-j <n>`                                        | New            | Parallel execution limit (worker processes)       |
+| `@resource(...)` / `@serial` scheduling                | New            | Resource locks and serial exclusivity             |
+| `--shuffle` / `--seed <n>`                             | New            | Reproducible order randomization                  |
+| `--durations <n>`                                      | New            | Report slowest N tests                            |
+| `--list`                                               | New            | List tests after filters; do not execute          |
+| `--format json`                                        | New            | One JSON record per test result                   |
+| `--junit <path>`                                       | New            | JUnit XML report                                  |
+| `--nocapture`                                          | Changed        | RFC makes capture default; `--nocapture` opts out |
+| Stable test id                                         | New            | Used by `--list`, `-k`, JSON, JUnit               |
+| `--feature <name>`                                     | New            | Enables `std.testing.feature(name)` probes        |
 
 ## Layers affected
 
@@ -1196,6 +1190,101 @@ Legend:
 - **Stdlib (`std.testing`)** — `@fixture`, `@parametrize`, `@skip`, `@xfail`, `@timeout`, `@serial`, `@resource`, and the `TEST_MARKS` registry must be defined and consumable by the runner as specified in this RFC.
 - **Build system** — `incan test` must compile test modules against the project source root, enabling `from mymodule import ...` in test files without duplication; it must strip `module tests:` bodies from production builds.
 - **Reporting layer** — the runner must support `--format json`, `--junit <path>`, `--list`, `--durations`, and `--shuffle` as specified; JSON reports must include a stable `schema_version` field.
+
+## Implementation Plan
+
+### Phase 1: Runner collection and stable identities
+
+- Add stable test identifiers for collected file-based tests and parametrized cases.
+- Add explicit `@test` discovery through `std.testing` marker metadata.
+- Update `-k` and `--list` to operate on stable test identifiers.
+
+### Phase 2: Runner reporting and xfail controls
+
+- Add JSON Lines result reporting with a stable `schema_version`.
+- Add JUnit XML report writing for CI consumers.
+- Add duration reporting, deterministic shuffle/seed support, and `--run-xfail`.
+
+### Phase 3: Shared fixture and marker model
+
+- Implement `tests/**/conftest.incn` fixture discovery and directory precedence.
+- Add marker expression selection (`-m`) and strict marker validation.
+- Add built-in fixtures (`tmp_path`, `tmp_workdir`, `env`) and collection-time feature probes.
+
+### Phase 4: Scheduling and timeouts
+
+- Add `--jobs` parallel execution with worker-process isolation.
+- Add resource locking and `@serial` execution constraints.
+- Add `--timeout` and per-test timeout markers with best-effort teardown.
+
+### Phase 5: RFC 018 integration boundary
+
+- Add inline `module tests:` discovery once RFC 018 parser/typechecker/lowering support exists or lands in the same implementation train.
+- Keep production build stripping and test-build inclusion semantics aligned with RFC 018.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Move RFC 019 to In Progress for active implementation.
+- [x] Keep RFC 018 language-level inline test semantics tracked separately unless a contained bridge is required.
+
+### Runner collection
+
+- [x] Add stable test ids for file-based collected tests and parametrized cases.
+- [x] Discover explicit `@test` marker functions in test files.
+- [x] Make `-k` filter against stable test ids.
+- [x] Add `--list` collection output.
+- [x] Discover inline `module tests:` blocks after the RFC 018 AST/parser boundary exists.
+
+### Stdlib / marker metadata
+
+- [x] Add `std.testing.test` marker metadata and runtime misuse guard.
+- [x] Add `std.testing.timeout`, `std.testing.serial`, `std.testing.resource`, and marker registry metadata.
+- [x] Add built-in runner fixtures (`tmp_path`, `tmp_workdir`, `env`).
+
+### Fixtures and conftest
+
+- [x] Discover `tests/**/conftest.incn` files.
+- [x] Resolve fixture precedence by test directory ancestry.
+- [x] Validate missing fixture parameters and fixture dependency references as collection errors.
+- [x] Support function-scoped top-level `yield` fixture teardown and per-harness module/session fixture caching.
+- [x] Support captured `yield` fixture teardown with setup-local capture and module/session teardown timing.
+- [x] Support cross-file session fixture caching under worker-batch harnesses.
+
+### Selection and markers
+
+- [x] Add `-m <expr>` marker expression selection.
+- [x] Add `--strict-markers`.
+- [x] Add per-case parametrized marks and ids. Current parser reserves `case`, so the implemented helper is `param_case` until the parser surface is available.
+- [x] Add `--run-xfail`.
+
+### Scheduling and execution
+
+- [x] Add `--jobs/-j` runner-level scheduling.
+- [x] Add `@resource` locking and `@serial` scheduling.
+- [x] Add `--timeout` and timeout marker metadata for generated test batches.
+- [x] Add deterministic `--shuffle` / `--seed`.
+
+### Reporting
+
+- [x] Add JSON Lines reports with `schema_version: "incan.test.v1"`.
+- [x] Add JUnit XML report writing.
+- [x] Add `--durations`.
+- [x] Implement output capture as the default and keep `--nocapture` as the opt-out.
+
+### Tests
+
+- [x] Add E2E coverage for `@test`, `--list`, stable-id `-k`, JSON reports, JUnit reports, and `--run-xfail`.
+- [x] Add E2E coverage for conftest fixtures, built-in fixtures, marker expressions, strict markers, per-case marks/ids, timeouts, and output capture.
+- [x] Add E2E coverage for inline `module tests:` discovery, selection, parametrization, markers, fixtures, built-ins, timeouts, and conftest isolation.
+- [x] Add E2E coverage for independent worker scheduling, fail-fast scheduling, resource/serial locking, and teardown failure.
+
+### Docs
+
+- [x] Update CLI reference for implemented RFC 019 runner flags.
+- [x] Update testing how-to/reference docs for implemented runner behavior.
+- [x] Add release notes entry.
 
 ## Implementation architecture
 
@@ -1226,26 +1315,28 @@ Suggested dependency order:
 
 Turn the guide-level examples into real tests:
 
-- [ ] stable test id formatting and `-k` filtering
-- [ ] `testing.test` vs name-based discovery (`test_*`) in both test files and inline modules
-- [ ] fixture resolution errors become `TestCollectionError`
-- [ ] `conftest.incn` fixtures resolve with correct precedence and scoping
-- [ ] autouse fixtures apply per scope and respect dependency ordering
-- [ ] parametrization ids and cartesian product ordering are stable
-- [ ] per-case marks in `parametrize` skip/xfail individual cases correctly
-- [ ] marker selection: `-m "db and not flaky"` filters tests correctly
-- [ ] `--strict-markers` rejects unknown markers in `TEST_MARKS`, `mark(...)`, and `-m`
-- [ ] `skipif` / `xfailif` conditions are evaluated at collection time and behave as specified
-- [ ] parallel scheduling: `--jobs 2` runs independent tests concurrently but respects `@resource("db")`
-- [ ] serial scheduling: `@serial` forces exclusive execution
-- [ ] shuffle reproducibility: `--shuffle --seed 123` produces stable randomized order
-- [ ] list mode: `--list` prints collected tests and exits without running them
-- [ ] built-in fixtures exist (`tmp_path`, `tmp_workdir`, `env`) and are scoped/cleaned up correctly
-- [ ] timeouts: `--timeout` default + `@timeout` override (teardown best-effort)
-- [ ] `--run-xfail` policy switch changes xfail behavior as specified
-- [ ] durations: `--durations 10` prints slowest tests with correct ids
-- [ ] reports: `--format json` and `--junit <path>` emit stable machine-readable output
-- [ ] JSON reports include `schema_version: "incan.test.v1"`
+- stable test id formatting and `-k` filtering
+- `std.testing.test` vs name-based discovery (`test_*`) in both test files and inline modules
+- fixture resolution errors become `TestCollectionError`
+- `conftest.incn` fixtures resolve with correct precedence and scoping
+- function-scoped autouse fixtures apply and respect dependency ordering
+- module/session-scoped autouse fixture lifetime reuse works inside each generated harness process
+- parametrization ids and cartesian product ordering are stable
+- per-case marks in `parametrize` skip/xfail individual cases correctly
+- marker selection: `-m "db and not flaky"` filters tests correctly
+- `--strict-markers` rejects unknown markers in `TEST_MARKS`, `mark(...)`, and `-m`
+- `skipif` / `xfailif` conditions are evaluated at collection time and behave as specified
+- parallel scheduling: `--jobs 2` runs independent tests concurrently
+- worker resource locking: `@resource("db")` is proven through generated worker execution
+- serial scheduling: `@serial` is proven through generated worker execution
+- shuffle reproducibility: `--shuffle --seed 123` produces stable randomized order
+- list mode: `--list` prints collected tests and exits without running them
+- built-in fixtures exist (`tmp_path`, `tmp_workdir`, `env`) and are scoped/cleaned up correctly
+- timeouts: `--timeout` default + `@timeout` override
+- `--run-xfail` policy switch changes xfail behavior as specified
+- durations: `--durations 10` prints slowest tests with correct ids
+- reports: `--format json` and `--junit <path>` emit stable machine-readable output
+- JSON reports include `schema_version: "incan.test.v1"`
 
 ## Design Decisions
 

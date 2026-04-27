@@ -8,13 +8,11 @@ A pytest-like testing library for Incan.
 Example:
 
 ```incan
-from std.testing import fixture, parametrize, skip, xfail
+from std.testing import fixture, parametrize, skip, test, xfail
 
 @fixture
 def database() -> Database:
-    db = Database.connect("test.db")
-    yield db
-    db.close()
+    return Database.connect("test.db")
 
 @parametrize("a, b, expected", [
     (1, 2, 3),
@@ -88,6 +86,35 @@ pub def skip(reason: str = "") -> None:
     ...
 
 
+@rust.extern(metadata={"marker_kind": "test", "runner_only": true})
+pub def test() -> None:
+    """
+    Mark a function as a test even when its name does not start with `test_`.
+
+    Example:
+
+    ```incan
+    @test
+    def checks_total() -> None:
+        assert_eq(total(), 42)
+    ```
+
+    Note: Marker decorators are consumed by `incan test` during discovery.
+          Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "skipif", "runner_only": true})
+pub def skipif(condition: bool, reason: str = "") -> None:
+    """
+    Skip a test when a collection-time condition is true.
+
+    Supported conditions are literals, boolean operators, string equality against `platform()`, and `feature("name")`.
+    """
+    ...
+
+
 @rust.extern(metadata={"marker_kind": "xfail", "runner_only": true})
 pub def xfail(reason: str = "") -> None:
     """
@@ -106,6 +133,36 @@ pub def xfail(reason: str = "") -> None:
 
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "xfailif", "runner_only": true})
+pub def xfailif(condition: bool, reason: str = "") -> None:
+    """
+    Expect a test to fail when a collection-time condition is true.
+
+    Supported conditions are literals, boolean operators, string equality against `platform()`, and `feature("name")`.
+    """
+    ...
+
+
+@rust.extern
+pub def platform() -> str:
+    """
+    Return the platform name used by collection-time testing marker probes.
+
+    `incan test` evaluates this during collection; runtime calls return the host OS identifier.
+    """
+    ...
+
+
+@rust.extern
+pub def feature(name: str) -> bool:
+    """
+    Return whether an `incan test --feature <name>` collection feature is enabled.
+
+    Runtime calls return false because collection features are runner metadata, not application configuration.
     """
     ...
 
@@ -132,6 +189,44 @@ pub def slow() -> None:
     ...
 
 
+@rust.extern(metadata={"marker_kind": "mark", "runner_only": true})
+pub def mark(name: str) -> None:
+    """
+    Attach a named marker to a test for `incan test -m` selection.
+
+    Marker names should use snake_case. With `--strict-markers`, names must be registered by TEST_MARKERS.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "resource", "runner_only": true})
+pub def resource(name: str) -> None:
+    """
+    Attach resource metadata to a test.
+
+    `incan test --jobs N` will not overlap tests that share the same resource key.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "serial", "runner_only": true})
+pub def serial() -> None:
+    """
+    Attach serial-execution metadata to a test.
+
+    `incan test --jobs N` runs serial tests alone against all other scheduled units.
+    """
+    ...
+
+
+@rust.extern(metadata={"marker_kind": "timeout", "runner_only": true})
+pub def timeout(duration: str) -> None:
+    """
+    Set the timeout used for the generated test batch that contains this test, such as "250ms", "5s", or "2m".
+    """
+    ...
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -147,21 +242,20 @@ pub def fixture() -> None:
     """
     Mark a function as a test fixture.
 
-    Fixtures provide setup/teardown and dependency injection for tests.
-    Use `yield` to separate setup from teardown.
+    Fixtures provide setup values and dependency injection for tests. Function scope runs per test. Module/session
+    scopes are cached inside the generated per-file test harness process. One top-level `yield` statement splits setup
+    from teardown for function-scoped fixtures; teardown code cannot reference setup locals or fixture parameters in the
+    current runner transform.
 
     Example:
 
     ```incan
     @fixture
-    def temp_file() -> str:
-        path = create_temp_file()
-        yield path
-        delete_file(path)
+    def temp_name() -> str:
+        return "scratch.txt"
 
-    def test_write(temp_file: str) -> None:
-        write_to_file(temp_file, "data")
-        assert read_file(temp_file) == "data"
+    def test_write(temp_name: str) -> None:
+        assert temp_name == "scratch.txt"
     ```
 
     Note: Fixtures are injected by parameter name matching.
@@ -199,6 +293,14 @@ pub def parametrize[T](argnames: str, argvalues: List[T]) -> None:
     test_add[-1-1-0] ... PASSED
     test_add[100-200-300] ... PASSED
     ```
+    """
+    ...
+
+
+@rust.extern
+pub def param_case[T](value: T, marks: List[str] = [], id: str = "") -> T:
+    """
+    Attach metadata to one parameter set inside `parametrize`.
     """
     ...
 

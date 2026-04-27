@@ -1,13 +1,14 @@
 # RFC 018: language primitives for testing
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-01-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (test runner and CLI), RFC 001 (language portions; superseded), RFC 002 (language portions; superseded)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/76
 - **RFC PR:** —
+- **Implementation PRs:** https://github.com/dannys-code-corner/incan/pull/410, this PR
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -16,10 +17,10 @@ Define the language-level testing primitives for Incan:
 - the `assert` keyword (always-on), including message propagation and pattern-binding forms
 - `assert ... raises ErrorType` (sync only)
 - a reserved `module tests:` block for inline test-only code
-- `testing`-gated resolution rules for test-only decorators/helpers (no magic global names)
+- `std.testing`-gated resolution rules for test-only decorators/helpers (no magic global names)
 - build/check stripping semantics for inline tests
 
-Testing decorators/markers are gated behind the `testing` standard library module (no magic global names).
+Testing decorators/markers are gated behind the `std.testing` standard library module (no magic global names).
 
 This RFC is jointly normative with **RFC 019**, which defines runner and CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting).
 
@@ -33,13 +34,13 @@ This RFC defines only the language primitives; RFC 019 specifies the runner and 
 
 - Define the language-owned testing primitives independently from runner and CLI behavior.
 - Standardize `assert`, `assert ... raises ErrorType`, and inline `module tests:` blocks.
-- Require `testing`-gated name resolution for test-only decorators and helpers.
+- Require `std.testing`-gated name resolution for test-only decorators and helpers.
 - Preserve a clean split between compiler semantics and test-runner semantics across RFC 018 and RFC 019.
 
 ## Non-Goals
 
 - Defining test discovery, fixtures, parametrization, markers, parallelism, or reporting semantics in this RFC.
-- Introducing magic global test names outside the `testing` module gate.
+- Introducing magic global test names outside the `std.testing` module gate.
 - Changing production-code semantics beyond the explicitly defined testing primitives in this document.
 
 ## Guide-level explanation (how users think about it)
@@ -51,23 +52,22 @@ This RFC covers **language-level** testing primitives only:
 - `assert` (including messages and pattern binding)
 - `assert ... raises ErrorType`
 - `module tests:` inline test blocks
-- `testing`-gated resolution rules for test-only constructs
+- `std.testing`-gated resolution rules for test-only constructs
 
 Runner/CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting) is defined in
 **RFC 019**.
 
 If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above, then implement in dependency order.
 
-### The `testing` module
+### The `std.testing` module
 
-Testing utilities are normal functions/decorators imported from the `testing` module:
+Testing utilities are normal functions/decorators imported from the `std.testing` module:
 
 ```incan
-from testing import assert_eq, assert_true, assert_false, fail
+from std.testing import assert_eq, assert_true, assert_false, fail
 ```
 
-This RFC only specifies how these names are *resolved* (gated behind `testing`) and how `assert` maps to the
-`testing.assert_*` surface. Execution semantics for fixtures, parametrization, markers, and CLI options are defined in
+This RFC only specifies how these names are *resolved* (gated behind `std.testing`) and how `assert` maps to the `std.testing.assert_*` surface. Execution semantics for fixtures, parametrization, markers, and CLI options are defined in
 RFC 019.
 
 ### Assertions: `assert ...` (keyword)
@@ -80,27 +80,23 @@ assert 2 < 3
 assert user is Some(_), "user must be present"
 ```
 
-It is syntax sugar for a **language-level assertion primitive** with the same user-facing behavior as the `testing` module’s assertion functions. See the reference-level table below for the full, exhaustive mapping.
+It is syntax sugar for a **language-level assertion primitive** with the same user-facing behavior as the `std.testing` module's assertion functions. See the reference-level table below for the full, exhaustive mapping.
 
 Design note (important semantic commitment):
 
 - `assert` must be valid in production code **without** pulling in the test runner or requiring `incan test`.
-- Implementations may lower `assert` to a compiler intrinsic / core runtime primitive. The `testing.assert_*` helpers are
-the test-oriented, explicit API surface and must remain consistent with `assert` behavior (messages, formatting, etc.).
-- This RFC defines `assert` as **always-on** runtime checking (like Python). A compile-out variant (e.g. `debug_assert`)
-may be introduced in a future RFC, but is out of scope here.
+- Implementations may lower `assert` to a compiler intrinsic / core runtime primitive. The `std.testing.assert_*` helpers are the test-oriented, explicit API surface and must remain consistent with `assert` behavior (messages, formatting, etc.).
+- This RFC defines `assert` as **always-on** runtime checking (like Python). A compile-out variant (e.g. `debug_assert`) may be introduced in a future RFC, but is out of scope here.
 
 Rationale (brief):
 
-- `assert` is used both in tests and in production code for invariants (“this should never happen”).
-- Always-on semantics avoid “works in tests/debug, breaks in release” surprises.
-- Mitigation: avoid asserts in hot paths and prefer explicit `Result`/`Option`-based error handling for recoverable
-conditions. A future `debug_assert` can address performance-sensitive checks.
+- `assert` is used both in tests and in production code for invariants ("this should never happen").
+- Always-on semantics avoid "works in tests/debug, breaks in release" surprises.
+- Mitigation: avoid asserts in hot paths and prefer explicit `Result`/`Option`-based error handling for recoverable conditions. A future `debug_assert` can address performance-sensitive checks.
 
-The `testing` module remains available for explicit imports, and richer APIs.
+The `std.testing` module remains available for explicit imports, and richer APIs.
 
-Note: this RFC specifies **assertion messages** (e.g. `assert x > 0, "x must be positive"`) and requires the underlying
-`testing.assert_*` helpers to accept an optional `msg`. This is not fully supported in current Incan; it is a required
+Note: this RFC specifies **assertion messages** (e.g. `assert x > 0, "x must be positive"`) and requires the underlying `std.testing.assert_*` helpers to accept an optional `msg`. This is not fully supported in current Incan; it is a required
 part of implementing this RFC.
 
 #### Common `assert` patterns (guide-level, Python-inspired)
@@ -200,7 +196,7 @@ compiler had emitted `let v = ...` at that point.
 - Nested patterns, multiple bindings, and guards are out of scope for this RFC (they may be added later if/when the
 general pattern-matching system is specified).
 
-“Contains” / membership style checks:
+"Contains" / membership style checks:
 
 ```incan
 assert name != ""
@@ -209,7 +205,7 @@ assert name != ""
 assert tags.contains("release")
 ```
 
-Identity checks (Python’s `is`) are intentionally **not** part of `assert` in this RFC, because `is` already has a different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled explicitly (e.g. `ref_eq(a, b)`), not overloaded onto `is`.
+Identity checks (Python's `is`) are intentionally **not** part of `assert` in this RFC, because `is` already has a different meaning (pattern matching). If/when Incan adds a reference-identity operation, it should be spelled explicitly (e.g. `ref_eq(a, b)`), not overloaded onto `is`.
 
 ### Inline test-only module blocks
 
@@ -221,7 +217,7 @@ def add(a: int, b: int) -> int:
 
 
 module tests:
-    from testing import assert_eq, test
+    from std.testing import assert_eq, test
 
     def test_addition() -> None:
         assert add(2, 3) == 5
@@ -235,55 +231,51 @@ This keeps helpers/fixtures/test imports scoped to the test module and allows th
 
 Rule of thumb:
 
-- In inline tests (`module tests:` inside a production file), put `from testing import ...` **inside the `module tests:`
-block** so the production module namespace stays clean.
+- In inline tests (`module tests:` inside a production file), put `from std.testing import ...` **inside the `module tests:` block** so the production module namespace stays clean.
 
 Test file discovery and runner behavior are defined in **RFC 019**.
 
 ## Reference-level explanation (precise rules)
 
-### Core principle: testing is gated behind `testing`
+### Core principle: testing is gated behind `std.testing`
 
-Test tooling must only recognize testing constructs when they resolve to the `testing` module. The compiler must resolve imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.
+Test tooling must only recognize testing constructs when they resolve to the `std.testing` module. The compiler must resolve imports/aliases consistently so runner semantics (defined in RFC 019) can rely on these identities.
 
 Runner-recognized constructs (see RFC 019) include:
 
-- `@test` = `testing.test`
-- `@fixture` = `testing.fixture`
-- `@parametrize` = `testing.parametrize`
-- `@skip`, `@xfail`, `@slow` = corresponding `testing.*` markers
-- `@serial` / `@resource(...)` = corresponding `testing.*` scheduling decorators
+- `@test` = `std.testing.test`
+- `@fixture` = `std.testing.fixture`
+- `@parametrize` = `std.testing.parametrize`
+- `@skip`, `@xfail`, `@slow` = corresponding `std.testing.*` markers
+- `@serial` / `@resource(...)` = corresponding `std.testing.*` scheduling decorators
 
-This avoids “magic names” (e.g. a random user-defined `@fixture` decorator should not be treated as a test fixture).
+This avoids "magic names" (e.g. a random user-defined `@fixture` decorator should not be treated as a test fixture).
 
 #### Resolution rule (minimal)
 
-For a decorator `@X` to be treated as `testing.<name>`, one of the following must hold in the file:
+For a decorator `@X` to be treated as `std.testing.<name>`, one of the following must hold in the file:
 
-1. `X` is `testing::<name>` / `testing.<name>` (fully-qualified reference), OR
-2. `X` is an imported alias of `testing.<name>` (e.g. `from testing import fixture as X`), OR
-3. `X` is imported from the `testing` module without alias (e.g. `from testing import fixture`)
+1. `X` is `std.testing::<name>` / `std.testing.<name>` (fully-qualified reference), OR
+2. `X` is an imported alias of `std.testing.<name>` (e.g. `from std.testing import fixture as X`), OR
+3. `X` is imported from the `std.testing` module without alias (e.g. `from std.testing import fixture`)
 
 (Exact import-resolution machinery is an implementation detail, but the behavior must match these semantics.)
 
 Rationale:
 
-- Unlike ordinary modules (e.g. `web`), `testing` is a gateway for discovery and special semantics. Resolution must be
-explicit and auditable, so only symbols that *resolve to* `testing` are treated as test constructs.
+- Unlike ordinary modules (e.g. `web`), `std.testing` is a gateway for discovery and special semantics. Resolution must be explicit and auditable, so only symbols that *resolve to* `std.testing` are treated as test constructs.
 
 Module aliasing:
 
-- A decorator expression of the form `@M.<name>` is treated as `testing.<name>` only if `M` resolves to the `testing`
-module (e.g. `import testing as t; @t.fixture`).
+- A decorator expression of the form `@M.<name>` is treated as `std.testing.<name>` only if `M` resolves to the `std.testing` module (e.g. `import std.testing as t; @t.fixture`).
 
 Re-exports:
 
-- If a decorator name resolves to a symbol re-exported from another module, it is treated as `testing.<name>` only if the
-resolver can prove the symbol originates from `testing`. Otherwise it is treated as a normal decorator.
+- If a decorator name resolves to a symbol re-exported from another module, it is treated as `std.testing.<name>` only if the resolver can prove the symbol originates from `std.testing`. Otherwise it is treated as a normal decorator.
 
-Star imports are disallowed for the `testing` module:
+Star imports are disallowed for the `std.testing` module:
 
-- `from testing import *` MUST be a compile-time error in any context.
+- `from std.testing import *` MUST be a compile-time error in any context.
 - Rationale: explicit imports keep the testing gate analyzable and avoid accidental collisions with user-defined names.
 
 ### The `assert` keyword (reference semantics)
@@ -295,12 +287,12 @@ Form:
 - `assert <expr>` where `<expr>` type-checks as `bool`
 - `assert <expr>, <msg>` where `<msg>` type-checks as `str` (optional failure message)
 
-The optional message is passed through to the underlying `testing.assert_*` helper and should be displayed as part of the assertion failure output.
+The optional message is passed through to the underlying `std.testing.assert_*` helper and should be displayed as part of the assertion failure output.
 
 Message presence:
 
 - If no message is provided, output should not render a message line.
-- An empty string is treated as “no message” for formatting purposes.
+- An empty string is treated as "no message" for formatting purposes.
 
 Minimum diagnostics guarantee:
 
@@ -312,7 +304,7 @@ identifies the failed comparison kind and includes the optional message when one
 Runtime error model:
 
 - A failed `assert` raises a built-in runtime error type named `AssertionError`.
-- “Runtime error” refers to a panic-style failure (not a `Result`-returning error). It aborts the current test case.
+- "Runtime error" refers to a panic-style failure (not a `Result`-returning error). It aborts the current test case.
 - `ErrorType` in `assert ... raises ErrorType` must denote a runtime error type.
 
 #### Runtime error types (normative; scope for this RFC)
@@ -324,28 +316,28 @@ Rules:
 
 - This RFC requires at minimum the built-in runtime error type `AssertionError`.
 - This RFC does **not** define a general, user-extensible runtime error hierarchy.
-    - User-defined errors should use `Result`/`Option` (Incan’s primary error-handling model).
+    - User-defined errors should use `Result`/`Option` (Incan's primary error-handling model).
 - Subtyping among runtime error types is **optional**:
     - If the implementation supports runtime error subtyping, `assert ... raises BaseType` must match subtypes.
     - If not, implementations MUST - at minimum - match the exact runtime error type named by `ErrorType` (as already
       specified in the raises rules below).
 
-#### Exhaustive mapping to `testing.assert_*` helpers (required behavior)
+#### Exhaustive mapping to `std.testing.assert_*` helpers (required behavior)
 
-| `testing.*` helper | `assert ...` surface form               | Lowers to                                        |
-| ------------------ | --------------------------------------- | ------------------------------------------------ |
-| `assert`           | `assert <bool-expr>[, msg]`             | `testing.assert(<bool-expr>, msg?)`              |
-| `assert_true`      | `assert <bool-expr>[, msg]`             | `testing.assert(<bool-expr>, msg?)`              |
-| `assert_false`     | `assert not <bool-expr>[, msg]`         | `testing.assert(not <bool-expr>, msg?)`          |
-| `assert_eq`        | `assert a == b[, msg]`                  | `testing.assert_eq(a, b, msg?)`                  |
-| `assert_ne`        | `assert a != b[, msg]`                  | `testing.assert_ne(a, b, msg?)`                  |
-| `assert_is_some`   | `assert opt is Some(v)[, msg]`          | `let v = testing.assert_is_some(opt, msg?)`      |
-| `assert_is_none`   | `assert opt is None[, msg]`             | `testing.assert_is_none(opt, msg?)`              |
-| `assert_is_ok`     | `assert res is Ok(v)[, msg]`            | `let v = testing.assert_is_ok(res, msg?)`        |
-| `assert_is_err`    | `assert res is Err(e)[, msg]`           | `let e = testing.assert_is_err(res, msg?)`       |
-| `assert_raises`    | `assert call() raises ErrorType[, msg]` | `testing.assert_raises[ErrorType](..., msg?)`    |
+| `std.testing.*` helper | `assert ...` surface form               | Lowers to                                         |
+| ---------------------- | --------------------------------------- | ------------------------------------------------- |
+| `assert`               | `assert <bool-expr>[, msg]`             | `std.testing.assert(<bool-expr>, msg?)`           |
+| `assert_true`          | `assert <bool-expr>[, msg]`             | `std.testing.assert(<bool-expr>, msg?)`           |
+| `assert_false`         | `assert not <bool-expr>[, msg]`         | `std.testing.assert(not <bool-expr>, msg?)`       |
+| `assert_eq`            | `assert a == b[, msg]`                  | `std.testing.assert_eq(a, b, msg?)`               |
+| `assert_ne`            | `assert a != b[, msg]`                  | `std.testing.assert_ne(a, b, msg?)`               |
+| `assert_is_some`       | `assert opt is Some(v)[, msg]`          | `let v = std.testing.assert_is_some(opt, msg?)`   |
+| `assert_is_none`       | `assert opt is None[, msg]`             | `std.testing.assert_is_none(opt, msg?)`           |
+| `assert_is_ok`         | `assert res is Ok(v)[, msg]`            | `let v = std.testing.assert_is_ok(res, msg?)`     |
+| `assert_is_err`        | `assert res is Err(e)[, msg]`           | `let e = std.testing.assert_is_err(res, msg?)`    |
+| `assert_raises`        | `assert call() raises ErrorType[, msg]` | `std.testing.assert_raises[ErrorType](..., msg?)` |
 
-Full signatures (required `testing` API surface for this RFC):
+Full signatures (required `std.testing` API surface for this RFC):
 
 ```incan
 assert(condition: bool, msg: str = "assertion failed") -> None
@@ -370,29 +362,29 @@ Desugaring rule used by the compiler:
 
 Let the optional message be `msg` when present (i.e. `assert <expr>, msg`).
 
-- If `<expr>` is syntactically `a == b`, lower to `testing.assert_eq(a, b, msg?)`
-- If `<expr>` is syntactically `a != b`, lower to `testing.assert_ne(a, b, msg?)`
-- If the assert statement is of the form `assert opt is Some(v)`, lower to `let v = testing.assert_is_some(opt, msg?)`
-- If the assert statement is of the form `assert opt is None`, lower to `testing.assert_is_none(opt, msg?)`
-- If the assert statement is of the form `assert res is Ok(v)`, lower to `let v = testing.assert_is_ok(res, msg?)`
-- If the assert statement is of the form `assert res is Err(e)`, lower to `let e = testing.assert_is_err(res, msg?)`
+- If `<expr>` is syntactically `a == b`, lower to `std.testing.assert_eq(a, b, msg?)`
+- If `<expr>` is syntactically `a != b`, lower to `std.testing.assert_ne(a, b, msg?)`
+- If the assert statement is of the form `assert opt is Some(v)`, lower to `let v = std.testing.assert_is_some(opt, msg?)`
+- If the assert statement is of the form `assert opt is None`, lower to `std.testing.assert_is_none(opt, msg?)`
+- If the assert statement is of the form `assert res is Ok(v)`, lower to `let v = std.testing.assert_is_ok(res, msg?)`
+- If the assert statement is of the form `assert res is Err(e)`, lower to `let e = std.testing.assert_is_err(res, msg?)`
 - If the assert statement is of the form `assert call() raises ErrorType`, lower to
-  `testing.assert_raises[ErrorType](lambda: call(), msg?)`.
-- Otherwise, lower to `testing.assert(<expr>, msg?)`
+  `std.testing.assert_raises[ErrorType](lambda: call(), msg?)`.
+- Otherwise, lower to `std.testing.assert(<expr>, msg?)`
 
-Note: the “lowers to” wording describes the required behavior and message propagation. Implementations may choose to lower
-`assert` to a compiler intrinsic and have `testing.assert_*` call into that intrinsic, as long as the user-visible
+Note: the "lowers to" wording describes the required behavior and message propagation. Implementations may choose to lower
+`assert` to a compiler intrinsic and have `std.testing.assert_*` call into that intrinsic, as long as the user-visible
 semantics match this mapping.
 
-The `testing` module is **not** required at runtime for `assert`; the mapping is semantic, and `testing.assert_*` must mirror the intrinsic behavior.
+The `std.testing` module is **not** required at runtime for `assert`; the mapping is semantic, and `std.testing.assert_*` must mirror the intrinsic behavior.
 
-The `assert_true` / `assert_false` helpers are aliases/conveniences in the `testing` API; the compiler does not need to emit them directly.
+The `assert_true` / `assert_false` helpers are aliases/conveniences in the `std.testing` API; the compiler does not need to emit them directly.
 
-On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as the underlying `testing` assertion functions.
+On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as the underlying `std.testing` assertion functions.
 
 #### Pattern-binding scope and allowed patterns (reference rules)
 
-`assert` supports a limited form of pattern binding via `is` (leveraging Incan’s existing pattern-matching semantics).
+`assert` supports a limited form of pattern binding via `is` (leveraging Incan's existing pattern-matching semantics).
 
 Allowed `Option` patterns:
 
@@ -426,12 +418,12 @@ Syntax: `assert <call-expr> raises <ErrorType>[, msg]` where `<call-expr>` is a 
 
 This is a convenience for asserting that a call fails by *raising* a runtime error.
 
-- “Raises” refers to a runtime error/panic-style failure (the same category of failure used for failed assertions).
+- "Raises" refers to a runtime error/panic-style failure (the same category of failure used for failed assertions).
 - It does **not** refer to `Result`-returning APIs; for results, use `assert res is Err(e)` / `assert_is_err`.
-- Block-style “raises” assertions are out of scope; use `testing.assert_raises` for multi-statement checks.
+- Block-style "raises" assertions are out of scope; use `std.testing.assert_raises` for multi-statement checks.
 - Matching: `ErrorType` matches that exact type or any of its subtypes.
 If an implementation lacks subtype information, it MUST at minimum match the exact type.
-- Async “raises” is out of scope for this RFC.
+- Async "raises" is out of scope for this RFC.
 
 ### Inline test module context (reference rules)
 
@@ -448,12 +440,12 @@ Test file discovery and how tests/fixtures are collected are defined in RFC 019.
 
 ### Build and check behavior
 
-| Command         | Test contexts (`module tests:`)    |
-| --------------- | ---------------------------------- |
-| `incan build`   | stripped (not emitted)             |
-| `incan run`     | stripped (not included)            |
-| `incan test`    | included and executed              |
-| `incan --check` | type-checked but not emitted       |
+| Command         | Test contexts (`module tests:`) |
+| --------------- | ------------------------------- |
+| `incan build`   | stripped (not emitted)          |
+| `incan run`     | stripped (not included)         |
+| `incan test`    | included and executed           |
+| `incan --check` | type-checked but not emitted    |
 
 Test files are only relevant to `incan test` (they are not part of production builds).
 
@@ -465,7 +457,7 @@ Note: `incan --check` type-checks inline `module tests:` blocks in source files,
 
 The inline test module:
 
-- may access names from the surrounding file (like Rust’s `use super::*` unit-test pattern)
+- may access names from the surrounding file (like Rust's `use super::*` unit-test pattern)
 - introduces a scope boundary so test-only helpers/imports do not pollute the production namespace
 
 Visibility rules (normative):
@@ -481,7 +473,7 @@ This RFC does **not** define a general-purpose module system beyond existing fil
 
 ## Compatibility / migration
 
-- Existing code that uses `testing.assert_*` continues to work; `assert` is additive syntax sugar.
+- Existing code that uses `std.testing.assert_*` continues to work; `assert` is additive syntax sugar.
 - Adding a `module tests:` block enables inline tests without changing production code layout.
 - Runner discovery and CLI compatibility are specified in RFC 019.
 
@@ -489,7 +481,7 @@ This RFC does **not** define a general-purpose module system beyond existing fil
 
 - **Top-level `@test` next to production functions**: rejected; it pollutes the production namespace and makes it hard
 to keep test-only imports/helpers contained.
-- **Magic language keywords for tests/fixtures**: rejected; harms tooling and contradicts the “stdlib-gated” principle.
+- **Magic language keywords for tests/fixtures**: rejected; harms tooling and contradicts the "stdlib-gated" principle.
 - **Compile-time-only assertions**: rejected; `assert` is intended for always-on runtime invariants.
 
 Out of scope (for now):
@@ -513,22 +505,22 @@ Legend:
 
 ### Language + assertion API surface
 
-| Item                                             | Today      | After RFC 018 | Notes                                           | Implemented |
-| ------------------------------------------------ | ---------- | ------------- | ----------------------------------------------- | ----------- |
-| `assert <expr>` keyword                          | No         | New           | Lowers to `testing.assert_*` helpers            |             |
-| `assert <expr>, <msg>`                           | No         | New           | Python-style message; passed through to helpers |             |
-| `module tests:` inline tests                     | No         | New           | Reserved scope; stripped outside `incan test`   |             |
-| `testing.assert*(..., msg="")`                   | Partial    | Changed       | RFC requires optional `msg` on core asserts     |             |
-| `testing.assert_is_*` helpers                    | Partial    | Changed       | RFC pins behavior + msg propagation             |             |
-| `testing.assert_raises` (+ `assert ... raises`)  | Partial    | Changed       | RFC pins desugaring + optional msg              |             |
-| `testing.fail(msg)`                              | Yes        | Unchanged     | Explicit failure                                |             |
+| Item                                                | Today   | After RFC 018 | Notes                                           | Implemented |
+| --------------------------------------------------- | ------- | ------------- | ----------------------------------------------- | ----------- |
+| `assert <expr>` keyword                             | No      | New           | Lowers to `std.testing.assert_*` helpers        |             |
+| `assert <expr>, <msg>`                              | No      | New           | Python-style message; passed through to helpers |             |
+| `module tests:` inline tests                        | No      | New           | Reserved scope; stripped outside `incan test`   |             |
+| `std.testing.assert*(..., msg="")`                  | Partial | Changed       | RFC requires optional `msg` on core asserts     |             |
+| `std.testing.assert_is_*` helpers                   | Partial | Changed       | RFC pins behavior + msg propagation             |             |
+| `std.testing.assert_raises` (+ `assert ... raises`) | Partial | Changed       | RFC pins desugaring + optional msg              |             |
+| `std.testing.fail(msg)`                             | Yes     | Unchanged     | Explicit failure                                |             |
 
 ## Layers affected
 
 - **Lexer** — `assert` must be treated as a soft keyword in statement position, not as a hard reserved word. The lexer emits `Ident("assert")`; the parser promotes it to the assertion statement form without requiring a `std.testing` import.
 - **Parser** — must parse the `assert <expr>` form, the `assert <expr>, <msg>` form, and the `assert <expr> raises <Type>` form as distinct AST nodes; must parse and validate `module tests:` as a reserved inline block producing a `TestModule` AST node; must enforce that `module tests:` appears at most once per file at module scope.
-- **Typechecker** — must gate resolution of test-only decorators and helpers behind `testing`-activated import context; must validate that names inside `module tests:` are not visible outside and that the block has read access to private module members.
-- **Lowering** — must lower `assert <expr>` to the appropriate `testing.assert_*` call based on expression shape (equality, inequality, option/result, pattern binding); must lower `assert <expr> raises <Type>` to `testing.assert_raises`; must strip `module tests:` bodies from non-test compilation modes.
+- **Typechecker** — must gate resolution of test-only decorators and helpers behind `std.testing`-activated import context; must validate that names inside `module tests:` are not visible outside and that the block has read access to private module members.
+- **Lowering** — must lower `assert <expr>` to the appropriate `std.testing.assert_*` call based on expression shape (equality, inequality, option/result, pattern binding); must lower `assert <expr> raises <Type>` to `std.testing.assert_raises`; must strip `module tests:` bodies from non-test compilation modes.
 - **Stdlib (`std.testing`)** — `assert_eq`, `assert_ne`, `assert_is_some`, `assert_is_none`, `assert_raises`, `assert`, and their message-accepting overloads must conform to the desugaring rules specified in this RFC.
 - **CLI** — `incan build` and `incan run` must strip `module tests:` bodies; `incan --check` must typecheck them; `incan test` must include them in the compilation unit.
 
@@ -558,7 +550,7 @@ Legend:
 - Add parser, typechecker, codegen, integration, and docs coverage for the accepted language behavior.
 - Update user-facing docs, release notes, RFC progress state, and the active development version.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / RFC lifecycle
 
@@ -612,7 +604,7 @@ Legend:
 ## Design Decisions
 
 - `assert` is an always-on language primitive and is not compiled out in release builds by this RFC.
-- Testing-specific decorators and helpers are gated behind the `testing` module rather than treated as ambient global names.
+- Testing-specific decorators and helpers are gated behind the `std.testing` module rather than treated as ambient global names.
 - `module tests:` is the reserved inline scope for test-only code in production modules.
 - Runner and CLI semantics remain split into RFC 019 rather than being folded into this language-level RFC.
 

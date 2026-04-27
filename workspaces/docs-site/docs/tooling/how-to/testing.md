@@ -57,6 +57,7 @@ Tests are discovered automatically from two sources:
 - **Conventional test files**: files named `test_*.incn` or `*_test.incn`
 - **Inline test modules**: non-test `.incn` source files that contain a parsed `module tests:` block
 - **Test functions**: functions named `def test_*()` in the active test context
+- **Explicit test decorators**: functions decorated with `@test` in the active test context
 
 ```bash
 my_project/
@@ -119,6 +120,44 @@ module tests:
 
     def test_production_value() -> None:
         assert_eq(production_value(), 42)
+```
+
+Inline test modules support the same runner features as conventional test files, including explicit `@test` discovery, fixture injection, parametrization, marker selection, strict marker registries, and timeouts:
+
+```incan
+def bounded_discount(percent: int) -> int:
+    if percent < 0:
+        return 0
+    if percent > 100:
+        return 100
+    return percent
+
+module tests:
+    from std.testing import assert_eq, fixture, mark, parametrize, test
+
+    TEST_MARKERS = ["edge"]
+
+    @fixture
+    def base_percent() -> int:
+        return 75
+
+    @test
+    def named_by_decorator(base_percent: int) -> None:
+        assert_eq(bounded_discount(base_percent), 75)
+
+    @mark("edge")
+    @parametrize("adjustment, expected", [
+        (-100, 0),
+        (50, 100),
+    ], ids=["floor", "cap"])
+    def test_discount_edges(base_percent: int, adjustment: int, expected: int) -> None:
+        assert_eq(bounded_discount(base_percent + adjustment), expected)
+```
+
+```bash
+incan test --list src/pricing.incn
+incan test -k "test_discount_edges[cap]" src/pricing.incn
+incan test -m edge --strict-markers src/pricing.incn
 ```
 
 Do not place `module tests:` in a conventional test file:
@@ -201,6 +240,18 @@ def test_integration() -> None:
 
 Slow tests are excluded by default. Include with `--slow`.
 
+### @test - Explicitly mark a test
+
+```incan
+from std.testing import test
+
+@test
+def checks_total() -> None:
+    assert_eq(total(), 42)
+```
+
+Use `@test` when the function name should not start with `test_`.
+
 ## CLI Options
 
 ```bash
@@ -213,6 +264,9 @@ incan test tests/test_math.incn
 # Filter by keyword
 incan test -k "addition"
 
+# List collected tests without running them
+incan test --list tests/
+
 # Verbose output (show timing)
 incan test -v
 
@@ -222,9 +276,57 @@ incan test -x
 # Include slow tests
 incan test --slow
 
+# Select by marker expression
+incan test -m "smoke and not slow" tests/
+
+# Enforce marker registration
+incan test --strict-markers tests/
+
+# Enable collection-time feature probes
+incan test --feature new_parser tests/
+
+# Fail long-running generated test batches
+incan test --timeout 5s tests/
+
+# Print passing-test output
+incan test --nocapture tests/
+
 # Fail if no tests are collected
 incan test --fail-on-empty
+
+# Run expected-failure tests as ordinary tests
+incan test --run-xfail tests/
+
+# Show the slowest tests
+incan test --durations 10 tests/
+
+# Shuffle with a reproducible seed
+incan test --shuffle --seed 12345 tests/
+
+# Run independent worker batches concurrently
+incan test --jobs 4 tests/
 ```
+
+`-k` matches the stable test id shown by `--list`, for example `tests/test_math.incn::test_addition` or `tests/test_math.incn::test_add[1-2-3]`.
+
+`-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`.
+Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
+
+Conditional markers are evaluated during collection:
+
+```incan
+from std.testing import assert_eq, feature, platform, skipif, xfailif
+
+@skipif(platform() == "windows", reason="path semantics differ")
+def test_posix_path() -> None:
+    assert_eq("/", "/")
+
+@xfailif(feature("new_parser"), reason="tracked parser bug")
+def test_new_parser_case() -> None:
+    assert_eq(parse("..."), expected)
+```
+
+Pass `--feature new_parser` to make `feature("new_parser")` true for collection.
 
 ## Output Format
 
@@ -264,9 +366,19 @@ ___________ test_division ___________
   run: incan test --fail-on-empty tests/
 ```
 
+For machine-readable CI output, use JSON Lines, JUnit XML, or both:
+
+```bash
+incan test --format json --junit reports/junit.xml tests/
+```
+
+Each JSON result record includes `schema_version: "incan.test.v1"`, a stable `test_id`, status, file, name, and duration. A final summary record closes the stream.
+
 ## Fixtures
 
-Fixtures provide setup/teardown and dependency injection for tests.
+Fixtures provide setup values and dependency injection for tests.
+
+Shared fixtures can live in `tests/**/conftest.incn`; the runner loads matching conftest files for tests in that directory subtree. The runner also provides built-in `tmp_path`, `tmp_workdir`, and `env` fixtures by parameter name. `conftest.incn` fixtures are scoped to conventional tests under `tests/**`; they do not apply to inline `module tests:` blocks in production source directories.
 
 ### Basic Fixture
 
@@ -276,32 +388,45 @@ from std.testing import fixture
 @fixture
 def database() -> Database:
     """Provides a test database."""
-    db = Database.connect("test.db")
-    yield db          # Test runs here
-    db.close()        # Teardown (always runs, even on failure)
+    return Database.connect("test.db")
 
 def test_insert(database: Database) -> None:
     database.insert("key", "value")
     assert_eq(database.get("key"), "value")
 ```
 
-### Fixture Scopes
+### Fixture Scope
 
-Control when fixtures are created/destroyed:
+Function-scoped fixtures are created each time a test needs them. Module fixtures are cached once per source file in a worker batch. Session fixtures are cached once per worker batch, so `--jobs 1` shares one session fixture instance across collected files and `--jobs N` shares one instance per worker.
 
 ```incan
-@fixture(scope="function")  # Default: new per test
-def temp_file() -> str:
-    ...
+from std.testing import assert_eq, fixture
 
-@fixture(scope="module")    # Shared across file
-def shared_client() -> Client:
-    ...
+static calls: int = 0
 
-@fixture(scope="session")   # Shared across entire run
-def global_config() -> Config:
-    ...
+@fixture(scope="module")
+def once() -> int:
+    calls += 1
+    return calls
+
+def test_first(once: int) -> None:
+    assert_eq(once, 1)
+
+def test_second(once: int) -> None:
+    assert_eq(once, 1)
 ```
+
+Fixtures can use a top-level `yield` for teardown:
+
+```incan
+@fixture
+def resource() -> int:
+    handle: int = open_resource()
+    yield handle
+    cleanup_resource(handle)
+```
+
+The teardown block runs after the test body for function fixtures, after all tests from the source file for module fixtures, and at the end of the worker batch for session fixtures. Teardown runs after assertion failures, can reference setup locals and fixture parameters, and fails the run if teardown itself fails. Timeout termination can still bypass teardown because the worker process may be killed.
 
 ### Fixture Dependencies
 
@@ -331,16 +456,16 @@ Auto-apply fixtures to all tests in scope:
 def setup_logging() -> None:
     """Automatically applied to all tests in this file."""
     logging.set_level("DEBUG")
-    yield
-    logging.set_level("INFO")
 ```
+
+Autouse fixtures respect scope: function autouse runs per test, while module/session autouse is cached in the generated harness process.
 
 ## Parametrize
 
 Run a test with multiple parameter sets:
 
 ```incan
-from std.testing import parametrize
+from std.testing import assert_eq, parametrize
 
 @parametrize("a, b, expected", [
     (1, 2, 3),
@@ -364,6 +489,8 @@ test_math.incn::test_add[100-200-300] PASSED
 ### Named Test IDs
 
 ```incan
+from std.testing import assert_eq, parametrize
+
 @parametrize("input, expected", [
     ("hello", "HELLO"),
     ("World", "WORLD"),
@@ -373,14 +500,25 @@ def test_upper(input: str, expected: str) -> None:
     assert_eq(input.upper(), expected)
 ```
 
+Use `param_case(...)` when only one case needs its own id or marks:
+
+```incan
+from std.testing import assert_eq, param_case, parametrize, xfail
+
+@parametrize("x, expected", [
+    param_case((1, 3), id="known-bug", marks=[xfail("tracked bug")]),
+    param_case((2, 4), id="happy-path"),
+])
+def test_double(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
+```
+
 ### Combining Fixtures and Parametrize
 
 ```incan
 @fixture
 def database() -> Database:
-    db = Database.connect("test.db")
-    yield db
-    db.close()
+    return Database.connect("test.db")
 
 @parametrize("key, value", [
     ("name", "Alice"),

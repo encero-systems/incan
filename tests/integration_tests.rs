@@ -3843,6 +3843,1022 @@ def test_imported_default_expression_expands_with_required_imports() -> None:
     }
 
     #[test]
+    fn e2e_explicit_test_decorator_discovers_non_prefixed_function() {
+        let dir = write_test_project(
+            "test_decorator.incn",
+            r#"
+from std.testing import assert_eq, test
+
+@test
+def verifies_total() -> None:
+    assert_eq(40 + 2, 42)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected @test-decorated function to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_decorator.incn::verifies_total"),
+            "expected decorated test id in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_list_and_keyword_filter_use_stable_test_ids() {
+        let dir = write_test_project(
+            "test_list_filter.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_alpha() -> None:
+    assert_eq(1, 1)
+
+def test_beta() -> None:
+    assert_eq(2, 2)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--list", "-k", "test_beta"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.lines().any(|line| line == "test_list_filter.incn::test_beta"),
+            "expected exact listed beta id rooted at the explicit test directory.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains(dir.to_string_lossy().as_ref()),
+            "expected --list output to avoid machine-local absolute paths.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains("test_list_filter.incn::test_alpha"),
+            "expected keyword filter to hide alpha.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_json_format_emits_result_records() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_json_report.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_json_one() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--format", "json", "--shuffle", "--seed", "7"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected JSON-format run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let mut saw_result = false;
+        let mut saw_summary = false;
+        for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+            let value: serde_json::Value = serde_json::from_str(line)?;
+            if value.get("test_id").is_some() {
+                saw_result = true;
+                assert_eq!(
+                    value.get("schema_version").and_then(|v| v.as_str()),
+                    Some("incan.test.v1")
+                );
+                assert_eq!(
+                    value.get("test_id").and_then(|v| v.as_str()),
+                    Some("test_json_report.incn::test_json_one")
+                );
+                assert_eq!(value.get("status").and_then(|v| v.as_str()), Some("passed"));
+            }
+            if value.get("summary").is_some() {
+                saw_summary = true;
+                assert_eq!(
+                    value
+                        .get("summary")
+                        .and_then(|summary| summary.get("shuffle_seed"))
+                        .and_then(|v| v.as_u64()),
+                    Some(7)
+                );
+            }
+        }
+
+        assert!(
+            saw_result,
+            "expected at least one JSON result record.\nstdout:\n{}",
+            stdout
+        );
+        assert!(saw_summary, "expected a JSON summary record.\nstdout:\n{}", stdout);
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_junit_report_writes_testcase_xml() {
+        let dir = write_test_project(
+            "test_junit_report.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_junit_one() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+        let report = dir.join("reports").join("junit.xml");
+        let report_arg = report.to_string_lossy().to_string();
+        let output = run_incan_test_with_args(&dir, &["--junit", report_arg.as_str()]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected JUnit report run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        let Ok(xml) = std::fs::read_to_string(&report) else {
+            panic!("failed to read {}", report.display());
+        };
+        assert!(
+            xml.contains("<testsuite") && xml.contains("test_junit_one"),
+            "expected JUnit XML with test case, got:\n{}",
+            xml,
+        );
+    }
+
+    #[test]
+    fn e2e_run_xfail_treats_xfail_as_ordinary_test() {
+        let dir = write_test_project(
+            "test_run_xfail.incn",
+            r#"
+from std.testing import assert_eq, xfail
+
+@xfail("currently passes")
+def test_xpass() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let default = run_incan_test(&dir);
+        let default_stdout = String::from_utf8_lossy(&default.stdout);
+        let default_stderr = String::from_utf8_lossy(&default.stderr);
+        assert!(
+            !default.status.success(),
+            "expected default xpass to fail.\nstdout:\n{}\nstderr:\n{}",
+            default_stdout,
+            default_stderr,
+        );
+
+        let run_xfail = run_incan_test_with_args(&dir, &["--run-xfail"]);
+        let stdout = String::from_utf8_lossy(&run_xfail.stdout);
+        let stderr = String::from_utf8_lossy(&run_xfail.stderr);
+        assert!(
+            run_xfail.status.success(),
+            "expected --run-xfail to treat xfail marker as ordinary.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_run_xfail.incn::test_xpass") && stdout.contains("PASSED"),
+            "expected ordinary passing output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_conftest_fixture_is_visible_to_nested_tests() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "conftest_fixture"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests").join("unit");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            dir.join("tests").join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def answer() -> int:
+    return 42
+"#,
+        ) {
+            panic!("failed to write conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_answer.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_answer(answer: int) -> None:
+    assert_eq(answer, 42)
+"#,
+        ) {
+            panic!("failed to write nested test: {}", err);
+        }
+
+        let output = run_incan_test_relative(&dir, "tests");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected conftest fixture injection to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_answer.incn::test_answer"),
+            "expected nested stable id in output.\nstdout:\n{}",
+            stdout,
+        );
+    }
+
+    #[test]
+    fn e2e_nested_test_root_uses_same_conftest_boundary_for_collection_and_execution() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "nested_conftest_boundary"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        let unit_dir = tests_dir.join("unit");
+        if let Err(err) = std::fs::create_dir_all(&unit_dir) {
+            panic!("failed to create nested tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def answer() -> int:
+    return 1
+"#,
+        ) {
+            panic!("failed to write parent conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            unit_dir.join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def answer() -> int:
+    return 2
+"#,
+        ) {
+            panic!("failed to write nested conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            unit_dir.join("test_value.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_answer(answer: int) -> None:
+    assert_eq(answer, 2)
+"#,
+        ) {
+            panic!("failed to write nested conftest test: {}", err);
+        }
+
+        let output = run_incan_test(&unit_dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected nested root run to use only root-bounded conftest sources.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+    }
+
+    #[test]
+    fn e2e_nested_conftest_fixture_overrides_parent_fixture() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "nested_conftest_precedence"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        let unit_dir = tests_dir.join("unit");
+        if let Err(err) = std::fs::create_dir_all(&unit_dir) {
+            panic!("failed to create nested tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def shared() -> str:
+    return "parent"
+"#,
+        ) {
+            panic!("failed to write parent conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            unit_dir.join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def shared() -> str:
+    return "child"
+"#,
+        ) {
+            panic!("failed to write nested conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            unit_dir.join("test_precedence.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_uses_nearest_fixture(shared: str) -> None:
+    assert_eq(shared, "child")
+"#,
+        ) {
+            panic!("failed to write nested conftest test: {}", err);
+        }
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected nearest conftest fixture to override parent fixture without duplicate generated functions.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        assert!(stdout.contains("test_uses_nearest_fixture"));
+    }
+
+    #[test]
+    fn e2e_builtin_tmp_path_fixture_is_injected() {
+        let dir = write_test_project(
+            "test_tmp_path.incn",
+            r#"
+from std.testing import assert_eq
+from rust::std::path import PathBuf
+
+def test_tmp_path_fixture(tmp_path: PathBuf) -> None:
+    assert_eq(tmp_path.exists(), true)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected built-in tmp_path fixture to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+    }
+
+    #[test]
+    fn e2e_std_testing_assert_helper_is_normalized_before_codegen() {
+        let dir = write_test_project(
+            "test_assert_helper.incn",
+            r#"
+import std.testing as testing
+
+def test_assert_helper() -> None:
+    testing.assert(True)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected one-argument std.testing.assert call to run without generated Rust string rewriting.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        assert!(stdout.contains("test_assert_helper"));
+    }
+
+    #[test]
+    fn e2e_marker_expr_and_strict_markers_use_conftest_registry() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "strict_markers"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+const TEST_MARKERS: List[str] = ["smoke"]
+const TEST_MARKS: List[str] = ["smoke"]
+"#,
+        ) {
+            panic!("failed to write conftest: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_markers.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_inherited_smoke() -> None:
+    assert_eq(1, 1)
+
+def test_other() -> None:
+    assert_eq(1, 1)
+"#,
+        ) {
+            panic!("failed to write marker test: {}", err);
+        }
+
+        let listed = run_incan_test_with_args(&tests_dir, &["--list", "-m", "smoke", "--strict-markers"]);
+        let stdout = String::from_utf8_lossy(&listed.stdout);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected strict registered marker list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_markers.incn::test_inherited_smoke"));
+
+        let strict_error = run_incan_test_with_args(&tests_dir, &["--list", "-m", "missing", "--strict-markers"]);
+        let strict_stdout = String::from_utf8_lossy(&strict_error.stdout);
+        let strict_stderr = String::from_utf8_lossy(&strict_error.stderr);
+        assert!(
+            !strict_error.status.success(),
+            "expected unknown strict marker to fail.\nstdout:\n{}\nstderr:\n{}",
+            strict_stdout,
+            strict_stderr,
+        );
+        assert!(strict_stderr.contains("unknown marker `missing`"));
+    }
+
+    #[test]
+    fn e2e_marker_expr_boolean_grammar_filters_tests() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_marker_expr.incn",
+            r#"
+from std.testing import assert_eq, mark, slow
+
+const TEST_MARKERS: List[str] = ["api", "db"]
+
+@mark("api")
+def test_api() -> None:
+    assert_eq(1, 1)
+
+@mark("api")
+@slow
+def test_api_slow() -> None:
+    assert_eq(1, 1)
+
+@mark("db")
+def test_db() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let output = run_incan_test_with_args(
+            &dir,
+            &["--list", "-m", "api and not slow", "--strict-markers", "--slow"],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected boolean marker expression to collect.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_marker_expr.incn::test_api"));
+        assert!(!stdout.contains("test_marker_expr.incn::test_api_slow"));
+        assert!(!stdout.contains("test_marker_expr.incn::test_db"));
+
+        let invalid = run_incan_test_with_args(&dir, &["--list", "-m", "api and ("]);
+        let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);
+        assert!(
+            !invalid.status.success(),
+            "expected invalid marker expression to fail.\nstderr:\n{}",
+            invalid_stderr,
+        );
+        assert!(invalid_stderr.contains("expected marker name or parenthesized expression"));
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_slow_marker_is_excluded_by_default_and_included_with_flag() {
+        let dir = write_test_project(
+            "test_slow_filter.incn",
+            r#"
+from std.testing import assert_eq, slow
+
+def test_fast() -> None:
+    assert_eq(1, 1)
+
+@slow
+def test_slow_case() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let default_list = run_incan_test_with_args(&dir, &["--list"]);
+        let default_stdout = String::from_utf8_lossy(&default_list.stdout);
+        assert!(
+            default_list.status.success(),
+            "expected default list to succeed.\nstdout:\n{}",
+            default_stdout,
+        );
+        assert!(default_stdout.contains("test_slow_filter.incn::test_fast"));
+        assert!(!default_stdout.contains("test_slow_filter.incn::test_slow_case"));
+
+        let slow_list = run_incan_test_with_args(&dir, &["--list", "--slow"]);
+        let slow_stdout = String::from_utf8_lossy(&slow_list.stdout);
+        assert!(
+            slow_list.status.success(),
+            "expected --slow list to succeed.\nstdout:\n{}",
+            slow_stdout,
+        );
+        assert!(slow_stdout.contains("test_slow_filter.incn::test_fast"));
+        assert!(slow_stdout.contains("test_slow_filter.incn::test_slow_case"));
+    }
+
+    #[test]
+    fn e2e_parametrize_case_ids_and_marks_affect_collection() {
+        let dir = write_test_project(
+            "test_case_ids.incn",
+            r#"
+from std.testing import assert_eq, param_case, parametrize, xfail
+
+@parametrize("x, expected", [
+    param_case((1, 3), marks=[xfail("known")], id="one-three"),
+    (2, 4),
+], ids=["ignored", "two-four"])
+def test_double(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
+"#,
+        );
+
+        let listed = run_incan_test_with_args(&dir, &["--list"]);
+        let stdout = String::from_utf8_lossy(&listed.stdout);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected parametrized list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_case_ids.incn::test_double[one-three]"));
+        assert!(stdout.contains("test_case_ids.incn::test_double[two-four]"));
+
+        let run = run_incan_test(&dir);
+        let run_stdout = String::from_utf8_lossy(&run.stdout);
+        let run_stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "expected xfailed case and passing case to make the run succeed.\nstdout:\n{}\nstderr:\n{}",
+            run_stdout,
+            run_stderr,
+        );
+        assert!(run_stdout.contains("xfailed") || run_stdout.contains("XFAIL"));
+    }
+
+    #[test]
+    fn e2e_stacked_parametrize_lists_cartesian_product_ids() {
+        let dir = write_test_project(
+            "test_parametrize_product.incn",
+            r#"
+from std.testing import assert_eq, parametrize
+
+@parametrize("x", [1, 2], ids=["one", "two"])
+@parametrize("y", [10, 20], ids=["ten", "twenty"])
+def test_pair(x: int, y: int) -> None:
+    assert_eq(x < y, true)
+"#,
+        );
+
+        let listed = run_incan_test_with_args(&dir, &["--list"]);
+        let stdout = String::from_utf8_lossy(&listed.stdout);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected stacked parametrized list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_parametrize_product.incn::test_pair[one-ten]"));
+        assert!(stdout.contains("test_parametrize_product.incn::test_pair[one-twenty]"));
+        assert!(stdout.contains("test_parametrize_product.incn::test_pair[two-ten]"));
+        assert!(stdout.contains("test_parametrize_product.incn::test_pair[two-twenty]"));
+    }
+
+    #[test]
+    fn e2e_parametrize_arity_mismatch_is_collection_error() {
+        let dir = write_test_project(
+            "test_parametrize_arity.incn",
+            r#"
+from std.testing import parametrize
+
+@parametrize("x, y", [1])
+def test_bad_case(x: int, y: int) -> None:
+    pass
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected arity mismatch to fail during collection.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stderr.contains("parametrize case `1`"));
+        assert!(stderr.contains("expected 2 value(s)"));
+    }
+
+    #[test]
+    fn e2e_timeout_marks_slow_test_failed() {
+        let dir = write_test_project(
+            "test_timeout.incn",
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_slow() -> None:
+    sleep(Duration.from_millis(100))
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--timeout", "1ms"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected timeout run to fail.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("timed out after"));
+    }
+
+    #[test]
+    fn e2e_conditional_markers_evaluate_collection_probes() {
+        let platform = std::env::consts::OS;
+        let dir = write_test_project(
+            "test_conditional_markers.incn",
+            &format!(
+                r#"
+from std.testing import assert_eq, feature, platform, skipif, xfailif
+
+@skipif(platform() == "{platform}", reason="host platform")
+def test_skip_on_platform_probe() -> None:
+    assert_eq(1, 0)
+
+@xfailif(feature("known_bug"), reason="feature-gated known issue")
+def test_feature_xfail() -> None:
+    assert_eq(1, 0)
+"#
+            ),
+        );
+
+        let without_feature = run_incan_test_with_args(&dir, &["-k", "test_feature_xfail"]);
+        let without_stdout = String::from_utf8_lossy(&without_feature.stdout);
+        let without_stderr = String::from_utf8_lossy(&without_feature.stderr);
+        assert!(
+            !without_feature.status.success(),
+            "expected feature-gated xfail to run as an ordinary failing test without --feature.\nstdout:\n{}\nstderr:\n{}",
+            without_stdout,
+            without_stderr,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--feature", "known_bug"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected skipif/xfailif probes to make the run successful.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("SKIPPED") || stdout.contains("skipped"));
+        assert!(stdout.contains("XFAIL") || stdout.contains("xfailed"));
+    }
+
+    #[test]
+    fn e2e_conditional_marker_rejects_runtime_expression() {
+        let dir = write_test_project(
+            "test_bad_conditional_marker.incn",
+            r#"
+from std.testing import skipif
+
+def helper() -> bool:
+    return true
+
+@skipif(helper(), reason="dynamic")
+def test_dynamic_condition() -> None:
+    pass
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected unsupported conditional marker expression to fail collection.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stderr.contains("platform()") && stderr.contains("feature"),
+            "expected collection-time expression diagnostic.\nstderr:\n{}",
+            stderr,
+        );
+    }
+
+    #[test]
+    fn e2e_jobs_run_independent_files_concurrently() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_sleep_a.incn",
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_sleep_a() -> None:
+    sleep(Duration.from_millis(1200))
+"#,
+        );
+        let second = dir.join("test_sleep_b.incn");
+        std::fs::write(
+            &second,
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_sleep_b() -> None:
+    sleep(Duration.from_millis(1200))
+"#,
+        )?;
+
+        let sequential_start = std::time::Instant::now();
+        let sequential = run_incan_test_with_args(&dir, &["--jobs", "1"]);
+        let sequential_elapsed = sequential_start.elapsed();
+        let sequential_stdout = String::from_utf8_lossy(&sequential.stdout);
+        let sequential_stderr = String::from_utf8_lossy(&sequential.stderr);
+        assert!(
+            sequential.status.success(),
+            "expected sequential warm-up run to pass.\nstdout:\n{}\nstderr:\n{}",
+            sequential_stdout,
+            sequential_stderr,
+        );
+
+        let parallel_start = std::time::Instant::now();
+        let parallel = run_incan_test_with_args(&dir, &["--jobs", "2"]);
+        let parallel_elapsed = parallel_start.elapsed();
+        let parallel_stdout = String::from_utf8_lossy(&parallel.stdout);
+        let parallel_stderr = String::from_utf8_lossy(&parallel.stderr);
+        assert!(
+            parallel.status.success(),
+            "expected parallel run to pass.\nstdout:\n{}\nstderr:\n{}",
+            parallel_stdout,
+            parallel_stderr,
+        );
+        assert!(
+            parallel_elapsed + std::time::Duration::from_millis(500) < sequential_elapsed,
+            "expected --jobs 2 to run independent file batches concurrently; sequential={:?}, parallel={:?}\nparallel stdout:\n{}",
+            sequential_elapsed,
+            parallel_elapsed,
+            parallel_stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_jobs_fail_fast_stops_launching_pending_units() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_a_fail.incn",
+            r#"
+def test_a_fail() -> None:
+    assert 1 == 2
+
+def test_c_pending() -> None:
+    pass
+"#,
+        );
+        std::fs::write(
+            dir.join("test_b_slow.incn"),
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_b_slow() -> None:
+    sleep(Duration.from_millis(3000))
+"#,
+        )?;
+        let warmup = run_incan_test_with_args(&dir, &["--jobs", "1", "-k", "test_b_slow"]);
+        let warmup_stdout = String::from_utf8_lossy(&warmup.stdout);
+        let warmup_stderr = String::from_utf8_lossy(&warmup.stderr);
+        assert!(
+            warmup.status.success(),
+            "expected slow test warm-up to pass.\nstdout:\n{}\nstderr:\n{}",
+            warmup_stdout,
+            warmup_stderr,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--jobs", "2", "-x"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected fail-fast run to fail.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_a_fail"),
+            "expected failing test to be reported.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains("test_c_pending"),
+            "expected fail-fast scheduler not to launch pending units after the first completed failure.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_resource_marker_prevents_overlapping_workers() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_resource_a.incn",
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.testing import resource
+
+@resource("db")
+def test_resource_a() -> None:
+    sleep(Duration.from_millis(1000))
+"#,
+        );
+        std::fs::write(
+            dir.join("test_resource_b.incn"),
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.testing import resource
+
+@resource("db")
+def test_resource_b() -> None:
+    sleep(Duration.from_millis(1000))
+"#,
+        )?;
+
+        let warmup = run_incan_test_with_args(&dir, &["--jobs", "1"]);
+        let warmup_stdout = String::from_utf8_lossy(&warmup.stdout);
+        let warmup_stderr = String::from_utf8_lossy(&warmup.stderr);
+        assert!(
+            warmup.status.success(),
+            "expected resource warm-up to pass.\nstdout:\n{}\nstderr:\n{}",
+            warmup_stdout,
+            warmup_stderr,
+        );
+
+        let start = std::time::Instant::now();
+        let output = run_incan_test_with_args(&dir, &["--jobs", "2"]);
+        let elapsed = start.elapsed();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected resource-constrained run to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_millis(1800),
+            "expected shared @resource workers not to overlap; elapsed={:?}\nstdout:\n{}",
+            elapsed,
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_serial_marker_runs_alone() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_serial.incn",
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.testing import serial
+
+@serial
+def test_serial() -> None:
+    sleep(Duration.from_millis(1000))
+"#,
+        );
+        std::fs::write(
+            dir.join("test_regular.incn"),
+            r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def test_regular() -> None:
+    sleep(Duration.from_millis(1000))
+"#,
+        )?;
+
+        let warmup = run_incan_test_with_args(&dir, &["--jobs", "1"]);
+        let warmup_stdout = String::from_utf8_lossy(&warmup.stdout);
+        let warmup_stderr = String::from_utf8_lossy(&warmup.stderr);
+        assert!(
+            warmup.status.success(),
+            "expected serial warm-up to pass.\nstdout:\n{}\nstderr:\n{}",
+            warmup_stdout,
+            warmup_stderr,
+        );
+
+        let start = std::time::Instant::now();
+        let output = run_incan_test_with_args(&dir, &["--jobs", "2"]);
+        let elapsed = start.elapsed();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected serial-constrained run to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_millis(1800),
+            "expected @serial worker to run alone; elapsed={:?}\nstdout:\n{}",
+            elapsed,
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_nocapture_prints_passing_test_output() {
+        let dir = write_test_project(
+            "test_capture.incn",
+            r#"
+def test_prints() -> None:
+    print("VISIBLE_CAPTURE")
+"#,
+        );
+
+        let output = run_incan_test_with_args(&dir, &["--nocapture"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected nocapture run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("VISIBLE_CAPTURE"));
+    }
+
+    #[test]
     fn e2e_sequential_single_file_runs_do_not_cross_wire_relative_paths() {
         let dir = write_test_project(
             "incan.toml",
@@ -4391,6 +5407,45 @@ module tests:
     }
 
     #[test]
+    fn e2e_inline_module_std_testing_assert_helper_is_normalized_before_codegen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_assert_helper"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+def main() -> None:
+    pass
+
+module tests:
+    import std.testing as testing
+
+    def test_assert_helper() -> None:
+        testing.assert(True)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected inline one-argument std.testing.assert call to be normalized before codegen.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        assert!(stdout.contains("test_assert_helper"));
+        Ok(())
+    }
+
+    #[test]
     fn e2e_inline_module_test_imports_do_not_affect_build() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
@@ -4436,6 +5491,564 @@ module tests:
             "inline test function should not leak into generated production code:\n{}",
             main_rs,
         );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_test_decorator_list_and_keyword_filter() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_decorator_list_filter"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("math.incn"),
+            r#"
+def add(a: int, b: int) -> int:
+    return a + b
+
+module tests:
+    from std.testing import assert_eq, test
+
+    @test
+    def checks_sum() -> None:
+        assert_eq(add(20, 22), 42)
+
+    def test_by_name() -> None:
+        assert_eq(add(1, 1), 2)
+"#,
+        )?;
+
+        let output = run_incan_test_with_args(&dir, &["--list", "-k", "checks_sum"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected inline --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.lines().any(|line| line == "src/math.incn::checks_sum"),
+            "expected decorated inline test id in --list output.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains("src/math.incn::test_by_name"),
+            "expected keyword filter to hide the name-discovered inline test.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_parametrize_markers"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("math.incn"),
+            r#"
+module tests:
+    from rust::std::thread import sleep
+    from rust::std::time import Duration
+    from std.testing import assert_eq, mark, param_case, parametrize, timeout, xfail
+
+    const TEST_MARKERS: List[str] = ["smoke"]
+    const TEST_MARKS: List[str] = ["smoke"]
+
+    @parametrize("x, expected", [
+        param_case((1, 3), marks=[xfail("known")], id="one-three"),
+        (2, 4),
+    ], ids=["ignored", "two-four"])
+    def test_double(x: int, expected: int) -> None:
+        assert_eq(x * 2, expected)
+
+    @mark("smoke")
+    @timeout("1ms")
+    def test_timeout_marker() -> None:
+        sleep(Duration.from_millis(100))
+"#,
+        )?;
+
+        let listed = run_incan_test_with_args(&dir, &["--list", "-m", "smoke", "--strict-markers"]);
+        let listed_stdout = String::from_utf8_lossy(&listed.stdout);
+        let listed_stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected inline strict marker list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            listed_stdout,
+            listed_stderr,
+        );
+        assert!(listed_stdout.contains("src/math.incn::test_double[one-three]"));
+        assert!(listed_stdout.contains("src/math.incn::test_double[two-four]"));
+        assert!(listed_stdout.contains("src/math.incn::test_timeout_marker"));
+
+        let run = run_incan_test_with_args(&dir, &["-k", "test_double"]);
+        let run_stdout = String::from_utf8_lossy(&run.stdout);
+        let run_stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "expected inline parametrized xfail/pass cases to succeed.\nstdout:\n{}\nstderr:\n{}",
+            run_stdout,
+            run_stderr,
+        );
+        assert!(run_stdout.contains("XFAIL") || run_stdout.contains("xfailed"));
+
+        let timeout = run_incan_test_with_args(&dir, &["-k", "test_timeout_marker"]);
+        let timeout_stdout = String::from_utf8_lossy(&timeout.stdout);
+        let timeout_stderr = String::from_utf8_lossy(&timeout.stderr);
+        assert!(
+            !timeout.status.success(),
+            "expected inline timeout marker to fail the test.\nstdout:\n{}\nstderr:\n{}",
+            timeout_stdout,
+            timeout_stderr,
+        );
+        assert!(timeout_stdout.contains("timed out after"));
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_fixtures_builtins_and_autouse() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_fixture_builtins"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+module tests:
+    from rust::incan_stdlib::testing import TestEnv
+    from rust::std::path import PathBuf
+    from std.testing import assert_eq, assert_is_some, fixture
+
+    @fixture(autouse=true)
+    def seed() -> int:
+        return 40
+
+    @fixture
+    def answer(seed: int) -> int:
+        return seed + 2
+
+    def test_fixture_and_tmp_path(answer: int, tmp_path: PathBuf) -> None:
+        assert_eq(answer, 42)
+        assert_eq(tmp_path.exists(), true)
+
+    def test_tmp_workdir(tmp_workdir: PathBuf) -> None:
+        assert_eq(tmp_workdir.exists(), true)
+
+    def test_env_fixture(mut env: TestEnv) -> None:
+        env.set("INCAN_INLINE_ENV_FIXTURE", "set")
+        assert_eq(assert_is_some(env.get("INCAN_INLINE_ENV_FIXTURE")), "set")
+        env.unset("INCAN_INLINE_ENV_FIXTURE")
+        assert_eq(env.get("INCAN_INLINE_ENV_FIXTURE"), None)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected inline fixtures and built-ins to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_fixture_and_tmp_path"),
+            "expected inline fixture test name in output.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            stdout.contains("test_tmp_workdir"),
+            "expected inline tmp_workdir test name in output.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_module_scoped_fixture_is_reused_within_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_module_scope_fixture.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+static calls: int = 0
+
+@fixture(scope="module")
+def once() -> int:
+    calls += 1
+    return calls
+
+def test_first(once: int) -> None:
+    assert_eq(once, 1)
+
+def test_second(once: int) -> None:
+    assert_eq(once, 1)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected module-scoped fixture value to be reused across tests in the same file.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stdout.contains("test_first") && stdout.contains("test_second"));
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_yield_fixture_teardown_runs_after_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_yield_fixture_teardown.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+static calls: int = 0
+
+@fixture
+def resource() -> int:
+    calls += 1
+    yield calls
+    calls += 10
+
+def test_1_fails(resource: int) -> None:
+    assert_eq(resource, 99)
+
+def test_2_observes_teardown() -> None:
+    assert_eq(calls, 11)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected the intentionally failing test to fail the run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_2_observes_teardown PASSED"),
+            "expected teardown to run before the following test observed shared state.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_yield_fixture_teardown_failure_fails_run() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_yield_fixture_teardown_failure.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+@fixture
+def resource() -> int:
+    yield 42
+    assert_eq(1, 2)
+
+def test_body_passes(resource: int) -> None:
+    assert_eq(resource, 42)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected teardown failure to fail the run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_body_passes FAILED") || stderr.contains("test_body_passes"),
+            "expected passing body with failing teardown to be reported as failed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_yield_fixture_teardown_captures_setup_locals() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_yield_fixture_capture.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+static observed: int = 0
+
+@fixture
+def resource() -> int:
+    value: int = 41
+    yield value + 1
+    observed += value
+
+def test_body(resource: int) -> None:
+    assert_eq(resource, 42)
+
+def test_after_teardown() -> None:
+    assert_eq(observed, 41)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected yield teardown to capture setup locals.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_module_yield_fixture_teardown_runs_at_module_boundary() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_module_yield_fixture.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+static calls: int = 0
+
+@fixture(scope="module")
+def shared() -> int:
+    yield 10
+    assert_eq(calls, 2)
+
+def test_first(shared: int) -> None:
+    calls += 1
+    assert_eq(shared, 10)
+
+def test_second(shared: int) -> None:
+    calls += 1
+    assert_eq(shared, 10)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected module yield teardown after all tests in the file.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_session_fixture_reused_across_files_with_single_worker() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "session_fixture_reuse"
+version = "0.1.0"
+"#,
+        );
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+from rust::std::path import Path
+from std.testing import fixture
+
+@fixture(scope="session")
+def session_value() -> int:
+    marker = Path.new("session-marker.txt")
+    if marker.exists():
+        return 2
+    write_file("session-marker.txt", "created")
+    return 1
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_a.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_a(session_value: int) -> None:
+    assert_eq(session_value, 1)
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_b.incn"),
+            r#"
+from std.testing import assert_eq
+
+def test_b(session_value: int) -> None:
+    assert_eq(session_value, 1)
+"#,
+        )?;
+
+        let output = run_incan_test_with_args(&dir, &["--jobs", "1"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected session fixture to be reused across files in one worker batch.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_yield_fixture_teardown_runs_in_reverse_dependency_order() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_yield_teardown_order.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+static order: int = 0
+
+@fixture
+def outer() -> int:
+    yield 1
+    assert_eq(order, 1)
+    order += 1
+
+@fixture
+def inner(outer: int) -> int:
+    yield outer + 1
+    assert_eq(order, 0)
+    order += 1
+
+def test_body(inner: int) -> None:
+    assert_eq(inner, 2)
+
+def test_after() -> None:
+    assert_eq(order, 2)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected dependent fixtures to tear down in reverse dependency order.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_module_missing_fixture_is_collection_error() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_missing_fixture"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+module tests:
+    def test_missing_fixture(missing: int) -> None:
+        pass
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected missing inline fixture to fail collection.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stderr.contains("missing fixture `missing`"),
+            "expected collection-time missing fixture diagnostic.\nstderr:\n{}",
+            stderr,
+        );
+        assert!(
+            !stdout.contains("could not compile") && !stderr.contains("could not compile"),
+            "missing fixtures should not fall through to generated Rust compile errors.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_conftest_does_not_apply_to_inline_src_tests() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_conftest_boundary"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            tests_dir.join("conftest.incn"),
+            r#"
+from std.testing import fixture
+
+@fixture
+def shared() -> int:
+    return 42
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+module tests:
+    from std.testing import assert_eq
+
+    def test_src_inline(shared: int) -> None:
+        assert_eq(shared, 42)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected tests/conftest fixture not to apply to src inline tests.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(stderr.contains("missing fixture `shared`"));
         Ok(())
     }
 
