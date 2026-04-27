@@ -1062,6 +1062,11 @@ mod tests {
         must_ok(parser::parse(&tokens))
     }
 
+    fn read_stdlib_program(path: &str) -> Program {
+        let source = must_ok(std::fs::read_to_string(path));
+        parse_program(&source)
+    }
+
     /// Parse and scan a source snippet to determine whether serde runtime support is required.
     fn detects_serde(source: &str) -> bool {
         let ast = parse_program(source);
@@ -1466,6 +1471,58 @@ model Account:
         assert!(
             !db_code.contains("self.type;"),
             "should not emit Rust keyword field access"
+        );
+    }
+
+    #[test]
+    fn test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures() {
+        let main_module = parse_program(
+            r#"
+from std.testing import timeout
+from std.async.time import timeout as async_timeout
+
+def main() -> None:
+  return
+"#,
+        );
+        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn");
+        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn");
+        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn");
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn");
+
+        let testing_path = vec!["__incan_std".to_string(), "testing".to_string()];
+        let async_task_path = vec!["__incan_std".to_string(), "async".to_string(), "task".to_string()];
+        let async_time_path = vec!["__incan_std".to_string(), "async".to_string(), "time".to_string()];
+        let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("__incan_std_testing", &testing_module, testing_path.clone());
+        codegen.add_module_with_path_segments("__incan_std_async_task", &async_task_module, async_task_path.clone());
+        codegen.add_module_with_path_segments("__incan_std_async_time", &async_time_module, async_time_path.clone());
+        codegen.add_module_with_path_segments(
+            "__incan_std_traits_error",
+            &traits_error_module,
+            traits_error_path.clone(),
+        );
+
+        let (_main_code, rust_modules) = must_ok(codegen.try_generate_multi_file_nested(
+            &main_module,
+            &[
+                testing_path.clone(),
+                async_task_path,
+                async_time_path,
+                traits_error_path,
+            ],
+        ));
+        let testing_code = must_some(rust_modules.get(&testing_path), "missing generated std.testing module");
+
+        assert!(
+            testing_code.contains("pub fn timeout(duration: String)"),
+            "std.testing.timeout should remain a non-generic marker wrapper; got:\n{testing_code}"
+        );
+        assert!(
+            !testing_code.contains("RuntimeFuture"),
+            "std.testing wrapper should not inherit std.async.time.timeout bounds; got:\n{testing_code}"
         );
     }
 

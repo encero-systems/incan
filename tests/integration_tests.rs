@@ -3782,6 +3782,53 @@ def test_two() -> None:
     }
 
     #[test]
+    fn e2e_cross_file_batch_falls_back_when_top_level_names_collide() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_a.incn",
+            r#"
+from std.testing import assert_eq
+
+model Order:
+    id: int
+
+def test_a() -> None:
+    order = Order(id=1)
+    assert_eq(order.id, 1)
+"#,
+        );
+        std::fs::write(
+            dir.join("test_b.incn"),
+            r#"
+from std.testing import assert_eq
+
+model Order:
+    id: int
+
+def test_b() -> None:
+    order = Order(id=2)
+    assert_eq(order.id, 2)
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected same-named top-level declarations in different files to run in isolated harnesses.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_a.incn::test_a") && stdout.contains("test_b.incn::test_b"),
+            "expected both tests in reporter output.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(

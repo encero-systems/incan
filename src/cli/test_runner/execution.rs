@@ -189,6 +189,108 @@ fn dedupe_import_declarations(ast: &mut Program) {
     ast.declarations = declarations;
 }
 
+#[derive(Debug, Default)]
+struct TopLevelNames {
+    types: HashSet<String>,
+    values: HashSet<String>,
+}
+
+/// Collect top-level Rust item names that would collide if multiple Incan files were concatenated.
+fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
+    /// Add the Rust type/value namespace names contributed by one declaration.
+    fn collect_from_decl(decl: &Declaration, names: &mut TopLevelNames) {
+        match decl {
+            Declaration::Const(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Static(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Model(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Class(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Trait(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::TypeAlias(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::Newtype(decl) => {
+                names.types.insert(decl.name.clone());
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::Enum(decl) => {
+                names.types.insert(decl.name.clone());
+            }
+            Declaration::Function(decl) => {
+                names.values.insert(decl.name.clone());
+            }
+            Declaration::TestModule(decl) => {
+                for nested in &decl.body {
+                    collect_from_decl(&nested.node, names);
+                }
+            }
+            Declaration::Import(_) | Declaration::Docstring(_) => {}
+        }
+    }
+
+    let mut names = TopLevelNames::default();
+    for decl in &program.declarations {
+        collect_from_decl(&decl.node, &mut names);
+    }
+    names
+}
+
+/// Return whether concatenating source files into one worker harness would collide at Rust module scope.
+///
+/// Worker batches can share one process only when their source files can coexist in the generated crate. If two files
+/// define the same model, function, or other top-level Rust item, the runner falls back to per-file harnesses.
+fn batch_has_cross_file_top_level_collision(
+    sources_by_file: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> bool {
+    if sources_by_file.len() <= 1 {
+        return false;
+    }
+
+    let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
+    let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
+    for (path, source) in sources_by_file {
+        let Ok(tokens) = lexer::lex(source) else {
+            return false;
+        };
+        let Ok(ast) =
+            parser::parse_with_context(&tokens, Some(path.to_string_lossy().as_ref()), library_imported_vocab)
+        else {
+            return false;
+        };
+        let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
+        for name in names.types {
+            if type_owner
+                .insert(name, path.clone())
+                .is_some_and(|owner| owner != *path)
+            {
+                return true;
+            }
+        }
+        for name in names.values {
+            if value_owner
+                .insert(name, path.clone())
+                .is_some_and(|owner| owner != *path)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Resolve a dotted expression path using local import aliases collected from the runner AST.
 fn resolved_expr_path(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
     match &expr.node {
@@ -1571,6 +1673,7 @@ pub(super) fn run_file_tests_batch(
 
     // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
     let mut source_parts = Vec::new();
+    let mut sources_by_file = Vec::new();
     let mut seen_conftests = BTreeSet::new();
     let mut seen_files = BTreeSet::new();
     for test in tests {
@@ -1595,7 +1698,10 @@ pub(super) fn run_file_tests_batch(
             }
         }
         match fs::read_to_string(&test.file_path) {
-            Ok(source) => source_parts.push(source),
+            Ok(source) => {
+                sources_by_file.push((test.file_path.clone(), source.clone()));
+                source_parts.push(source);
+            }
             Err(e) => {
                 return tests
                     .iter()
@@ -1630,6 +1736,29 @@ pub(super) fn run_file_tests_batch(
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
+
+    if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
+        let mut split_results = Vec::new();
+        for file_path in seen_files {
+            let file_tests = tests
+                .iter()
+                .filter(|test| test.file_path == file_path)
+                .cloned()
+                .collect::<Vec<_>>();
+            split_results.extend(run_file_tests_batch(
+                &file_tests,
+                conftest_files_by_file,
+                prep_cache,
+                locked,
+                frozen,
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+                options,
+            ));
+        }
+        return split_results;
+    }
 
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
@@ -2158,6 +2287,38 @@ mod tests {
             result.contains("test_sub(-1, 1, 0);"),
             "should call with negative int args"
         );
+    }
+
+    #[test]
+    fn cross_file_batch_collision_detects_duplicate_top_level_model_names() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model Order:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        assert!(batch_has_cross_file_top_level_collision(&sources, None));
+    }
+
+    #[test]
+    fn cross_file_batch_collision_allows_distinct_top_level_names() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model OrderA:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model OrderB:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        assert!(!batch_has_cross_file_top_level_collision(&sources, None));
     }
 
     #[test]

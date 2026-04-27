@@ -644,6 +644,7 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { panic!(#default_message); })
     }
 
+    /// Emit canonical `std.testing.assert_eq` / `assert_ne` calls with expression operands isolated.
     fn emit_assert_comparison(&self, name: &str, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let left = Self::canonical_assert_arg(name, args, 0)?;
         let right = Self::canonical_assert_arg(name, args, 1)?;
@@ -653,14 +654,14 @@ impl<'a> IrEmitter<'a> {
         if name == "assert_eq" {
             let failure = self.emit_assert_comparison_failure("left != right", message)?;
             Ok(quote! {
-                if #left_tokens != #right_tokens {
+                if (#left_tokens) != (#right_tokens) {
                     #failure
                 }
             })
         } else {
             let failure = self.emit_assert_comparison_failure("left == right", message)?;
             Ok(quote! {
-                if #left_tokens == #right_tokens {
+                if (#left_tokens) == (#right_tokens) {
                     #failure
                 }
             })
@@ -1066,7 +1067,10 @@ mod tests {
                 Some(&path),
             )
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq should emit: {err:?}")))?;
-        assert_eq!(render(tokens), "ifleft!=right{panic!(\"AssertionError:left!=right\");}");
+        assert_eq!(
+            render(tokens),
+            "if(left)!=(right){panic!(\"AssertionError:left!=right\");}"
+        );
         Ok(())
     }
 
@@ -1096,7 +1100,49 @@ mod tests {
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq with message should emit: {err:?}")))?;
         assert_eq!(
             render(tokens),
-            "ifleft!=right{{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
+            "if(left)!=(right){{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_assert_eq_parenthesizes_comparison_operands() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_eq");
+        let comparison = TypedExpr::new(
+            IrExprKind::BinOp {
+                op: BinOp::Gt,
+                left: Box::new(local_arg("encoded", IrType::Int)),
+                right: Box::new(TypedExpr::new(IrExprKind::Int(0), IrType::Int)),
+            },
+            IrType::Bool,
+        );
+        let path = canonical_testing_path("assert_eq");
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[
+                    IrCallArg {
+                        name: None,
+                        expr: comparison,
+                    },
+                    IrCallArg {
+                        name: None,
+                        expr: TypedExpr::new(IrExprKind::Bool(true), IrType::Bool),
+                    },
+                ],
+                Some(&path),
+            )
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "canonical assert_eq with comparison operand should emit: {err:?}"
+                ))
+            })?;
+        assert_eq!(
+            render(tokens),
+            "if(encoded>0)!=(true){panic!(\"AssertionError:left!=right\");}"
         );
         Ok(())
     }
