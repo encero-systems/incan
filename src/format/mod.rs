@@ -360,6 +360,57 @@ def MixedName() -> int:
     }
 
     #[test]
+    fn test_format_source_wraps_long_function_signature() -> Result<(), FormatError> {
+        let source = r#"def append_node(store_id: int, kind: PrismNodeKind, input_ids: list[int], named_table: str, predicate: bool, limit_count: int) -> int:
+  return 1
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"def append_node(
+    store_id: int,
+    kind: PrismNodeKind,
+    input_ids: list[int],
+    named_table: str,
+    predicate: bool,
+    limit_count: int,
+) -> int:
+    return 1
+"#;
+        assert_eq!(formatted, expected);
+        assert!(
+            formatted.lines().all(|line| line.len() <= 120),
+            "expected wrapped signature to stay within 120 columns; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_wraps_long_method_signature() -> Result<(), FormatError> {
+        let source = r#"class Store:
+  def append_node(self, store_id: int, kind: PrismNodeKind, input_ids: list[int], named_table: str, predicate: bool, limit_count: int) -> int:
+    return 1
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"class Store:
+    def append_node(
+        self,
+        store_id: int,
+        kind: PrismNodeKind,
+        input_ids: list[int],
+        named_table: str,
+        predicate: bool,
+        limit_count: int,
+    ) -> int:
+        return 1
+"#;
+        assert_eq!(formatted, expected);
+        assert!(
+            formatted.lines().all(|line| line.len() <= 120),
+            "expected wrapped method signature to stay within 120 columns; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_invalid_syntax() {
         let source = "def foo(";
         let result = format_source(source);
