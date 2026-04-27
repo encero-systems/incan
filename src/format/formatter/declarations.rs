@@ -627,23 +627,29 @@ impl Formatter {
         }
     }
 
+    /// Format a function declaration, wrapping its parameter list when the header exceeds the line-length target.
     fn format_function(&mut self, func: &FunctionDecl) {
         for dec in &func.decorators {
             self.format_decorator(&dec.node);
         }
 
-        self.write_visibility(func.visibility);
-        if func.is_async() {
-            self.writer.write("async ");
-        }
-        self.writer.write("def ");
-        self.writer.write(&func.name);
-        self.format_type_params(&func.type_params);
+        let checkpoint = self.writer.checkpoint();
+        self.write_function_prefix(func.visibility, func.is_async(), &func.name, &func.type_params);
         self.writer.write("(");
         self.format_params(&func.params);
         self.writer.write(") -> ");
         self.format_type(&func.return_type.node);
-        self.writer.writeln(":");
+        self.writer.write(":");
+        if self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_function_prefix(func.visibility, func.is_async(), &func.name, &func.type_params);
+            self.writer.write("(");
+            self.format_params_multiline(None, &func.params);
+            self.writer.write(") -> ");
+            self.format_type(&func.return_type.node);
+            self.writer.write(":");
+        }
+        self.writer.newline();
 
         self.writer.indent();
 
@@ -667,43 +673,45 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a method declaration, wrapping receiver and parameter lines when the header exceeds the target length.
     fn format_method(&mut self, method: &MethodDecl) {
         for dec in &method.decorators {
             self.format_decorator(&dec.node);
         }
 
-        if method.is_async() {
-            self.writer.write("async ");
-        }
-        self.writer.write("def ");
-        self.writer.write(&method.name);
-        if !method.type_params.is_empty() {
-            self.format_type_params(&method.type_params);
-        }
+        let checkpoint = self.writer.checkpoint();
+        self.write_method_prefix(method);
         self.writer.write("(");
-
-        let has_receiver = method.receiver.is_some();
-        if let Some(receiver) = &method.receiver {
-            match receiver {
-                Receiver::Immutable => self.writer.write("self"),
-                Receiver::Mutable => self.writer.write("mut self"),
-            }
-        }
-
-        if has_receiver && !method.params.is_empty() {
-            self.writer.write(", ");
-        }
-        self.format_params(&method.params);
-
+        self.format_receiver_and_params(method.receiver.as_ref(), &method.params);
         self.writer.write(") -> ");
         self.format_type(&method.return_type.node);
 
         if method.body.is_none() {
-            self.writer.writeln(": ...");
+            self.writer.write(": ...");
+            if self.writer.line_length_exceeded() {
+                self.writer.restore(checkpoint);
+                self.write_method_prefix(method);
+                self.writer.write("(");
+                self.format_params_multiline(method.receiver.as_ref(), &method.params);
+                self.writer.write(") -> ");
+                self.format_type(&method.return_type.node);
+                self.writer.write(": ...");
+            }
+            self.writer.newline();
             return;
         }
 
-        self.writer.writeln(":");
+        self.writer.write(":");
+        if self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_method_prefix(method);
+            self.writer.write("(");
+            self.format_params_multiline(method.receiver.as_ref(), &method.params);
+            self.writer.write(") -> ");
+            self.format_type(&method.return_type.node);
+            self.writer.write(":");
+        }
+        self.writer.newline();
         self.writer.indent();
 
         if let Some(body) = &method.body {
@@ -721,6 +729,70 @@ impl Formatter {
             }
         }
 
+        self.writer.dedent();
+    }
+
+    /// Write the reusable prefix before a function's opening parameter parenthesis.
+    fn write_function_prefix(&mut self, visibility: Visibility, is_async: bool, name: &str, type_params: &[TypeParam]) {
+        self.write_visibility(visibility);
+        if is_async {
+            self.writer.write("async ");
+        }
+        self.writer.write("def ");
+        self.writer.write(name);
+        self.format_type_params(type_params);
+    }
+
+    /// Write the reusable prefix before a method's opening parameter parenthesis.
+    fn write_method_prefix(&mut self, method: &MethodDecl) {
+        if method.is_async() {
+            self.writer.write("async ");
+        }
+        self.writer.write("def ");
+        self.writer.write(&method.name);
+        if !method.type_params.is_empty() {
+            self.format_type_params(&method.type_params);
+        }
+    }
+
+    /// Format an explicit method receiver.
+    fn format_receiver(&mut self, receiver: &Receiver) {
+        match receiver {
+            Receiver::Immutable => self.writer.write("self"),
+            Receiver::Mutable => self.writer.write("mut self"),
+        }
+    }
+
+    /// Format an inline method receiver followed by ordinary parameters.
+    fn format_receiver_and_params(&mut self, receiver: Option<&Receiver>, params: &[Spanned<Param>]) {
+        if let Some(receiver) = receiver {
+            self.format_receiver(receiver);
+            if !params.is_empty() {
+                self.writer.write(", ");
+            }
+        }
+        self.format_params(params);
+    }
+
+    /// Format a multiline receiver/parameter list inside an already-opened signature.
+    fn format_params_multiline(&mut self, receiver: Option<&Receiver>, params: &[Spanned<Param>]) {
+        let trailing_commas = self.writer.config().trailing_commas;
+        self.writer.newline();
+        self.writer.indent();
+        if let Some(receiver) = receiver {
+            self.format_receiver(receiver);
+            if trailing_commas || !params.is_empty() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        for (i, param) in params.iter().enumerate() {
+            self.format_param(&param.node);
+            if trailing_commas || i + 1 < params.len() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
         self.writer.dedent();
     }
 
