@@ -4666,6 +4666,7 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Codegen</strong>: RFC 032 value enums now lower their raw-value metadata into IR and generate <code>value()</code>, <code>from_value(...)</code>, display, string parsing, and serde implementations that use the canonical raw representation while keeping <code>message()</code> variant-name based (#317, RFC 032).</li>
 <li><strong>Compiler/Runtime</strong>: Generated Rust now routes the in-scope panic-backed collection and JSON extraction paths, plus proc-macro decorator misuse stubs, through named stdlib helpers instead of open-coded fallback or <code>panic!</code> shims. The narrow checked-newtype construction panic remains tracked separately (#351).</li>
 <li><strong>Compiler/Codegen</strong>: <code>@rust.allow(...)</code> now emits targeted Rust <code>#[allow(...)]</code> metadata for specific generated Rust items when an Incan declaration intentionally accepts a narrow rustc or Clippy lint. The decorator supports functions, methods, models, classes, enums, and newtypes, rejects module-level directives, and blocks broad lint groups such as <code>warnings</code>, <code>unused</code>, and the common Clippy group lints (#337, RFC 057).</li>
+<li><strong>Compiler/Codegen</strong>: Normal generated Rust no longer emits compiler-generated <code>dead_code</code> or <code>unused_imports</code> allowances. The backend now prunes unused private declarations and imports, keeps Rust extension-trait imports when method lookup needs them, keeps public reexports warning-clean without suppression, and uses narrow <code>#[expect(dead_code)]</code> markers only where retained private fields are required for Incan semantics but Rust cannot observe a read (#214).</li>
 </ul>
 <h3 id="tooling-and-formatter">Tooling and formatter<a class="headerlink" href="#tooling-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4697,7 +4698,7 @@ the raw representation for value enums.</p>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
 <li><strong>Dependency policy</strong>: The rust-analyzer proc-macro API dependency is patched locally to request <code>postcard</code> without default features, removing the unmaintained <code>atomic-polyfill</code> crate from the workspace dependency graph and letting <code>cargo deny check</code> run without the <code>RUSTSEC-2023-0089</code> advisory ignore (#260).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.18</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.19</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
