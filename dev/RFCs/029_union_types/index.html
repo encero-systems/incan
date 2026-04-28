@@ -4396,6 +4396,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
     <span class="md-ellipsis">
       Guide-level explanation (how users think about it)
@@ -4636,6 +4654,126 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-syntax-and-canonical-type-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Syntax and canonical type representation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-typechecker-semantics-and-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Typechecker semantics and narrowing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-lowering-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Lowering and emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-tests-docs-and-release-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Tests, docs, and release readiness
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / lifecycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#syntax-ast" class="md-nav__link">
+    <span class="md-ellipsis">
+      Syntax / AST
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       Design Decisions
@@ -4664,7 +4802,7 @@
 
 <h1 id="rfc-029-union-types-and-type-narrowing">RFC 029: union types and type narrowing<a class="headerlink" href="#rfc-029-union-types-and-type-narrowing" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 028 (trait-based operator overloading)</li>
@@ -4674,8 +4812,7 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce first-class union types to Incan. <code>Union[A, B, ...]</code> is the canonical form, and <code>A | B</code> is equivalent syntactic sugar.</p>
-<p>Union types let a value be one of several alternative types without requiring the user to declare a named enum at each use site. Narrowing is checked at compile time through <code>isinstance(...)</code> and exhaustive <code>match</code>, using Python-style type patterns such as <code>case int(n)</code> and <code>case str(s)</code>.</p>
+<p>Introduce first-class union types to Incan: <code>Union[A, B, ...]</code> is the canonical form, <code>A | B</code> is equivalent syntactic sugar, and union values are narrowed at compile time through <code>isinstance(...)</code>, <code>is None</code> / <code>is not None</code>, and exhaustive <code>match</code> with Python-style type patterns such as <code>case int(n)</code> and <code>case str(s)</code>.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Programs often need a value that may be one of several unrelated types. Today, expressing that shape directly in Incan is awkward. Users must introduce a named enum purely for transport, push the type distinction out to API boundaries, or contort APIs around overloads that do not really model the underlying data.</p>
 <p>Real programs need richer unions:</p>
@@ -4712,6 +4849,22 @@
 <li><strong>closed</strong>: the set of possible member types is fixed by the annotation itself</li>
 </ul>
 <p>This RFC adds that anonymous union facility. It does not change existing named enums such as <code>Option[T]</code>, which continue to use their own declared variants like <code>Some(...)</code> and <code>None</code>.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add a first-class anonymous union type that can represent a closed set of possible member types without user-declared wrapper enums.</li>
+<li>Support both <code>Union[A, B, ...]</code> and <code>A | B</code> in annotation positions, with normalization that makes order, duplicates, and nested unions irrelevant.</li>
+<li>Preserve existing <code>Option[T]</code> semantics by canonicalizing <code>T | None</code> and <code>A | B | None</code> through <code>Option[...]</code>.</li>
+<li>Typecheck assignment, return, collection, narrowing, and match behavior against the normalized union member set.</li>
+<li>Lower ordinary unions to a stable closed backend representation while keeping <code>Option[...]</code>-canonicalized unions on the existing <code>Option</code> path.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Do not add an open-ended runtime <code>Variant</code> or dynamic reflection type.</li>
+<li>Do not make union values implicitly expose methods, operators, or trait capabilities from their members before narrowing.</li>
+<li>Do not synthesize fresh union types to satisfy unconstrained generic inference.</li>
+<li>Do not specify serialization, display, or ABI details for backend union representations.</li>
+<li>Do not change the source-level behavior of existing named enums such as <code>Option[T]</code>, <code>Result[T, E]</code>, or user-declared enums.</li>
+</ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="declaring-union-types">Declaring union types<a class="headerlink" href="#declaring-union-types" title="Permanent link">&para;</a></h3>
 <p>The canonical form is <code>Union[A, B, ...]</code> for ordinary unions and <code>Option[...]</code> for unions that include <code>None</code>. The <code>|</code> operator is syntactic sugar:</p>
@@ -4780,7 +4933,7 @@
 type_atom  ::= IDENT type_args? | &quot;None&quot;
 type_args  ::= &quot;[&quot; type_expr (&quot;,&quot; type_expr)* &quot;,&quot;? &quot;]&quot;
 </code></pre></div>
-<p><code>Union[A, B]</code> is the canonical form for unions that do not include <code>None</code>. <code>A | B</code> is syntactic sugar that the parser desugars to <code>Union[A, B]</code> during parsing. When <code>None</code> appears in the union, normalization rewrites the type through <code>Option[...]</code>.</p>
+<p><code>Union[A, B]</code> is the canonical form for unions that do not include <code>None</code>. <code>A | B</code> is syntactic sugar that normalizes to <code>Union[A, B]</code>. When <code>None</code> appears in the union, normalization rewrites the type through <code>Option[...]</code>.</p>
 <p>The <code>|</code> operator binds looser than <code>[]</code>, so <code>List[int | str]</code> parses as <code>List[Union[int, str]]</code>.</p>
 <p>Trait constraints are orthogonal to unions. <code>T with Serializable</code> constrains a type parameter; <code>A | B</code> describes a value-level set of alternatives. A union member may itself be a trait-adopting type, but a union does not implicitly mean "some type satisfying trait X". Operator or method use that depends on a particular member's traits must happen after narrowing.</p>
 <h3 id="match-patterns-for-unions">Match patterns for unions<a class="headerlink" href="#match-patterns-for-unions" title="Permanent link">&para;</a></h3>
@@ -4813,7 +4966,7 @@ none_pattern       ::= &quot;None&quot;
 <li><strong>Union-to-union assignability</strong>: <code>A | B</code> is assignable to <code>A | B | C</code>. More generally, a source union is assignable to a target union when every source member is assignable to some target member.</li>
 <li><strong>Equivalence</strong>: Unions are unordered sets. <code>int | str == str | int</code>. Duplicates and nested unions are normalized.</li>
 <li><strong><code>None</code> canonicalization</strong>: A union containing <code>None</code> canonicalizes through <code>Option[...]</code>. <code>T | None == Option[T]</code>, and <code>A | B | None == Option[Union[A, B]]</code>.</li>
-<li><strong>Narrowing</strong>: After <code>isinstance(x, T)</code>, <code>x</code> is <code>T</code> in the true branch and <code>Union minus T</code> in the else branch. After   <code>x is None</code>, <code>x</code> is <code>None</code> in the true branch and <code>Union minus None</code> in the else branch. After <code>x is not None</code>, <code>x</code> is <code>Union minus None</code> in the true branch and <code>None</code> in the else branch. Narrowing does <strong>not</strong> persist after the conditional block.</li>
+<li><strong>Narrowing</strong>: After <code>isinstance(x, T)</code>, <code>x</code> is <code>T</code> in the true branch and <code>Union minus T</code> in the else branch. After <code>x is None</code>, <code>x</code> is <code>None</code> in the true branch and <code>Union minus None</code> in the else branch. After <code>x is not None</code>, <code>x</code> is <code>Union minus None</code> in the true branch and <code>None</code> in the else branch. Narrowing does <strong>not</strong> persist after the conditional block.</li>
 <li><strong>Exhaustiveness</strong>: <code>match</code> on a union type must cover all constituent types or include a wildcard arm.</li>
 <li><strong>No implicit generic-union synthesis</strong>: The compiler does not invent a union type solely to satisfy an otherwise unconstrained generic parameter. When generic inference would require synthesizing a new union, the user must write the annotation explicitly.</li>
 <li><strong><code>Option[T]</code> integration</strong>: <code>Option[T]</code> remains the named enum type from the standard library, and this RFC treats <code>T | None</code> as equivalent to that existing maybe-value abstraction.</li>
@@ -4915,6 +5068,80 @@ none_pattern       ::= &quot;None&quot;
 <li><strong>Type system</strong>: union members must be canonicalized, narrowing rules enforced, and exhaustiveness checking performed where this RFC requires it.</li>
 <li><strong>Execution handoff</strong>: implementations must use a stable closed representation for unions without changing the language-level narrowing semantics.</li>
 <li><strong>Docs / tooling</strong>: the relationship between unions, <code>Option</code>, <code>match</code>, and narrowing must be explained clearly enough that users can predict when narrowing is required.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-syntax-and-canonical-type-representation">Phase 1: Syntax and canonical type representation<a class="headerlink" href="#phase-1-syntax-and-canonical-type-representation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extend type-expression parsing so <code>A | B</code> is accepted only in type positions and binds looser than generic type arguments.</li>
+<li>Normalize <code>Union[...]</code>, nested unions, duplicate members, member ordering, and <code>None</code>-containing unions into the canonical semantic type shape.</li>
+<li>Preserve <code>Option[...]</code> as the canonical shape for <code>T | None</code> and <code>A | B | None</code>.</li>
+<li>Update formatter/display behavior and parser tests so union syntax round-trips predictably.</li>
+</ul>
+<h3 id="phase-2-typechecker-semantics-and-narrowing">Phase 2: Typechecker semantics and narrowing<a class="headerlink" href="#phase-2-typechecker-semantics-and-narrowing" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add union assignability and union-to-union compatibility checks.</li>
+<li>Validate returns, variable bindings, and collection literals against explicit union annotations without inventing implicit union types for generic inference.</li>
+<li>Add <code>isinstance(x, T)</code> narrowing for union-typed locals and parameters.</li>
+<li>Extend <code>is None</code> / <code>is not None</code> narrowing over <code>Option[...]</code>-canonicalized unions.</li>
+<li>Validate union type patterns in <code>match</code>, bind narrowed member values, and require exhaustive coverage or a wildcard arm.</li>
+</ul>
+<h3 id="phase-3-lowering-and-emission">Phase 3: Lowering and emission<a class="headerlink" href="#phase-3-lowering-and-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Lower non-<code>None</code> unions to deterministic generated closed sum representations.</li>
+<li>Lower concrete member assignments and returns into the appropriate generated union constructors.</li>
+<li>Lower <code>isinstance</code> checks and union type patterns to closed sum matches without runtime type reflection.</li>
+<li>Keep <code>Option[...]</code>-canonicalized unions on the existing <code>Option</code> lowering and emission path.</li>
+</ul>
+<h3 id="phase-4-tests-docs-and-release-readiness">Phase 4: Tests, docs, and release readiness<a class="headerlink" href="#phase-4-tests-docs-and-release-readiness" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add parser, typechecker, lowering/emission, snapshot, and end-to-end coverage for ordinary unions and <code>None</code>-canonicalized unions.</li>
+<li>Update authored language docs for union types, narrowing, and match usage.</li>
+<li>Add a release note entry for the active release line.</li>
+<li>Bump the active development version by one <code>-dev.N</code> increment.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="spec-lifecycle">Spec / lifecycle<a class="headerlink" href="#spec-lifecycle" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Review RFC 029 for lifecycle readiness and move it to active implementation.</li>
+<li>[x] Keep this progress checklist synchronized with accepted implementation slices.</li>
+</ul>
+<h3 id="syntax-ast">Syntax / AST<a class="headerlink" href="#syntax-ast" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser accepts <code>Union[A, B]</code> and <code>A | B</code> in annotation positions.</li>
+<li>[x] Parser rejects or preserves expression-position <code>|</code> according to the existing expression grammar without ambiguity.</li>
+<li>[x] Type display / formatting round-trips normalized union annotations.</li>
+<li>[x] Parser tests cover precedence, nested unions, duplicates, and <code>None</code>.</li>
+</ul>
+<h3 id="typechecker">Typechecker<a class="headerlink" href="#typechecker" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Semantic type representation canonicalizes union members deterministically.</li>
+<li>[x] Assignability admits member-to-union and source-union-to-target-union cases.</li>
+<li>[x] Assignment, return, and collection checks require explicit union annotations and do not synthesize implicit unions for generic inference.</li>
+<li>[x] <code>isinstance(x, T)</code> narrows true and else branches for union-typed values, including chained and wider union-minus narrowing.</li>
+<li>[x] <code>x is None</code> and <code>x is not None</code> narrow <code>Option[...]</code>-canonicalized unions.</li>
+<li>[x] <code>match</code> type patterns bind narrowed member values.</li>
+<li>[x] <code>match</code> on unions requires exhaustive member coverage or a wildcard.</li>
+</ul>
+<h3 id="lowering-emission">Lowering / emission<a class="headerlink" href="#lowering-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] IR represents non-<code>None</code> union shapes without losing canonical member identity.</li>
+<li>[x] Emission produces deterministic closed sum definitions for union shapes.</li>
+<li>[x] Member values assigned or returned into union-typed positions are wrapped in the generated representation.</li>
+<li>[x] <code>isinstance</code> and union type patterns lower to closed sum matches.</li>
+<li>[x] <code>Option[...]</code>-canonicalized unions continue to use the existing <code>Option</code> path.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Parser unit tests cover union type syntax.</li>
+<li>[x] Typechecker unit tests cover valid assignments, invalid assignments, explicit generic-boundary behavior, narrowing, and exhaustiveness diagnostics.</li>
+<li>[x] Codegen snapshot tests cover union construction, match, <code>isinstance</code>, and <code>Option</code> canonicalization.</li>
+<li>[x] At least one integration test compiles and runs a union-typed program end to end.</li>
+</ul>
+<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update authored language docs for union types and narrowing.</li>
+<li>[x] Add the active release-note entry for RFC 029 / #163.</li>
+<li>[x] Bump the active dev version from <code>0.3.0-dev.19</code> to <code>0.3.0-dev.20</code>.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
