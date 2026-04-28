@@ -115,8 +115,8 @@ pub const PUNCTUATION: &[PunctuationInfo] = &[
         "|",
         &[],
         PunctuationCategory::Marker,
-        RFC::_000,
-        Since(0, 1),
+        RFC::_040,
+        Since(0, 3),
     ),
     // Access / path
     info(

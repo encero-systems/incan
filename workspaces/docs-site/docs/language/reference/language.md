@@ -364,7 +364,7 @@ def main() -> None:
 | Colon | `:` |  | Separator | RFC 000 | 0.1 | Stable |
 | Question | `?` |  | Marker | RFC 000 | 0.1 | Stable |
 | At | `@` |  | Marker | RFC 000 | 0.1 | Stable |
-| Pipe | `|` |  | Marker | RFC 000 | 0.1 | Stable |
+| Pipe | `|` |  | Marker | RFC 040 | 0.3 | Stable |
 | Dot | `.` |  | Access | RFC 000 | 0.1 | Stable |
 | ColonColon | `::` |  | Access | RFC 000 | 0.1 | Stable |
 | Arrow | `->` |  | Arrow | RFC 000 | 0.1 | Stable |

@@ -61,6 +61,9 @@ pub const RFC_022: RfcId = "RFC 022";
 /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
 pub const RFC_023: RfcId = "RFC 023";
 
+/// RFC 040 — scoped DSL surface forms.
+pub const RFC_040: RfcId = "RFC 040";
+
 /// RFC 052 — module static storage.
 pub const RFC_052: RfcId = "RFC 052";
 
@@ -100,6 +103,8 @@ impl RFC {
     pub const _022: RfcId = RFC_022;
     /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
     pub const _023: RfcId = RFC_023;
+    /// RFC 040 — scoped DSL surface forms.
+    pub const _040: RfcId = RFC_040;
     /// RFC 052 — module static storage.
     pub const _052: RfcId = RFC_052;
     /// RFC 057 — targeted Rust lint suppression.
