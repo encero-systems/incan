@@ -353,8 +353,23 @@ impl<'a> IrEmitter<'a> {
             let preserves_stdlib_rust_facade = matches!(qualifier, IrImportQualifier::None)
                 && path.first().is_some_and(|segment| segment == "incan_stdlib");
             let export_item_import = export_module_import || preserves_stdlib_rust_facade;
-            let preserve_rust_trait_or_type_candidate =
-                matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
+            // If rust-inspect metadata is unavailable for an extension trait, codegen cannot map the observed method
+            // call back to its trait import. Preserve only the common Rust pattern `from crate import Trait, function`
+            // when reachable code uses a lowercase function from the same import group and then calls an external
+            // Rust method. This keeps `rand::Rng` for `thread_rng().gen_range(...)` without retaining unrelated dead
+            // type imports such as `Path` in pruned helper-only code.
+            let preserve_metadata_missing_trait_candidate =
+                if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
+                    let analysis = self.generated_use_analysis.borrow();
+                    !analysis.observed_external_rust_method_calls.is_empty()
+                        && items.iter().any(|item| {
+                            let binding = item.alias.as_ref().unwrap_or(&item.name);
+                            item.name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
+                                && analysis.used_imports.contains(binding)
+                        })
+                } else {
+                    false
+                };
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .filter(|item| {
@@ -362,7 +377,8 @@ impl<'a> IrEmitter<'a> {
                     export_item_import
                         || self.should_emit_import_binding(binding)
                         || self.should_emit_extension_trait_import(binding)
-                        || (preserve_rust_trait_or_type_candidate
+                        || (preserve_metadata_missing_trait_candidate
+                            && item.rust_trait_methods.is_empty()
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {

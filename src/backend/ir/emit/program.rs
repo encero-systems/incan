@@ -862,6 +862,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         if !self.receiver_can_use_rust_extension_trait(receiver) {
             return;
         }
+        self.analysis
+            .observed_external_rust_method_calls
+            .insert(method.to_string());
         let Some(bindings) = self.rust_extension_trait_imports_by_method.get(method).cloned() else {
             return;
         };

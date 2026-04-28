@@ -51,6 +51,8 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) used_imports: HashSet<String>,
     /// Rust trait imports that are used implicitly by extension-method lookup.
     pub(super) used_extension_trait_imports: HashSet<String>,
+    /// Method names observed on reachable external Rust receivers.
+    pub(super) observed_external_rust_method_calls: HashSet<String>,
     /// Struct/class fields that are read by emitted code.
     pub(super) read_fields: HashSet<(String, String)>,
     /// Methods that are called by emitted code.
