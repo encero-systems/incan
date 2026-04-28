@@ -29,7 +29,7 @@ You can orient yourself with these anchors:
     - shared lexer/parser/AST/diagnostics
     - used by compiler, formatter, and LSP to avoid drift
 - `src/frontend/`:
-    - module resolution (`module.rs`, `resolver.rs`)
+    - module resolution (`module.rs`)
     - typechecker (`typechecker/`)
     - symbol table + scope rules (`symbols.rs`)
 - `src/backend/`:

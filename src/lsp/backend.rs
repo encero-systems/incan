@@ -29,7 +29,7 @@ use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
 use crate::frontend::ast::{Declaration, MethodDecl, Program, Span, Type, TypeParam};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::resolve_import_path;
+use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
@@ -310,20 +310,20 @@ impl IncanLanguageServer {
         let mut result: Vec<ParsedModule> = Vec::new();
         let mut entry_diags: Vec<Diagnostic> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
-        let mut stack: Vec<(PathBuf, PathBuf, Span)> = Vec::new(); // (module_path, base_dir_for_that_module, import_span_in_entry)
+        let mut stack = Vec::new();
 
         // Seed stack with direct imports from the entry AST
-        for decl in &ast.declarations {
-            if let Declaration::Import(import) = &decl.node
-                && let Some(dep_path) = resolve_import_path(&entry_base, import)
-            {
-                let base = dep_path.parent().unwrap_or(&entry_base).to_path_buf();
-                stack.push((dep_path, base, decl.span));
+        for resolved in resolve_program_source_imports(ast, &entry_base, None) {
+            if let SourceModuleImportResolution::Local(module_ref) = resolved.resolution {
+                stack.push((module_ref, resolved.span));
             }
         }
 
-        while let Some((path, base_dir, import_span)) = stack.pop() {
-            let canonical = path.canonicalize().unwrap_or(path.clone());
+        while let Some((module_ref, import_span)) = stack.pop() {
+            let canonical = module_ref
+                .file_path
+                .canonicalize()
+                .unwrap_or_else(|_| module_ref.file_path.clone());
             if !seen.insert(canonical.clone()) {
                 continue;
             }
@@ -450,23 +450,16 @@ impl IncanLanguageServer {
             }
 
             // Queue nested dependencies
-            for decl in &dep_ast.declarations {
-                if let Declaration::Import(import) = &decl.node
-                    && let Some(nested_path) = resolve_import_path(&base_dir, import)
-                {
-                    let nested_base = nested_path.parent().unwrap_or(&base_dir).to_path_buf();
-                    stack.push((nested_path, nested_base, Span::default()));
+            let current_base = canonical.parent().unwrap_or(&entry_base);
+            for resolved in resolve_program_source_imports(&dep_ast, current_base, None) {
+                if let SourceModuleImportResolution::Local(nested_ref) = resolved.resolution {
+                    stack.push((nested_ref, Span::default()));
                 }
             }
 
-            let module_name = canonical
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("module")
-                .to_string();
             result.push(ParsedModule {
-                name: module_name.clone(),
-                path_segments: vec![module_name],
+                name: module_ref.module_name,
+                path_segments: module_ref.path_segments,
                 file_path: canonical,
                 source: dep_source,
                 ast: dep_ast,

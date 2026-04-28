@@ -7,7 +7,7 @@
 //! - `symbols`: symbol table and scope management
 //! - `typechecker`: type checking and validation
 //! - `diagnostics`: error reporting and lints
-//! - `resolver`: module resolution for multi-file projects
+//! - `module`: canonical source-module resolution for multi-file projects
 
 // Syntax components are provided by the shared incan_syntax crate.
 pub use incan_syntax::{ast, diagnostics, lexer, parser};
@@ -19,7 +19,6 @@ pub mod library_exports;
 pub mod library_manifest_index;
 pub mod module;
 pub(crate) mod resolved_type_subst;
-pub mod resolver;
 pub mod surface_semantics;
 pub mod symbols;
 pub mod testing_markers;

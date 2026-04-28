@@ -30,8 +30,7 @@ src/
 │   │   ├── const_eval.rs             #   Compile-time constant evaluation
 │   │   └── stdlib_loader.rs          #   Stdlib type loading
 │   ├── symbols.rs                    # Symbol table
-│   ├── resolver.rs                   # Name resolution
-│   ├── module.rs                     # Module representation
+│   ├── module.rs                     # Canonical source-module resolution and identity
 │   ├── decorator_resolution.rs       # Decorator processing
 │   ├── library_exports.rs            # Public export tracking
 │   └── surface_semantics.rs          # Surface-level semantic rules

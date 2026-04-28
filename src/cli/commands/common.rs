@@ -16,7 +16,9 @@ use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::{canonicalize_source_module_segments, resolve_source_module_from_base};
+use crate::frontend::module::{
+    SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
+};
 use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
@@ -762,123 +764,45 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             return Err(CliError::failure(msg.trim_end()));
         }
 
-        // Find imports and add them to process queue
-        for decl in &ast.declarations {
-            if let crate::frontend::ast::Declaration::Import(import) = &decl.node {
-                let import_path = match &import.kind {
-                    crate::frontend::ast::ImportKind::Module(path) if !path.segments.is_empty() => Some(path),
-                    crate::frontend::ast::ImportKind::From { module, .. } if !module.segments.is_empty() => {
-                        Some(module)
-                    }
-                    _ => None,
-                };
-
-                if let Some(path) = import_path {
-                    if path.segments.is_empty() {
+        let current_base = Path::new(&file_path).parent().unwrap_or(base_dir);
+        for resolved in resolve_program_source_imports(&ast, current_base, Some(&source_root)) {
+            match resolved.resolution {
+                SourceModuleImportResolution::Stdlib { module_path } => {
+                    if stdlib::stdlib_stub_path(&module_path).is_none() {
                         continue;
                     }
-
-                    if path.parent_levels == 0
-                        && !path.is_absolute
-                        && path
-                            .segments
-                            .first()
-                            .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
-                    {
-                        if stdlib::stdlib_stub_path(&path.segments).is_some() {
-                            let stdlib_key = path.segments.join(".");
-                            let source_path =
-                                if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
-                                    cached_path.clone()
-                                } else {
-                                    let resolved = resolve_stdlib_module_source_path(&path.segments)?;
-                                    incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
-                                    resolved
-                                };
-
-                            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                            module_segments.extend(path.segments.iter().skip(1).cloned());
-                            let module_name = module_segments.join("_");
-                            let dep_path_str = source_path.to_string_lossy().to_string();
-                            if !processed.contains(&dep_path_str) {
-                                to_process.push((dep_path_str.clone(), module_name, module_segments));
-                            }
-                            dependency_edges
-                                .entry(file_path.clone())
-                                .or_default()
-                                .insert(dep_path_str);
-                        }
-                        // Unknown `std.*` imports are diagnosed by frontend validation with stdlib hinting;
-                        // do not fail early here by trying to resolve them as source files.
-                        continue;
-                    }
-
-                    let mut target_dir = base_dir.to_path_buf();
-
-                    if path.is_absolute {
-                        let mut project_root = base_dir.to_path_buf();
-                        while !project_root.join("Cargo.toml").exists() && !project_root.join("src").exists() {
-                            if let Some(parent) = project_root.parent() {
-                                project_root = parent.to_path_buf();
-                            } else {
-                                break;
-                            }
-                        }
-                        if project_root.join("src").exists() {
-                            target_dir = project_root.join("src");
-                        } else {
-                            target_dir = project_root;
-                        }
+                    let stdlib_key = module_path.join(".");
+                    let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
+                        cached_path.clone()
                     } else {
-                        for _ in 0..path.parent_levels {
-                            target_dir = target_dir.parent().map(|p| p.to_path_buf()).unwrap_or(target_dir);
-                        }
-                    }
-
-                    let module_segments = match &import.kind {
-                        crate::frontend::ast::ImportKind::From { module, .. } => module.segments.clone(),
-                        crate::frontend::ast::ImportKind::Module(p) => {
-                            if p.segments.len() > 1 {
-                                p.segments[..p.segments.len() - 1].to_vec()
-                            } else {
-                                p.segments.clone()
-                            }
-                        }
-                        _ => continue,
+                        let resolved = resolve_stdlib_module_source_path(&module_path)?;
+                        incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
+                        resolved
                     };
 
-                    if module_segments.is_empty() {
-                        continue;
+                    let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+                    module_segments.extend(module_path.iter().skip(1).cloned());
+                    let module_name = module_segments.join("_");
+                    let dep_path_str = source_path.to_string_lossy().to_string();
+                    if !processed.contains(&dep_path_str) {
+                        to_process.push((dep_path_str.clone(), module_name, module_segments));
                     }
-
-                    // When running entrypoints outside `src/` (for example `examples/*.incn`),
-                    // unqualified imports like `from dataset import ...` should still be able to
-                    // resolve project modules from the configured source root.
-                    let try_source_root = (!path.is_absolute && path.parent_levels == 0 && source_root != target_dir)
-                        .then_some(source_root.as_path());
-
-                    let mut found_resolution: Option<(PathBuf, Vec<String>)> = None;
-                    for base in std::iter::once(target_dir.as_path()).chain(try_source_root) {
-                        if let Some((resolved_path, logical_segments)) =
-                            resolve_source_module_from_base(base, &module_segments)
-                        {
-                            found_resolution = Some((resolved_path, logical_segments));
-                            break;
-                        }
-                    }
-
-                    if let Some((path, logical_segments)) = found_resolution {
-                        let dep_path_str = path.to_string_lossy().to_string();
-                        let module_name = logical_segments.join("_");
-                        if !processed.contains(&dep_path_str) {
-                            to_process.push((dep_path_str, module_name, logical_segments));
-                        }
-                        dependency_edges
-                            .entry(file_path.clone())
-                            .or_default()
-                            .insert(path.to_string_lossy().to_string());
-                    }
+                    dependency_edges
+                        .entry(file_path.clone())
+                        .or_default()
+                        .insert(dep_path_str);
                 }
+                SourceModuleImportResolution::Local(module_ref) => {
+                    let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
+                    if !processed.contains(&dep_path_str) {
+                        to_process.push((dep_path_str.clone(), module_ref.module_name, module_ref.path_segments));
+                    }
+                    dependency_edges
+                        .entry(file_path.clone())
+                        .or_default()
+                        .insert(dep_path_str);
+                }
+                SourceModuleImportResolution::External => {}
             }
         }
 

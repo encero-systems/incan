@@ -1,197 +1,216 @@
-//! Module resolution for multi-file Incan projects
+//! Canonical module resolution for multi-file Incan projects.
 //!
-//! Resolves import paths like `import models::User` to actual file paths
-//! and manages loading/parsing of dependent modules.
+//! This module owns source-module import classification, on-disk path resolution, and logical module identity
+//! derivation. CLI, LSP, and test-runner orchestration may parse sources differently, but they should all ask this
+//! module which imports point at local source modules and what logical module name those files carry.
 
-use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::ast::{Declaration, ImportDecl, ImportKind, Program, Span, Visibility};
-use super::diagnostics::{CompileError, errors};
-use super::lexer;
-use super::parser;
+use super::ast::{Declaration, ImportDecl, ImportKind, ImportPath, Program, Span, Visibility};
 use incan_core::lang::stdlib;
 
-/// Represents a resolved module with its AST and metadata
-#[derive(Debug)]
-pub struct ResolvedModule {
-    pub path: PathBuf,
-    pub source: String,
-    pub ast: Program,
+/// A resolved local source module import.
+///
+/// `file_path` is the concrete source file to read. `path_segments` is the canonical logical module identity derived
+/// from the source root and normalized so directory entrypoints such as `mod.incn` and `__init__.incn` do not become
+/// semantic module names. `module_name` is the underscore-joined key used by existing typechecker/codegen adapters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceModuleRef {
+    pub file_path: PathBuf,
+    pub module_name: String,
+    pub path_segments: Vec<String>,
 }
 
-/// Collects all modules needed for compilation
-pub struct ModuleCollector {
-    /// Base directory for resolving relative imports
-    base_dir: PathBuf,
-    /// Already loaded modules (path -> module)
-    loaded: HashMap<PathBuf, ResolvedModule>,
-    /// Modules currently being loaded (for cycle detection)
-    loading: HashSet<PathBuf>,
-}
-
-impl ModuleCollector {
-    pub fn new(entry_file: &Path) -> Self {
-        let base_dir = entry_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-
+impl SourceModuleRef {
+    /// Build a resolved source-module reference from an on-disk file path and logical path segments.
+    fn new(file_path: PathBuf, path_segments: Vec<String>) -> Self {
+        let module_name = path_segments.join("_");
         Self {
-            base_dir,
-            loaded: HashMap::new(),
-            loading: HashSet::new(),
+            file_path,
+            module_name,
+            path_segments,
         }
     }
+}
 
-    /// Load the entry file and all its dependencies
-    pub fn collect(&mut self, entry_file: &Path) -> Result<Vec<ResolvedModule>, Vec<CompileError>> {
-        let canonical = entry_file.canonicalize().unwrap_or_else(|_| entry_file.to_path_buf());
+/// Classification for an import that may affect source-module graph traversal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceModuleImportResolution {
+    /// Import resolved to a local Incan source file.
+    Local(SourceModuleRef),
+    /// Import points at an Incan stdlib source module. Callers that materialize stdlib source decide how to load it.
+    Stdlib { module_path: Vec<String> },
+    /// Import is not a source-backed Incan module, or no matching local source file exists.
+    External,
+}
 
-        self.load_module(&canonical)?;
+/// One resolved import declaration inside a parsed program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedProgramSourceImport {
+    pub span: Span,
+    pub resolution: SourceModuleImportResolution,
+}
 
-        // Return modules in dependency order (dependencies first)
-        let mut result = Vec::new();
-        let entry_key = canonical.clone();
+/// Resolve every import declaration in `program` through the canonical source-module resolver.
+///
+/// `base_dir` is the directory of `program`'s source file. `source_root` is optional but should be supplied by CLI and
+/// test-runner flows that already resolved the project source root; when it is absent, manifest/layout discovery is
+/// used as a fallback for crate-root imports and source-root fallback behavior.
+pub(crate) fn resolve_program_source_imports(
+    program: &Program,
+    base_dir: &Path,
+    source_root: Option<&Path>,
+) -> Vec<ResolvedProgramSourceImport> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|decl| {
+            let Declaration::Import(import) = &decl.node else {
+                return None;
+            };
+            Some(ResolvedProgramSourceImport {
+                span: decl.span,
+                resolution: resolve_source_module_import(base_dir, source_root, import),
+            })
+        })
+        .collect()
+}
 
-        // First add all non-entry modules
-        for (path, module) in self.loaded.drain() {
-            if path != entry_key {
-                result.push(module);
-            }
-        }
+/// Resolve one import declaration into local source, stdlib source, or external/non-source classification.
+pub(crate) fn resolve_source_module_import(
+    base_dir: &Path,
+    source_root: Option<&Path>,
+    import: &ImportDecl,
+) -> SourceModuleImportResolution {
+    let Some((path, candidates)) = source_import_candidates(import) else {
+        return SourceModuleImportResolution::External;
+    };
 
-        // Entry module is handled separately
-        Ok(result)
+    if path.parent_levels == 0
+        && !path.is_absolute
+        && path
+            .segments
+            .first()
+            .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+    {
+        return SourceModuleImportResolution::Stdlib {
+            module_path: path.segments.clone(),
+        };
     }
 
-    /// Load a single module and its dependencies
-    fn load_module(&mut self, path: &Path) -> Result<(), Vec<CompileError>> {
-        // Already loaded?
-        if self.loaded.contains_key(path) {
-            return Ok(());
-        }
+    let identity_root = effective_source_root(base_dir, source_root);
 
-        // Cycle detection
-        if self.loading.contains(path) {
-            return Err(vec![errors::circular_import(path, Span::default())]);
-        }
-
-        self.loading.insert(path.to_path_buf());
-
-        // Read and parse
-        let source = fs::read_to_string(path).map_err(|e| vec![errors::cannot_read_file(path, &e, Span::default())])?;
-
-        let tokens = lexer::lex(&source)?;
-        let ast = parser::parse_with_module_path(&tokens, path.to_str())?;
-
-        // Find and load dependencies
-        for decl in &ast.declarations {
-            if let Declaration::Import(import) = &decl.node
-                && let Some(dep_path) = self.resolve_import(import)
-            {
-                self.load_module(&dep_path)?;
-            }
-        }
-
-        self.loading.remove(path);
-        self.loaded.insert(
-            path.to_path_buf(),
-            ResolvedModule {
-                path: path.to_path_buf(),
-                source,
-                ast,
-            },
-        );
-
-        Ok(())
+    let primary_base = primary_import_base_dir(base_dir, source_root, path);
+    if let Some(module_ref) = resolve_first_source_candidate(&primary_base, identity_root.as_deref(), &candidates) {
+        return SourceModuleImportResolution::Local(module_ref);
     }
 
-    /// Resolve an import to a file path (relative to this collector's base directory).
-    fn resolve_import(&self, import: &ImportDecl) -> Option<PathBuf> {
-        resolve_import_path(&self.base_dir, import)
+    if !path.is_absolute
+        && path.parent_levels == 0
+        && let Some(root) = identity_root
+        && root != primary_base
+        && let Some(module_ref) = resolve_first_source_candidate(&root, Some(&root), &candidates)
+    {
+        return SourceModuleImportResolution::Local(module_ref);
     }
 
-    /// Get all loaded modules
-    pub fn modules(&self) -> impl Iterator<Item = &ResolvedModule> {
-        self.loaded.values()
-    }
-
-    /// Take ownership of loaded modules
-    pub fn into_modules(self) -> HashMap<PathBuf, ResolvedModule> {
-        self.loaded
-    }
+    SourceModuleImportResolution::External
 }
 
 /// Resolve an `import` / `from ... import ...` into an on-disk Incan module file path.
 ///
-/// This is used by both the CLI and the LSP to typecheck multi-file projects.
+/// This compatibility wrapper returns only local source files. New orchestration code should prefer
+/// [`resolve_source_module_import`] or [`resolve_program_source_imports`] so stdlib and external imports are classified
+/// explicitly.
 pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathBuf> {
-    let (path, is_absolute, parent_levels) = match &import.kind {
-        ImportKind::Module(p) if !p.segments.is_empty() => (p.segments.clone(), p.is_absolute, p.parent_levels),
-        ImportKind::From { module, .. } if !module.segments.is_empty() => {
-            (module.segments.clone(), module.is_absolute, module.parent_levels)
+    match resolve_source_module_import(base_dir, None, import) {
+        SourceModuleImportResolution::Local(module_ref) => Some(module_ref.file_path),
+        SourceModuleImportResolution::Stdlib { .. } | SourceModuleImportResolution::External => None,
+    }
+}
+
+/// Return import path metadata plus candidate source-module paths for an import.
+///
+/// `from a.b import C` has one source module candidate, `a.b`. `import a.b.C` is ambiguous in existing syntax because
+/// it can mean a module import or an item-style import; try the full path first, then the parent module. Keeping both
+/// candidates here prevents CLI, LSP, and test-runner paths from drifting on that ambiguity.
+fn source_import_candidates(import: &ImportDecl) -> Option<(&ImportPath, Vec<Vec<String>>)> {
+    match &import.kind {
+        ImportKind::From { module, .. } if !module.segments.is_empty() => Some((module, vec![module.segments.clone()])),
+        ImportKind::Module(path) if !path.segments.is_empty() => {
+            let mut candidates = vec![path.segments.clone()];
+            if path.segments.len() > 1 {
+                let parent = path.segments[..path.segments.len() - 1].to_vec();
+                if parent != path.segments {
+                    candidates.push(parent);
+                }
+            }
+            Some((path, candidates))
         }
-        // External namespace imports don't resolve to on-disk Incan source files.
         ImportKind::RustCrate { .. }
         | ImportKind::RustFrom { .. }
         | ImportKind::PubLibrary { .. }
-        | ImportKind::PubFrom { .. } => return None,
-        ImportKind::Python(_) | ImportKind::Module(_) | ImportKind::From { .. } => return None,
-    };
+        | ImportKind::PubFrom { .. }
+        | ImportKind::Python(_)
+        | ImportKind::Module(_)
+        | ImportKind::From { .. } => None,
+    }
+}
 
-    // Skip standard library imports (std::*)
-    if let Some(first) = path.first()
-        && first == stdlib::STDLIB_ROOT
-    {
-        return None;
+/// Determine the primary base directory for resolving an import path.
+fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &ImportPath) -> PathBuf {
+    if path.is_absolute {
+        return effective_source_root(base_dir, source_root)
+            .unwrap_or_else(|| discover_source_root_from_layout(base_dir));
     }
 
-    // Calculate base directory based on relative path
     let mut base = base_dir.to_path_buf();
+    for _ in 0..path.parent_levels {
+        base = base.parent().map(Path::to_path_buf).unwrap_or(base);
+    }
+    base
+}
 
-    // Handle absolute paths (crate::...)
-    if is_absolute {
-        // Find project root (look for Cargo.toml or src/ directory)
-        let mut project_root = base.clone();
-        while !project_root.join("Cargo.toml").exists() && !project_root.join("src").exists() {
-            if !project_root.pop() {
-                break;
-            }
+/// Find the effective source root for imports when one is known or discoverable.
+fn effective_source_root(base_dir: &Path, source_root: Option<&Path>) -> Option<PathBuf> {
+    source_root
+        .map(Path::to_path_buf)
+        .or_else(|| resolve_source_root_for_imports(base_dir))
+}
+
+/// Infer a source root from conventional project layout when no manifest-driven root is available.
+fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
+    let mut project_root = base_dir.to_path_buf();
+    while !project_root.join("Cargo.toml").exists() && !project_root.join("src").exists() {
+        if !project_root.pop() {
+            break;
         }
-        // If we found a src directory, use it as base
-        if project_root.join("src").exists() {
-            base = project_root.join("src");
-        } else {
-            base = project_root;
-        }
+    }
+    if project_root.join("src").exists() {
+        project_root.join("src")
     } else {
-        // Handle parent navigation (super:: or ..)
-        for _ in 0..parent_levels {
-            base = base.parent().map(|p| p.to_path_buf()).unwrap_or(base);
+        project_root
+    }
+}
+
+/// Resolve the first candidate path that exists under `base`.
+fn resolve_first_source_candidate(
+    base: &Path,
+    identity_root: Option<&Path>,
+    candidates: &[Vec<String>],
+) -> Option<SourceModuleRef> {
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        if let Some(file_path) = resolve_module_path_from_base(base, candidate) {
+            let logical_segments = identity_root
+                .and_then(|root| logical_module_segments_from_file(root, &file_path))
+                .or_else(|| logical_module_segments_from_file(base, &file_path))
+                .unwrap_or_else(|| candidate.clone());
+            return Some(SourceModuleRef::new(file_path, logical_segments));
         }
     }
-
-    if path.is_empty() {
-        return None;
-    }
-
-    if let Some(resolved) = resolve_module_path_from_base(&base, &path) {
-        return Some(resolved);
-    }
-
-    // For simple relative imports (e.g. `from dataset import ...`) in non-source directories
-    // like `tests/` or `examples/`, also attempt resolution from the project source root.
-    if !is_absolute
-        && parent_levels == 0
-        && let Some(source_root) = resolve_source_root_for_imports(base_dir)
-        && source_root != base
-        && let Some(resolved) = resolve_module_path_from_base(&source_root, &path)
-    {
-        return Some(resolved);
-    }
-
     None
 }
 
@@ -232,19 +251,6 @@ pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path)
     }
 
     Some(canonicalize_source_module_segments(&segments))
-}
-
-/// Resolve a source-backed module path under `base` and return both its on-disk path and logical
-/// module segments.
-///
-/// This is the shared source-module identity helper for compiler orchestration paths that need to go from an import
-/// path like `dataset.ops` to both:
-/// - the concrete source file to load
-/// - the canonical logical module ID used by downstream stages
-pub(crate) fn resolve_source_module_from_base(base: &Path, path: &[String]) -> Option<(PathBuf, Vec<String>)> {
-    let resolved = resolve_module_path_from_base(base, path)?;
-    let logical_segments = logical_module_segments_from_file(base, &resolved).unwrap_or_else(|| path.to_vec());
-    Some((resolved, logical_segments))
 }
 
 /// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
@@ -539,26 +545,6 @@ mod tests {
         }
     }
 
-    // ========================================
-    // ModuleCollector tests
-    // ========================================
-
-    #[test]
-    fn test_module_collector_new() {
-        let path = std::path::Path::new("/test/project/main.incn");
-        let collector = ModuleCollector::new(path);
-        assert!(collector.loaded.is_empty());
-        assert!(collector.loading.is_empty());
-    }
-
-    #[test]
-    fn test_module_collector_new_with_relative_path() {
-        let path = std::path::Path::new("main.incn");
-        let collector = ModuleCollector::new(path);
-        // Should default to "." as base_dir when parent is none
-        assert!(collector.loaded.is_empty());
-    }
-
     #[test]
     fn resolve_import_path_falls_back_to_project_source_root_for_tests_dir() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -649,6 +635,94 @@ source-root = "library"
             .ok_or("dataset/ops.incn should resolve logical path")?;
         assert_eq!(leaf, vec!["dataset".to_string(), "ops".to_string()]);
 
+        Ok(())
+    }
+
+    fn relative_module_import(segments: &[&str]) -> ImportDecl {
+        ImportDecl {
+            visibility: Visibility::Private,
+            kind: ImportKind::Module(ImportPath {
+                segments: segments.iter().map(|segment| (*segment).to_string()).collect(),
+                is_absolute: false,
+                parent_levels: 0,
+            }),
+            alias: None,
+        }
+    }
+
+    #[test]
+    fn resolve_source_module_import_classifies_stdlib_imports() {
+        let import = relative_module_import(&["std", "testing"]);
+        let resolved = resolve_source_module_import(Path::new("src"), None, &import);
+
+        assert_eq!(
+            resolved,
+            SourceModuleImportResolution::Stdlib {
+                module_path: vec!["std".to_string(), "testing".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_source_module_import_prefers_full_module_import_path() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("dataset"))?;
+        let parent = src.join("dataset.incn");
+        let nested = src.join("dataset").join("ops.incn");
+        std::fs::write(&parent, "pub const PARENT: int = 1\n")?;
+        std::fs::write(&nested, "pub const NESTED: int = 2\n")?;
+
+        let import = relative_module_import(&["dataset", "ops"]);
+        let resolved = resolve_source_module_import(&src, Some(&src), &import);
+
+        let SourceModuleImportResolution::Local(module_ref) = resolved else {
+            return Err("expected local source module resolution".into());
+        };
+        assert_eq!(module_ref.file_path, nested.canonicalize()?);
+        assert_eq!(module_ref.path_segments, vec!["dataset".to_string(), "ops".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_source_module_import_falls_back_to_parent_for_item_style_module_import()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("db"))?;
+        let schema = src.join("db").join("schema.incn");
+        std::fs::write(&schema, "pub model Database:\n    id: int\n")?;
+
+        let import = relative_module_import(&["db", "schema", "Database"]);
+        let resolved = resolve_source_module_import(&src, Some(&src), &import);
+
+        let SourceModuleImportResolution::Local(module_ref) = resolved else {
+            return Err("expected parent source module resolution".into());
+        };
+        assert_eq!(module_ref.file_path, schema.canonicalize()?);
+        assert_eq!(module_ref.path_segments, vec!["db".to_string(), "schema".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_source_module_import_uses_source_root_for_nested_module_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        let package = src.join("pkg");
+        std::fs::create_dir_all(&package)?;
+        let sibling = package.join("bar.incn");
+        std::fs::write(&sibling, "pub const VALUE: int = 1\n")?;
+
+        let import = relative_module_import(&["bar"]);
+        let resolved = resolve_source_module_import(&package, Some(&src), &import);
+
+        let SourceModuleImportResolution::Local(module_ref) = resolved else {
+            return Err("expected local source module resolution".into());
+        };
+        assert_eq!(module_ref.file_path, sibling.canonicalize()?);
+        assert_eq!(module_ref.path_segments, vec!["pkg".to_string(), "bar".to_string()]);
+        assert_eq!(module_ref.module_name, "pkg_bar");
         Ok(())
     }
 
@@ -1124,25 +1198,5 @@ source-root = "library"
         let debug_str = format!("{:?}", sym);
         assert!(debug_str.contains("Function"));
         assert!(debug_str.contains("test"));
-    }
-
-    // ========================================
-    // ResolvedModule tests
-    // ========================================
-
-    #[test]
-    fn test_resolved_module_debug() {
-        let module = ResolvedModule {
-            path: std::path::PathBuf::from("/test/module.incn"),
-            source: "fn main(): ()".to_string(),
-            ast: Program {
-                declarations: vec![],
-                rust_module_path: None,
-                warnings: vec![],
-            },
-        };
-        let debug_str = format!("{:?}", module);
-        assert!(debug_str.contains("ResolvedModule"));
-        assert!(debug_str.contains("module.incn"));
     }
 }

@@ -38,7 +38,7 @@ This diagram shows the compilation pipeline of the Incan compiler in high level.
 
 ### Glossary
 
-|       Term       |                                                                     Meaning                                                                      |
+| Term             | Meaning                                                                                                                                          |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Frontend         | Parses `.incn` and typechecks it, producing a typed AST (or diagnostics).                                                                        |
 | `.incn` source   | The source code of an Incan program.                                                                                                             |
@@ -188,22 +188,21 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 ### Frontend (`src/frontend/`)
 
-|         Module         |                                       Purpose                                       |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `lexer`                | Tokenization (re-exported from `crates/incan_syntax`)                               |
-| `parser`               | Parser (re-exported from `crates/incan_syntax`)                                     |
-| `ast`                  | Untyped AST (`Spanned<T>` for diagnostics) (re-exported from `crates/incan_syntax`) |
-| `module.rs`            | Import path modeling and module metadata                                            |
-| `resolver.rs`          | Multi-file module resolution                                                        |
-| `surface_semantics.rs` | Import-driven activation + feature-key routing for soft keywords/decorators         |
-| `typechecker/`         | Two-pass collection + type checking                                                 |
-| `rust_inspect/`        | Rust item metadata loading/cache/extraction for Rust interop typechecking           |
-| `symbols.rs`           | Symbol table and scope management                                                   |
-| `diagnostics`          | Syntax/parse diagnostics (re-exported from `crates/incan_syntax`)                   |
+| Module                 | Purpose                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| `lexer`                | Tokenization (re-exported from `crates/incan_syntax`)                                |
+| `parser`               | Parser (re-exported from `crates/incan_syntax`)                                      |
+| `ast`                  | Untyped AST (`Spanned<T>` for diagnostics) (re-exported from `crates/incan_syntax`)  |
+| `module.rs`            | Canonical source-module import classification, path resolution, and logical identity |
+| `surface_semantics.rs` | Import-driven activation + feature-key routing for soft keywords/decorators          |
+| `typechecker/`         | Two-pass collection + type checking                                                  |
+| `rust_inspect/`        | Rust item metadata loading/cache/extraction for Rust interop typechecking            |
+| `symbols.rs`           | Symbol table and scope management                                                    |
+| `diagnostics`          | Syntax/parse diagnostics (re-exported from `crates/incan_syntax`)                    |
 
 #### Typechecker submodules (`typechecker/`)
 
-|            File             |                    Responsibility                     |
+| File                        | Responsibility                                        |
 | --------------------------- | ----------------------------------------------------- |
 | `mod.rs`                    | `TypeChecker` API (`check_program`, imports)          |
 | `collect.rs`                | Pass 1: register types/functions/imports              |
@@ -238,7 +237,7 @@ flowchart LR
 Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
 **action descriptor** enums that tell the compiler *what to do*:
 
-|            Enum             |   Variants (current)   |   Used by   |                     Purpose                     |
+| Enum                        | Variants (current)     | Used by     | Purpose                                         |
 | --------------------------- | ---------------------- | ----------- | ----------------------------------------------- |
 | `SurfaceStmtLoweringAction` | `AssertCall`           | Lowering    | Describes how to lower a surface statement      |
 | `SurfaceExprLoweringAction` | `Await`                | Lowering    | Describes how to lower a surface expression     |
@@ -305,7 +304,7 @@ descriptors represent compiler behavior patterns, not individual keywords.
 
 ### Backend (`src/backend/`)
 
-|       Module        |                     Purpose                     |
+| Module              | Purpose                                         |
 | ------------------- | ----------------------------------------------- |
 | `ir/codegen.rs`     | Entry point (`IrCodegen`): lowering + emission  |
 | `ir/lower/`         | AST → IR lowering (types + ownership decisions) |
@@ -322,19 +321,19 @@ descriptors represent compiler behavior patterns, not individual keywords.
 
 `rust_inspect/` powers RFC 041 interop checks that need Rust-side signatures and item shapes.
 
-| Module         | Purpose                                                               |
-| -------------- | --------------------------------------------------------------------- |
-| `mod.rs`       | Public entry points and orchestration of metadata retrieval           |
-| `cache.rs`     | Workspace-scoped in-memory cache for extracted Rust item metadata     |
-| `loader.rs`    | Rust workspace loading and crate graph setup for metadata extraction  |
-| `extractor.rs` | rust-analyzer-backed extraction of item signatures and method shapes  |
-| `error.rs`     | Typed metadata load/extract error surface                             |
+| Module         | Purpose                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| `mod.rs`       | Public entry points and orchestration of metadata retrieval          |
+| `cache.rs`     | Workspace-scoped in-memory cache for extracted Rust item metadata    |
+| `loader.rs`    | Rust workspace loading and crate graph setup for metadata extraction |
+| `extractor.rs` | rust-analyzer-backed extraction of item signatures and method shapes |
+| `error.rs`     | Typed metadata load/extract error surface                            |
 
 #### Expression Emission (`src/backend/ir/emit/expressions/`)
 
 The expression emitter is split into focused submodules for maintainability:
 
-|      Submodule      |                     Purpose                      |
+| Submodule           | Purpose                                          |
 | ------------------- | ------------------------------------------------ |
 | `mod.rs`            | `emit_expr` entry point and dispatch             |
 | `builtins.rs`       | Builtin calls (`print`, `len`, `range`, etc.)    |
@@ -353,7 +352,7 @@ This provides compile-time exhaustiveness checking and makes it easier to add ne
 
 ### CLI (`src/cli/`)
 
-|      Module      |                  Purpose                  |
+| Module           | Purpose                                   |
 | ---------------- | ----------------------------------------- |
 | `commands.rs`    | Command handlers (`build`, `run`, `fmt`)  |
 | `test_runner.rs` | pytest-style test discovery and execution |
@@ -361,7 +360,7 @@ This provides compile-time exhaustiveness checking and makes it easier to add ne
 
 ### Tooling
 
-|  Module   |                Purpose                |
+| Module    | Purpose                               |
 | --------- | ------------------------------------- |
 | `format/` | Source formatter                      |
 | `lsp/`    | LSP backend logic (diagnostics/hover) |
