@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::lang::types::collections::{self, CollectionTypeId};
+
 /// Whether an item is visible across crate boundaries for ordinary `pub` Rust APIs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RustVisibility {
@@ -63,13 +65,33 @@ impl RustCollectionFamily {
     /// Classify a canonical Rust path into a supported collection family.
     #[must_use]
     pub fn for_canonical_path(path: &str) -> Option<Self> {
+        let path = path.split('<').next().unwrap_or(path);
         match path {
-            "std::collections::HashMap" | "std::collections::hash_map::HashMap" | "hashbrown::HashMap" => {
-                Some(Self::HashMap)
-            }
+            "std::collections::HashMap"
+            | "std::collections::hash_map::HashMap"
+            | "hashbrown::HashMap"
+            | "hashbrown::map::HashMap" => Some(Self::HashMap),
             "std::collections::BTreeMap" | "alloc::collections::btree_map::BTreeMap" => Some(Self::BTreeMap),
-            "std::collections::HashSet" | "std::collections::hash_set::HashSet" => Some(Self::HashSet),
+            "std::collections::HashSet"
+            | "std::collections::hash_set::HashSet"
+            | "hashbrown::HashSet"
+            | "hashbrown::set::HashSet" => Some(Self::HashSet),
             "std::collections::BTreeSet" | "alloc::collections::btree_set::BTreeSet" => Some(Self::BTreeSet),
+            _ => None,
+        }
+    }
+
+    /// Classify an Incan or imported collection type name into a supported collection family.
+    #[must_use]
+    pub fn for_type_name(name: &str) -> Option<Self> {
+        match collections::from_str(name) {
+            Some(CollectionTypeId::Dict) => return Some(Self::HashMap),
+            Some(CollectionTypeId::Set) => return Some(Self::HashSet),
+            _ => {}
+        }
+        match name {
+            "BTreeMap" => Some(Self::BTreeMap),
+            "BTreeSet" => Some(Self::BTreeSet),
             _ => None,
         }
     }
@@ -240,12 +262,32 @@ mod tests {
         for (path, expected) in [
             ("std::collections::HashMap", RustCollectionFamily::HashMap),
             ("hashbrown::HashMap", RustCollectionFamily::HashMap),
+            ("hashbrown::map::HashMap<K, V>", RustCollectionFamily::HashMap),
             ("std::collections::BTreeMap", RustCollectionFamily::BTreeMap),
             ("std::collections::HashSet", RustCollectionFamily::HashSet),
+            ("hashbrown::set::HashSet<T>", RustCollectionFamily::HashSet),
             ("std::collections::BTreeSet", RustCollectionFamily::BTreeSet),
+            ("std::collections::HashMap<String, i64>", RustCollectionFamily::HashMap),
         ] {
             let meta = dummy_type_metadata(path);
             assert_eq!(meta.collection_family(), Some(expected), "path `{path}`");
+        }
+    }
+
+    #[test]
+    fn collection_family_matches_incan_and_imported_type_names() {
+        for (name, expected) in [
+            ("Dict", RustCollectionFamily::HashMap),
+            ("HashMap", RustCollectionFamily::HashMap),
+            ("Set", RustCollectionFamily::HashSet),
+            ("BTreeMap", RustCollectionFamily::BTreeMap),
+            ("BTreeSet", RustCollectionFamily::BTreeSet),
+        ] {
+            assert_eq!(
+                RustCollectionFamily::for_type_name(name),
+                Some(expected),
+                "name `{name}`"
+            );
         }
     }
 

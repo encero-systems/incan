@@ -46,15 +46,7 @@ impl RustWorkspace {
     }
 
     fn metadata_cargo_config() -> CargoConfig {
-        let mut cargo_config = CargoConfig::default();
-        // The generated `target/incan_lock` workspace is a semantic probe, not the user's real build. Keep metadata
-        // loading offline-first so missing registry state fails fast instead of burning tens of seconds on network
-        // retries during ordinary typechecking/codegen.
-        cargo_config.extra_args.push("--offline".to_string());
-        cargo_config
-            .extra_env
-            .insert("CARGO_NET_OFFLINE".to_string(), Some("true".to_string()));
-        cargo_config
+        CargoConfig::default()
     }
 
     /// Load the Cargo project rooted at `manifest_dir` (directory containing `Cargo.toml`).
@@ -107,16 +99,16 @@ mod tests {
     use super::RustWorkspace;
 
     #[test]
-    fn metadata_loader_forces_offline_cargo_queries() {
+    fn metadata_loader_allows_cargo_to_resolve_uncached_dependencies() {
         let cargo_config = RustWorkspace::metadata_cargo_config();
         assert!(
-            cargo_config.extra_args.iter().any(|arg| arg == "--offline"),
-            "rust-inspect workspace loads should pass --offline to cargo metadata"
+            !cargo_config.extra_args.iter().any(|arg| arg == "--offline"),
+            "rust-inspect workspace loads must not force offline metadata resolution"
         );
         assert_eq!(
             cargo_config.extra_env.get("CARGO_NET_OFFLINE"),
-            Some(&Some("true".to_string())),
-            "rust-inspect workspace loads should force offline cargo resolution"
+            None,
+            "rust-inspect workspace loads must not force Cargo into offline mode"
         );
     }
 }

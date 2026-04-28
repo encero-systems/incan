@@ -696,8 +696,17 @@ mod tests {
     #[test]
     fn lower_method_call_threads_arg_shape_hint_from_typechecker() -> Result<(), String> {
         let receiver_span = Span::new(0, 5);
+        let arg_span = Span::new(10, 17);
         let mut type_info = TypeCheckInfo::default();
         type_info.record_regular_method_arg_shape(receiver_span, "get");
+        type_info.rust_arg_coercions.insert(
+            (arg_span.start, arg_span.end),
+            RustArgCoercionInfo {
+                rust_target_type: "&Q".to_string(),
+                target_type: ResolvedType::Ref(Box::new(ResolvedType::RustPath("Q".to_string()))),
+                kind: RustArgCoercionKind::Builtin(CoercionPolicy::Borrow),
+            },
+        );
 
         let mut lowering = AstLowering::new_with_type_info(type_info);
         let expr = Expr::MethodCall(
@@ -706,7 +715,7 @@ mod tests {
             Vec::new(),
             vec![CallArg::Positional(Spanned::new(
                 Expr::Literal(Literal::String("hello".to_string())),
-                Span::new(10, 17),
+                arg_span,
             ))],
         );
 
@@ -715,8 +724,15 @@ mod tests {
             .map_err(|err| format!("expected successful lowering, got {err:?}"))?;
 
         match lowered.kind {
-            IrExprKind::MethodCall { arg_policy, .. } => {
+            IrExprKind::MethodCall { arg_policy, args, .. } => {
                 assert_eq!(arg_policy, MethodCallArgPolicy::PreserveShape);
+                assert!(
+                    !matches!(
+                        args.first().map(|arg| &arg.expr.kind),
+                        Some(IrExprKind::InteropCoerce { .. })
+                    ),
+                    "expected preserved lookup method args to skip rust arg coercion wrapping, got {args:?}"
+                );
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
         }

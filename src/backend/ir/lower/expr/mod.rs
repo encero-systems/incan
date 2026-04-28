@@ -21,6 +21,7 @@ use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::typechecker::IdentKind;
+use incan_core::interop::RustCollectionFamily;
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
@@ -40,6 +41,16 @@ impl AstLowering {
         }
     }
 
+    fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
+        match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+                RustCollectionFamily::for_canonical_path(name).or(RustCollectionFamily::for_type_name(name))
+            }
+            IrType::Ref(inner) | IrType::RefMut(inner) => Self::rust_collection_family_for_ir_type(inner),
+            _ => None,
+        }
+    }
+
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: crate::frontend::ast::Span,
@@ -51,6 +62,12 @@ impl AstLowering {
             .type_info
             .as_ref()
             .is_some_and(|info| info.preserves_regular_method_arg_shape(receiver_span, method))
+        {
+            return MethodCallArgPolicy::PreserveShape;
+        }
+
+        if Self::rust_collection_family_for_ir_type(&receiver.ty)
+            .is_some_and(|family| family.preserves_lookup_arg_shape(method))
         {
             return MethodCallArgPolicy::PreserveShape;
         }
@@ -313,16 +330,19 @@ impl AstLowering {
                 };
                 let mut args_ir = self.lower_call_args(args)?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
-                for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
-                    let arg_span = match arg_ast {
-                        ast::CallArg::Positional(expr)
-                        | ast::CallArg::Named(_, expr)
-                        | ast::CallArg::PositionalUnpack(expr)
-                        | ast::CallArg::KeywordUnpack(expr) => expr.span,
-                    };
-                    arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
-                }
                 let method_name = self.resolve_method_rebinding(&receiver.ty, m);
+                let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
+                if !matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
+                    for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
+                        let arg_span = match arg_ast {
+                            ast::CallArg::Positional(expr)
+                            | ast::CallArg::Named(_, expr)
+                            | ast::CallArg::PositionalUnpack(expr)
+                            | ast::CallArg::KeywordUnpack(expr) => expr.span,
+                        };
+                        arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
+                    }
+                }
 
                 // Check for known methods (enum-based dispatch)
                 if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
@@ -335,7 +355,6 @@ impl AstLowering {
                         IrType::Unknown,
                     )
                 } else {
-                    let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {

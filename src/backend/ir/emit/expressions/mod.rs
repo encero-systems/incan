@@ -1135,6 +1135,55 @@ mod tests {
     }
 
     #[test]
+    fn regular_hash_map_get_preserves_borrowed_probe_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "counts".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("HashMap".to_string(), vec![IrType::String, IrType::Int]),
+                )),
+                method: "get".to_string(),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "word".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::StrRef,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Option(Box::new(IrType::Int)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("counts . get (word)"),
+            "expected HashMap::get to keep borrowed probe shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("counts . get (& word)"),
+            "HashMap::get must not double-borrow borrowed probes, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn known_dict_get_with_string_literal_uses_str_lookup_shape() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
