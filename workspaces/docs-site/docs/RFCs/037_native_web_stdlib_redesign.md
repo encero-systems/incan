@@ -9,7 +9,7 @@
     - RFC 031 (Library system)
     - RFC 035 (First-class named function references)
     - RFC 036 (User-defined decorators)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/329
+- **Issue:** [#171](https://github.com/dannys-code-corner/incan/issues/171)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

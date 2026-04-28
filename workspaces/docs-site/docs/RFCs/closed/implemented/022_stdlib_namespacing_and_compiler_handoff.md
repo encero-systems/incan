@@ -5,7 +5,7 @@
 **Author(s):** Danny Meijer (@dannymeijer)  
 **Related:** RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 051 (`JsonValue`),  
 RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy)
-**Issues:** [#120](https://github.com/incan-lang/incan/issues/120)
+**Issue:** [#120](https://github.com/dannys-code-corner/incan/issues/120)
 
 ## Summary
 

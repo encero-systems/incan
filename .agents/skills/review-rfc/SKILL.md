@@ -79,6 +79,7 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 - [ ] "Layers affected" describes impacts (not task steps); lists only layers that are actually affected.
 - [ ] "Alternatives considered" includes a rationale for rejection for each alternative.
 - [ ] **No prescriptive implementation prose in the design sections.** The RFC must not reference specific internal files, function names, struct fields, or data structures in the design sections. Those belong in the Implementation Plan / GitHub issues. If found in design sections, rewrite as a normative contract statement or remove.
+- [ ] **No `v1` / `V1` shorthand.** RFCs should define their own north-star contract, not an implementation phase labeled as "v1". Rewrite phrases like "v1 does X" or "the stable v1 renderer" as concrete RFC commitments ("this RFC requires X", "the required renderer is Markdown") or explicit future-extension framing ("a follow-up RFC may define Y").
 - [ ] **Ambition check.** RFCs should be end-to-end and favor complete solutions over incremental stubs. Flag if the RFC is too dismissive or handwavy about hard parts. Equally, if the RFC is ambitious, verify that the ambition is well-motivated, clearly explained, and not excessive.
 - [ ] **Coupling check.** If an RFC bundles a general language feature with a specific stdlib or product surface, challenge whether those concerns should stay together. If the coupling is not clearly justified in the document, flag it or recommend a split/supersession path.
 
@@ -139,6 +140,7 @@ The RFC lifecycle has four statuses. Different sections are required — or forb
 | Section named "Implementation plan" in a Draft or Planned RFC                   | Remove or defer to GitHub issue; keep only "Layers affected"                                           |
 | Missing "Implementation Plan" + "Checklist" in an In Progress RFC               | Add both sections; use `/bump-rfc` skill to generate them from "Layers affected"                       |
 | Prose references specific files or functions (`calls.rs`, `FunctionInfo`, etc.) | Rewrite as a normative contract statement or remove (OK in Implementation Plan, not in design)         |
+| `v1` / `V1` phrasing such as "v1 does X" or "stable v1 renderer"                | Replace with concrete RFC commitments or "a follow-up RFC may define X" future-extension framing       |
 | Hard-wrapped prose (lines ending mid-sentence)                                  | Reflow each paragraph to a single line                                                                 |
 | `Shipped in:` filled for a Draft/Planned/In Progress RFC                        | Set to `—`; only fill once the feature is released                                                     |
 | `Shipped in:` still `—` for a Done RFC                                          | Fill with the actual release version                                                                   |

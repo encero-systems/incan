@@ -5,7 +5,7 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 032 (Value Enums)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/318
+- **Issue:** [#167](https://github.com/dannys-code-corner/incan/issues/167)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -407,7 +407,7 @@ Should multi-axis matching, such as `match RunMode:` plus
 toward: a follow-up RFC. Single-axis matching covers the common case and keeps the initial implementation focused.
 
 6. **Generated panic compatibility with strict lint settings.** The generated init path may use fail-fast panics for
-env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return `Result[None, CtxInitError]` and propagate errors to `main` instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: **keep panics for v1** — fail-fast startup is the point, and a `Result` return complicates auto-init.
+env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return `Result[None, CtxInitError]` and propagate errors to `main` instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: **keep fail-fast panics in this RFC** — fail-fast startup is the point, and a `Result` return complicates auto-init.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 

@@ -13,7 +13,7 @@
     - RFC 021 (Field metadata and aliases — similar decorator pattern)
     - RFC 024 (Extensible derive protocol — how `@derive` maps to Rust proc macros today)
     - RFC 041 (First-class Rust interop — `rusttype`, metadata dispatch, coercions; **implemented**)
-- **Issue:** #152
+- **Issue:** [#152](https://github.com/dannys-code-corner/incan/issues/152)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -938,7 +938,7 @@ This is **not** the formal In-Progress “Implementation Plan” checklist; it i
 
 ### Phase 1 — MVP (highest benefit / smallest slice)
 
-- Parse and typecheck `@rust.delegate(trait=..., methods=[...])` on **`newtype`** (and define whether `rusttype` is in scope for v1).
+- Parse and typecheck `@rust.delegate(trait=..., methods=[...])` on **`newtype`** (and define whether `rusttype` is in scope for this RFC).
 - Emit a forwarding `impl` for **one** trait, **explicit** method list, **sync** methods first; associated types either explicit in the decorator or copied from a single, known-good pattern.
 - Defer: method **renaming** maps, multi-trait collision policy, and “delegate all methods with zero list” default.
 - Validate shapes primarily with **rustc** errors mapped to Incan spans; treat rust-analyzer metadata as **optional** optimization, not a gate.

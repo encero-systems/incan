@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 005 (Rust interop)
     - RFC 028 (Overload-based dispatch)
-- **Issue:** #266
+- **Issue:** [#266](https://github.com/dannys-code-corner/incan/issues/266)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.2

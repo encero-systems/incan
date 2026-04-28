@@ -11,7 +11,7 @@
     - RFC 026 (Superseded — see RFC 043 for Rust trait surface on wrappers)
     - RFC 027 (incan-vocab — library vocabulary registration, enables DSL decorators)
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/328
+- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

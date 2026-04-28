@@ -4,7 +4,7 @@
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/79
+- **Issue:** [#79](https://github.com/dannys-code-corner/incan/issues/79)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —

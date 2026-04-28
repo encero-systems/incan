@@ -4,7 +4,7 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/317
+- **Issue:** [#166](https://github.com/dannys-code-corner/incan/issues/166)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

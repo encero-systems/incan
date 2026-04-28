@@ -2,6 +2,7 @@
 
 **Status:** Planned  
 **Created:** 2024-12-10
+**Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
 
 ## Summary
 

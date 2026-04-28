@@ -10,7 +10,7 @@
     - RFC 029 (Union types and type narrowing)
     - RFC 035 (First-class named function references)
     - RFC 038 (Variadic positional args and keyword-argument capture)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/331
+- **Issue:** [#173](https://github.com/dannys-code-corner/incan/issues/173)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -134,7 +134,7 @@ That difference matters enough that reusing `match` would blur semantics rather 
 - Exposing Rust's `Future<Output = T>` syntax directly in user-facing Incan.
 - Designing a full async trait system, async closures RFC, or effect system.
 - Adding Go-style channel `select` as a separate feature in this RFC.
-- Adding `default` arms, guarded arms, or fairness controls in v1.
+- Adding `default` arms, guarded arms, or fairness controls in this RFC.
 
 ## Guide-level explanation
 
@@ -384,7 +384,7 @@ The binding name after `for` is in scope inside each arm body, but each arm gets
 ### Context restrictions
 
 1. `race` is only valid inside `async def`.
-2. Every arm in v1 is an `await` arm.
+2. Every arm accepted by this RFC is an `await` arm.
 3. All arm bodies must produce a single common result type.
 4. That common result type may be a union, subject to RFC 029's rules.
 5. `race` is expression-position syntax.
@@ -482,9 +482,9 @@ This is the same semantic territory as runtimes like Tokio, but the language def
 
 ### Tie-breaking
 
-If more than one arm becomes ready at the same poll point, v1 chooses the first arm in source order.
+If more than one arm becomes ready at the same poll point, this RFC chooses the first arm in source order.
 
-This gives deterministic behavior and keeps the first version easy to reason about.
+This gives deterministic behavior and keeps the feature easy to reason about.
 
 ### Backend guidance
 
@@ -654,7 +654,7 @@ These costs are acceptable because they buy a much cleaner async story for the s
 
 ## Unresolved questions
 
-1. Should `Awaitable[T]` be user-implementable in v1, or compiler-recognized only?
+1. Should `Awaitable[T]` be user-implementable under this RFC, or compiler-recognized only?
 2. Should `std.async.select` be renamed to `std.async.race`, with compatibility exports left behind?
 3. Does RFC 027 need a dedicated expression-block surface kind for `race for value:`?
 4. Should a later version add a more general pattern-binding `race` form, or is `race for value:` plus ordinary `match` sufficient?

@@ -4,7 +4,7 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/314
+- **Issue:** [#162](https://github.com/dannys-code-corner/incan/issues/162)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

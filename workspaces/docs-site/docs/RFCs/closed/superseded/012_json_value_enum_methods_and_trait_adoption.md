@@ -4,7 +4,7 @@
 - **Created:** 2025-11-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (enum methods and enum trait adoption), RFC 051 (`JsonValue`)
-- **Issue:** #80
+- **Issue:** [#80](https://github.com/dannys-code-corner/incan/issues/80)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —
