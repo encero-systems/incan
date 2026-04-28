@@ -535,6 +535,13 @@ fn path_to_string(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// Render an optional path, using a consistent placeholder when absent.
+fn display_option_path(path: &Option<PathBuf>) -> String {
+    path.as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "(not found)".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,11 +583,4 @@ pub def label() -> str:
         assert_eq!(package.modules[0].declarations.len(), 2);
         Ok(())
     }
-}
-
-/// Render an optional path, using a consistent placeholder when absent.
-fn display_option_path(path: &Option<PathBuf>) -> String {
-    path.as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "(not found)".to_string())
 }

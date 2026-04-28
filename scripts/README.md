@@ -13,4 +13,4 @@ Utility scripts for development and CI.
 |         Variable         |                       Default                       |                  Description                   |
 | ------------------------ | --------------------------------------------------- | ---------------------------------------------- |
 | `INCAN_BIN`              | `./target/release/incan` (if present), else `incan` | Path to the Incan binary                       |
-| `INCAN_EXAMPLES_TIMEOUT` | `5`                                                 | Per-example timeout in seconds for `incan run` |
+| `INCAN_EXAMPLES_TIMEOUT` | `30`                                                | Per-example timeout in seconds for `incan run` |

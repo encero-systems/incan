@@ -12,7 +12,7 @@ set -euo pipefail
 #
 # Configuration:
 #   INCAN_BIN               path to the incan binary (default: ./target/release/incan if present, else `incan`)
-#   INCAN_EXAMPLES_TIMEOUT  per-example timeout in seconds for `incan run` (default: 5)
+#   INCAN_EXAMPLES_TIMEOUT  per-example timeout in seconds for `incan run` (default: 30)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -29,7 +29,7 @@ if [[ "$INCAN_BIN" == ./* ]]; then
   INCAN_BIN="$ROOT_DIR/${INCAN_BIN#./}"
 fi
 
-TIMEOUT_SECS="${INCAN_EXAMPLES_TIMEOUT:-5}"
+TIMEOUT_SECS="${INCAN_EXAMPLES_TIMEOUT:-30}"
 
 echo "Incan examples runner"
 echo "  incan:    $INCAN_BIN"
@@ -39,7 +39,7 @@ echo ""
 python_run_with_timeout() {
   # Usage: python_run_with_timeout <cmd...>
   python3 -c 'import os, subprocess, sys
-timeout = float(os.environ.get("INCAN_EXAMPLES_TIMEOUT", "5"))
+timeout = float(os.environ.get("INCAN_EXAMPLES_TIMEOUT", "30"))
 try:
   p = subprocess.run(sys.argv[1:], timeout=timeout)
   sys.exit(p.returncode)

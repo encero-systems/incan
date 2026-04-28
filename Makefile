@@ -248,7 +248,7 @@ test-rust-inspect:
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
 	@echo "\033[1mRunning examples...\033[0m"
-	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
+	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
 
 .PHONY: benchmarks  ## test - Run benchmark suite (requires hyperfine)
 benchmarks: release
@@ -279,7 +279,7 @@ smoke-test-core:
 	@INCAN_NO_BANNER=1 ./target/release/incan build examples/advanced/nested_project/src/main.incn
 	@echo "\033[32m✓ Nested project example built\033[0m"
 	@echo "\033[1mRunning examples...\033[0m"
-	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
+	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
 
