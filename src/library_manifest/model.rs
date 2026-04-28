@@ -298,10 +298,16 @@ pub struct FieldRequirementExport {
 pub struct EnumExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Traits implemented by the enum.
+    #[serde(default)]
+    pub traits: Vec<String>,
     /// Primitive backing type for RFC 032 value enums.
     #[serde(default)]
     pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<EnumVariantExport>,
+    /// Methods and associated functions exposed by the enum.
+    #[serde(default)]
+    pub methods: Vec<MethodExport>,
     /// `@derive(...)` names (empty for manifests predating this field).
     #[serde(default)]
     pub derives: Vec<String>,
@@ -613,6 +619,7 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
     EnumExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        traits: export.traits.clone(),
         value_type: export.value_type.map(value_enum_type_from_checked),
         variants: export
             .variants
@@ -623,6 +630,7 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
                 value: variant.value.as_ref().map(value_enum_value_from_checked),
             })
             .collect(),
+        methods: export.methods.iter().map(method_from_checked).collect(),
         derives: export.derives.clone(),
     }
 }

@@ -2872,6 +2872,62 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_enum_with_trait_adoption_and_method() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+enum Lookup with Index[str, int]:
+    Mapping
+    Empty
+
+    def __getitem__(self, key: str) -> int:
+        return 0
+"#;
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert_eq!(en.name, "Lookup");
+        assert_eq!(en.traits.len(), 1);
+        assert_eq!(en.traits[0].node.name, "Index");
+        assert_eq!(en.traits[0].node.type_args.len(), 2);
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[0])?, "str");
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[1])?, "int");
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.methods.len(), 1);
+        assert_eq!(en.methods[0].node.name, "__getitem__");
+        assert_eq!(en.methods[0].node.receiver, Some(Receiver::Immutable));
+        assert_eq!(en.methods[0].node.params.len(), 1);
+        assert!(en.methods[0].node.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_value_enum_with_trait_adoption_after_value_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+enum Env(str) with From[str]:
+    Dev = "development"
+    Prod = "production"
+
+    @classmethod
+    def from(cls, value: str) -> Self:
+        return Env.Dev
+"#;
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert_eq!(en.traits.len(), 1);
+        assert_eq!(en.traits[0].node.name, "From");
+        assert_eq!(en.traits[0].node.type_args.len(), 1);
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[0])?, "str");
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.methods.len(), 1);
+        assert_eq!(en.methods[0].node.name, "from");
+        assert_eq!(en.methods[0].node.receiver, None);
+        assert_eq!(en.methods[0].node.params.len(), 1);
+        assert_eq!(en.methods[0].node.decorators.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_valid_enum_still_parses() {
         let source = "enum Status:\n    Pending\n    Active\n    Done(str)\n";
         let Ok(program) = parse_str(source) else {

@@ -1220,9 +1220,9 @@ impl TypeChecker {
                     }
                 }
                 TypeInfo::Enum(en) => {
-                    let traits = self.trait_names_for_type_methods(&[], &en.derives);
+                    let traits = self.trait_names_for_type_methods(&en.traits, &en.derives);
                     if let Some(ret) = self.resolve_named_method(
-                        &std::collections::HashMap::new(),
+                        &en.methods,
                         Some(&traits),
                         method,
                         type_args,
@@ -1307,9 +1307,9 @@ impl TypeChecker {
                         if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) {
                             return ResolvedType::Str;
                         }
-                        let traits = self.trait_names_for_type_methods(&[], &en.derives);
+                        let traits = self.trait_names_for_type_methods(&en.traits, &en.derives);
                         if let Some(ret) = self.resolve_named_method(
-                            &std::collections::HashMap::new(),
+                            &en.methods,
                             Some(&traits),
                             method,
                             type_args,

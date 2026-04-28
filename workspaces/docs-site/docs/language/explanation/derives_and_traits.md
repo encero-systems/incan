@@ -43,7 +43,7 @@ Read more about [dunder methods: custom behavior](../how-to/customize_derived_be
 Use traits for reusable, domain-specific capabilities:
 
 - You define a contract once
-- Multiple types can opt into it via `with TraitName`
+- Models, classes, enums, and other concrete type declarations can opt into it via `with TraitName`
 - Traits can include default method bodies
 - Traits are always abstract, so the trait name itself can be used directly in annotations
 - Traits can build capability hierarchies with `trait Sub with Base:`
@@ -55,9 +55,36 @@ That gives Incan a simple mental model: a trait is both a capability declaration
 
 Read more about [traits: domain capabilities](../tutorials/book/11_traits_and_derives.md).
 
+Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:
+
+```incan
+trait Describable:
+    def describe(self) -> str: ...
+
+enum Outcome with Describable:
+    Success
+    Failure(str)
+
+    def describe(self) -> str:
+        match self:
+            Outcome.Success => return "success"
+            Outcome.Failure(message) => return message
+```
+
+That makes enum adoption useful at API boundaries:
+
+```incan
+def render[T with Describable](value: T) -> str:
+    return value.describe()
+
+message = render(Outcome.Failure("timed out"))
+```
+
+Use this when the enum itself owns the behavior. Keep a free function when the behavior combines several independent types or belongs to a higher-level service, view, or adapter layer.
+
 ### Generic methods on types
 
-Methods can also introduce their own type parameters. This now works on `class`, `model`, `trait`, and `newtype` declarations, using the same syntax as generic top-level functions:
+Methods can also introduce their own type parameters. This works on `class`, `model`, `trait`, `enum`, and `newtype` declarations, using the same syntax as generic top-level functions:
 
 ```incan
 class Box:
@@ -66,6 +93,17 @@ class Box:
 ```
 
 The important distinction is that these are method-scoped type parameters, not hidden type parameters on the enclosing type. A generic `model Shelf[U]` may still define a method like `def swap[T](...)`, where `U` belongs to the type and `T` belongs only to that method.
+
+For enums, owner type parameters and method type parameters are separate in the same way:
+
+```incan
+enum Maybe[U]:
+    Some(U)
+    None
+
+    def echo[T](self, value: T) -> T:
+        return value
+```
 
 For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](...)`), see:
 

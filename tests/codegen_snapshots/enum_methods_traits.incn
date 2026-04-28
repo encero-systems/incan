@@ -1,0 +1,21 @@
+"""RFC 050: enum methods and enum trait adoption emit Rust impl blocks."""
+
+pub trait Labelled:
+    def label(self) -> str
+
+pub enum Signal with Labelled:
+    Start
+    Stop
+
+    def label(self) -> str:
+        match self:
+            case Signal.Start:
+                return "start"
+            case Signal.Stop:
+                return "stop"
+
+    def default() -> Self:
+        return Signal.Start
+
+def main() -> None:
+    signal: Signal = Signal.Start

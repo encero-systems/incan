@@ -5,6 +5,8 @@ different data.
 
 You use enums when a value can be **one of a few well-defined shapes** and you want the compiler to enforce that you handle every case.
 
+Enums can also own behavior. Put methods and associated functions in the enum body when the behavior belongs to the closed set itself, and use `with TraitName` when the enum should participate in the same trait-based protocols as models and classes.
+
 ??? info "Coming from Python?"
     Python’s `Enum` is mainly “named constants”. When Python code needs variants *with data* it often ends up using class hierarchies and `isinstance(...)` checks, which are not exhaustive and are easy to break during refactors.
 
@@ -124,6 +126,36 @@ match msg:
 
 ---
 
+## Declaration shape
+
+The optional `with` clause belongs on the enum header:
+
+```incan
+enum ResultState with Describable:
+    Success
+    Failure(str)
+```
+
+For generic enums, put `with` after the type parameters:
+
+```incan
+enum Maybe[T] with Describable:
+    Some(T)
+    None
+```
+
+For value enums, put `with` after the backing type:
+
+```incan
+enum Environment(str) with Describable:
+    Development = "development"
+    Production = "production"
+```
+
+Inside the enum body, declare variants first and then methods. After the first method declaration, the rest of the body is method territory; do not add more variants below methods. That keeps the visual shape predictable: data cases first, behavior second.
+
+---
+
 ## Value enums
 
 Use a value enum when each variant needs one canonical external `str` or `int` representation:
@@ -202,6 +234,162 @@ tree = Node(
     Node(Leaf(2), Leaf(3))
 )
 ```
+
+---
+
+## Methods and associated functions
+
+Enum bodies may declare methods after their variants. Use instance methods when the operation depends on the selected variant:
+
+```incan
+enum Direction:
+    North
+    South
+    East
+    West
+
+    def is_horizontal(self) -> bool:
+        match self:
+            Direction.East => return true
+            Direction.West => return true
+            _ => return false
+
+    def opposite(self) -> Direction:
+        match self:
+            Direction.North => return Direction.South
+            Direction.South => return Direction.North
+            Direction.East => return Direction.West
+            Direction.West => return Direction.East
+```
+
+Call enum methods on enum values:
+
+```incan
+dir = Direction.East
+
+if dir.is_horizontal():
+    println("moving sideways")
+```
+
+Methods may use the enum's type parameters. This is useful for small helpers on `Option`-like enums:
+
+```incan
+enum Maybe[T]:
+    Some(T)
+    None
+
+    def unwrap_or(self, fallback: T) -> T:
+        match self:
+            Maybe.Some(value) => return value
+            Maybe.None => return fallback
+```
+
+Use associated functions for constructors or helpers that belong to the enum type rather than a particular instance. An associated enum function has no `self` receiver and is called through the enum type:
+
+```incan
+enum Direction:
+    North
+    South
+    East
+    West
+
+    def default() -> Self:
+        return Direction.North
+```
+
+Call it with type-name method syntax:
+
+```incan
+dir = Direction.default()
+```
+
+You can also mark no-receiver helpers with `@staticmethod` when that makes the intent clearer:
+
+```incan
+enum Direction:
+    North
+    South
+    East
+    West
+
+    @staticmethod
+    def all() -> list[Direction]:
+        return [Direction.North, Direction.South, Direction.East, Direction.West]
+```
+
+Enum methods follow the same receiver model as methods on models and classes. They do not change matching or construction semantics; variants are still the closed set of cases, and `match` remains exhaustive.
+
+Rules to keep in mind:
+
+- Instance methods take `self` or `mut self`.
+- Associated functions take no `self` receiver and are called as `EnumName.method(...)`.
+- `Self` means the declaring enum type, including active generic type arguments.
+- Variants remain constructors or values; adding methods does not make an enum open-ended.
+
+---
+
+## Trait adoption
+
+Enums can adopt traits with `with`:
+
+```incan
+trait Describable:
+    def describe(self) -> str: ...
+
+enum BuildState with Describable:
+    Queued
+    Running(str)
+    Failed(str)
+
+    def describe(self) -> str:
+        match self:
+            BuildState.Queued => return "queued"
+            BuildState.Running(worker) => return f"running on {worker}"
+            BuildState.Failed(message) => return f"failed: {message}"
+```
+
+This uses the same trait-adoption surface as models and classes. The enum must provide the required trait behavior, and values of the enum are accepted where the adopted trait is expected:
+
+```incan
+def log_state(state: Describable) -> None:
+    println(state.describe())
+
+log_state(BuildState.Queued)
+```
+
+Explicit enum adoption also satisfies generic trait bounds:
+
+```incan
+def keep_describable[T with Describable](value: T) -> T:
+    return value
+
+state = keep_describable(BuildState.Queued)
+```
+
+This matters when a library API is written against a reusable capability instead of one concrete enum type.
+
+Value enums can adopt traits too:
+
+```incan
+trait ExternalValue:
+    def external(self) -> str: ...
+
+enum Environment(str) with ExternalValue:
+    Development = "development"
+    Production = "production"
+
+    def external(self) -> str:
+        return self.value()
+```
+
+Trait adoption is additive. An enum without a `with` clause behaves exactly like before, and adopting a trait does not make the enum open-ended; its variants remain closed.
+
+Rules to keep in mind:
+
+- Required trait methods must be implemented in the enum body.
+- Trait methods with default bodies can be inherited when their requirements are satisfied.
+- Generic traits use the same syntax as other adopters: `enum Lookup with Index[str, int]:`.
+- Traits that require adopter fields with `@requires(...)` are usually a model/class fit; enum variant payloads are not shared fields on the enum itself.
 
 ---
 
@@ -349,6 +537,8 @@ def all_categories() -> list[Category]:
 | Fixed set of variants                  | ✓    |       |       |
 | Data that can be one of several shapes | ✓    |       |       |
 | Exhaustive handling required           | ✓    |       |       |
+| Behavior tied to a closed set          | ✓    |       |       |
+| Trait adoption with `with`             | ✓    | ✓     | ✓     |
 | Simple data container (DTO, config)    |      | ✓     |       |
 | Serialization (`@derive`)              | ✓    | ✓     |       |
 | Validation and defaults                |      | ✓     |       |
@@ -427,6 +617,8 @@ enum Ordering:
 | Variants      | Each case of an enum, optionally with data   |
 | Value enum    | Enum with canonical `str` / `int` raw values |
 | Generic enum  | Enum parameterized over types: `Option[T]`   |
+| Methods       | Behavior declared inside the enum body       |
+| `with Trait`  | Trait adoption for enum values               |
 | `match`       | Exhaustive pattern matching on enums         |
 | Destructuring | Extract data from variants: `Some(x) =>`     |
 

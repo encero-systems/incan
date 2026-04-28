@@ -879,6 +879,7 @@ source-root = "library"
             name: "Color".to_string(),
             type_params: vec![],
             value_type: None,
+            traits: vec![],
             docstring: None,
             variants: vec![
                 make_spanned(VariantDecl {
@@ -897,6 +898,7 @@ source-root = "library"
                     value: None,
                 }),
             ],
+            methods: vec![],
         };
         let program = Program {
             declarations: vec![make_spanned(Declaration::Enum(enum_decl))],

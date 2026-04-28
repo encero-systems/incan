@@ -1,6 +1,6 @@
 # RFC 050: Enum methods and enum trait adoption
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-04-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -154,6 +154,79 @@ The feature is additive. Existing enums without methods or traits keep working u
 - **Type system**: enum methods and enum trait adoption must follow the same broad validation rules used for models and classes.
 - **Interop / code generation**: emitted artifacts must preserve enum methods and adopted traits in the same spirit as model/class methods and traits.
 - **Docs / tooling**: completion, hover text, and diagnostics should surface enum methods and enum-adopted traits ergonomically.
+
+## Implementation Plan
+
+### Phase 1: Parser, AST, and syntax tests
+
+- Extend enum declarations so the syntax layer preserves optional `with` clauses and method declarations without regressing regular enums or value enums.
+- Add parser coverage for enum methods, associated functions, generic trait adoption, and interactions with existing enum backing-value syntax.
+
+### Phase 2: Typechecker and semantic lookup
+
+- Store enum methods and adopted traits in semantic enum information.
+- Validate enum methods with the same receiver, parameter, generic, and body rules used for other nominal types.
+- Validate enum trait adoption with the existing trait-arity, bound, coherence, abstract-method, and default-method machinery where applicable.
+- Make enum method lookup work for instance receivers and type-name receivers in the same broad shape as model/class/newtype method lookup.
+
+### Phase 3: Lowering, IR, and emission
+
+- Lower enum methods into generated Rust `impl` blocks for the enum type.
+- Lower enum trait adoption into generated trait implementations, reusing existing trait/default-method lowering policy where possible.
+- Add codegen snapshot coverage that proves enum methods and enum trait impls are emitted and compile through the snapshot harness.
+
+### Phase 4: Documentation, release notes, and integration gates
+
+- Update authored enum and trait documentation so users learn enum methods and enum trait adoption outside the RFC.
+- Add release notes for the active `0.3` development line and bump the development version.
+- Run focused parser/typechecker/codegen checks during implementation, then the repository gate on the integrated result.
+
+## Progress Checklist
+
+### Spec / process
+
+- [x] Review RFC 050 and begin active implementation for issue #334.
+- [x] Relabel issue #334 from RFC tracking to feature implementation.
+- [x] Keep this checklist updated as implementation phases land.
+
+### Parser / AST
+
+- [x] AST: represent enum adopted traits.
+- [x] AST: represent enum methods and associated functions.
+- [x] Parser: parse enum `with` clauses.
+- [x] Parser: parse methods after enum variants without regressing value enums.
+- [x] Parser tests: enum methods and enum trait adoption.
+
+### Typechecker
+
+- [x] Symbols: store enum methods and adopted traits.
+- [x] Validate enum methods with normal method receiver/signature/body rules.
+- [x] Validate enum trait adoption with existing trait conformance rules.
+- [x] Resolve enum instance method calls.
+- [x] Resolve enum associated function or type-name method calls where supported by existing method rules.
+- [x] Typechecker tests: valid and invalid enum method/trait adoption cases.
+
+### Lowering / emission
+
+- [x] Lower enum methods into Rust impl blocks.
+- [x] Lower enum trait adoption into Rust trait impls.
+- [x] Preserve existing enum variant construction and pattern matching behavior.
+- [x] Codegen snapshots: enum method call and enum trait adoption.
+
+### Docs / release
+
+- [x] Update enum explanation/how-to docs.
+- [x] Update trait/derive reference docs where enum adoption is described.
+- [x] Add active-release notes entry for RFC 050 / issue #334.
+- [x] Bump the active development version.
+
+### Verification
+
+- [x] Focused parser verification passes.
+- [x] Focused typechecker verification passes.
+- [x] Focused codegen snapshot verification passes.
+- [x] Integrated review/fix loop is clean.
+- [x] Repository gate passes.
 
 ## Design Decisions
 

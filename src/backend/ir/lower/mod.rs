@@ -706,6 +706,49 @@ impl AstLowering {
                         Err(e) => errors.push(e),
                     }
                 }
+                ast::Declaration::Enum(e) => match self.lower_enum(e) {
+                    Ok(enum_ir) => {
+                        self.enum_names
+                            .insert(enum_ir.name.clone(), IrType::Enum(enum_ir.name.clone()));
+                        ir_program
+                            .declarations
+                            .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())));
+
+                        if !e.methods.is_empty() {
+                            match self.lower_enum_methods(&enum_ir.name, &e.type_params, &e.methods) {
+                                Ok(impl_ir) => {
+                                    ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
+                                }
+                                Err(e) => errors.push(e),
+                            }
+                        }
+
+                        for trait_ref in &e.traits {
+                            for (trait_name, trait_type_args) in
+                                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &e.type_params)
+                            {
+                                if !self.trait_decls.contains_key(&trait_name)
+                                    && Self::is_stdlib_serde_trait_name(&trait_name)
+                                {
+                                    continue;
+                                }
+                                match self.lower_trait_impl(
+                                    &enum_ir.name,
+                                    &e.type_params,
+                                    &trait_name,
+                                    trait_type_args,
+                                    &e.methods,
+                                ) {
+                                    Ok(trait_impl) => {
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => errors.push(e),
+                },
                 _ => {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node) {

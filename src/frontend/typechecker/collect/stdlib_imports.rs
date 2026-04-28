@@ -939,9 +939,11 @@ impl TypeChecker {
 
         EnumInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            traits: export.traits.clone(),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
             value_enum,
             derives: export.derives.clone(),
+            methods: self.methods_from_manifest(&export.methods),
         }
     }
 

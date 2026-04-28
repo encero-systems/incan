@@ -513,10 +513,14 @@ pub struct NewtypeInfo {
 #[derive(Debug, Clone)]
 pub struct EnumInfo {
     pub type_params: Vec<String>,
+    /// Explicit traits adopted by this enum via `with`, using source-level trait names.
+    pub traits: Vec<String>,
     pub variants: Vec<String>,
     pub value_enum: Option<ValueEnumInfo>,
     /// Names from `@derive(...)` (same vocabulary as models/classes).
     pub derives: Vec<String>,
+    /// Inherent methods and associated functions declared in the enum body.
+    pub methods: HashMap<String, MethodInfo>,
 }
 
 /// RFC 032 value enum metadata.

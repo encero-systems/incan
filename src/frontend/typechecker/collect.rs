@@ -521,13 +521,23 @@ impl TypeChecker {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                 type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                 variants: variants.clone(),
                 value_enum,
                 derives,
+                methods: HashMap::new(),
             })),
             span,
             scope: 0,
         });
+
+        let methods = collect_methods(&en.methods, self, Some(&en.name), &en.type_params);
+        if let Some(sym_id) = self.symbols.lookup(&en.name)
+            && let Some(sym) = self.symbols.get_mut(sym_id)
+            && let SymbolKind::Type(TypeInfo::Enum(info)) = &mut sym.kind
+        {
+            info.methods = methods;
+        }
 
         // Also define each variant as a symbol
         for variant in &en.variants {

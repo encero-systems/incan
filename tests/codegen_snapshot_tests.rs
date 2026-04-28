@@ -1258,6 +1258,26 @@ fn test_enums_codegen() {
 }
 
 #[test]
+fn test_enum_methods_traits_codegen() {
+    let source = load_test_file("enum_methods_traits");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("pubfndefault()->Self{"),
+        "expected enum inherent methods to emit in an impl block; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implLabelledforSignal{"),
+        "expected enum trait adoption to emit a trait impl block; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("pubfnmessage(&self)->String{"),
+        "expected existing enum message helper to remain emitted; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("enum_methods_traits", rust_code);
+}
+
+#[test]
 fn test_value_enums_codegen() {
     let source = load_test_file("value_enums");
     let rust_code = generate_rust(&source);

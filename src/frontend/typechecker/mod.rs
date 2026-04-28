@@ -1210,7 +1210,7 @@ impl TypeChecker {
         let (adopted, derives) = match info {
             TypeInfo::Model(m) => (m.traits.as_slice(), Some(m.derives.as_slice())),
             TypeInfo::Class(c) => (c.traits.as_slice(), Some(c.derives.as_slice())),
-            TypeInfo::Enum(e) => (&[][..], Some(e.derives.as_slice())),
+            TypeInfo::Enum(e) => (e.traits.as_slice(), Some(e.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
@@ -2553,9 +2553,11 @@ impl TypeChecker {
                     name: en.name.clone(),
                     kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                         type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
+                        traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
                         value_enum: None,
                         derives: Vec::new(),
+                        methods: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
