@@ -45,7 +45,7 @@ use std::process;
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
-use commands::tools::ToolsDoctorFormat;
+use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat};
 
 // ============================================================================
 // CLI Error handling
@@ -461,6 +461,24 @@ pub enum ToolsCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: ToolsDoctorFormat,
     },
+    /// Extract checked metadata for tooling and documentation consumers
+    Metadata {
+        #[command(subcommand)]
+        command: ToolsMetadataCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ToolsMetadataCommand {
+    /// Emit checked public API metadata as JSON
+    Api {
+        /// Incan source file or project directory to inspect
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "json")]
+        format: ToolsMetadataFormat,
+    },
 }
 
 // ============================================================================
@@ -658,6 +676,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         },
         Some(Command::Tools { command }) => match command {
             ToolsCommand::Doctor { format } => commands::tools_doctor(format),
+            ToolsCommand::Metadata { command } => match command {
+                ToolsMetadataCommand::Api { path, format } => commands::tools_metadata_api(&path, format),
+            },
         },
         Some(Command::New {
             name,
@@ -1144,6 +1165,23 @@ mod tests {
             return Err(expected_command("tools doctor"));
         };
         assert_eq!(format, ToolsDoctorFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_tools_metadata_api_json() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "tools", "metadata", "api", "src/lib.incn", "--format", "json"])?;
+        let Some(Command::Tools {
+            command:
+                ToolsCommand::Metadata {
+                    command: ToolsMetadataCommand::Api { path, format },
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("tools metadata api"));
+        };
+        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
+        assert_eq!(format, ToolsMetadataFormat::Json);
         Ok(())
     }
 

@@ -16,6 +16,7 @@ use incan_vocab::{
 
 pub use model::*;
 pub use type_refs::resolved_type_from_manifest_type_ref;
+pub(crate) use type_refs::type_ref_from_resolved;
 
 /// Stable on-disk format version for `.incnlib` manifests.
 pub const LIBRARY_MANIFEST_FORMAT: u32 = 1;

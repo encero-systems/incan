@@ -7,7 +7,17 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use serde_json::json;
 
+use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::frontend::api_metadata::{
+    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+};
+use crate::frontend::diagnostics;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::typechecker;
+use crate::manifest::ProjectManifest;
+
+use super::common::{collect_modules, imported_module_deps_for_with_index, module_key_index, resolve_project_root};
 
 /// Output format for `incan tools doctor`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +25,13 @@ pub enum ToolsDoctorFormat {
     /// Human-readable diagnostic report.
     Text,
     /// Machine-readable JSON report for editor integrations and issue templates.
+    Json,
+}
+
+/// Output format for `incan tools metadata api`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsMetadataFormat {
+    /// Stable checked API metadata JSON.
     Json,
 }
 
@@ -26,6 +43,123 @@ pub fn tools_doctor(format: ToolsDoctorFormat) -> CliResult<ExitCode> {
         ToolsDoctorFormat::Json => report.print_json()?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Emit checked public API metadata for a source file or project directory.
+pub fn tools_metadata_api(path: &Path, format: ToolsMetadataFormat) -> CliResult<ExitCode> {
+    let package = collect_api_metadata_package(path)?;
+    match format {
+        ToolsMetadataFormat::Json => {
+            let output = serde_json::to_string_pretty(&package)
+                .map_err(|error| CliError::failure(format!("failed to serialize API metadata: {error}")))?;
+            println!("{output}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Type-check a metadata entry path and collect checked API metadata for all local modules.
+fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPackage> {
+    let entry_path = resolve_metadata_entry_path(path)?;
+    let entry_path_string = entry_path.to_string_lossy();
+    let modules = collect_modules(&entry_path_string)?;
+    let project_root = resolve_project_root(&entry_path);
+    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let module_idx_by_key = module_key_index(&modules);
+    let mut all_errors = String::new();
+    let mut metadata_modules = Vec::new();
+
+    for (idx, module) in modules.iter().enumerate() {
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+        let mut checker = typechecker::TypeChecker::new();
+        if let Some(names) = declared.clone() {
+            checker.set_declared_crate_names(names);
+        }
+        checker.set_library_manifest_index(library_manifest_index.clone());
+
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                for warn in checker.warnings() {
+                    eprint!(
+                        "{}",
+                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
+                    );
+                }
+                metadata_modules.push(collect_checked_api_metadata(
+                    &module.ast,
+                    &checker,
+                    metadata_module_path(module, &entry_path),
+                ));
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
+    Ok(CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        modules: metadata_modules,
+    })
+}
+
+/// Return the logical module path used in metadata for one parsed module.
+fn metadata_module_path(module: &ParsedModule, entry_path: &Path) -> Vec<String> {
+    if module.file_path == entry_path
+        && let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str())
+    {
+        return vec![stem.to_string()];
+    }
+    module.path_segments.clone()
+}
+
+/// Resolve a file or project directory to the source file used as the metadata entry point.
+fn resolve_metadata_entry_path(path: &Path) -> CliResult<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
+            .join(path)
+    };
+
+    if absolute.is_file() {
+        return Ok(absolute);
+    }
+    if absolute.is_dir() {
+        let lib = absolute.join("src").join("lib.incn");
+        if lib.is_file() {
+            return Ok(lib);
+        }
+        let main = absolute.join("src").join("main.incn");
+        if main.is_file() {
+            return Ok(main);
+        }
+        return Err(CliError::failure(format!(
+            "metadata API extraction requires an Incan source file, or a project directory with `src/lib.incn` or `src/main.incn`: {}",
+            absolute.display()
+        )));
+    }
+
+    Err(CliError::failure(format!(
+        "metadata API extraction path does not exist: {}",
+        absolute.display()
+    )))
 }
 
 #[derive(Debug)]
@@ -236,6 +370,42 @@ fn is_executable_file(path: &Path) -> bool {
 /// Render a path for plain text or JSON output.
 fn path_to_string(path: &Path) -> String {
     path.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_api_metadata_package_extracts_project_lib() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            r#"
+[project]
+name = "metadata_demo"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(
+            src.join("lib.incn"),
+            r#"
+pub const LABEL = "demo"
+
+pub def label() -> str:
+    return LABEL
+"#,
+        )?;
+
+        let package = collect_api_metadata_package(tmp.path())?;
+        assert_eq!(package.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION);
+        assert_eq!(package.modules.len(), 1);
+        assert_eq!(package.modules[0].module_path, vec!["lib".to_string()]);
+        assert_eq!(package.modules[0].declarations.len(), 2);
+        Ok(())
+    }
 }
 
 /// Render an optional path, using a consistent placeholder when absent.

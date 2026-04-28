@@ -294,6 +294,116 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn tools_metadata_api_reports_checked_json() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("metadata_app");
+    let main_path = write_minimal_project(&project_dir, "metadata_app", "")?;
+    fs::write(
+        &main_path,
+        r#"
+pub const LABEL = "metadata"
+
+pub def label() -> str:
+    return LABEL
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "api",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata api --format json");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json.pointer("/schema_version").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/modules/0/module_path/0")
+            .and_then(serde_json::Value::as_str),
+        Some("main")
+    );
+    assert!(
+        json.pointer("/modules/0/declarations")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|decls| decls.len() == 2),
+        "expected const and function declarations in metadata JSON: {json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_api_reports_public_import_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("metadata_alias_app");
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_dir.join("incan.toml"),
+        r#"[project]
+name = "metadata_alias_app"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("widgets.incn"),
+        r#"
+pub model Widget:
+    name: str
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"
+pub from crate.widgets import Widget as PublicWidget
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "api",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata api --format json");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let declarations = json
+        .pointer("/modules")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|module| module.pointer("/declarations").and_then(serde_json::Value::as_array))
+        .flatten();
+    let alias = declarations
+        .filter(|declaration| declaration.pointer("/kind").and_then(serde_json::Value::as_str) == Some("alias"))
+        .find(|declaration| declaration.pointer("/name").and_then(serde_json::Value::as_str) == Some("PublicWidget"))
+        .ok_or_else(|| format!("expected PublicWidget alias declaration in metadata JSON: {json}"))?;
+    assert_eq!(
+        alias
+            .pointer("/target_path")
+            .and_then(serde_json::Value::as_array)
+            .map(|segments| segments
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()),
+        Some(vec!["crate", "widgets", "Widget"])
+    );
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

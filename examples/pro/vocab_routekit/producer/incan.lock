@@ -3,7 +3,7 @@
 
 [incan]
 format = 1
-incan-version = "0.3.0-dev.18"
+incan-version = "0.3.0-dev.19"
 generated = "2026-04-27T10:30:00.000000Z"
 deps-fingerprint = "sha256:17f122844d2fa1c9756f9a1976d222f15255557e74d975b8d8ff46536ea82b87"
 cargo-features = []
@@ -18,14 +18,14 @@ version = 4
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.18"
+version = "0.3.0-dev.19"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.18"
+version = "0.3.0-dev.19"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.18"
+version = "0.3.0-dev.19"
 dependencies = [
  "incan_core",
  "incan_derive",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "routekit_core"
-version = "0.3.0-dev.18"
+version = "0.3.0-dev.19"
 dependencies = [
  "incan_derive",
  "incan_stdlib",
