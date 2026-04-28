@@ -4865,7 +4865,7 @@
 <li>RFC 038 (Variadic positional args and keyword-argument capture)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/331</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/173">#173</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -4969,7 +4969,7 @@
 <li>Exposing Rust's <code>Future&lt;Output = T&gt;</code> syntax directly in user-facing Incan.</li>
 <li>Designing a full async trait system, async closures RFC, or effect system.</li>
 <li>Adding Go-style channel <code>select</code> as a separate feature in this RFC.</li>
-<li>Adding <code>default</code> arms, guarded arms, or fairness controls in v1.</li>
+<li>Adding <code>default</code> arms, guarded arms, or fairness controls in this RFC.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="user-model">User model<a class="headerlink" href="#user-model" title="Permanent link">&para;</a></h3>
@@ -5140,7 +5140,7 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
 <h3 id="context-restrictions">Context restrictions<a class="headerlink" href="#context-restrictions" title="Permanent link">&para;</a></h3>
 <ol>
 <li><code>race</code> is only valid inside <code>async def</code>.</li>
-<li>Every arm in v1 is an <code>await</code> arm.</li>
+<li>Every arm accepted by this RFC is an <code>await</code> arm.</li>
 <li>All arm bodies must produce a single common result type.</li>
 <li>That common result type may be a union, subject to RFC 029's rules.</li>
 <li><code>race</code> is expression-position syntax.</li>
@@ -5212,8 +5212,8 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
 </ul>
 <p>This is the same semantic territory as runtimes like Tokio, but the language definition stays backend-agnostic.</p>
 <h3 id="tie-breaking">Tie-breaking<a class="headerlink" href="#tie-breaking" title="Permanent link">&para;</a></h3>
-<p>If more than one arm becomes ready at the same poll point, v1 chooses the first arm in source order.</p>
-<p>This gives deterministic behavior and keeps the first version easy to reason about.</p>
+<p>If more than one arm becomes ready at the same poll point, this RFC chooses the first arm in source order.</p>
+<p>This gives deterministic behavior and keeps the feature easy to reason about.</p>
 <h3 id="backend-guidance">Backend guidance<a class="headerlink" href="#backend-guidance" title="Permanent link">&para;</a></h3>
 <p>The Rust backend will likely realize <code>Awaitable[T]</code> in terms equivalent to Rust futures and realize <code>std.async.race(...)</code> in terms equivalent to <code>tokio::select!</code> or a narrow helper facade.</p>
 <p>That is explicitly backend guidance, not the normative language definition.</p>
@@ -5345,7 +5345,7 @@ race_body     ::= expr | NEWLINE INDENT stmt+ DEDENT
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Should <code>Awaitable[T]</code> be user-implementable in v1, or compiler-recognized only?</li>
+<li>Should <code>Awaitable[T]</code> be user-implementable under this RFC, or compiler-recognized only?</li>
 <li>Should <code>std.async.select</code> be renamed to <code>std.async.race</code>, with compatibility exports left behind?</li>
 <li>Does RFC 027 need a dedicated expression-block surface kind for <code>race for value:</code>?</li>
 <li>Should a later version add a more general pattern-binding <code>race</code> form, or is <code>race for value:</code> plus ordinary <code>match</code> sufficient?</li>

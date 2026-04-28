@@ -5004,7 +5004,7 @@
 <li>RFC 041 (First-class Rust interop — <code>rusttype</code>, metadata dispatch, coercions; <strong>implemented</strong>)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> #152</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/152">#152</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -5803,7 +5803,7 @@ This table shows <code>syn</code> compared to the <code>rust-analyzer</code> app
 </ul>
 <h3 id="phase-1-mvp-highest-benefit-smallest-slice">Phase 1 — MVP (highest benefit / smallest slice)<a class="headerlink" href="#phase-1-mvp-highest-benefit-smallest-slice" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Parse and typecheck <code>@rust.delegate(trait=..., methods=[...])</code> on <strong><code>newtype</code></strong> (and define whether <code>rusttype</code> is in scope for v1).</li>
+<li>Parse and typecheck <code>@rust.delegate(trait=..., methods=[...])</code> on <strong><code>newtype</code></strong> (and define whether <code>rusttype</code> is in scope for this RFC).</li>
 <li>Emit a forwarding <code>impl</code> for <strong>one</strong> trait, <strong>explicit</strong> method list, <strong>sync</strong> methods first; associated types either explicit in the decorator or copied from a single, known-good pattern.</li>
 <li>Defer: method <strong>renaming</strong> maps, multi-trait collision policy, and “delegate all methods with zero list” default.</li>
 <li>Validate shapes primarily with <strong>rustc</strong> errors mapped to Incan spans; treat rust-analyzer metadata as <strong>optional</strong> optimization, not a gate.</li>

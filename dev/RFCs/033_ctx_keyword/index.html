@@ -4704,7 +4704,7 @@
 <li><strong>Created:</strong> 2026-03-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 032 (Value Enums)</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/318</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/167">#167</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> —</li>
@@ -5113,7 +5113,7 @@ toward: a follow-up RFC. Single-axis matching covers the common case and keeps t
 </li>
 <li>
 <p><strong>Generated panic compatibility with strict lint settings.</strong> The generated init path may use fail-fast panics for
-env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return <code>Result[None, CtxInitError]</code> and propagate errors to <code>main</code> instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: <strong>keep panics for v1</strong> — fail-fast startup is the point, and a <code>Result</code> return complicates auto-init.</p>
+env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return <code>Result[None, CtxInitError]</code> and propagate errors to <code>main</code> instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: <strong>keep fail-fast panics in this RFC</strong> — fail-fast startup is the point, and a <code>Result</code> return complicates auto-init.</p>
 </li>
 </ol>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
