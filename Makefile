@@ -265,23 +265,59 @@ benchmarks-incan: release
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
 
-.PHONY: smoke-test-core
-smoke-test-core:
+.PHONY: smoke-test-release
+smoke-test-release:
 	@$(MAKE) release
-	@$(MAKE) test-rust-inspect
+
+.PHONY: smoke-test-require-release-bin
+smoke-test-require-release-bin:
+	@if [ ! -x "$(CURDIR)/target/release/incan" ]; then \
+		echo "incan: expected $(CURDIR)/target/release/incan; run make smoke-test-release first"; \
+		exit 1; \
+	fi
+
+.PHONY: smoke-test-canary
+smoke-test-canary:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan test tests/fixtures/test_assert_canary.incn
 	@echo "\033[32m✓ Incan assertion canary passed\033[0m"
+
+.PHONY: smoke-test-web-example
+smoke-test-web-example:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mBuilding web example (build-only)...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan build examples/web/hello_web.incn
 	@echo "\033[32m✓ Web example built\033[0m"
+
+.PHONY: smoke-test-nested-project-example
+smoke-test-nested-project-example:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mBuilding nested_project example (build-only)...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan build examples/advanced/nested_project/src/main.incn
 	@echo "\033[32m✓ Nested project example built\033[0m"
+
+.PHONY: smoke-test-examples
+smoke-test-examples:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning examples...\033[0m"
 	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
+
+.PHONY: smoke-test-benchmarks-incan
+smoke-test-benchmarks-incan:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
+
+.PHONY: smoke-test-core
+smoke-test-core:
+	@$(MAKE) smoke-test-release
+	@$(MAKE) test-rust-inspect
+	@$(MAKE) smoke-test-canary
+	@$(MAKE) smoke-test-web-example
+	@$(MAKE) smoke-test-nested-project-example
+	@$(MAKE) smoke-test-examples
+	@$(MAKE) smoke-test-benchmarks-incan
 
 .PHONY: smoke-test  ## test - Full smoke test: tests + release canary + examples + benchmarks-incan
 smoke-test:

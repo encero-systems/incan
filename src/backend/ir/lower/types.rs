@@ -9,7 +9,7 @@
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
 
 use super::super::expr::BinOp;
-use super::super::types::IrType;
+use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::AstLowering;
 use crate::frontend::ast;
 use crate::frontend::symbols::ResolvedType;
@@ -35,6 +35,40 @@ fn classify_generic_base(name: &str) -> GenericBaseKind {
 
 fn lowered_generic_arg_or_unknown(lowered_params: &[IrType], idx: usize) -> IrType {
     lowered_params.get(idx).cloned().unwrap_or(IrType::Unknown)
+}
+
+/// Construct the canonical IR shape for an anonymous union.
+fn union_ir_type(members: Vec<IrType>) -> IrType {
+    let mut has_none = false;
+    let mut flattened = Vec::new();
+
+    for member in members {
+        match member {
+            IrType::Unit => has_none = true,
+            IrType::NamedGeneric(name, nested) if name == IR_UNION_TYPE_NAME => flattened.extend(nested),
+            other => flattened.push(other),
+        }
+    }
+
+    flattened.sort_by_key(IrType::rust_name);
+    flattened.dedup();
+
+    if has_none {
+        return match flattened.as_slice() {
+            [] => IrType::Unit,
+            [only] => IrType::Option(Box::new(only.clone())),
+            _ => IrType::Option(Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.to_string(),
+                flattened,
+            ))),
+        };
+    }
+
+    match flattened.as_slice() {
+        [] => IrType::Unknown,
+        [only] => only.clone(),
+        _ => IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), flattened),
+    }
 }
 
 impl AstLowering {
@@ -193,6 +227,7 @@ impl AstLowering {
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), params_lowered)
                     }
+                    _ if base == IR_UNION_TYPE_NAME => union_ir_type(params_lowered),
                     _ => IrType::NamedGeneric(base.clone(), params.iter().map(|p| self.lower_type(&p.node)).collect()),
                 }
             }
@@ -291,6 +326,9 @@ impl AstLowering {
                 }
                 GenericBaseKind::Other => {
                     let lowered_args: Vec<IrType> = args.iter().map(|t| self.lower_resolved_type(t)).collect();
+                    if name == IR_UNION_TYPE_NAME {
+                        return union_ir_type(lowered_args);
+                    }
                     if lowered_args.is_empty() {
                         IrType::Struct(name.clone())
                     } else {
@@ -311,6 +349,7 @@ impl AstLowering {
         }
     }
 
+    /// Lower an AST type while preserving names that are in-scope type parameters.
     pub(super) fn lower_type_with_type_params(
         &self,
         ty: &ast::Type,
@@ -385,6 +424,7 @@ impl AstLowering {
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), lowered_params)
                     }
+                    GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => union_ir_type(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(base.clone(), lowered_params),
                 }
             }
@@ -447,6 +487,7 @@ impl AstLowering {
             ast::BinaryOp::And => BinOp::And,
             ast::BinaryOp::Or => BinOp::Or,
             ast::BinaryOp::In | ast::BinaryOp::NotIn | ast::BinaryOp::Is => BinOp::Eq,
+            ast::BinaryOp::IsNot => BinOp::Ne,
         }
     }
 
@@ -481,7 +522,8 @@ impl AstLowering {
             | ast::BinaryOp::Or
             | ast::BinaryOp::In
             | ast::BinaryOp::NotIn
-            | ast::BinaryOp::Is => IrType::Bool,
+            | ast::BinaryOp::Is
+            | ast::BinaryOp::IsNot => IrType::Bool,
             ast::BinaryOp::Add
             | ast::BinaryOp::Sub
             | ast::BinaryOp::Mul

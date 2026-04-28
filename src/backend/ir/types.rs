@@ -6,6 +6,9 @@ use std::fmt;
 
 use super::decl::IrTraitBound;
 
+/// Canonical IR generic name used for anonymous union types.
+pub const IR_UNION_TYPE_NAME: &str = "Union";
+
 /// Ownership semantics for a value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Ownership {
@@ -211,6 +214,9 @@ impl IrType {
             IrType::Result(ok, err) => format!("Result<{}, {}>", ok.rust_name(), err.rust_name()),
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
+            IrType::NamedGeneric(name, _) if name == IR_UNION_TYPE_NAME => {
+                self.union_type_name().unwrap_or_else(|| IR_UNION_TYPE_NAME.to_string())
+            }
             IrType::NamedGeneric(name, args) => {
                 let inner: Vec<_> = args.iter().map(|a| a.rust_name()).collect();
                 format!("{}<{}>", name, inner.join(", "))
@@ -235,6 +241,60 @@ impl IrType {
             IrType::Unknown => "_".to_string(),
         }
     }
+}
+
+impl IrType {
+    /// Return the normalized members of an anonymous union type.
+    pub fn union_members(&self) -> Option<&[IrType]> {
+        match self {
+            IrType::NamedGeneric(name, members) if name == IR_UNION_TYPE_NAME => Some(members.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Return whether this type is an anonymous union type.
+    pub fn is_union(&self) -> bool {
+        self.union_members().is_some()
+    }
+
+    /// Return the deterministic generated Rust type name for an anonymous union shape.
+    pub fn union_type_name(&self) -> Option<String> {
+        let members = self.union_members()?;
+        let key = members.iter().map(IrType::rust_name).collect::<Vec<_>>().join("|");
+        Some(format!("__IncanUnion{:016x}", stable_union_hash(key.as_bytes())))
+    }
+
+    /// Return the variant name for a normalized union member index.
+    pub fn union_variant_name(index: usize) -> String {
+        format!("V{index}")
+    }
+
+    /// Find the union variant index that can hold `member_ty`.
+    pub fn union_variant_index_for_member(&self, member_ty: &IrType) -> Option<usize> {
+        let members = self.union_members()?;
+        members
+            .iter()
+            .position(|member| union_member_type_matches(member, member_ty))
+    }
+}
+
+/// Return whether a concrete value type can inhabit a normalized union member type.
+fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
+    member == value_ty
+        || matches!(
+            (member, value_ty),
+            (IrType::String, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
+        )
+}
+
+/// Hash a union member-key into a deterministic generated Rust type suffix.
+fn stable_union_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 impl fmt::Display for IrType {

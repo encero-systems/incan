@@ -1106,6 +1106,197 @@ fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
 }
 
 #[test]
+fn test_union_member_values_satisfy_explicit_union_return_type() {
+    let source = r#"
+def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 42
+  return "fallback"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_rejects_return_value_outside_member_set() {
+    let source = r#"
+def parse_value() -> int | str:
+  return true
+"#;
+    let errors = check_str_err(source, "bool should not satisfy int | str");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Union") && error.message.contains("bool")),
+        "expected union type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_assignment_canonicalizes_none_through_option() {
+    let source = r#"
+def maybe_name(flag: bool) -> str | None:
+  if flag:
+    return "Ada"
+  return None
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_branch_type() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, str):
+    return value.upper()
+  return "number"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_else_branch_for_two_member_union() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_wider_else_branch_to_remaining_union() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    match value:
+      bool(flag) =>
+        if flag:
+          return "true"
+        return "false"
+      str(text) =>
+        return text.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_elif_chain() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  elif isinstance(value, str):
+    return value.upper()
+  else:
+    if value:
+      return "true"
+    return "false"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_requires_explicit_union_annotation() {
+    let source = r#"
+def values() -> List[int | str]:
+  items: List[int | str] = [1, "two"]
+  return items
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_does_not_synthesize_implicit_union() {
+    let source = r#"
+def values() -> None:
+  items = [1, "two"]
+"#;
+    let errors = check_str_err(source, "mixed list literal should require an explicit union annotation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("int") && error.message.contains("str")),
+        "expected mixed list element diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_is_not_none_narrows_option_canonicalized_union() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is not None:
+    return value.upper()
+  return "missing"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_is_none_narrows_else_branch_to_option_inner() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is None:
+    return "missing"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_option_wrapped_union_else_branch() {
+    let source = r#"
+def normalize(value: int | str | None) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_match_type_patterns_bind_narrowed_values() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+    str(s) =>
+      return s.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_match_requires_exhaustive_type_patterns() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+  return "fallback"
+"#;
+    let errors = check_str_err(source, "missing union match arm should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("non-exhaustive") || error.message.contains("str")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
 from rust::mail import EmailAddress as RustEmailAddress

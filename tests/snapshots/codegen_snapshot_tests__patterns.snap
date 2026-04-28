@@ -69,7 +69,7 @@ fn test_pattern_option_some() {
     };
 }
 fn test_pattern_option_none() {
-    let maybe = None::<_>;
+    let maybe = None::<i64>;
     match maybe {
         Some(n) => {
             println!("{}", n);

@@ -293,6 +293,7 @@ impl<'a> IrEmitter<'a> {
         };
 
         match id {
+            BuiltinFnId::IsInstance => Ok(None),
             BuiltinFnId::Print => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;

@@ -81,6 +81,13 @@ impl<'a> IrEmitter<'a> {
                 }
                 Self::emit_path_ident(name)
             }
+            IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
+                let union_name = ty
+                    .union_type_name()
+                    .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
+                let n = Self::rust_ident(&union_name);
+                quote! { #n }
+            }
             IrType::NamedGeneric(name, args) => {
                 let frozen_name = match collections::from_str(name) {
                     Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),

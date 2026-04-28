@@ -212,7 +212,7 @@ impl TypeChecker {
                 ));
                 ResolvedType::Bool
             }
-            BinaryOp::Is => ResolvedType::Bool,
+            BinaryOp::Is | BinaryOp::IsNot => ResolvedType::Bool,
         }
     }
 

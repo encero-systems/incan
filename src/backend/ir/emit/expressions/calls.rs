@@ -86,6 +86,86 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether an argument can be wrapped directly as `Some(inner)`.
+    fn option_payload_type_matches(arg_ty: &IrType, inner_ty: &IrType) -> bool {
+        arg_ty == inner_ty
+            || matches!(
+                (inner_ty, arg_ty),
+                (IrType::String, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
+            )
+    }
+
+    /// Emit a concrete payload argument for an `Option[T]` parameter as `Some(...)`.
+    fn emit_option_payload_arg(&self, arg: &TypedExpr, inner_ty: &IrType) -> Result<Option<TokenStream>, EmitError> {
+        if let Some(variant_index) = inner_ty.union_variant_index_for_member(&arg.ty) {
+            let Some(members) = inner_ty.union_members() else {
+                return Ok(None);
+            };
+            let Some(member_ty) = members.get(variant_index) else {
+                return Ok(None);
+            };
+            let Some(union_name) = inner_ty.union_type_name() else {
+                return Ok(None);
+            };
+            let union_ident = quote::format_ident!("{}", union_name);
+            let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+            let emitted = self.emit_expr_for_use(
+                arg,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(member_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+            )?;
+            return Ok(Some(quote! { Some(#union_ident :: #variant_ident(#emitted)) }));
+        }
+
+        if Self::option_payload_type_matches(&arg.ty, inner_ty) {
+            let emitted = self.emit_expr_for_use(
+                arg,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(inner_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+            )?;
+            return Ok(Some(quote! { Some(#emitted) }));
+        }
+
+        Ok(None)
+    }
+
+    /// Emit a concrete payload argument for a `Union[...]` parameter as the generated enum variant.
+    fn emit_union_payload_arg(&self, arg: &TypedExpr, target_ty: &IrType) -> Result<Option<TokenStream>, EmitError> {
+        if arg.ty.is_union() {
+            return Ok(None);
+        }
+        let Some(variant_index) = target_ty.union_variant_index_for_member(&arg.ty) else {
+            return Ok(None);
+        };
+        let Some(members) = target_ty.union_members() else {
+            return Ok(None);
+        };
+        let Some(member_ty) = members.get(variant_index) else {
+            return Ok(None);
+        };
+        let Some(union_name) = target_ty.union_type_name() else {
+            return Ok(None);
+        };
+
+        let union_ident = quote::format_ident!("{}", union_name);
+        let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+        let emitted = self.emit_expr_for_use(
+            arg,
+            ValueUseSite::IncanCallArg {
+                target_ty: Some(member_ty),
+                callee_param: None,
+                in_return: false,
+            },
+        )?;
+        Ok(Some(quote! { #union_ident :: #variant_ident(#emitted) }))
+    }
+
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
     ///
     /// This helper rewrites constructor-shaped arguments into explicit generic forms (for example `None::<T>`, `Ok::<T,
@@ -109,6 +189,10 @@ impl<'a> IrEmitter<'a> {
         arg: &TypedExpr,
         target_ty: &IrType,
     ) -> Result<Option<TokenStream>, EmitError> {
+        if let Some(wrapped) = self.emit_union_payload_arg(arg, target_ty)? {
+            return Ok(Some(wrapped));
+        }
+
         // ---- Context: constructor seeding from an expected parameter type ----
         match (&arg.kind, target_ty) {
             // ---- Context: seed `None` from the target `Option[T]` ----
@@ -120,6 +204,8 @@ impl<'a> IrEmitter<'a> {
                 };
                 Ok(Some(quote! { None::<#inner_ty> }))
             }
+
+            (_, IrType::Option(inner)) => self.emit_option_payload_arg(arg, inner),
 
             // ---- Context: seed `Ok`/`Err` constructors spelled as calls ----
             (IrExprKind::Call { func, args, .. }, IrType::Result(ok_ty, err_ty)) => {

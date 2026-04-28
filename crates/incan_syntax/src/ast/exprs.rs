@@ -216,9 +216,11 @@ pub enum BinaryOp {
     In,
     NotIn,
     Is,
+    IsNot,
 }
 
 impl fmt::Display for BinaryOp {
+    /// Format a binary operator using its source-level spelling.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BinaryOp::Add => write!(f, "+"),
@@ -239,6 +241,7 @@ impl fmt::Display for BinaryOp {
             BinaryOp::In => write!(f, "in"),
             BinaryOp::NotIn => write!(f, "not in"),
             BinaryOp::Is => write!(f, "is"),
+            BinaryOp::IsNot => write!(f, "is not"),
         }
     }
 }

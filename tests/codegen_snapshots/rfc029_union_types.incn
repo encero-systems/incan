@@ -1,0 +1,62 @@
+pub def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 42
+  return "fallback"
+
+pub def normalize(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+
+pub def describe(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return str(n)
+    str(s) =>
+      return s.upper()
+
+pub def label(value: str | None) -> str:
+  if value is not None:
+    return value.upper()
+  return "missing"
+
+pub def describe_optional(value: int | str | None) -> str:
+  match value:
+    int(n) =>
+      return str(n)
+    str(s) =>
+      return s.upper()
+    None =>
+      return "missing"
+
+pub def describe_wide(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    match value:
+      bool(flag) =>
+        if flag:
+          return "true"
+        return "false"
+      str(text) =>
+        return text.upper()
+
+pub def describe_chain(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  elif isinstance(value, str):
+    return value.upper()
+  else:
+    if value:
+      return "true"
+    return "false"
+
+pub def describe_optional_narrow(value: int | str | None) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
