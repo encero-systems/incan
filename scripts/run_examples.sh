@@ -30,11 +30,28 @@ if [[ "$INCAN_BIN" == ./* ]]; then
 fi
 
 TIMEOUT_SECS="${INCAN_EXAMPLES_TIMEOUT:-30}"
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/incan-example-logs.XXXXXX")"
+trap 'rm -rf "$LOG_DIR"' EXIT
 
 echo "Incan examples runner"
 echo "  incan:    $INCAN_BIN"
 echo "  timeout: ${TIMEOUT_SECS}s (only for runnable examples)"
 echo ""
+
+log_file_for() {
+  local kind="$1"
+  local path="$2"
+  local safe="${path//\//_}"
+  safe="${safe// /_}"
+  printf '%s/%s-%s.log' "$LOG_DIR" "$kind" "$safe"
+}
+
+print_log() {
+  local log_file="$1"
+  if [[ -s "$log_file" ]]; then
+    sed 's/^/  | /' "$log_file"
+  fi
+}
 
 python_run_with_timeout() {
   # Usage: python_run_with_timeout <cmd...>
@@ -76,10 +93,14 @@ prebuild_example_libraries() {
     fi
 
     echo "==> build-lib: $project_dir"
-    if (cd "$project_dir" && INCAN_NO_BANNER=1 "$INCAN_BIN" build --lib >/dev/null); then
+    local log_file
+    log_file="$(log_file_for "build-lib" "$project_dir")"
+    if (cd "$project_dir" && INCAN_NO_BANNER=1 "$INCAN_BIN" build --lib >"$log_file" 2>&1); then
       :
     else
       echo "FAILED: build --lib $project_dir"
+      print_log "$log_file"
+      failed_items+=("build --lib $project_dir")
       failed=$((failed + 1))
     fi
   done < <(
@@ -94,6 +115,7 @@ ran=0
 skipped=0
 failed=0
 timed_out=0
+failed_items=()
 
 found_any=0
 
@@ -107,8 +129,9 @@ while IFS= read -r f; do
     # For runnable entrypoints, `incan run` already performs compile-time validation,
     # so we avoid a redundant prior `--check`.
     echo "==> run:   $f"
+    log_file="$(log_file_for "run" "$f")"
     set +e
-    INCAN_EXAMPLES_TIMEOUT="$TIMEOUT_SECS" python_run_with_timeout "$INCAN_BIN" run "$f" >/dev/null
+    INCAN_EXAMPLES_TIMEOUT="$TIMEOUT_SECS" python_run_with_timeout "$INCAN_BIN" run "$f" >"$log_file" 2>&1
     rc=$?
     set -e
 
@@ -117,16 +140,20 @@ while IFS= read -r f; do
       ran=$((ran + 1))
     elif [[ "$rc" -eq 124 ]]; then
       echo "==> skip:  $f (timeout after ${TIMEOUT_SECS}s)"
+      print_log "$log_file"
       timed_out=$((timed_out + 1))
     else
       echo "FAILED: run $f (exit $rc)"
+      print_log "$log_file"
+      failed_items+=("run $f")
       failed=$((failed + 1))
     fi
     continue
   fi
 
   echo "==> check: $f"
-  if "$INCAN_BIN" --check "$f" >/dev/null; then
+  log_file="$(log_file_for "check" "$f")"
+  if "$INCAN_BIN" --check "$f" >"$log_file" 2>&1; then
     checked=$((checked + 1))
     if is_runnable_entrypoint "$f" && should_skip_run "$f"; then
       echo "==> skip:  $f (excluded: long-running)"
@@ -134,6 +161,8 @@ while IFS= read -r f; do
     fi
   else
     echo "FAILED: check $f"
+    print_log "$log_file"
+    failed_items+=("check $f")
     failed=$((failed + 1))
   fi
 done < <(
@@ -156,5 +185,10 @@ echo "  timed out: $timed_out"
 echo "  failed:    $failed"
 
 if [[ "$failed" -ne 0 ]]; then
+  echo ""
+  echo "Failed examples:"
+  for item in "${failed_items[@]}"; do
+    echo "  - $item"
+  done
   exit 1
 fi
