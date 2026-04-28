@@ -136,15 +136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic-polyfill"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf2bce30dfe09ef0bfaef228b9d414faaf7e563035494d7fe092dba54b300f4"
-dependencies = [
- "critical-section",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -314,12 +305,6 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 dependencies = [
  "allocator-api2",
 ]
-
-[[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
@@ -704,12 +689,6 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
-
-[[package]]
-name = "critical-section"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam-channel"
@@ -1138,15 +1117,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash32"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1181,20 +1151,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "heapless"
-version = "0.7.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
-dependencies = [
- "atomic-polyfill",
- "hash32",
- "rustc_version",
- "serde",
- "spin",
- "stable_deref_trait",
 ]
 
 [[package]]
@@ -1433,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "clap",
  "hex",
@@ -1471,14 +1427,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1487,14 +1443,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1502,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "axum",
  "incan_core",
@@ -1515,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1536,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2121,7 +2077,6 @@ dependencies = [
  "cobs",
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
- "heapless",
  "serde",
 ]
 
@@ -2699,8 +2654,6 @@ dependencies = [
 [[package]]
 name = "ra_ap_proc_macro_api"
 version = "0.0.325"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2e7b87c262735a10e5cd3ccaee89cc9d547eacbba86828c5ff6d2b22995dd4a"
 dependencies = [
  "indexmap",
  "postcard",
@@ -3068,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 dependencies = [
  "hex",
  "incan_core",
@@ -3131,15 +3084,6 @@ checksum = "486c2179b4796f65bfe2ee33679acf0927ac83ecf583ad6c91c3b4570911b9ad"
 dependencies = [
  "bitflags 2.11.0",
  "smallvec",
-]
-
-[[package]]
-name = "rustc_version"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-dependencies = [
- "semver",
 ]
 
 [[package]]
@@ -3431,15 +3375,6 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "spin"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-dependencies = [
- "lock_api",
 ]
 
 [[package]]

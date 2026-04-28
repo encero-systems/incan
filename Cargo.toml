@@ -14,8 +14,15 @@ members = [
 exclude = ["target/incan"]
 resolver = "2"
 
+[patch.crates-io]
+# `ra_ap_proc_macro_api` enables postcard's default `heapless-cas` feature even though it only
+# needs postcard with `alloc`. That default feature pulls `heapless/cas`, which pulls the
+# unmaintained `atomic-polyfill` crate tracked by issue #260. Keep this patch narrow and remove it
+# when the upstream manifest disables postcard defaults.
+ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
+
 [workspace.package]
-version = "0.3.0-dev.17"
+version = "0.3.0-dev.18"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.91"

@@ -9,10 +9,7 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # Valid values: ["all", "workspace", "transitive", "none"].
 unmaintained = "transitive"
 yanked = "warn"
-ignore = [
-    # transitive-only; no safe upgrade currently available, tracked in GitHub issue #260
-    "RUSTSEC-2023-0089", # atomic-polyfill
-]
+ignore = []
 
 [licenses]
 # License policy
