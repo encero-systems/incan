@@ -88,7 +88,7 @@ templates/
 The template is not compiled directly. It is provider-side data:
 
 ```incan
-from pub::inql import Session, backends
+from pub::sample_session import Session, backends
 from {{ config_module }} import {{ config_type }}
 
 def default_session() -> Session:
@@ -138,7 +138,7 @@ src/data/session.incn
 The rendered file is ordinary source:
 
 ```incan
-from pub::inql import Session, backends
+from pub::sample_session import Session, backends
 from data.config import DataConfig
 
 def default_session() -> Session:
@@ -156,10 +156,10 @@ If the descriptor requests tracked provenance, the lifecycle tool records enough
 
 ```toml
 [tool.incan.templates."src/data/session.incn"]
-source = "inql:templates/session.incn.tpl"
-package = "inql"
+source = "sample_session:templates/session.incn.tpl"
+package = "sample_session"
 version = "0.1.0"
-origin = "capability:inql.session"
+origin = "capability:sample_session.session"
 language = "incan"
 renderer = "incan-template-v1"
 template_hash = "sha256:4b5a..."
@@ -174,7 +174,7 @@ This record is tooling provenance. Removing it must not break compilation. Keepi
 A user may ask the toolchain to write the values a template expects before applying it:
 
 ```text
-incan template values-file inql:templates/session.incn.tpl --output session.values.toml
+incan template values-file sample_session:templates/session.incn.tpl --output session.values.toml
 ```
 
 The generated file contains declared parameters, defaults, choices, and prompt text:
@@ -189,7 +189,7 @@ backend_type = "DataFusion"
 This gives teams something concrete to review in automation and allows non-interactive application:
 
 ```text
-incan template render inql:templates/session.incn.tpl --values session.values.toml --dry-run
+incan template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
 ```
 
 The exact command spelling may change, but the lifecycle layer must expose the same capability: inspect required values, write a values file, and render from that file without interactive prompts.
@@ -208,12 +208,12 @@ Example output:
 tracked templates:
   src/data/session.incn
     status: edited
-    source: inql:templates/session.incn.tpl
-    origin: capability:inql.session
+    source: sample_session:templates/session.incn.tpl
+    origin: capability:sample_session.session
 
   tests/test_session.incn
     status: current
-    source: inql:templates/test_session.incn.tpl
+    source: sample_session:templates/test_session.incn.tpl
 ```
 
 `edited` means the current file hash differs from the recorded `rendered_hash`. It does not mean the file is invalid. Users are expected to edit generated files.
@@ -230,8 +230,8 @@ Example output:
 
 ```text
 target                   source                         current   latest    file
-src/data/session.incn    inql:templates/session.incn    0.1.0     0.2.0     edited
-tests/test_session.incn  inql:templates/test_session    0.1.0     0.1.0     current
+src/data/session.incn    sample_session:templates/session.incn    0.1.0     0.2.0     edited
+tests/test_session.incn  sample_session:templates/test_session    0.1.0     0.1.0     current
 ```
 
 If the source catalog is unavailable, status may fall back to local provenance and report the version as unknown or cached. Machine-readable status should include the provenance record path, source package, source version, latest compatible version, and file drift state.

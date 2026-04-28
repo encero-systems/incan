@@ -1,0 +1,11 @@
+from pub::querykit import querykit_name
+
+def main() -> None:
+    let name = querykit_name()
+    print(name)
+
+    query:
+        .amount > 100
+        .customer_id
+        orders |> paid_orders
+        orders.filter(.status == "paid").select(.region)

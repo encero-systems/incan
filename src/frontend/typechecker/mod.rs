@@ -1625,6 +1625,11 @@ impl TypeChecker {
                 SurfaceExprPayload::PrefixUnary(expr) => {
                     self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
                 }
+                SurfaceExprPayload::LeadingDotPath { .. } => {}
+                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                    self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
+                    self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
+                }
             },
         }
     }
@@ -1858,6 +1863,11 @@ impl TypeChecker {
             Expr::Surface(surface) => match &surface.payload {
                 SurfaceExprPayload::PrefixUnary(inner) => {
                     self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions);
+                }
+                SurfaceExprPayload::LeadingDotPath { .. } => {}
+                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                    self.collect_static_initializer_static_writes_from_expr(left, current_static, visiting_functions);
+                    self.collect_static_initializer_static_writes_from_expr(right, current_static, visiting_functions);
                 }
             },
         }

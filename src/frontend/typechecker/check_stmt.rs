@@ -893,6 +893,12 @@ impl TypeChecker {
             let label = match &stmt.key {
                 incan_semantics_core::SurfaceFeatureKey::SoftKeyword(id) => keywords::as_str(*id).to_string(),
                 incan_semantics_core::SurfaceFeatureKey::Decorator(_) => "decorator-surface-feature".to_string(),
+                incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key,
+                    descriptor_key,
+                } => {
+                    format!("{dependency_key}:{descriptor_key}")
+                }
             };
             self.errors.push(errors::unknown_symbol(&label, span));
             return;

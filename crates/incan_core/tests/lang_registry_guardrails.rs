@@ -153,7 +153,7 @@ fn operators_spellings_unique_and_resolvable() {
 fn punctuation_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "punctuation",
-        expected_len: 15,
+        expected_len: 16,
         items: punctuation::PUNCTUATION,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

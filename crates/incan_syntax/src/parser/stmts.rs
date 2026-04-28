@@ -748,12 +748,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse either an assignment-like statement or a plain expression statement.
     fn assignment_or_expr_stmt(&mut self) -> Result<Statement, CompileError> {
         // Look for `ident = expr` or `ident, ident = expr` pattern (simple or tuple assignment)
         if let TokenKind::Ident(_) = &self.peek().kind {
             // Check if next is = or : (for assignment) or , (for tuple unpacking)
             if self.peek_next().kind == TokenKind::Operator(OperatorId::Eq)
-                || self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Colon)
+                || (self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Colon)
+                    && !self.active_scoped_glyph_starts_at_offset(1))
                 || self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Comma)
             {
                 return self.assignment_stmt();

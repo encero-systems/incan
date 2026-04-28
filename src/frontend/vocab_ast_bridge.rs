@@ -499,20 +499,18 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             map_internal_binary_op(*op)?,
             Box::new(internal_expr_to_public(&right.node)?),
         )),
-        ast::Expr::Call(callee, _type_args, args) => {
-            let mut mapped_args = Vec::new();
-            for arg in args {
-                let value = match arg {
-                    ast::CallArg::Positional(expr)
-                    | ast::CallArg::Named(_, expr)
-                    | ast::CallArg::PositionalUnpack(expr)
-                    | ast::CallArg::KeywordUnpack(expr) => expr,
-                };
-                mapped_args.push(internal_expr_to_public(&value.node)?);
-            }
+        ast::Expr::Call(callee, _type_args, args) => Ok(incan_vocab::IncanExpr::Call {
+            callee: Box::new(internal_expr_to_public(&callee.node)?),
+            args: internal_call_args_to_public(args)?,
+        }),
+        ast::Expr::MethodCall(base, method, _type_args, args) => {
+            let callee = incan_vocab::IncanExpr::Field {
+                object: Box::new(internal_expr_to_public(&base.node)?),
+                field: method.clone(),
+            };
             Ok(incan_vocab::IncanExpr::Call {
-                callee: Box::new(internal_expr_to_public(&callee.node)?),
-                args: mapped_args,
+                callee: Box::new(callee),
+                args: internal_call_args_to_public(args)?,
             })
         }
         ast::Expr::Field(object, field) => match &object.node {
@@ -528,10 +526,83 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
                 field: field.clone(),
             }),
         },
+        ast::Expr::Surface(surface) => internal_surface_expr_to_public(surface),
         _ => Err(VocabAstBridgeError::UnsupportedInternalExpression(
             "expression form is not yet supported by public vocab AST bridge",
         )),
     }
+}
+
+/// Convert internal call arguments to public positional argument payloads.
+fn internal_call_args_to_public(args: &[ast::CallArg]) -> Result<Vec<incan_vocab::IncanExpr>, VocabAstBridgeError> {
+    let mut mapped_args = Vec::with_capacity(args.len());
+    for arg in args {
+        let value = match arg {
+            ast::CallArg::Positional(expr)
+            | ast::CallArg::Named(_, expr)
+            | ast::CallArg::PositionalUnpack(expr)
+            | ast::CallArg::KeywordUnpack(expr) => expr,
+        };
+        mapped_args.push(internal_expr_to_public(&value.node)?);
+    }
+    Ok(mapped_args)
+}
+
+/// Convert a compiler surface expression artifact into the public vocab AST.
+fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
+    let incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key,
+        descriptor_key,
+    } = &surface.key
+    else {
+        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+            "surface expression is not yet supported by public vocab AST bridge",
+        ));
+    };
+
+    let payload = match &surface.payload {
+        ast::SurfaceExprPayload::LeadingDotPath {
+            segments,
+            receiver,
+            owner,
+        } => incan_vocab::IncanScopedSurfacePayload::LeadingDotPath {
+            segments: segments.clone(),
+            receiver: receiver.clone(),
+            owner: incan_vocab::IncanScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        ast::SurfaceExprPayload::ScopedGlyph {
+            glyph,
+            left,
+            right,
+            owner,
+        } => incan_vocab::IncanScopedSurfacePayload::ScopedGlyph {
+            glyph: glyph.clone(),
+            left: Box::new(internal_expr_to_public(&left.node)?),
+            right: Box::new(internal_expr_to_public(&right.node)?),
+            owner: incan_vocab::IncanScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        ast::SurfaceExprPayload::PrefixUnary(_) => {
+            return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                "soft-keyword surface expression is not yet supported by public vocab AST bridge",
+            ));
+        }
+    };
+
+    Ok(incan_vocab::IncanExpr::ScopedSurface(
+        incan_vocab::IncanScopedSurfaceExpr {
+            dependency_key: dependency_key.clone(),
+            descriptor_key: descriptor_key.clone(),
+            payload,
+        },
+    ))
 }
 
 /// Convert one public `incan_vocab::IncanExpr` to internal compiler expression AST.
@@ -629,10 +700,57 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             )),
             field.clone(),
         )),
+        incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface),
         _ => Err(VocabAstBridgeError::UnsupportedPublicExpression(
             "expression form is not yet supported by internal AST bridge",
         )),
     }
+}
+
+/// Convert a public scoped-surface expression back into the compiler AST.
+fn public_scoped_surface_expr_to_internal(
+    surface: &incan_vocab::IncanScopedSurfaceExpr,
+) -> Result<ast::Expr, VocabAstBridgeError> {
+    let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key: surface.dependency_key.clone(),
+        descriptor_key: surface.descriptor_key.clone(),
+    };
+    let payload = match &surface.payload {
+        incan_vocab::IncanScopedSurfacePayload::LeadingDotPath {
+            segments,
+            receiver,
+            owner,
+        } => ast::SurfaceExprPayload::LeadingDotPath {
+            segments: segments.clone(),
+            receiver: receiver.clone(),
+            owner: ast::ScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        incan_vocab::IncanScopedSurfacePayload::ScopedGlyph {
+            glyph,
+            left,
+            right,
+            owner,
+        } => ast::SurfaceExprPayload::ScopedGlyph {
+            glyph: glyph.clone(),
+            left: Box::new(ast::Spanned::new(public_expr_to_internal(left)?, ast::Span::default())),
+            right: Box::new(ast::Spanned::new(public_expr_to_internal(right)?, ast::Span::default())),
+            owner: ast::ScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        _ => {
+            return Err(VocabAstBridgeError::UnsupportedPublicExpression(
+                "scoped surface payload is not yet supported by internal AST bridge",
+            ));
+        }
+    };
+    Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr { key, payload })))
 }
 
 /// Convert one internal decorator to the public decorator DTO.
@@ -846,6 +964,71 @@ mod tests {
         let relation_internal = public_expression_to_internal(&relation)?;
         let relation_roundtrip = internal_expr_to_public(&relation_internal)?;
         assert_eq!(relation_roundtrip, relation);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_method_calls_as_public_field_callee_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let call = ast::Expr::MethodCall(
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident("orders".to_string()),
+                ast::Span::default(),
+            )),
+            "filter".to_string(),
+            Vec::new(),
+            vec![ast::CallArg::Positional(ast::Spanned::new(
+                ast::Expr::Ident("predicate".to_string()),
+                ast::Span::default(),
+            ))],
+        );
+
+        let public = internal_expr_to_public(&call)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::Call { callee, args }
+                if matches!(
+                    callee.as_ref(),
+                    incan_vocab::IncanExpr::Field { object, field }
+                        if matches!(object.as_ref(), incan_vocab::IncanExpr::Name(name) if name == "orders")
+                            && field == "filter"
+                ) && args == &vec![incan_vocab::IncanExpr::Name("predicate".to_string())]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_scoped_surface_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let scoped = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "querykit".to_string(),
+                descriptor_key: "query.field".to_string(),
+            },
+            payload: ast::SurfaceExprPayload::LeadingDotPath {
+                segments: vec!["order".to_string(), "amount".to_string()],
+                receiver: incan_vocab::ScopedSurfaceReceiver::OwningDeclaration,
+                owner: ast::ScopedSurfaceOwner {
+                    declaration: "query".to_string(),
+                    clause: None,
+                    call: None,
+                },
+            },
+        }));
+
+        let public = internal_expr_to_public(&scoped)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::ScopedSurface(surface)
+                if surface.dependency_key == "querykit"
+                    && surface.descriptor_key == "query.field"
+                    && matches!(
+                        &surface.payload,
+                        incan_vocab::IncanScopedSurfacePayload::LeadingDotPath { segments, owner, .. }
+                            if segments == &["order".to_string(), "amount".to_string()]
+                                && owner.declaration == "query"
+                    )
+        ));
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(round_trip, scoped);
         Ok(())
     }
 }

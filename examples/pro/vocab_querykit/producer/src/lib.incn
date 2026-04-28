@@ -1,0 +1,8 @@
+"""
+Producer library for the pro-level synthetic querykit scoped surface example.
+
+The consumer imports this library through `pub::querykit`, which activates the sibling vocab companion metadata during
+`incan build --lib`.
+"""
+
+pub from info import querykit_name

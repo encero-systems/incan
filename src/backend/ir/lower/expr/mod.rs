@@ -420,6 +420,15 @@ impl AstLowering {
                             super::super::surface_semantics::lower_await_expression(lowered_inner)
                         }
                     }
+                    _ => {
+                        return Err(LoweringError {
+                            message: format!(
+                                "surface expression {:?} has an unsupported payload for lowering",
+                                surface_expr.key
+                            ),
+                            span: super::super::IrSpan::default(),
+                        });
+                    }
                 }
             }
 

@@ -183,6 +183,7 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
     }
 
     validate_helper_bindings(&raw.exports, &vocab.provider_manifest)?;
+    validate_scoped_surface_descriptors(raw)?;
 
     let Some(desugarer) = &vocab.desugarer_artifact else {
         return Ok(());
@@ -227,6 +228,279 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         ));
     }
     validate_sha256_hex(&desugarer.sha256)
+}
+
+/// Validate RFC 040 scoped-surface descriptors before they become compiler-facing manifest data.
+fn validate_scoped_surface_descriptors(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let Some(vocab) = &raw.vocab else {
+        return Ok(());
+    };
+
+    let mut seen_descriptor_keys = HashSet::new();
+    let mut seen_positive_positions = HashSet::new();
+
+    for surface in &vocab.dsl_surfaces {
+        let activation_key = scoped_surface_activation_key(&surface.activation);
+        let declarations: HashSet<&str> = surface
+            .declarations
+            .iter()
+            .map(|declaration| declaration.keyword.as_str())
+            .collect();
+        let clauses: HashSet<(&str, &str)> = surface
+            .declarations
+            .iter()
+            .flat_map(|declaration| {
+                declaration
+                    .clauses
+                    .iter()
+                    .map(|clause| (declaration.keyword.as_str(), clause.keyword.as_str()))
+            })
+            .collect();
+
+        for descriptor in &surface.scoped_surfaces {
+            if descriptor.key.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid(
+                    "vocab scoped surface descriptor key cannot be empty".to_string(),
+                ));
+            }
+            if !seen_descriptor_keys.insert(format!("{activation_key}:{}", descriptor.key)) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "duplicate scoped surface descriptor key `{}` for activation `{activation_key}`",
+                    descriptor.key
+                )));
+            }
+            validate_scoped_surface_syntax(descriptor)?;
+            validate_scoped_surface_receiver(descriptor)?;
+            validate_scoped_surface_diagnostics(descriptor)?;
+
+            if descriptor.eligible_in.is_empty() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{}` must declare at least one eligible position",
+                    descriptor.key
+                )));
+            }
+
+            for eligibility in &descriptor.eligible_in {
+                validate_scoped_surface_eligibility(&descriptor.key, eligibility, &declarations, &clauses)?;
+                let position_key = format!(
+                    "{}:{}:{}:{}:{}:{:?}",
+                    activation_key,
+                    scoped_surface_syntax_key(&descriptor.syntax),
+                    eligibility.declaration,
+                    eligibility.clause.as_deref().unwrap_or(""),
+                    eligibility.call.as_deref().unwrap_or(""),
+                    eligibility.position
+                );
+                if !seen_positive_positions.insert(position_key) {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "ambiguous scoped surface descriptor `{}` conflicts with another descriptor for the same activation, syntax, and eligible position",
+                        descriptor.key
+                    )));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that descriptor syntax is well-formed and matches the declared family.
+fn validate_scoped_surface_syntax(
+    descriptor: &incan_vocab::ScopedSurfaceDescriptor,
+) -> Result<(), LibraryManifestError> {
+    match (&descriptor.family, &descriptor.syntax) {
+        (
+            incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike,
+            incan_vocab::ScopedSurfaceSyntax::Glyph { spelling },
+        ) => {
+            if spelling.trim().is_empty() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{}` glyph spelling cannot be empty",
+                    descriptor.key
+                )));
+            }
+        }
+        (
+            incan_vocab::ScopedSurfaceFamily::ExpressionForm,
+            incan_vocab::ScopedSurfaceSyntax::LeadingDotPath {
+                min_segments,
+                max_segments,
+            },
+        ) => {
+            if *min_segments == 0 {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{}` leading-dot path must accept at least one segment",
+                    descriptor.key
+                )));
+            }
+            if max_segments.is_some_and(|max_segments| max_segments < *min_segments) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{}` leading-dot max_segments cannot be less than min_segments",
+                    descriptor.key
+                )));
+            }
+        }
+        _ => {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` uses a syntax shape that does not match its family",
+                descriptor.key
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate receiver metadata for expression-form descriptors.
+fn validate_scoped_surface_receiver(
+    descriptor: &incan_vocab::ScopedSurfaceDescriptor,
+) -> Result<(), LibraryManifestError> {
+    if descriptor.family == incan_vocab::ScopedSurfaceFamily::ExpressionForm && descriptor.receiver.is_none() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "expression-form scoped surface descriptor `{}` must declare receiver derivation",
+            descriptor.key
+        )));
+    }
+    if descriptor.family != incan_vocab::ScopedSurfaceFamily::ExpressionForm && descriptor.receiver.is_some() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "non-expression scoped surface descriptor `{}` cannot declare receiver derivation",
+            descriptor.key
+        )));
+    }
+
+    match &descriptor.receiver {
+        Some(incan_vocab::ScopedSurfaceReceiver::Clause { clause }) if clause.trim().is_empty() => {
+            Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` receiver clause cannot be empty",
+                descriptor.key
+            )))
+        }
+        Some(incan_vocab::ScopedSurfaceReceiver::Custom { key }) if key.trim().is_empty() => {
+            Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` receiver custom key cannot be empty",
+                descriptor.key
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Validate author-provided diagnostic templates for one scoped-surface descriptor.
+fn validate_scoped_surface_diagnostics(
+    descriptor: &incan_vocab::ScopedSurfaceDescriptor,
+) -> Result<(), LibraryManifestError> {
+    let mut seen_codes = HashSet::new();
+    for diagnostic in &descriptor.diagnostics {
+        if diagnostic.code.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` diagnostic code cannot be empty",
+                descriptor.key
+            )));
+        }
+        if diagnostic.message.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` diagnostic `{}` message cannot be empty",
+                descriptor.key, diagnostic.code
+            )));
+        }
+        if !seen_codes.insert(diagnostic.code.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{}` contains duplicate diagnostic code `{}`",
+                descriptor.key, diagnostic.code
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate that a positive eligibility rule references a known declaration or clause.
+fn validate_scoped_surface_eligibility(
+    descriptor_key: &str,
+    eligibility: &incan_vocab::ScopedSurfaceEligibility,
+    declarations: &HashSet<&str>,
+    clauses: &HashSet<(&str, &str)>,
+) -> Result<(), LibraryManifestError> {
+    if eligibility.declaration.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped surface descriptor `{descriptor_key}` eligibility declaration cannot be empty"
+        )));
+    }
+    if !declarations.contains(eligibility.declaration.as_str()) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped surface descriptor `{descriptor_key}` references unknown declaration `{}`",
+            eligibility.declaration
+        )));
+    }
+
+    match eligibility.position {
+        incan_vocab::ScopedSurfacePosition::ClauseBody => match &eligibility.clause {
+            Some(clause) if !clause.trim().is_empty() => {
+                if eligibility.call.is_some() {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "scoped surface descriptor `{descriptor_key}` clause-body eligibility cannot declare a call"
+                    )));
+                }
+                if !clauses.contains(&(eligibility.declaration.as_str(), clause.as_str())) {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "scoped surface descriptor `{descriptor_key}` references unknown clause `{}` in declaration `{}`",
+                        clause, eligibility.declaration
+                    )));
+                }
+                Ok(())
+            }
+            _ => Err(LibraryManifestError::Invalid(format!(
+                "scoped surface descriptor `{descriptor_key}` clause-body eligibility must declare a clause"
+            ))),
+        },
+        incan_vocab::ScopedSurfacePosition::DeclarationHead => Err(LibraryManifestError::Invalid(format!(
+            "scoped surface descriptor `{descriptor_key}` declaration-head eligibility is not supported yet"
+        ))),
+        incan_vocab::ScopedSurfacePosition::DeclarationBody => {
+            if eligibility.clause.is_some() || eligibility.call.is_some() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{descriptor_key}` declaration eligibility cannot declare a clause or call"
+                )));
+            }
+            Ok(())
+        }
+        incan_vocab::ScopedSurfacePosition::CallArgument => {
+            if eligibility.clause.is_some() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{descriptor_key}` call-argument eligibility cannot declare a clause"
+                )));
+            }
+            match eligibility.call.as_deref() {
+                Some(call) if !call.trim().is_empty() => Ok(()),
+                _ => Err(LibraryManifestError::Invalid(format!(
+                    "scoped surface descriptor `{descriptor_key}` call-argument eligibility must declare a call"
+                ))),
+            }
+        }
+        _ => Err(LibraryManifestError::Invalid(format!(
+            "scoped surface descriptor `{descriptor_key}` uses an unsupported eligibility position"
+        ))),
+    }
+}
+
+/// Build a stable validation key for a descriptor activation rule.
+fn scoped_surface_activation_key(activation: &incan_vocab::KeywordActivation) -> String {
+    match activation {
+        incan_vocab::KeywordActivation::Always => "always".to_string(),
+        incan_vocab::KeywordActivation::OnImport { namespace } => format!("import:{namespace}"),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// Build a stable validation key for a descriptor syntax shape.
+fn scoped_surface_syntax_key(syntax: &incan_vocab::ScopedSurfaceSyntax) -> String {
+    match syntax {
+        incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } => format!("glyph:{spelling}"),
+        incan_vocab::ScopedSurfaceSyntax::LeadingDotPath {
+            min_segments,
+            max_segments,
+        } => format!("leading-dot:{min_segments}:{max_segments:?}"),
+        _ => "unsupported".to_string(),
+    }
 }
 
 /// Validate RFC 032 value-enum metadata before import code trusts the manifest enum surface.

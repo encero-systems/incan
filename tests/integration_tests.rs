@@ -7319,6 +7319,149 @@ pub def display[T](data: DataSet[T]) -> None:
         Ok(wat::parse_str(wat_source)?)
     }
 
+    fn compile_desugarer_wasm_requiring_request_substring(
+        output_payload: &str,
+        error_payload: &str,
+        needle: &str,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let output_ptr_cell = 0usize;
+        let output_len_cell = 4usize;
+        let error_ptr_cell = 8usize;
+        let error_len_cell = 12usize;
+        let input_ptr_cell = 16usize;
+        let input_capacity_cell = 20usize;
+        let input_len_cell = 24usize;
+        let output_offset = 128usize;
+        let output_len = output_payload.len();
+        let error_offset = output_offset + output_len + 32;
+        let input_offset = error_offset + error_payload.len() + 32;
+        let input_capacity = 16_384usize;
+        let needle_offset = input_offset + input_capacity + 32;
+        let needle_len = needle.len();
+        let wat_source = format!(
+            r#"(module
+  (memory (export "memory") 1)
+  (global $input_ptr_cell (export "__incan_input_ptr") i32 (i32.const {input_ptr_cell}))
+  (global (export "__incan_input_capacity") i32 (i32.const {input_capacity_cell}))
+  (global $input_len_cell (export "__incan_input_len") i32 (i32.const {input_len_cell}))
+  (global (export "__incan_output_ptr") i32 (i32.const {output_ptr_cell}))
+  (global (export "__incan_output_len") i32 (i32.const {output_len_cell}))
+  (global (export "__incan_error_ptr") i32 (i32.const {error_ptr_cell}))
+  (global (export "__incan_error_len") i32 (i32.const {error_len_cell}))
+  (data (i32.const {output_ptr_cell}) "{output_ptr_data}")
+  (data (i32.const {output_len_cell}) "{output_len_data}")
+  (data (i32.const {error_ptr_cell}) "{error_ptr_data}")
+  (data (i32.const {error_len_cell}) "{error_len_data}")
+  (data (i32.const {input_ptr_cell}) "{input_ptr_data}")
+  (data (i32.const {input_capacity_cell}) "{input_capacity_data}")
+  (data (i32.const {input_len_cell}) "{input_len_data}")
+  (data (i32.const {output_offset}) "{output_data}")
+  (data (i32.const {error_offset}) "{error_data}")
+  (data (i32.const {needle_offset}) "{needle_data}")
+  (func (export "__incan_init_desugarer"))
+  (func $matches_at (param $pos i32) (result i32)
+    (local $j i32)
+    (block $fail
+      (loop $scan
+        local.get $j
+        i32.const {needle_len}
+        i32.ge_u
+        if
+          i32.const 1
+          return
+        end
+        local.get $pos
+        local.get $j
+        i32.add
+        i32.load8_u
+        i32.const {needle_offset}
+        local.get $j
+        i32.add
+        i32.load8_u
+        i32.ne
+        br_if $fail
+        local.get $j
+        i32.const 1
+        i32.add
+        local.set $j
+        br $scan
+      )
+    )
+    i32.const 0
+  )
+  (func (export "desugar_block") (result i32)
+    (local $input_ptr i32)
+    (local $input_len i32)
+    (local $end i32)
+    (local $i i32)
+    global.get $input_ptr_cell
+    i32.load
+    local.set $input_ptr
+    global.get $input_len_cell
+    i32.load
+    local.set $input_len
+    local.get $input_len
+    i32.const {needle_len}
+    i32.lt_u
+    if
+      i32.const 1
+      return
+    end
+    local.get $input_ptr
+    local.get $input_len
+    i32.add
+    i32.const {needle_len}
+    i32.sub
+    i32.const 1
+    i32.add
+    local.set $end
+    local.get $input_ptr
+    local.set $i
+    (block $not_found
+      (loop $search
+        local.get $i
+        local.get $end
+        i32.ge_u
+        br_if $not_found
+        local.get $i
+        call $matches_at
+        if
+          i32.const 0
+          return
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $search
+      )
+    )
+    i32.const 1
+  )
+)"#,
+            output_ptr_cell = output_ptr_cell,
+            output_len_cell = output_len_cell,
+            error_ptr_cell = error_ptr_cell,
+            error_len_cell = error_len_cell,
+            input_ptr_cell = input_ptr_cell,
+            input_capacity_cell = input_capacity_cell,
+            input_len_cell = input_len_cell,
+            output_ptr_data = wat_i32_cell(output_offset as i32),
+            output_len_data = wat_i32_cell(output_payload.len() as i32),
+            error_ptr_data = wat_i32_cell(error_offset as i32),
+            error_len_data = wat_i32_cell(error_payload.len() as i32),
+            input_ptr_data = wat_i32_cell(input_offset as i32),
+            input_capacity_data = wat_i32_cell(input_capacity as i32),
+            input_len_data = wat_i32_cell(0),
+            output_data = wat_data_string(output_payload),
+            error_data = wat_data_string(error_payload),
+            needle_offset = needle_offset,
+            needle_len = needle_len,
+            needle_data = wat_data_string(needle),
+        );
+        Ok(wat::parse_str(wat_source)?)
+    }
+
     fn write_pub_library_with_vocab_desugarer(
         root: &Path,
         dependency_key: &str,
@@ -7361,6 +7504,56 @@ pub def display[T](data: DataSet[T]) -> None:
             }),
         });
         manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_querykit_surface_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "querykit.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: vec![
+                incan_vocab::DslSurface::on_import("querykit.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_declaration_body("query")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration),
+                    ),
+            ],
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
         Ok(())
     }
 
@@ -8486,12 +8679,18 @@ def main() -> Result[None, SessionError]:
         });
         let output_payload = serde_json::to_string(&response)?;
         let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
-        write_pub_library_with_vocab_desugarer_and_filter_helper(tmp.path(), "inql", "inql_core", &wasm, "where")?;
+        write_pub_library_with_vocab_desugarer_and_filter_helper(
+            tmp.path(),
+            "filterkit",
+            "filterkit_core",
+            &wasm,
+            "where",
+        )?;
 
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\ninql = { path = \"deps/inql\" }\n",
-            "import pub::inql\n\ndef main() -> None:\n  where true:\n    pass\n",
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nfilterkit = { path = \"deps/filterkit\" }\n",
+            "import pub::filterkit\n\ndef main() -> None:\n  where true:\n    pass\n",
         )?;
 
         let check_output = run_check(&main_path)?;
@@ -8513,12 +8712,74 @@ def main() -> Result[None, SessionError]:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            generated_main_rs.contains("__incan_vocab_helper_inql_filter"),
+            generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
             "expected hidden helper alias in generated Rust, got:\n{generated_main_rs}"
         );
         assert!(
-            generated_main_rs.contains("inql::filter"),
+            generated_main_rs.contains("filterkit::filter"),
             "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_passes_scoped_query_surface_artifacts_to_desugarer() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::statements(vec![incan_vocab::IncanStatement::Let {
+            name: "query_generated".to_string(),
+            mutable: false,
+            value: incan_vocab::IncanExpr::Int(1),
+        }]);
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing scoped query surface artifact",
+            r#""descriptor_key":"query.field""#,
+        )?;
+        write_pub_library_with_querykit_surface_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  query:
+    .amount > 100
+    .customer_id
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to succeed when querykit-style leading-dot artifacts reach the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let negative_main_path = write_project_files(
+            tmp.path().join("negative_consumer").as_path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  query:
+    amount > 100
+"#,
+        )?;
+        let negative_output = run_check(&negative_main_path)?;
+        assert!(
+            !negative_output.status.success(),
+            "expected check to fail when no scoped query artifact reaches the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&negative_output.stdout),
+            String::from_utf8_lossy(&negative_output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&negative_output.stderr).contains("missing scoped query surface artifact"),
+            "expected desugarer failure to prove the request substring assertion was active.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&negative_output.stdout),
+            String::from_utf8_lossy(&negative_output.stderr)
         );
         Ok(())
     }

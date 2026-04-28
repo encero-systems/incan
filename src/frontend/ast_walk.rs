@@ -333,6 +333,10 @@ where
         Expr::Range { start, end, .. } => expr_has(&start.node, pred) || expr_has(&end.node, pred),
         Expr::Surface(surface_expr) => match &surface_expr.payload {
             crate::frontend::ast::SurfaceExprPayload::PrefixUnary(expr) => expr_has(&expr.node, pred),
+            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => false,
+            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                expr_has(&left.node, pred) || expr_has(&right.node, pred)
+            }
         },
 
         // ---- Context: collection / interpolation expressions ----

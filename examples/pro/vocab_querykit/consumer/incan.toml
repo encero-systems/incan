@@ -1,0 +1,6 @@
+[project]
+name = "querykit_consumer"
+version = "0.1.0"
+
+[dependencies]
+querykit = { path = "../producer" }

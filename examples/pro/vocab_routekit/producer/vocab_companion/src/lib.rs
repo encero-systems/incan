@@ -6,7 +6,7 @@
 
 mod desugar;
 
-use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, VocabRegistration};
+use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, LibraryManifest, ScopedSurfaceDescriptor, VocabRegistration};
 
 pub use desugar::RoutekitDesugarer;
 
@@ -18,6 +18,12 @@ pub const ROUTE_KW: &str = "route";
 
 /// Nested sub-block supported inside a `route` block.
 pub const MIDDLEWARE_KW: &str = "middleware";
+
+/// Stable descriptor key for route verb composition.
+pub const ROUTE_VERB_DESCRIPTOR: &str = "route.verb";
+
+/// Stable descriptor key for route handler mapping.
+pub const ROUTE_MAP_DESCRIPTOR: &str = "route.map";
 
 /// Return the complete vocabulary registration for the example companion crate.
 ///
@@ -32,7 +38,14 @@ pub fn library_vocab() -> VocabRegistration {
                     .with_header_args()
                     .with_mixed_body()
                     .with_clause(ClauseSurface::nested_items(MIDDLEWARE_KW).optional()),
-            ),
+            )
+            .with_scoped_surfaces([
+                    ScopedSurfaceDescriptor::operator(ROUTE_VERB_DESCRIPTOR, "+")
+                        .in_declaration_body(ROUTE_KW)
+                        .pairwise_chain(),
+                    ScopedSurfaceDescriptor::operator(ROUTE_MAP_DESCRIPTOR, "->")
+                        .in_declaration_body(ROUTE_KW),
+                ]),
         )
         .with_library_manifest(LibraryManifest::default())
         .with_desugarer(RoutekitDesugarer)

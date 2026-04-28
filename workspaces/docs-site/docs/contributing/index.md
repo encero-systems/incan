@@ -10,6 +10,7 @@ If you’re new, start with:
 ## How-to guides (do)
 
 - [Extending the Language](how-to/extending_language.md) — when to add builtins vs new syntax; end-to-end checklists
+- [Author Library DSLs with `incan_vocab`](how-to/authoring_vocab_crates.md) — how to publish import-activated DSL blocks, scoped surfaces, and desugarers
 
 ## Tutorials (learn)
 

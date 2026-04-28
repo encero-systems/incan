@@ -1146,6 +1146,11 @@ impl AstLowering {
             }
             ast::Expr::Surface(surface_expr) => match &surface_expr.payload {
                 ast::SurfaceExprPayload::PrefixUnary(inner) => self.count_expr_ident_reads(&inner.node, counts),
+                ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
+                ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                    self.count_expr_ident_reads(&left.node, counts);
+                    self.count_expr_ident_reads(&right.node, counts);
+                }
             },
             ast::Expr::Match(scrutinee, arms) => {
                 self.count_expr_ident_reads(&scrutinee.node, counts);

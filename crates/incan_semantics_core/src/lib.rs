@@ -27,6 +27,10 @@ use incan_core::lang::keywords::KeywordId;
 pub enum SurfaceFeatureKey {
     SoftKeyword(KeywordId),
     Decorator(DecoratorFeature),
+    ScopedDslSurface {
+        dependency_key: String,
+        descriptor_key: String,
+    },
 }
 
 /// Canonical decorator-feature identities used by semantics packs.

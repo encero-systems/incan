@@ -46,10 +46,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse comparison expressions and route registered scoped glyphs before ordinary core operators.
     fn comparison(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.range_expr()?;
 
         loop {
+            if let Some((active, glyph)) = self.consume_active_scoped_glyph() {
+                let right = if active.descriptor.family == incan_vocab::ScopedSurfaceFamily::BindingLike {
+                    self.comparison()?
+                } else {
+                    self.range_expr()?
+                };
+                let span = left.span.merge(right.span);
+                left = self.scoped_glyph_binary_from_active(&active, &glyph, left.clone(), right, span);
+                continue;
+            }
+
             let op = if self.match_token(&TokenKind::Operator(OperatorId::EqEq)) {
                 BinaryOp::Eq
             } else if self.match_token(&TokenKind::Operator(OperatorId::NotEq)) {
@@ -76,7 +88,22 @@ impl<'a> Parser<'a> {
 
             let right = self.range_expr()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::Eq => Some("=="),
+                BinaryOp::NotEq => Some("!="),
+                BinaryOp::Lt => Some("<"),
+                BinaryOp::Gt => Some(">"),
+                BinaryOp::LtEq => Some("<="),
+                BinaryOp::GtEq => Some(">="),
+                _ => None,
+            };
+            left = if let Some(glyph) = glyph
+                && let Some(surface) = self.scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+            {
+                surface
+            } else {
+                Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span)
+            };
         }
 
         Ok(left)
@@ -108,6 +135,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse additive expressions, preserving DSL-owned `+`/`-` glyphs in eligible vocab blocks.
     fn additive(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.multiplicative()?;
 
@@ -122,12 +150,20 @@ impl<'a> Parser<'a> {
 
             let right = self.multiplicative()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::Add => "+",
+                BinaryOp::Sub => "-",
+                _ => unreachable!("additive parser only emits additive operators"),
+            };
+            left = self
+                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
         }
 
         Ok(left)
     }
 
+    /// Parse multiplicative expressions, preserving DSL-owned glyphs in eligible vocab blocks.
     fn multiplicative(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.power()?;
 
@@ -147,10 +183,59 @@ impl<'a> Parser<'a> {
 
             let right = self.power()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::Mul => "*",
+                BinaryOp::FloorDiv => "//",
+                BinaryOp::Div => "/",
+                BinaryOp::Mod => "%",
+                _ => unreachable!("multiplicative parser only emits multiplicative operators"),
+            };
+            left = self
+                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
         }
 
         Ok(left)
+    }
+
+    /// Build a scoped-surface binary glyph expression when an active descriptor owns the glyph.
+    fn scoped_glyph_binary(
+        &self,
+        glyph: &str,
+        left: Spanned<Expr>,
+        right: Spanned<Expr>,
+        span: Span,
+    ) -> Option<Spanned<Expr>> {
+        let active = self.active_scoped_glyph_surface_descriptor(glyph)?;
+        Some(self.scoped_glyph_binary_from_active(active, glyph, left, right, span))
+    }
+
+    /// Build a scoped-surface binary glyph expression from a descriptor that has already matched the current context.
+    fn scoped_glyph_binary_from_active(
+        &self,
+        active: &ActiveScopedSurfaceDescriptor,
+        glyph: &str,
+        left: Spanned<Expr>,
+        right: Spanned<Expr>,
+        span: Span,
+    ) -> Spanned<Expr> {
+        let owner = self.scoped_surface_owner(active);
+
+        Spanned::new(
+            Expr::Surface(Box::new(SurfaceExpr {
+                key: SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key: active.dependency_key.clone(),
+                    descriptor_key: active.descriptor.key.clone(),
+                },
+                payload: SurfaceExprPayload::ScopedGlyph {
+                    glyph: glyph.to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    owner,
+                },
+            })),
+            span,
+        )
     }
 
     fn power(&mut self) -> Result<Spanned<Expr>, CompileError> {
@@ -189,6 +274,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
     fn postfix(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut expr = self.primary()?;
 
@@ -219,7 +305,7 @@ impl<'a> Parser<'a> {
                     if (type_args.is_empty() && self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)))
                         || !type_args.is_empty()
                     {
-                        let args = self.call_args()?;
+                        let args = self.call_args_for(Some(name.clone()))?;
                         self.expect(
                             &TokenKind::Punctuation(PunctuationId::RParen),
                             "Expected ')' after arguments",
@@ -239,7 +325,7 @@ impl<'a> Parser<'a> {
                             &TokenKind::Punctuation(PunctuationId::LParen),
                             "Expected '(' after explicit function type arguments",
                         )?;
-                        let args = self.call_args()?;
+                        let args = self.call_args_for(self.call_argument_target(&expr))?;
                         self.expect(
                             &TokenKind::Punctuation(PunctuationId::RParen),
                             "Expected ')' after arguments",
@@ -266,7 +352,7 @@ impl<'a> Parser<'a> {
                     IndexOrSlice::Slice(slice) => Spanned::new(Expr::Slice(Box::new(expr), slice), span),
                 };
             } else if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-                let args = self.call_args()?;
+                let args = self.call_args_for(self.call_argument_target(&expr))?;
                 self.expect(
                     &TokenKind::Punctuation(PunctuationId::RParen),
                     "Expected ')' after arguments",
@@ -409,8 +495,18 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse primary expressions, including descriptor-enabled leading-dot scoped surfaces.
     fn primary(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let start = self.current_span().start;
+
+        if self.check(&TokenKind::Punctuation(PunctuationId::Dot)) {
+            if let Some(expr) = self.try_scoped_leading_dot_path(start)? {
+                return Ok(expr);
+            }
+            if let Some(err) = self.scoped_leading_dot_outside_scope_error(start) {
+                return Err(err);
+            }
+        }
 
         // Yield expression (for fixtures/generators)
         if self.match_token(&TokenKind::Keyword(KeywordId::Yield)) {
@@ -491,6 +587,278 @@ impl<'a> Parser<'a> {
             &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
+    }
+
+    /// Parse a descriptor-enabled leading-dot path if the current DSL block accepts one.
+    fn try_scoped_leading_dot_path(&mut self, start: usize) -> Result<Option<Spanned<Expr>>, CompileError> {
+        let Some(active) = self.active_leading_dot_surface_descriptor() else {
+            return Ok(None);
+        };
+        let dependency_key = active.dependency_key.clone();
+        let descriptor_key = active.descriptor.key.clone();
+        let receiver = active
+            .descriptor
+            .receiver
+            .clone()
+            .unwrap_or(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration);
+        let owner = self.scoped_surface_owner(active);
+        let (min_segments, max_segments) = match &active.descriptor.syntax {
+            incan_vocab::ScopedSurfaceSyntax::LeadingDotPath {
+                min_segments,
+                max_segments,
+            } => (*min_segments as usize, max_segments.map(usize::from)),
+            _ => return Ok(None),
+        };
+
+        let mut segments = Vec::new();
+        loop {
+            self.expect_punct(PunctuationId::Dot, "Expected '.' at start of scoped leading-dot path")?;
+            segments.push(self.identifier_or_any_keyword()?);
+            if max_segments.is_some_and(|max_segments| segments.len() >= max_segments) {
+                break;
+            }
+            if !self.check(&TokenKind::Punctuation(PunctuationId::Dot)) {
+                break;
+            }
+            if !matches!(self.peek_next().kind, TokenKind::Ident(_) | TokenKind::Keyword(_)) {
+                break;
+            }
+        }
+
+        if segments.len() < min_segments {
+            return Err(errors::expected_expression(
+                "scoped leading-dot path",
+                Span::new(start, self.current_span().end),
+            ));
+        }
+
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Expr::Surface(Box::new(SurfaceExpr {
+                key: SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key,
+                    descriptor_key,
+                },
+                payload: SurfaceExprPayload::LeadingDotPath {
+                    segments,
+                    receiver,
+                    owner,
+                },
+            })),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Return the first active leading-dot descriptor accepted by the current scoped context.
+    fn active_leading_dot_surface_descriptor(&self) -> Option<&ActiveScopedSurfaceDescriptor> {
+        self.active_scoped_surface_descriptors.iter().find(|active| {
+            active.descriptor.family == incan_vocab::ScopedSurfaceFamily::ExpressionForm
+                && matches!(
+                    active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
+                )
+                && active.descriptor.eligible_in.iter().any(|eligibility| {
+                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
+                })
+        })
+    }
+
+    /// Build an author-provided outside-scope diagnostic for an active leading-dot descriptor.
+    fn scoped_leading_dot_outside_scope_error(&self, start: usize) -> Option<CompileError> {
+        if !matches!(self.peek_next().kind, TokenKind::Ident(_) | TokenKind::Keyword(_)) {
+            return None;
+        }
+        let active = self.active_scoped_surface_descriptors.iter().find(|active| {
+            active.descriptor.family == incan_vocab::ScopedSurfaceFamily::ExpressionForm
+                && !matches!(
+                    active.descriptor.misuse_scope,
+                    incan_vocab::ScopedSurfaceMisuseScope::None
+                )
+                && matches!(
+                    active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
+                )
+        })?;
+        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
+            diagnostic.kind == incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope
+        });
+        let message = diagnostic
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "Scoped surface `{}` is not valid in this position",
+                    active.descriptor.key
+                )
+            });
+        let mut error = CompileError::syntax(message, Span::new(start, self.peek_next().span.end));
+        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+            error = error.with_note(format!("diagnostic code: {code}"));
+        }
+        if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
+            error = error.with_hint(help);
+        }
+        Some(error)
+    }
+
+    /// Return the first active operator-like or binding-like glyph descriptor accepted by the current context.
+    fn active_scoped_glyph_surface_descriptor(&self, glyph: &str) -> Option<&ActiveScopedSurfaceDescriptor> {
+        self.active_scoped_surface_descriptors.iter().find(|active| {
+            matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            )
+                && matches!(
+                    &active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } if spelling == glyph
+                )
+                && active.descriptor.eligible_in.iter().any(|eligibility| {
+                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
+                })
+        })
+    }
+
+    /// Consume the longest active scoped glyph at the current token position.
+    fn consume_active_scoped_glyph(&mut self) -> Option<(ActiveScopedSurfaceDescriptor, String)> {
+        let mut best: Option<(ActiveScopedSurfaceDescriptor, String, usize)> = None;
+
+        for active in &self.active_scoped_surface_descriptors {
+            if !matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            ) {
+                continue;
+            }
+            if !active
+                .descriptor
+                .eligible_in
+                .iter()
+                .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+            {
+                continue;
+            }
+            let incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } = &active.descriptor.syntax else {
+                continue;
+            };
+            let Some(token_count) = self.scoped_glyph_token_count_at(spelling, self.pos) else {
+                continue;
+            };
+
+            let should_replace = best
+                .as_ref()
+                .map(|(_, current_spelling, current_count)| {
+                    token_count > *current_count
+                        || (token_count == *current_count && spelling.len() > current_spelling.len())
+                })
+                .unwrap_or(true);
+            if should_replace {
+                best = Some((active.clone(), spelling.clone(), token_count));
+            }
+        }
+
+        let (active, spelling, token_count) = best?;
+        for _ in 0..token_count {
+            self.advance();
+        }
+        Some((active, spelling))
+    }
+
+    /// Return whether an active scoped glyph starts `offset` tokens after the current parser position.
+    fn active_scoped_glyph_starts_at_offset(&self, offset: usize) -> bool {
+        let pos = self.pos.saturating_add(offset);
+        self.active_scoped_surface_descriptors.iter().any(|active| {
+            matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            ) && active
+                .descriptor
+                .eligible_in
+                .iter()
+                .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+                && matches!(
+                    &active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::Glyph { spelling }
+                        if self.scoped_glyph_token_count_at(spelling, pos).is_some()
+                )
+        })
+    }
+
+    /// Return the number of tokens that compose `spelling` at `pos`, if the token spellings match exactly.
+    fn scoped_glyph_token_count_at(&self, spelling: &str, pos: usize) -> Option<usize> {
+        let mut matched = String::new();
+        let mut idx = pos;
+
+        while matched.len() < spelling.len() {
+            let piece = self.token_symbol_spelling(idx)?;
+            matched.push_str(piece);
+            if !spelling.starts_with(&matched) {
+                return None;
+            }
+            idx += 1;
+        }
+
+        if matched == spelling {
+            Some(idx - pos)
+        } else {
+            None
+        }
+    }
+
+    /// Return the source spelling for an operator or punctuation token at `idx`.
+    fn token_symbol_spelling(&self, idx: usize) -> Option<&'static str> {
+        match self.tokens.get(idx).map(|token| &token.kind)? {
+            TokenKind::Operator(id) => Some(incan_core::lang::operators::info_for(*id).spellings[0]),
+            TokenKind::Punctuation(id) => Some(incan_core::lang::punctuation::as_str(*id)),
+            _ => None,
+        }
+    }
+
+    /// Return whether a scoped-surface eligibility matches the parser's current scoped context.
+    fn scoped_surface_eligibility_accepts_current_context(
+        &self,
+        eligibility: &incan_vocab::ScopedSurfaceEligibility,
+    ) -> bool {
+        match eligibility.position {
+            incan_vocab::ScopedSurfacePosition::DeclarationBody
+            | incan_vocab::ScopedSurfacePosition::ClauseBody => {
+                self.vocab_block_stack.last() == Some(&eligibility.declaration)
+            }
+            incan_vocab::ScopedSurfacePosition::CallArgument => self
+                .scoped_call_argument_stack
+                .last()
+                .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str())),
+            incan_vocab::ScopedSurfacePosition::DeclarationHead => false,
+            _ => false,
+        }
+    }
+
+    /// Build the owner metadata attached to a scoped-surface AST payload.
+    fn scoped_surface_owner(&self, active: &ActiveScopedSurfaceDescriptor) -> ScopedSurfaceOwner {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .find(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+            .map(|eligibility| ScopedSurfaceOwner {
+                declaration: eligibility.declaration.clone(),
+                clause: eligibility.clause.clone(),
+                call: eligibility.call.clone(),
+            })
+            .unwrap_or_else(|| ScopedSurfaceOwner {
+                declaration: self.vocab_block_stack.last().cloned().unwrap_or_default(),
+                clause: None,
+                call: self
+                    .scoped_call_argument_stack
+                    .last()
+                    .map(|context| context.call.clone()),
+            })
+    }
+
+    /// Return the function or method name whose argument list is about to be parsed.
+    fn call_argument_target(&self, expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::Ident(name) | Expr::Field(_, name) => Some(name.clone()),
+            _ => None,
+        }
     }
 
     fn try_literal(&mut self) -> Option<Literal> {
@@ -700,6 +1068,11 @@ impl<'a> Parser<'a> {
             }
             Expr::Surface(surface_expr) => match &mut surface_expr.payload {
                 SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
+                SurfaceExprPayload::LeadingDotPath { .. } => {}
+                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                    self.shift_spanned_expr(left, offset);
+                    self.shift_spanned_expr(right, offset);
+                }
             },
         }
     }
@@ -1351,6 +1724,19 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(params)
+    }
+
+    /// Parse call arguments while temporarily enabling descriptors scoped to the named call target.
+    fn call_args_for(&mut self, call: Option<String>) -> Result<Vec<CallArg>, CompileError> {
+        let pushed_context = call.map(|call| {
+            self.scoped_call_argument_stack
+                .push(ScopedCallArgumentContext { call });
+        });
+        let result = self.call_args();
+        if pushed_context.is_some() {
+            self.scoped_call_argument_stack.pop();
+        }
+        result
     }
 
     fn call_args(&mut self) -> Result<Vec<CallArg>, CompileError> {

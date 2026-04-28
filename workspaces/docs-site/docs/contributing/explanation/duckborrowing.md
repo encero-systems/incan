@@ -140,7 +140,7 @@ Use these test shapes:
 - Conversion planner unit tests in `src/backend/ir/conversions.rs` for pure policy decisions.
 - IR/codegen snapshot tests for emitted Rust shapes.
 - Build or run tests for generated Rust when borrow checker behavior is the failure mode.
-- Consumer checks, such as InQL, when the bug came from real library patterns rather than a minimized fixture.
+- Consumer checks from sibling projects when the bug came from real library patterns rather than a minimized fixture.
 - Trait-bound inference tests when a backend-inserted clone touches generic `T`.
 
 ## Review checklist

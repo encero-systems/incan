@@ -151,28 +151,28 @@ This is the gap the example is solving. Incan can already compile and run code, 
 
 The same example exercises the core rule: packages are dependencies, capabilities are explicit project concerns, templates are rendered files with provenance, actions are typed workflows, and policy decides whether the project accepts the patch.
 
-### Example 2: creating an InQL data project
+### Example 2: creating a sample query project
 
-A user wants a typed data project with InQL queries, tests, and one local validation action. The DX problem is not only "create some files." The user wants a project where query files, model files, validation actions, examples, and tests are already connected so the IDE can catch query-shape mistakes before anything reaches a warehouse.
+A user wants a typed data project with sample query files, tests, and one local validation action. The DX problem is not only "create some files." The user wants a project where query files, model files, validation actions, examples, and tests are already connected so the IDE can catch query-shape mistakes before anything reaches a warehouse.
 
 They start with a starter:
 
 ```text
-incan new revenue_model --starter inql.project --dry-run
+incan new revenue_model --starter sample_query.project --dry-run
 ```
 
-The starter composes several smaller concerns: an InQL project layout, a basic testing capability, query examples, typed actions, and optional data-quality scaffolding. That saves the user from assembling a data-project shape by hand and gives tools a stable contract for "this is an InQL project."
+The starter composes several smaller concerns: a sample query project layout, a basic testing capability, query examples, typed actions, and optional data-quality scaffolding. That saves the user from assembling a data-project shape by hand and gives tools a stable contract for "this is a query project."
 
 The plan should explain the composition rather than hiding it:
 
 ```text
-Starter: inql.project
+Starter: sample_query.project
 
 Applies:
-  capability inql.query
+  capability sample_query.query
   capability testing.basic
-  template inql.model-example
-  template inql.query-example
+  template sample_query.model-example
+  template sample_query.query-example
 
 Actions:
   test              kind=test
@@ -190,30 +190,30 @@ Once applied, the project should be self-describing. The IDE can understand that
 The user can then add a package or adapter separately:
 
 ```text
-incan add inql-duckdb
-incan capability add inql.adapter.duckdb --dry-run
+incan add sample-query-duckdb
+incan capability add sample_query.adapter.duckdb --dry-run
 ```
 
 The adapter capability may add an action, manifest metadata, and configuration placeholders. Policy can treat this differently from ordinary source creation because it may introduce external execution, local files, credentials, or network access.
 
 This example shows why the registry must be more than package storage. A user is not searching only for "which tarball contains the code?" They are searching for a usable project concern: query authoring, validation, explain, adapter binding, examples, and IDE-visible file roles.
 
-This is the gap the example is solving. Incan can express models and run code, but it does not yet have a first-class way to say: "this is a typed query project; connect the model files, query files, validation actions, explain actions, tests, adapter setup, and IDE affordances." Without that lifecycle layer, each InQL project has to assemble its own conventions for where queries live, how they are validated, how adapters are added, and which command proves the project is healthy. The north-star proposal turns that query-project shape into discoverable, repeatable, tool-visible metadata.
+This is the gap the example is solving. Incan can express models and run code, but it does not yet have a first-class way to say: "this is a typed query project; connect the model files, query files, validation actions, explain actions, tests, adapter setup, and IDE affordances." Without that lifecycle layer, each query project has to assemble its own conventions for where queries live, how they are validated, how adapters are added, and which command proves the project is healthy. The north-star proposal turns that query-project shape into discoverable, repeatable, tool-visible metadata.
 
-### Example 3: creating a Pallay application with governed analytics
+### Example 3: creating a synthetic application with governed analytics
 
 A user wants an application starter with a page, one server action, and one analytics read backed by a typed data slice. The DX problem is that a "full-stack app" usually starts with several disconnected setup chores: UI files, server action conventions, local run commands, test wiring, config, and data access. The user wants a runnable application shape by the end of the first session, not a blank framework shell.
 
 They start from a public starter:
 
 ```text
-incan new customer_console --starter pallay.console --dry-run
+incan new customer_console --starter sample_app.console --dry-run
 ```
 
 The dry-run should reveal the full lifecycle shape before it creates files:
 
 ```text
-Starter: pallay.console
+Starter: sample_app.console
 
 Files:
   create src/app.incn
@@ -222,9 +222,9 @@ Files:
   create tests/test_actions.incn
 
 Capabilities:
-  pallay.app
-  pallay.server-actions
-  inql.analytics-read
+  sample_app.app
+  sample_app.server-actions
+  sample_query.analytics-read
 
 Actions:
   run-local       kind=serve
@@ -257,13 +257,13 @@ The examples point to a few conclusions.
 
 First, `incan add <pkg>` must stay boring. It should add a dependency and perhaps report advertised capabilities, but it should not rewrite the project.
 
-Second, project concerns need their own explicit unit. A CLI, InQL adapter, data-quality pack, server-action setup, or AI eval workflow is more than a package and less than a framework. That unit is a capability.
+Second, project concerns need their own explicit unit. A CLI, query adapter, data-quality pack, server-action setup, or AI eval workflow is more than a package and less than a framework. That unit is a capability.
 
 Third, templates need provenance because generated files do not stop mattering after creation. Some are bootstrap examples the user owns immediately. Some are managed configuration files that can be updated. Some are advisory origin records. Treating all generated files the same would either block useful updates or risk overwriting user work.
 
 Fourth, actions need types and risk labels. `test`, `serve`, `generate`, `validate`, `publish`, and `eval` are not the same operation. Tools, IDEs, CI, and agents need to know what an action does before running it.
 
-Fifth, the registry is most valuable when it models relationships. The useful question is often "how do I add a CLI?", "how do I validate an InQL query?", or "which starter gives me a Pallay app with analytics?", not only "which package name should I install?"
+Fifth, the registry is most valuable when it models relationships. The useful question is often "how do I add a CLI?", "how do I validate a query?", or "which starter gives me an application with analytics?", not only "which package name should I install?"
 
 Sixth, policy is not a late enterprise feature. It is required as soon as templates, capabilities, actions, and AI assets can affect source, scripts, credentials, network access, or agent behavior.
 
@@ -519,7 +519,7 @@ These are the decisions that most affect the final shape:
 4. What is the minimum policy language that can block dangerous template, capability, action, and AI mutations without creating a heavyweight governance system?
 5. Which metadata vocabulary must be standardized in v1: file roles, action kinds, risk categories, AI asset kinds, applicability states, and relationship kinds?
 6. How should private catalogs integrate without making hosted product assumptions in the language RFCs?
-7. What is the first end-to-end demo that proves the model: a CLI app capability, an InQL project starter, a workspace starter, or an AI eval-backed capability?
+7. What is the first end-to-end demo that proves the model: a CLI app capability, a sample query project starter, a workspace starter, or an AI eval-backed capability?
 
 ## Branch-out RFCs
 

@@ -1,6 +1,6 @@
 # RFC 040: Scoped DSL Surface Forms
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-03-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,13 +10,15 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/174
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
-Introduce **scoped DSL surface forms** for explicit DSL blocks and their registered subgrammars: a registered DSL may give a local syntax shape positive meaning inside eligible positions of an owning block, while preserving negative misuse diagnostics outside that block in the activating file or module. Operator-like glyphs such as `>>`, `<<`, `|>`, `<|`, `->`, `<-`, or `+` can support chaining, routing, linking, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as `:=` are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot paths (`.column`, `.order.amount`) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.
+Introduce **scoped DSL surface forms** for explicit DSL blocks and their registered subgrammars: a registered DSL may give a local syntax shape positive meaning inside eligible positions of an owning block, while preserving negative misuse diagnostics outside that block in the activating file or module. Operator-like glyphs such as `>>`, `<<`, `|>`, `<|`, `->`, `<-`, `//`, `===`, or `+` can support chaining, routing, linking, comparison, matching, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as `:=` are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot paths (`.column`, `.order.amount`) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.
 
 This RFC does **not** define a closed whitelist of legal DSL surfaces. It defines the descriptor contract, scoping rules, parsing-eligibility rules, semantic artifact requirements, diagnostic rules, and conflict policy that make scoped surfaces safe to use. The surface set is open-ended as long as a DSL registers the shape explicitly and it coexists cleanly with the core grammar and tooling.
+
+RFC 040 defines the base scoped-surface layer for product DSLs. At minimum, it must be enough for query-like blocks and method arguments, site/application composition blocks, assistant/workflow surfaces, and app-builder template/style entry points that fit descriptor-gated surface forms. It owns descriptor contracts for scoped glyphs and expression-form surfaces. Full language-shaped embeddings such as CSS, HTML, XML, Ruby, JavaScript, TypeScript, Java, Kotlin, and Groovy belong to RFC 081 (language-shaped DSL embeddings), because they require lexical modes and token forms beyond RFC 040's base surface model. Narrow template or style surfaces may still be specified against RFC 040 when they can be modeled as constrained DSL surfaces.
 
 ## Motivation
 
@@ -58,8 +60,10 @@ The immediate motivating cases are operator-like glyphs:
 - `>>` / `<<` for directional linking
 - `|>` / `<|` for pipe-style flow or reverse application inside a block
 - `->` / `<-` for transitions, edges, mappings, or directional flow inside a block
+- `//` for DSL-local fallback, layering, path-like composition, or rule-combination forms without changing ordinary floor-division semantics
+- `===` for DSL-local exact, identity, or shape-equality predicates without making strict equality a global Incan operator
 
-But the same family also needs room for future binding-like surfaces such as `:=`, where the glyph is not a global walrus operator, but a block-local alias or slot-binding form.
+But the same family also needs room for binding-like surfaces such as `:=`, where the glyph is not a global walrus operator, but a block-local alias or slot-binding form.
 
 Beyond operators and bindings, DSLs also need **expression-form surfaces**: syntax shapes that are only valid inside eligible DSL positions. The leading example is `.column` notation — a leading-dot path with an implicit receiver supplied by the owning block's context. Outside DSL positions, `.field` at expression start is not valid Incan syntax and must be rejected. Inside a query or relational block, `.amount` means "the `amount` field of the primary relation" without needing a named receiver.
 
@@ -88,12 +92,12 @@ That is the real safety boundary for this RFC.
 ## Goals
 
 - Define the registration, scoping, parsing-eligibility, semantic artifact, diagnostic, and conflict rules under which explicit DSL blocks may own position-scoped surface forms.
-- Cover three surface families: operator-like glyphs (e.g. `>>`, `|>`), binding-like glyphs (e.g. `:=`), and expression-form surfaces (e.g. leading-dot `.field` access).
+- Cover three surface families: operator-like glyphs (e.g. `>>`, `|>`, `//`, `===`), binding-like glyphs (e.g. `:=`), and expression-form surfaces (e.g. leading-dot `.field` access).
 - Ensure scoped surface meaning is block-local and position-scoped: a surface gains DSL-owned semantics only inside eligible positions of an explicit owning block, not as a blanket redefinition for the whole block body.
 - Require accepted scoped-surface occurrences to carry descriptor identity, owning block identity, eligible-position identity, parsed payload, source span, and lowering/tooling handoff metadata through later phases.
 - Provide targeted misuse diagnostics when DSL-shaped surfaces appear outside eligible positions but inside an activating file or module.
 - Coexist cleanly with RFC 028 global operator overloading and the rest of the core grammar.
-- Keep the surface set open-ended: any surface form that satisfies the registration and conflict rules is valid, with no pre-closed whitelist.
+- Keep the surface set open-ended within RFC 040's base layer: core-token glyph reuse, leading-dot expression forms, and a descriptor path for selected registered symbolic glyphs.
 
 ## Non-goals
 
@@ -103,6 +107,7 @@ That is the real safety boundary for this RFC.
 - A global walrus operator for ordinary Incan code
 - Scoped identifier symbol semantics (e.g. `sum`, `count` gaining DSL-specific meaning by position) — that belongs to RFC 045
 - One-off parser exceptions for individual libraries without a registered descriptor
+- General-purpose language embeddings for CSS, HTML, XML, Ruby, JavaScript, TypeScript, Java, Kotlin, Groovy, or similar languages. These belong to RFC 081, not RFC 040.
 
 ## Guide-level explanation
 
@@ -282,7 +287,7 @@ tasks ci:
 
 This reinforces a key point of the RFC: a glyph like `+` need not be globally special, or even special throughout the whole DSL block. It only needs a well-defined meaning in the DSL positions that register it.
 
-### Example: future binding-like glyphs
+### Example: binding-like glyphs
 
 ```incan
 query totals:
@@ -317,6 +322,32 @@ _relation_ctx.field("amount")
 ```
 
 The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, `.field` at expression start must be rejected.
+
+### Scope boundary
+
+Scoped surfaces are not only for compact custom notations. The important boundary is which compiler layer owns the surface.
+
+RFC 040 owns the base scoped-surface layer for query-like blocks, site/application composition, assistant/workflow authoring, and descriptor-shaped app-builder template/style entry points. RFC 081 owns language-shaped lexical modes and token forms.
+
+For RFC 040, "complete" means:
+
+- DSL blocks and selected DSL expression positions can register scoped operator-like and binding-like surfaces.
+- Existing core tokens such as `+`, `>`, `==`, `->`, `=>`, `//`, `>>`, and `<<` can be reused with DSL-local meaning only where descriptors make them eligible.
+- Selected non-core symbolic glyphs such as `|>`, `%>%`, `:=`, and `===` are compatible with the descriptor model, but broad symbolic-token admission belongs to RFC 081 unless a constrained product DSL needs the exact glyph as a scoped surface.
+- Leading-dot expression forms such as `.amount` and `.order.amount` work in eligible query/relational positions with descriptor-provided receiver derivation.
+- DSL authors can provide diagnostics that explain why a surface is only legal in the owning DSL position.
+
+RFC 081 owns the language-embedding question: descriptor-gated token forms and lexical submodes for markup, raw text, comments, regex/template literals, sigil identifiers, dimensions, colors, selector tokens, type-position syntax, and language-specific ambiguity rules. RFC 040 may still support a narrow product-specific template/style surface when it can be expressed as a constrained DSL surface built on the same descriptor contract.
+
+### Product-readiness envelope
+
+RFC 040 is not complete merely because the descriptor API exists. The base layer must be expressive enough for at least these product DSL families:
+
+- **Query and relational DSLs** — support explicit query blocks and relational method arguments; leading-dot field paths in predicates and projections; scoped comparison, boolean, pipeline, binding, fallback, and exact-match surfaces where registered; receiver derivation from a block clause or method receiver; and descriptor-owned diagnostics when a field path or glyph escapes its eligible position.
+- **Site and application composition DSLs** — support scoped route-head and route-mapping surfaces such as `get + post -> handler`; scoped application/layout/resource blocks; constrained template/style entry points when they can be represented as DSL-owned surfaces rather than full markup or CSS lexical modes; and durable handoff to a desugarer.
+- **Assistant and workflow DSLs** — support pipeline, graph, routing, fallback, alias/binding, and shape-check surfaces such as `>>`, `->`, `//`, `:=`, and `===` in registered workflow positions; nested block ownership; ambiguity rejection; and stable metadata for formatter, diagnostics, and desugarer handoff.
+
+These families are the minimum acceptance envelope, not a closed list. A DSL outside these families still belongs in RFC 040 when it can be expressed through scoped glyphs, binding-like surfaces, expression-form surfaces, descriptor metadata, and ordinary Incan expression re-entry without requiring RFC 081 lexical submodes.
 
 ### Canonical acceptance examples
 
@@ -409,11 +440,13 @@ Common operator-like examples include:
 - `<|`
 - `->`
 - `<-`
+- `//`
+- `===`
 - `+`
 
-These are infix glyphs with operator-like shape. A DSL may interpret them as linking, piping, chaining, directional flow, verb composition, or other block-local relations.
+These are infix glyphs with operator-like shape. A DSL may interpret them as linking, piping, chaining, directional flow, strict or shape equality, verb composition, or other block-local relations.
 
-Arrow-shaped glyphs deserve one extra constraint: scoped reuse of `->` or `<-` must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve `->`. They are valid only where the enclosing block grammar explicitly admits a scoped surface occurrence.
+Glyphs that already have core-language meanings need extra care. Scoped reuse of `//` must not change ordinary floor-division semantics outside registered positions. Scoped reuse of `->` or `<-` must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve `->`. They are valid only where the enclosing block grammar explicitly admits a scoped surface occurrence.
 
 Common binding-like examples include:
 
@@ -459,7 +492,7 @@ Conceptually, a scoped surface descriptor needs to capture:
 - diagnostic templates: author-provided messages for outside-scope use, wrong operand kinds, invalid binding targets, ambiguous surface ownership, and related failures
 - lowering/desugaring handoff identity: the stable identity later phases use to dispatch to the owning DSL behavior
 
-The descriptor is the single source of truth for surface ownership. Later compiler phases, the formatter, and the LSP must not infer DSL-owned meaning by re-parsing source text or by string-matching raw glyphs.
+The descriptor is the single source of truth for surface ownership. Later compiler phases and the formatter must not infer DSL-owned meaning by re-parsing source text or by string-matching raw glyphs. LSP integration must use the same metadata when the editor-facing path is added.
 
 ### Surface recognition
 
@@ -482,7 +515,7 @@ Every accepted scoped-surface occurrence must carry at least:
 - diagnostic identity
 - lowering/desugaring handoff identity
 
-The concrete AST or IR representation is an implementation detail, but the information above is not optional. Typechecking, lowering, formatting, and LSP features must receive enough metadata to preserve the DSL-owned meaning without rediscovering it from raw text.
+The concrete AST or IR representation is an implementation detail, but the information above is not optional. Typechecking, desugaring/lowering handoff, and formatting must receive enough metadata to preserve the DSL-owned meaning without rediscovering it from raw text. LSP features must use the same artifact model when editor support lands.
 
 ### Resolution order
 
@@ -577,26 +610,31 @@ extract.__rshift__(normalize)
 
 ### Diagnostics
 
-This RFC requires targeted diagnostics for scoped surface misuse.
+This RFC requires targeted diagnostics for compiler-gated scoped surface misuse.
 
-Required classes:
+The RFC 040 diagnostic floor is:
 
 - outside-scope use
     - example: "`>>` between pipeline steps is only valid inside a `pipeline` block"
+- ambiguous surface ownership
+    - example: "`|>` is ambiguous here: both `query` and `pipeline` register it for this position"
+
+Descriptors also reserve diagnostic templates for semantic validators that are not RFC 040 closure blockers:
+
 - wrong operand kinds inside the block
     - example: "`>>` in a `pipeline` block expects `PipelineStep` operands, got `Foo` and `Bar`"
 - invalid binding target for binding-like glyphs
     - example: "`:=` in a `query` block expects an identifier on the left-hand side"
-- ambiguous surface ownership
-    - example: "`|>` is ambiguous here: both `query` and `pipeline` register it for this position"
+- invalid receiver derivation for expression-form surfaces
+    - example: "`.amount` needs a query relation introduced by `FROM`"
 
 DSL authors may provide diagnostic templates for these classes as part of the descriptor. The compiler controls when those templates may fire: an outside-scope diagnostic requires an active descriptor, an exact surface-shape match, and failure of ordinary parsing or ordinary operator resolution. The compiler must not use a DSL-authored message merely because the operands are vaguely similar to a DSL example.
 
 ### Formatter and LSP metadata
 
-The formatter and LSP consume scoped-surface metadata; they do not infer DSL semantics from punctuation alone.
+The formatter consumes scoped-surface metadata; it does not infer DSL semantics from punctuation alone. LSP support must consume the same metadata once the editor-facing integration exists.
 
-For a leading-dot path such as `.order.amount`, tooling receives the descriptor family, path segments, owning DSL, eligible position, source span, and receiver/context derivation. A hover can therefore report that `.amount` is a query field reference resolved against the active relation, while the formatter can preserve the leading-dot path without treating it as ordinary field access.
+For a leading-dot path such as `.order.amount`, tooling metadata includes the descriptor family, path segments, owning DSL, eligible position, source span, and receiver/context derivation. A future hover can therefore report that `.amount` is a query field reference resolved against the active relation, while the formatter can preserve the leading-dot path without treating it as ordinary field access.
 
 For operator-like glyphs, the descriptor provides semantic hints such as `chain_mode = pairwise`, but line-breaking remains formatter policy. The formatter may consult `chain_mode` to avoid rewriting a pairwise chain as if it were an ordinary nested binary expression, but the descriptor does not prescribe exact line width or wrapping layout.
 
@@ -652,11 +690,119 @@ This RFC extends that world with block-owned, position-scoped surface forms. It 
 ## Layers affected
 
 - **Frontend recognition** — the language frontend must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; `->` and other glyphs with existing core meanings must continue to mean their ordinary language form outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere
+- **Scoped symbolic recognition** — RFC 040 reuses existing core tokens and defines a descriptor-gated path for selected non-core symbolic glyphs such as `|>`, `%>%`, `:=`, and `===`; broad language-shaped token recognition belongs to RFC 081
+- **RFC 081 boundary** — language-shaped token forms and lexical submodes must remain outside RFC 040 except for a deliberately narrowed product-specific template/style surface
 - **Semantic analysis** — block-local surface resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); active DSL descriptors must remain available to the current file/module
 - **Lowering / execution handoff** — DSL-owned surface occurrences must preserve their block-owned meaning through later compilation stages; pairwise chaining must be expanded correctly
 - **RFC 027 extension** — the vocab registration surface needs a scoped-surface descriptor so DSL authors can declare surfaces alongside block keywords; expression-position block kinds may need a small extension to support forms such as `race for value:`
 - **Formatter** — must preserve scoped surface markers without ad-hoc special-casing; repeated chainable surfaces should format coherently
-- **LSP** — hover and syntax highlighting should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable
+- **LSP** — follow-up editor integration should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable
+
+## Implementation Plan
+
+### Phase 1: Descriptor contract and manifest transport
+
+- Extend the public vocab API with scoped-surface descriptors for operator-like glyphs, binding-like glyphs, and expression-form surfaces.
+- Serialize registered scoped surfaces through library manifests without losing family, eligibility, misuse scope, diagnostic, receiver, and formatter metadata.
+- Validate descriptor conflicts early enough that a malformed vocab crate cannot silently publish ambiguous scoped-surface behavior.
+
+### Phase 2: Frontend recognition and semantic artifacts
+
+- Extend syntax/AST support so accepted scoped-surface occurrences produce typed payloads instead of raw punctuation matches.
+- Reuse existing core tokens in eligible DSL positions without changing their ordinary meaning outside those positions.
+- Add leading-dot expression-form recognition for eligible DSL positions, including chained paths such as `.order.amount`.
+- Preserve descriptor identity, owning block identity, eligible-position identity, payload, receiver derivation, and source span for later phases and tooling.
+
+### Phase 3: Activation, resolution, and diagnostics
+
+- Carry active scoped-surface descriptors from imported vocab crates into the file/module surface context.
+- Resolve scoped-surface occurrences using the deterministic lexical ownership rules in this RFC.
+- Emit author-provided, compiler-gated diagnostics for outside-scope use and ambiguous ownership.
+- Preserve descriptor diagnostic classes for later semantic validators such as wrong operands, invalid binding targets, and invalid receiver derivation.
+
+### Phase 4: Formatter and desugaring handoff
+
+- Format scoped-surface expressions from semantic metadata rather than ad-hoc punctuation rewriting.
+- Hand accepted scoped-surface artifacts to desugarers without requiring later phases to rediscover meaning from source text.
+- Record LSP metadata consumption and direct lowering-hook dispatch as follow-up work rather than RFC 040 closure blockers.
+
+### Phase 5: User-facing docs, release notes, and versioning
+
+- Update vocab-authoring documentation with descriptor examples and diagnostic-template guidance.
+- Add release notes for RFC 040 and document current limitations.
+- Bump the active development version for the implementation.
+
+## Implementation Log
+
+### Spec / design
+
+- [x] Move RFC 040 from Planned to In Progress for issue 174.
+- [x] Keep design decisions synchronized with implementation discoveries.
+
+### Descriptor contract and manifests
+
+- [x] Add public scoped-surface descriptor types and builders to `incan_vocab`.
+- [x] Support operator-like glyph, binding-like glyph, and expression-form descriptor families.
+- [x] Include positive eligibility and misuse-scope metadata in descriptors.
+- [x] Include receiver/context derivation metadata for expression-form descriptors.
+- [x] Include author-provided diagnostic templates with stable diagnostic identities.
+- [x] Serialize scoped-surface descriptors through library manifests.
+- [x] Validate duplicate, ambiguous, or unsupported descriptor combinations.
+
+### Frontend recognition and semantic artifacts
+
+- [x] Carry active scoped-surface descriptors into frontend surface context.
+- [x] Recognize eligible DSL-owned operator-like glyph surfaces without changing global RFC 028 behavior.
+- [x] Recognize eligible leading-dot expression-form surfaces, including chained paths.
+- [x] Reject leading-dot expression starts outside eligible scoped-surface positions.
+- [x] Preserve accepted scoped-surface artifacts through later frontend stages.
+
+### Diagnostics and conflict policy
+
+- [x] Apply innermost-eligible-block ownership for nested DSLs.
+- [x] Reject same-depth competing descriptors as ambiguous.
+- [x] Emit targeted outside-scope diagnostics only when the compiler-gated conditions are met.
+- [x] Preserve descriptor diagnostic classes for wrong operands, invalid binding targets, and invalid receiver derivation as follow-up semantic validation hooks.
+
+### Formatter and desugaring handoff
+
+- [x] Format accepted scoped-surface artifacts stably.
+- [x] Preserve chain-mode hints for pairwise scoped-surface chains.
+- [x] Hand scoped-surface artifacts to desugarers with descriptor identity intact.
+- [x] Record LSP metadata consumption and direct lowering-hook dispatch as follow-up work, not RFC 040 closure scope.
+
+### Product-readiness acceptance
+
+- [x] Add a synthetic query/relational DSL example that exercises leading-dot field paths and desugarer handoff.
+- [x] Add ignored executable product probes for query method arguments, route mapping, and workflow surfaces so missing RFC 040 coverage is tracked by tests.
+- [x] Add synthetic query/relational coverage for method-argument DSL positions, not only block bodies.
+- [x] Add a synthetic site/application composition DSL fixture for route-head and route-mapping scoped surfaces such as `get + post -> handler`.
+- [x] Add a synthetic assistant/workflow DSL fixture for pipeline, graph, fallback, binding, and shape-check surfaces in registered workflow positions.
+- [x] Validate that full template/style lexical needs belong to RFC 081; RFC 040 covers only descriptor-shaped app-builder entry points.
+
+### Tests
+
+- [x] Add descriptor builder and manifest round-trip tests.
+- [x] Add parser/frontend tests for accepted scoped operator-like glyphs.
+- [x] Add parser/frontend tests for accepted and rejected leading-dot expression forms.
+- [x] Add diagnostics tests for outside-scope and ambiguity cases implemented in RFC 040.
+- [x] Add formatter regression coverage for accepted scoped-surface payloads where existing test harnesses allow.
+- [x] Add an end-to-end vocab/desugarer test that consumes scoped-surface artifacts.
+
+### Docs and release
+
+- [x] Update vocab-authoring docs with scoped-surface descriptor examples.
+- [x] Update release notes for RFC 040.
+- [x] Bump the active development version.
+
+## Follow-up Work
+
+These items are intentionally not RFC 040 closure blockers:
+
+- Surface scoped-surface metadata to LSP hover, highlighting, and completion paths.
+- Add direct lowering-hook dispatch for scoped surfaces that intentionally bypass desugaring.
+- Add semantic validators and span-precise diagnostics for wrong operands, invalid binding targets, invalid receiver derivation, and invalid payload cases.
+- Add LSP-facing metadata regression tests once an RFC 040-aware LSP harness exists.
 
 ## Design Decisions
 
@@ -670,7 +816,7 @@ This RFC extends that world with block-owned, position-scoped surface forms. It 
 
 5. **Formatter layout is formatter policy, but semantic hints come from descriptors.** A descriptor may expose `chain_mode`, payload shape, and surface family so the formatter preserves semantics. Exact line-breaking, wrapping, and width decisions remain formatter policy rather than descriptor metadata.
 
-6. **LSP and formatter consume scoped-surface metadata.** Hover, highlighting, completions, formatting, and diagnostics receive the same scoped-surface identity and payload metadata as later compiler phases. Tooling must be able to distinguish block-local surface use from ordinary global operator or field-access syntax.
+6. **Formatter consumes scoped-surface metadata now; LSP follows the same contract later.** Formatting and diagnostics receive the same scoped-surface identity and payload metadata as later compiler phases. Hover, highlighting, and completions must use the same artifact model when editor support is added, so tooling can distinguish block-local surface use from ordinary global operator or field-access syntax.
 
 7. **Arrow-shaped glyphs require explicit eligible positions.** Scoped reuse of `->` or `<-` cannot opt out of core grammar globally. It is valid only where the owning block grammar explicitly admits a scoped surface occurrence; ordinary language meaning remains authoritative elsewhere.
 

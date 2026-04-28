@@ -51,7 +51,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
-    /// Format one expression node, preserving source-order entry structure for calls and collection literals.
+    /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => self.writer.write(name),
@@ -134,6 +134,22 @@ impl Formatter {
                     self.writer.write(keywords::as_str(*id));
                     self.writer.write(" ");
                     self.format_expr(&inner.node);
+                }
+                (SurfaceFeatureKey::ScopedDslSurface { .. }, SurfaceExprPayload::LeadingDotPath { segments, .. }) => {
+                    for segment in segments {
+                        self.writer.write(".");
+                        self.writer.write(segment);
+                    }
+                }
+                (
+                    SurfaceFeatureKey::ScopedDslSurface { .. },
+                    SurfaceExprPayload::ScopedGlyph { glyph, left, right, .. },
+                ) => {
+                    self.format_expr(&left.node);
+                    self.writer.write(" ");
+                    self.writer.write(glyph);
+                    self.writer.write(" ");
+                    self.format_expr(&right.node);
                 }
                 _ => self.writer.write("<surface_expr>"),
             },

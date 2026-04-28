@@ -87,7 +87,7 @@ That means a registry or marketplace can show a user the contract for a publishe
 
 This view is intentionally the structural contract view. A registry or governance portal may choose to enrich that rendered model with live policy data such as PII classification, retention, freshness SLAs, or ownership, but those are adjacent runtime layers, not the embedded structural bundle itself.
 
-In v1, the guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer such as InQL may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.
+In v1, the guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.
 
 ## Reference-level explanation (precise rules)
 
@@ -219,7 +219,7 @@ lifecycle and tooling conventions rather than inventing a disconnected formatter
 the human-readable contract view for published artifacts that carry RFC 048 metadata.
 - **Governance / policy layers**: runtime classifications, retention rules,
 ownership, and SLAs may enrich the structural model view in higher-level products, but they are not part of this RFC’s embedded structural contract unless a future RFC says otherwise.
-- **Companion producer specs**: systems such as InQL may define how canonical
+- **Companion producer specs**: companion systems may define how canonical
 bundles are derived, named, and validated before they reach Incan. Those specs are upstream of this RFC and must produce bundles that satisfy this RFC’s completeness and determinism requirements.
 
 ### Compatibility / migration
@@ -293,6 +293,6 @@ encoding for embedded bundles so CLI, registry, and third-party tooling can inte
 4. **Logical identity**: is the logical type name alone sufficient for
 artifact-facing identity, or should v1 require an additional stable model identifier to support registry diffing and compatibility views?
 5. **Companion producer boundary**: what is the minimum producer-side contract
-a host such as InQL must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?
+a host must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

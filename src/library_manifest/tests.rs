@@ -516,6 +516,163 @@ fn manifest_io_round_trip_preserves_vocab_payload() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_scoped_surface_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                        ]),
+                )
+                .with_scoped_surfaces([
+                    incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                        .in_clause_body("query", "SELECT")
+                        .with_misuse_scope(incan_vocab::ScopedSurfaceMisuseScope::ActivatingFile)
+                        .with_diagnostic(incan_vocab::ScopedSurfaceDiagnosticTemplate::new(
+                            "query-pipe-outside-scope",
+                            incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope,
+                            "`|>` is only valid inside query SELECT clauses",
+                        ))
+                        .pairwise_chain(),
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                        .in_clause_body("query", "SELECT")
+                        .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.arg_field")
+                        .with_eligibilities([
+                            incan_vocab::ScopedSurfaceEligibility::call_argument("query", "filter"),
+                            incan_vocab::ScopedSurfaceEligibility::call_argument("query", "select"),
+                        ])
+                        .with_receiver(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver")),
+                ]),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    let scoped_surfaces = &loaded.vocab.as_ref().unwrap().dsl_surfaces[0].scoped_surfaces;
+    assert_eq!(loaded, manifest);
+    assert_eq!(scoped_surfaces.len(), 3);
+    assert_eq!(
+        scoped_surfaces[0].format_hint.chain_mode,
+        incan_vocab::ScopedSurfaceChainMode::Pairwise
+    );
+    assert_eq!(
+        scoped_surfaces[1].receiver,
+        Some(incan_vocab::ScopedSurfaceReceiver::clause("FROM"))
+    );
+    assert_eq!(scoped_surfaces[2].eligible_in[0].call.as_deref(), Some("filter"));
+    assert_eq!(
+        scoped_surfaces[2].receiver,
+        Some(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver"))
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_ambiguous_scoped_surface_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let query_surface = incan_vocab::DslSurface::on_import("mylib.query")
+        .with_declaration(
+            incan_vocab::DeclarationSurface::named("query").with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+        )
+        .with_scoped_surfaces([
+            incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe.primary", "|>")
+                .in_clause_body("query", "SELECT"),
+            incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe.secondary", "|>")
+                .in_clause_body("query", "SELECT"),
+        ]);
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![query_surface],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("ambiguous scoped surface descriptor")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_expression_form_without_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_surface(
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                        .in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("must declare receiver derivation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_declaration_head_scoped_surface_position() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                .with_scoped_surface(
+                    incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                        .with_eligibility(incan_vocab::ScopedSurfaceEligibility::declaration_head("query")),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("declaration-head eligibility is not supported yet")
+    ));
+    Ok(())
+}
+
+#[test]
 fn manifest_writer_rejects_helper_binding_to_unknown_export() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.vocab = Some(VocabExports {

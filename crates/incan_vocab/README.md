@@ -2,13 +2,14 @@
 
 `incan_vocab` is the stable contract crate for Incan library companion crates.
 
-Libraries that want to contribute import-activated keywords, compatibility soft-keyword metadata, or future desugaring hooks depend on this crate instead of depending on the full Incan compiler. The goal is to give library authors a small, well-documented API surface that stays stable even as the compiler itself keeps evolving.
+Libraries that want to contribute import-activated keywords, compatibility soft-keyword metadata, scoped DSL surfaces, or desugaring hooks depend on this crate instead of depending on the full Incan compiler. The goal is to give library authors a small, well-documented API surface that stays stable even as the compiler itself keeps evolving.
 
 ## What this crate is for
 
 - Define keyword registrations through `KeywordRegistration`, `KeywordSpec`, and `KeywordActivation`.
+- Define scoped DSL surfaces through `DslSurface` and `ScopedSurfaceDescriptor`.
 - Describe machine-readable library metadata through the DTOs in `manifest`.
-- Provide a public AST and desugaring interface for future library-driven syntax lowering.
+- Provide a public AST and desugaring interface for library-driven syntax lowering.
 - Give the compiler a serializable `VocabMetadata` payload that can be written into `.incnlib` artifacts.
 
 ## Stability contract
@@ -21,6 +22,36 @@ This crate is intended to be versioned independently from the main Incan compile
 - The compiler may evolve faster than this crate, but it should continue consuming older compatible `incan_vocab` payloads whenever practical.
 
 In other words: library authors should not need to rewrite their vocab companion crates every time the compiler's own version changes.
+
+## Version tracking
+
+Current crate version: **0.2.0**.
+
+`incan_vocab` uses crate semver for the Rust API that companion crates compile against. The serialized metadata contracts are tracked separately by constants in `version.rs`:
+
+- `VOCAB_METADATA_VERSION`: current serialized vocab metadata contract version.
+- `WASM_DESUGAR_ABI_VERSION`: current compiler/desugarer request-response ABI version.
+
+Those constants do not need to change for every additive Rust API release. For example, `incan_vocab` 0.2.0 adds new author-facing scoped-surface DTOs while keeping the metadata and WASM ABI versions at `1`.
+
+### What's new in 0.2.0
+
+Version 0.2.0 is the RFC 040 release. It adds the stable library-author contract for scoped DSL surface forms:
+
+- `DslSurface::with_scoped_surface(...)` and `with_scoped_surfaces(...)` let a library attach scoped syntax to an import-activated DSL surface.
+- `ScopedSurfaceDescriptor` describes operator-like glyphs, binding-like glyphs, and expression-form surfaces such as leading-dot paths.
+- `ScopedSurfaceEligibility` declares where a surface is legal, including declaration bodies, clause bodies, and registered call-argument positions.
+- `ScopedSurfaceReceiver` records how expression-form surfaces derive their implicit receiver or context.
+- `ScopedSurfaceDiagnosticTemplate` lets library authors provide compiler-gated diagnostics for misuse cases such as outside-scope leading-dot paths.
+- `ScopedSurfaceFormatHint` and `ScopedSurfaceChainMode` carry formatter/desugarer-facing hints such as pairwise chains.
+- `IncanExpr::ScopedSurface` and `IncanScopedSurfacePayload` expose typed scoped-surface artifacts to desugarers so they do not need to reparse source text.
+
+### Version history
+
+| Version | Compiler line                | Summary                                                                                                                      |
+| ------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `0.2.0` | Incan `0.3` development line | Adds RFC 040 scoped DSL surface descriptors and scoped-surface desugarer payloads.                                           |
+| `0.1.0` | Incan `0.2` development line | Initial stable companion-crate contract for import-activated vocab declarations, manifest metadata, and desugarer packaging. |
 
 ## Public API overview
 
@@ -56,6 +87,7 @@ These are the main author-facing types:
 - `DslSurface`: one activation-scoped group of DSL declarations
 - `DeclarationSurface`: one top-level DSL declaration such as `query`, `step`, or `route`
 - `ClauseSurface`: one declaration-owned clause such as `FROM`, `SELECT`, or `middleware`
+- `ScopedSurfaceDescriptor`: one declaration-owned scoped glyph, binding-like glyph, or expression-form surface
 - `LibraryManifest`: exported module metadata plus any required Cargo or stdlib requirements
 
 ### Public desugaring contract

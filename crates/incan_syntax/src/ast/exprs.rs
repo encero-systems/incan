@@ -111,6 +111,27 @@ pub struct SurfaceExpr {
 pub enum SurfaceExprPayload {
     /// Prefix unary keyword expression: `kw expr`.
     PrefixUnary(Box<Spanned<Expr>>),
+    /// DSL-owned leading-dot path with an implicit receiver: `.field` or `.relation.field`.
+    LeadingDotPath {
+        segments: Vec<Ident>,
+        receiver: incan_vocab::ScopedSurfaceReceiver,
+        owner: ScopedSurfaceOwner,
+    },
+    /// DSL-owned binary glyph with local block semantics.
+    ScopedGlyph {
+        glyph: String,
+        left: Box<Spanned<Expr>>,
+        right: Box<Spanned<Expr>>,
+        owner: ScopedSurfaceOwner,
+    },
+}
+
+/// Source DSL context that accepted a scoped surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedSurfaceOwner {
+    pub declaration: String,
+    pub clause: Option<String>,
+    pub call: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

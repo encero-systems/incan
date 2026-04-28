@@ -315,4 +315,45 @@ pub enum IncanExpr {
     },
     /// Field access.
     Field { object: Box<IncanExpr>, field: String },
+    /// DSL-owned scoped surface expression accepted by the compiler.
+    ScopedSurface(IncanScopedSurfaceExpr),
+}
+
+/// Public desugarer-facing representation of an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanScopedSurfaceExpr {
+    pub dependency_key: String,
+    pub descriptor_key: String,
+    pub payload: IncanScopedSurfacePayload,
+}
+
+/// Public desugarer-facing payload for an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum IncanScopedSurfacePayload {
+    /// Leading-dot path with an implicit receiver.
+    LeadingDotPath {
+        segments: Vec<String>,
+        receiver: crate::ScopedSurfaceReceiver,
+        owner: IncanScopedSurfaceOwner,
+    },
+    /// DSL-owned binary glyph.
+    ScopedGlyph {
+        glyph: String,
+        left: Box<IncanExpr>,
+        right: Box<IncanExpr>,
+        owner: IncanScopedSurfaceOwner,
+    },
+}
+
+/// Public owner context for an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanScopedSurfaceOwner {
+    pub declaration: String,
+    pub clause: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub call: Option<String>,
 }
