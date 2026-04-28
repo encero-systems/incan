@@ -3898,24 +3898,29 @@ mod test_runner_e2e {
 
     static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    /// Create a temp directory with a single test file and return the directory path.
-    fn write_test_project(filename: &str, source: &str) -> std::path::PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
+    struct TestProject {
+        dir: tempfile::TempDir,
+    }
 
-        let mut dir = std::env::temp_dir();
-        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-            panic!("system time before UNIX epoch");
-        };
-        let uniq = duration.as_nanos();
+    impl std::ops::Deref for TestProject {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            self.dir.path()
+        }
+    }
+
+    /// Create a temp directory with a single test file and keep it alive for the test duration.
+    fn write_test_project(filename: &str, source: &str) -> TestProject {
         let seq = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
-        dir.push(format!("incan_e2e_test_{}_{}_{}", std::process::id(), seq, uniq));
-        let Ok(()) = std::fs::create_dir_all(&dir) else {
+        let prefix = format!("incan_e2e_test_{}_{}_", std::process::id(), seq);
+        let Ok(dir) = tempfile::Builder::new().prefix(&prefix).tempdir() else {
             panic!("failed to create temp dir");
         };
-        let Ok(()) = std::fs::write(dir.join(filename), source) else {
+        let Ok(()) = std::fs::write(dir.path().join(filename), source) else {
             panic!("failed to write test file");
         };
-        dir
+        TestProject { dir }
     }
 
     /// Run `incan test` for the given path argument (file or directory).
