@@ -353,6 +353,8 @@ impl<'a> IrEmitter<'a> {
             let preserves_stdlib_rust_facade = matches!(qualifier, IrImportQualifier::None)
                 && path.first().is_some_and(|segment| segment == "incan_stdlib");
             let export_item_import = export_module_import || preserves_stdlib_rust_facade;
+            let preserve_rust_trait_or_type_candidate =
+                matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .filter(|item| {
@@ -360,6 +362,8 @@ impl<'a> IrEmitter<'a> {
                     export_item_import
                         || self.should_emit_import_binding(binding)
                         || self.should_emit_extension_trait_import(binding)
+                        || (preserve_rust_trait_or_type_candidate
+                            && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
                     let name_ident = Self::rust_ident(&item.name);

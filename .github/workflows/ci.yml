@@ -149,18 +149,23 @@ jobs:
           - name: canary
             make-target: smoke-test-canary
             wasi: false
+            examples-timeout: 5
           - name: web-example
             make-target: smoke-test-web-example
             wasi: false
+            examples-timeout: 5
           - name: nested-project
             make-target: smoke-test-nested-project-example
             wasi: false
+            examples-timeout: 5
           - name: examples
             make-target: smoke-test-examples
             wasi: true
+            examples-timeout: 20
           - name: benchmarks
             make-target: smoke-test-benchmarks-incan
             wasi: true
+            examples-timeout: 5
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -180,6 +185,8 @@ jobs:
         run: chmod +x target/release/incan
       - name: Run smoke shard
         run: make ${{ matrix.make-target }}
+        env:
+          INCAN_EXAMPLES_TIMEOUT: ${{ matrix.examples-timeout }}
 
   smoke-test:
     name: Smoke Test
