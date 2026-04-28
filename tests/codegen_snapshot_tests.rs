@@ -1321,6 +1321,13 @@ fn test_pub_const_codegen() {
 }
 
 #[test]
+fn test_consts_codegen() {
+    let source = load_test_file("consts");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("consts", rust_code);
+}
+
+#[test]
 fn test_rfc052_module_static_storage_codegen() {
     let source = load_test_file("rfc052_module_static_storage");
     let rust_code = generate_rust(&source);

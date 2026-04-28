@@ -102,6 +102,7 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
     };
 
     let mut codegen = IrCodegen::new();
+    codegen.set_strict_generated_lints(strict);
     let normalized_file_path = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
     } else {
@@ -128,17 +129,7 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
         .try_generate(&main_module.ast)
         .map_err(|e| CliError::failure(format!("Code generation error: {}", e)))?;
 
-    // In strict mode, replace permissive allow attributes with stricter ones
-    let output = if strict {
-        rust_code.replace(
-            "#![allow(unused_imports, unused_parens, dead_code, unused_variables, unused_mut, unused_assignments)]",
-            "#![deny(unused_imports, unused_variables)]",
-        )
-    } else {
-        rust_code
-    };
-
-    println!("{}", output);
+    println!("{}", rust_code);
     Ok(ExitCode::SUCCESS)
 }
 

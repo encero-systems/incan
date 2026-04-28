@@ -358,6 +358,8 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Whether generated Rust should deny warning classes that normal emission suppresses at narrow scopes.
+    strict_generated_lints: bool,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -376,9 +378,15 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             declared_crate_names: None,
             library_manifest_index: None,
+            strict_generated_lints: false,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
+    pub fn set_strict_generated_lints(&mut self, enabled: bool) {
+        self.strict_generated_lints = enabled;
     }
 
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
@@ -664,6 +672,7 @@ impl<'a> IrCodegen<'a> {
             inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
+            inner.set_strict_generated_lints(self.strict_generated_lints);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -678,6 +687,7 @@ impl<'a> IrCodegen<'a> {
             emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
+            emitter.set_strict_generated_lints(self.strict_generated_lints);
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -720,12 +730,10 @@ impl<'a> IrCodegen<'a> {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_roots);
-            inner.set_add_clippy_allows(false);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_roots);
-            emitter.set_add_clippy_allows(false);
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
@@ -843,7 +851,6 @@ impl<'a> IrCodegen<'a> {
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_add_clippy_allows(false);
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 svc.emit_program(&ir)?
             } else {
@@ -854,7 +861,6 @@ impl<'a> IrCodegen<'a> {
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_add_clippy_allows(false);
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.emit_program(&ir)?
             };
@@ -996,7 +1002,6 @@ impl<'a> IrCodegen<'a> {
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_add_clippy_allows(false);
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 svc.emit_program(&ir)?
             } else {
@@ -1007,7 +1012,6 @@ impl<'a> IrCodegen<'a> {
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_add_clippy_allows(false);
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.emit_program(&ir)?
             };
@@ -1056,6 +1060,107 @@ mod tests {
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         must_ok(IrCodegen::new().try_generate(&ast))
+    }
+
+    #[test]
+    fn normal_codegen_does_not_emit_blanket_generated_lint_allows() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+
+        assert!(!code.contains("#![allow(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("use incan_stdlib::prelude::*;"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
+        assert!(code.contains("#[allow(dead_code)]\nfn helper"), "{code}");
+        assert!(!code.contains("#[allow(dead_code, unused_variables)]\nfn helper"));
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_parameters() {
+        let code = generate(
+            r#"
+def helper(value: int, unused: int) -> int:
+  return value
+
+def main() -> None:
+  print(helper(1, 2))
+"#,
+        );
+
+        assert!(code.contains("fn helper(value: i64, _: i64) -> i64"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_locals() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "value"
+  print("done")
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("let unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_unused_local_scan_respects_shadowing() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "outer"
+  if true:
+    let unused = "inner"
+    print(unused)
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"outer\".to_string();"), "{code}");
+        assert!(code.contains("let unused = \"inner\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn strict_codegen_emits_denies_without_generated_scoped_allows() {
+        let ast = parse_program(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_strict_generated_lints(true);
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(code.contains("#![deny(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("#![allow("));
+        assert!(!code.contains("#[allow(dead_code"));
+        assert!(!code.contains("#[allow(unused_variables"));
+    }
+
+    #[test]
+    fn built_in_derive_macros_are_path_qualified() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+"#,
+        );
+
+        assert!(code.contains("#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
     }
 
     /// Parse an Incan program into an AST
@@ -1639,7 +1744,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let mut w = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w = make_widget(DEFAULT_NAME);"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }

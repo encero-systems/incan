@@ -735,8 +735,8 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Block { stmts, value } => {
-                let stmt_tokens = self.emit_stmts(stmts)?;
                 if let Some(v) = value {
+                    let stmt_tokens = self.emit_stmts_before_expr(stmts, v)?;
                     let vv = self.emit_expr(v)?;
                     Ok(quote! {
                         {
@@ -745,6 +745,7 @@ impl<'a> IrEmitter<'a> {
                         }
                     })
                 } else {
+                    let stmt_tokens = self.emit_stmts(stmts)?;
                     Ok(quote! {
                         {
                             #(#stmt_tokens)*

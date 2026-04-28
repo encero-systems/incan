@@ -65,7 +65,9 @@ impl<'a> IrEmitter<'a> {
                 let name_ident = format_ident!("{}", name);
                 let ty_tokens = self.emit_type(ty);
                 let generics = self.emit_type_params(type_params);
+                let dead_code_allow = self.generated_dead_code_allow();
                 Ok(quote! {
+                    #dead_code_allow
                     #vis type #name_ident #generics = #ty_tokens;
                 })
             }
@@ -93,6 +95,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit a module-level static binding backed by a generated `StaticCell`.
     fn emit_static(
         &self,
         visibility: &super::super::decl::Visibility,
@@ -109,8 +112,10 @@ impl<'a> IrEmitter<'a> {
         let emitted_value = emitted_value?;
         let converted_value =
             plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(emitted_value);
+        let dead_code_allow = self.generated_dead_code_allow();
 
         Ok(quote! {
+            #dead_code_allow
             #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
                 std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
         })
@@ -131,32 +136,49 @@ impl<'a> IrEmitter<'a> {
         let vis = self.emit_visibility(visibility);
         let name_ident = format_ident!("{}", name);
         let ty_tokens = self.emit_type(ty);
+        let value_tokens = self.emit_const_value_for_type(ty, value)?;
+        let dead_code_allow = self.generated_dead_code_allow();
 
-        // If this is a FrozenList/Set/Dict with literal initializer, emit via FrozenX::new(&[...]).
+        Ok(quote! {
+            #dead_code_allow
+            #vis const #name_ident: #ty_tokens = #value_tokens;
+        })
+    }
+
+    /// Emit a const initializer using the declared target type to qualify frozen collection constructors.
+    fn emit_const_value_for_type(
+        &self,
+        ty: &IrType,
+        value: &super::super::TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
         use super::super::types::IrType as T;
         use incan_core::lang::types::collections::{self, CollectionTypeId};
-        let specialized_tokens: Option<TokenStream> = match (ty, &value.kind) {
+
+        match (ty, &value.kind) {
             (T::NamedGeneric(n, args), IrExprKind::List(items))
                 if n == collections::as_str(CollectionTypeId::FrozenList) && args.len() == 1 =>
             {
                 let elems: Result<Vec<_>, EmitError> = items
                     .iter()
                     .map(|entry| match entry {
-                        IrListEntry::Element(value) => self.emit_expr(value),
+                        IrListEntry::Element(value) => self.emit_const_value_for_type(&args[0], value),
                         IrListEntry::Spread(_) => Err(EmitError::Unsupported(
                             "FrozenList const spread emission is not supported".to_string(),
                         )),
                     })
                     .collect();
                 let elems = elems?;
-                Some(quote! { FrozenList::new(&[ #(#elems),* ]) })
+                Ok(quote! { incan_stdlib::frozen::FrozenList::new(&[ #(#elems),* ]) })
             }
             (T::NamedGeneric(n, args), IrExprKind::Set(items))
                 if n == collections::as_str(CollectionTypeId::FrozenSet) && args.len() == 1 =>
             {
-                let elems: Result<Vec<_>, EmitError> = items.iter().map(|i| self.emit_expr(i)).collect();
+                let elems: Result<Vec<_>, EmitError> = items
+                    .iter()
+                    .map(|item| self.emit_const_value_for_type(&args[0], item))
+                    .collect();
                 let elems = elems?;
-                Some(quote! { FrozenSet::new(&[ #(#elems),* ]) })
+                Ok(quote! { incan_stdlib::frozen::FrozenSet::new(&[ #(#elems),* ]) })
             }
             (T::NamedGeneric(n, args), IrExprKind::Dict(pairs))
                 if n == collections::as_str(CollectionTypeId::FrozenDict) && args.len() == 2 =>
@@ -165,8 +187,8 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|entry| match entry {
                         IrDictEntry::Pair(k, v) => {
-                            let kk = self.emit_expr(k)?;
-                            let vv = self.emit_expr(v)?;
+                            let kk = self.emit_const_value_for_type(&args[0], k)?;
+                            let vv = self.emit_const_value_for_type(&args[1], v)?;
                             Ok(quote! { ( #kk , #vv ) })
                         }
                         IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
@@ -175,34 +197,29 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect();
                 let kvs = kvs?;
-                Some(quote! { FrozenDict::new(&[ #(#kvs),* ]) })
+                Ok(quote! { incan_stdlib::frozen::FrozenDict::new(&[ #(#kvs),* ]) })
             }
-            _ => None,
-        };
-
-        let value_tokens = if let Some(tok) = specialized_tokens {
-            tok
-        } else {
-            match (ty, &value.kind) {
-                // RFC 008: frozen scalars.
-                (T::FrozenStr, IrExprKind::String(s)) => {
-                    quote! { FrozenStr::new(#s) }
-                }
-                (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
-                    let lit = Literal::byte_string(bytes);
-                    quote! { FrozenBytes::new(#lit) }
-                }
-                _ => self.emit_expr(value)?,
+            (T::Tuple(types), IrExprKind::Tuple(items)) if types.len() == items.len() => {
+                let elems: Result<Vec<_>, EmitError> = types
+                    .iter()
+                    .zip(items.iter())
+                    .map(|(ty, item)| self.emit_const_value_for_type(ty, item))
+                    .collect();
+                let elems = elems?;
+                Ok(quote! { (#(#elems),*) })
             }
-        };
-
-        Ok(quote! {
-            #vis const #name_ident: #ty_tokens = #value_tokens;
-        })
+            (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) }),
+            (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
+                let lit = Literal::byte_string(bytes);
+                Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) })
+            }
+            _ => self.emit_expr(value),
+        }
     }
 
     // ---- Import emission ----
 
+    /// Emit a Rust import or re-export, including scoped unused-import allowance when normal emission needs it.
     fn emit_import(
         &self,
         origin: &IrImportOrigin,
@@ -303,6 +320,7 @@ impl<'a> IrEmitter<'a> {
         };
 
         let path_ts = join_path_tokens(&path_tokens);
+        let unused_imports_allow = self.generated_unused_imports_allow();
 
         // `pub use` module imports in two cases:
         // 1. Stdlib Incan-source imports (std.web.* → crate::__incan_std::web::*)
@@ -320,10 +338,12 @@ impl<'a> IrEmitter<'a> {
             let alias_ident = Self::rust_ident(alias_name);
             if export_module_import {
                 Ok(quote! {
+                    #unused_imports_allow
                     pub use #path_ts as #alias_ident;
                 })
             } else {
                 Ok(quote! {
+                    #unused_imports_allow
                     use #path_ts as #alias_ident;
                 })
             }
@@ -349,9 +369,9 @@ impl<'a> IrEmitter<'a> {
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        quote! { #unused_imports_allow pub use #path_ts_clone :: #name_ident as #alias_ident; }
                     } else {
-                        quote! { pub use #path_ts_clone :: #name_ident; }
+                        quote! { #unused_imports_allow pub use #path_ts_clone :: #name_ident; }
                     }
                 })
                 .collect();
@@ -360,10 +380,12 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {
+                #unused_imports_allow
                 pub use #path_ts;
             })
         } else {
             Ok(quote! {
+                #unused_imports_allow
                 use #path_ts;
             })
         }

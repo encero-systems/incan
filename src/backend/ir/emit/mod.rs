@@ -49,8 +49,9 @@ use incan_core::lang::rust_keywords;
 /// - The public API is `emit_program()` (implemented in `program.rs`).
 /// - Most emission helpers are implemented on this type across submodules.
 pub struct IrEmitter<'a> {
-    /// Whether to add clippy allows (should be false for warning-free codegen)
-    add_clippy_allows: bool,
+    /// Whether to add generated-code scoped lint allows.
+    add_generated_lint_allows: bool,
+    emit_strict_generated_lint_denies: bool,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed (for Serialize/Deserialize derives)
@@ -132,11 +133,8 @@ impl<'a> IrEmitter<'a> {
     /// argument conversion.
     pub fn new(function_registry: &'a FunctionRegistry) -> Self {
         Self {
-            // Enable minimal allows for patterns that can't easily be made warning-free:
-            // - dead_code: library modules export functions that may not be used by main
-            // - unused_imports: user imports may not all be used
-            // - unused_variables: pattern bindings like `_x` in destructuring
-            add_clippy_allows: true,
+            add_generated_lint_allows: true,
+            emit_strict_generated_lint_denies: false,
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
@@ -251,19 +249,41 @@ impl<'a> IrEmitter<'a> {
         self.rust_module_path = path;
     }
 
-    /// Disable clippy allows (for strict warning-free codegen).
+    /// Disable generated lint allows.
     pub fn without_clippy_allows(mut self) -> Self {
-        self.add_clippy_allows = false;
+        self.add_generated_lint_allows = false;
         self
     }
 
-    /// Set whether to emit file-level clippy allows.
-    ///
-    /// Module files generated for the multi-file pipeline must NOT emit `#![allow(...)]` because the project generator
-    /// prepends `pub mod` declarations before the emitted code. Inner attributes are only valid at the start of a
-    /// file/module, so emitting them after `pub mod` lines causes a Rust compile error.
+    /// Set whether generated-code scoped lint allows are emitted.
     pub fn set_add_clippy_allows(&mut self, enabled: bool) {
-        self.add_clippy_allows = enabled;
+        self.add_generated_lint_allows = enabled;
+    }
+
+    /// Enable strict generated Rust lint validation.
+    pub fn set_strict_generated_lints(&mut self, enabled: bool) {
+        self.emit_strict_generated_lint_denies = enabled;
+        self.add_generated_lint_allows = !enabled;
+    }
+
+    /// Emit a generated-code `dead_code` allow at the current item boundary when normal warning-tolerant emission is
+    /// active.
+    pub(super) fn generated_dead_code_allow(&self) -> TokenStream {
+        if self.add_generated_lint_allows {
+            quote! { #[allow(dead_code)] }
+        } else {
+            quote! {}
+        }
+    }
+
+    /// Emit a generated-code `unused_imports` allow at an emitted import boundary when normal warning-tolerant
+    /// emission is active.
+    pub(super) fn generated_unused_imports_allow(&self) -> TokenStream {
+        if self.add_generated_lint_allows {
+            quote! { #[allow(unused_imports)] }
+        } else {
+            quote! {}
+        }
     }
 
     /// Set whether to emit the Zen of Incan in main.

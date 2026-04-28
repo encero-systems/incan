@@ -22,6 +22,8 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 Some(DeriveId::Serialize) => quote! { serde::Serialize },
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
+                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ => {
                     if let Some(module_path) = s.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path
@@ -46,6 +48,7 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&s.lint_allows);
+        let dead_code_allow = self.generated_dead_code_allow();
 
         let has_serde = s.derives.iter().any(|d| {
             matches!(
@@ -74,6 +77,7 @@ impl<'a> IrEmitter<'a> {
 
             // Emit struct definition
             let struct_def = quote! {
+                #dead_code_allow
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics (#(#tuple_fields),*);
@@ -127,6 +131,7 @@ impl<'a> IrEmitter<'a> {
                     .collect();
 
                 quote! {
+                    #dead_code_allow
                     #[allow(non_snake_case, clippy::too_many_arguments)]
                     #vis fn #name #generics (#(#param_tokens),*) -> #name #generics_bare {
                         #name {
@@ -139,6 +144,7 @@ impl<'a> IrEmitter<'a> {
             };
 
             Ok(quote! {
+                #dead_code_allow
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics {
@@ -197,6 +203,8 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 Some(DeriveId::Serialize) => quote! { serde::Serialize },
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
+                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ => {
                     if let Some(module_path) = e.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path
@@ -221,6 +229,7 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&e.lint_allows);
+        let dead_code_allow = self.generated_dead_code_allow();
 
         let variant_match_arms: Vec<TokenStream> = e
             .variants
@@ -249,6 +258,7 @@ impl<'a> IrEmitter<'a> {
         let value_enum_helpers = self.emit_value_enum_helpers(e, &name, &generics, &generics_bare)?;
 
         Ok(quote! {
+            #dead_code_allow
             #(#lint_allows)*
             #derive_attr
             #vis enum #name #generics {
@@ -256,6 +266,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             impl #generics #name #generics_bare {
+                #dead_code_allow
                 pub fn message(&self) -> String {
                     match self {
                         #(#variant_match_arms),*
@@ -284,6 +295,7 @@ impl<'a> IrEmitter<'a> {
                 e.name
             )));
         }
+        let dead_code_allow = self.generated_dead_code_allow();
 
         match value_type {
             IrEnumValueType::String => {
@@ -357,12 +369,14 @@ impl<'a> IrEmitter<'a> {
 
                 Ok(quote! {
                     impl #generics #name #generics_bare {
+                        #dead_code_allow
                         pub fn value(&self) -> String {
                             match self {
                                 #(#value_arms),*
                             }
                         }
 
+                        #dead_code_allow
                         pub fn from_value(value: impl AsRef<str>) -> Option<Self> {
                             match value.as_ref() {
                                 #(#from_value_arms),*,
@@ -465,12 +479,14 @@ impl<'a> IrEmitter<'a> {
 
                 Ok(quote! {
                     impl #generics #name #generics_bare {
+                        #dead_code_allow
                         pub fn value(&self) -> i64 {
                             match self {
                                 #(#value_arms),*
                             }
                         }
 
+                        #dead_code_allow
                         pub fn from_value(value: i64) -> Option<Self> {
                             match value {
                                 #(#from_value_arms),*,

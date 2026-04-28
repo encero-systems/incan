@@ -14,6 +14,7 @@ use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit an impl block, including generated convenience methods and trait impl adapters.
     pub(in crate::backend::ir::emit) fn emit_impl(
         &self,
         impl_block: &super::super::super::decl::IrImpl,
@@ -23,6 +24,7 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&impl_block.type_params);
         let generics_bare = self.emit_type_params_bare(&impl_block.type_params);
+        let dead_code_allow = self.generated_dead_code_allow();
 
         let mut regular_methods = Vec::new();
         let mut trait_impls = Vec::new();
@@ -176,6 +178,7 @@ impl<'a> IrEmitter<'a> {
                 }
             } else if !regular_methods.is_empty() {
                 quote! {
+                    #dead_code_allow
                     impl #generics #target_type #generics_bare {
                         #(#regular_methods)*
                     }
@@ -198,6 +201,7 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
     fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
         let Some(field_names) = self.struct_field_names.get(struct_name) else {
             return Ok(None);

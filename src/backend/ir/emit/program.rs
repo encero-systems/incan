@@ -271,8 +271,11 @@ impl<'a> IrEmitter<'a> {
             crate::version::INCAN_VERSION
         );
 
-        // Find the end of the inner attribute block and insert marker after it
-        let with_marker = if formatted.contains("]\nuse ") {
+        // Find the end of the inner attribute block and insert marker after it. Normal generated Rust no longer emits
+        // inner lint attributes, so files without an attribute block place the marker before the first Rust item.
+        let with_marker = if !formatted.starts_with("#![") {
+            format!("// __INCAN_INSERT_MODS__\n\n{formatted}")
+        } else if formatted.contains("]\nuse ") {
             formatted.replacen("]\nuse ", "]\n\n// __INCAN_INSERT_MODS__\n\nuse ", 1)
         } else if formatted.contains("]\n\nuse ") {
             formatted.replacen("]\n\nuse ", "]\n\n// __INCAN_INSERT_MODS__\n\nuse ", 1)
@@ -296,9 +299,9 @@ impl<'a> IrEmitter<'a> {
             .collect();
         *self.module_has_local_statics.borrow_mut() = !static_names.is_empty();
 
-        if self.add_clippy_allows {
+        if self.emit_strict_generated_lint_denies {
             items.push(quote! {
-                #![allow(unused_imports, dead_code, unused_variables)]  // FIXME: this should be made obsolete ideally
+                #![deny(unused_imports, dead_code, unused_variables)]
             });
         }
 
@@ -307,8 +310,6 @@ impl<'a> IrEmitter<'a> {
 
         let compiler_version = crate::version::INCAN_VERSION;
         items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
-        items.push(quote! { use incan_stdlib::prelude::*; });
-        items.push(quote! { use incan_derive::{FieldInfo, IncanClass}; });
 
         match (tracker.needs_hashmap, tracker.needs_hashset) {
             (true, true) => items.push(quote! { use std::collections::{HashMap, HashSet}; }),
