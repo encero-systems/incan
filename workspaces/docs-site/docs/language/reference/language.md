@@ -266,6 +266,7 @@ def main() -> None:
 | ReadFile | `read_file` |  | Read a file from disk into a string/bytes. | RFC 000 | 0.1 | Stable |
 | WriteFile | `write_file` |  | Write a string/bytes to a file on disk. | RFC 000 | 0.1 | Stable |
 | JsonStringify | `json_stringify` |  | Serialize a value to JSON. | RFC 000 | 0.1 | Stable |
+| IsInstance | `isinstance` |  | Test whether a value is an instance of a type and narrow union branches. | RFC 029 | 0.3 | Stable |
 
 ## Decorators
 

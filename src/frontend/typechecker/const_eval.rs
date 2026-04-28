@@ -416,7 +416,7 @@ impl TypeChecker {
                             return None;
                         }
                     }
-                    BinaryOp::In | BinaryOp::NotIn | BinaryOp::Is => {
+                    BinaryOp::In | BinaryOp::NotIn | BinaryOp::Is | BinaryOp::IsNot => {
                         self.errors
                             .push(errors::const_operator_not_allowed(&op.to_string(), expr.span));
                         return None;

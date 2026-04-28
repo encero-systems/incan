@@ -2026,6 +2026,115 @@ def main() -> None:
     }
 
     #[test]
+    fn test_union_types_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def parse_value(flag: bool) -> int | str:
+    if flag:
+        return 42
+    return "fallback"
+
+def normalize(value: int | str) -> str:
+    if isinstance(value, int):
+        return "number"
+    else:
+        return value.upper()
+
+def describe(value: int | str) -> str:
+    match value:
+        int(n) =>
+            return str(n)
+        str(s) =>
+            return s.upper()
+
+def label(value: str | None) -> str:
+    if value is not None:
+        return value.upper()
+    return "missing"
+
+def describe_optional(value: int | str | None) -> str:
+    match value:
+        int(n) =>
+            return str(n)
+        str(s) =>
+            return s.upper()
+        None =>
+            return "missing"
+
+def describe_wide(value: int | str | bool) -> str:
+    if isinstance(value, int):
+        return "number"
+    else:
+        match value:
+            bool(flag) =>
+                if flag:
+                    return "true"
+                return "false"
+            str(text) =>
+                return text.upper()
+
+def describe_chain(value: int | str | bool) -> str:
+    if isinstance(value, int):
+        return "number"
+    elif isinstance(value, str):
+        return value.upper()
+    else:
+        if value:
+            return "true"
+        return "false"
+
+def describe_optional_narrow(value: int | str | None) -> str:
+    if isinstance(value, int):
+        return "number"
+    else:
+        if value is None:
+            return "missing"
+        else:
+            return value.upper()
+
+def main() -> None:
+    println(normalize(parse_value(False)))
+    println(normalize(parse_value(True)))
+    println(describe(parse_value(False)))
+    println(label("present"))
+    println(label(None))
+    println(describe_optional(parse_value(True)))
+    println(describe_optional(None))
+    println(describe_wide("wide"))
+    println(describe_wide(True))
+    println(describe_chain("chain"))
+    println(describe_chain(False))
+    println(describe_optional_narrow("optional"))
+    println(describe_optional_narrow(None))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "union type run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "FALLBACK", "number", "FALLBACK", "PRESENT", "missing", "42", "missing", "WIDE", "true", "CHAIN",
+                "false", "OPTIONAL", "missing"
+            ],
+            "unexpected union output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_filtered_comprehensions_run_with_borrowed_iterables() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

@@ -6,6 +6,7 @@ use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 impl AstLowering {
     /// Lower match arms to IR.
@@ -20,10 +21,11 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_match_arms(
         &mut self,
         arms: &[Spanned<ast::MatchArm>],
+        scrutinee_ty: &IrType,
     ) -> Result<Vec<MatchArm>, LoweringError> {
         arms.iter()
             .map(|a| {
-                let pattern = self.lower_pattern(&a.node.pattern.node);
+                let pattern = self.lower_pattern_for_expected_type(&a.node.pattern.node, scrutinee_ty);
                 let guard = a.node.guard.as_ref().map(|g| self.lower_expr_spanned(g)).transpose()?;
                 let body = match &a.node.body {
                     ast::MatchBody::Expr(e) => self.lower_expr_spanned(e)?,
@@ -41,6 +43,59 @@ impl AstLowering {
                 Ok(MatchArm { pattern, guard, body })
             })
             .collect()
+    }
+
+    /// Lower the type name used by a union type pattern.
+    fn lower_type_pattern_name(&self, name: &str) -> IrType {
+        self.lower_type(&ast::Type::Simple(name.to_string()))
+    }
+
+    /// Lower a pattern with enough scrutinee type context to rewrite union type patterns.
+    fn lower_pattern_for_expected_type(&mut self, p: &ast::Pattern, expected_ty: &IrType) -> Pattern {
+        if let ast::Pattern::Constructor(name, args) = p
+            && !name.contains("::")
+        {
+            let target_ty = self.lower_type_pattern_name(name);
+            let option_wrapped_union = match expected_ty {
+                IrType::Option(inner) if inner.is_union() => Some(inner.as_ref()),
+                _ => None,
+            };
+            let union_ty = option_wrapped_union.unwrap_or(expected_ty);
+            if let Some(variant_index) = union_ty.union_variant_index_for_member(&target_ty)
+                && let Some(union_name) = union_ty.union_type_name()
+            {
+                let member_ty = expected_ty
+                    .union_members()
+                    .or_else(|| option_wrapped_union.and_then(IrType::union_members))
+                    .and_then(|members| members.get(variant_index))
+                    .cloned()
+                    .unwrap_or(target_ty);
+                let fields = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        ast::PatternArg::Positional(pat) => {
+                            Some(self.lower_pattern_for_expected_type(&pat.node, &member_ty))
+                        }
+                        ast::PatternArg::Named(_, _) => None,
+                    })
+                    .collect();
+                let union_pattern = Pattern::Enum {
+                    name: union_name.clone(),
+                    variant: format!("{}::{}", union_name, IrType::union_variant_name(variant_index)),
+                    fields,
+                };
+                if option_wrapped_union.is_some() {
+                    return Pattern::Enum {
+                        name: "Option".to_string(),
+                        variant: constructors::as_str(ConstructorId::Some).to_string(),
+                        fields: vec![union_pattern],
+                    };
+                }
+                return union_pattern;
+            }
+        }
+
+        self.lower_pattern(p)
     }
 
     /// Lower a pattern to IR.

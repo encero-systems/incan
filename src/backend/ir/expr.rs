@@ -547,6 +547,7 @@ impl BuiltinFn {
             BuiltinFnId::ReadFile => Self::ReadFile,
             BuiltinFnId::WriteFile => Self::WriteFile,
             BuiltinFnId::JsonStringify => Self::JsonStringify,
+            BuiltinFnId::IsInstance => return None,
         })
     }
 }

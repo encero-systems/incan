@@ -445,7 +445,7 @@ impl AstLowering {
             // ---- Match expressions (delegated to patterns submodule) ----
             ast::Expr::Match(s, arms) => {
                 let scrutinee = self.lower_expr_spanned(s)?;
-                let arms_ir = self.lower_match_arms(arms)?;
+                let arms_ir = self.lower_match_arms(arms, &scrutinee.ty)?;
                 let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
                 (
                     IrExprKind::Match {

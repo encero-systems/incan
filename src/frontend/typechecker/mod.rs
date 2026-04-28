@@ -2650,6 +2650,28 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (
+                ResolvedType::Generic(actual_name, actual_members),
+                ResolvedType::Generic(expected_name, expected_members),
+            ) if actual_name == UNION_TYPE_NAME && expected_name == UNION_TYPE_NAME => {
+                actual_members.iter().all(|actual_member| {
+                    expected_members
+                        .iter()
+                        .any(|expected_member| self.types_compatible(actual_member, expected_member))
+                })
+            }
+            (ResolvedType::Generic(name, members), expected) if name == UNION_TYPE_NAME => {
+                members.iter().all(|member| self.types_compatible(member, expected))
+            }
+            (actual, ResolvedType::Generic(name, members)) if name == UNION_TYPE_NAME => {
+                members.iter().any(|member| self.types_compatible(actual, member))
+            }
+            (actual, expected) if expected.is_option() && !actual.is_option() => {
+                let Some(inner) = expected.option_inner_type() else {
+                    return false;
+                };
+                self.types_compatible(actual, inner)
+            }
 
             // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
             (ResolvedType::Named(type_name), ResolvedType::Named(trait_name))

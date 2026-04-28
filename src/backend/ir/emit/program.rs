@@ -19,7 +19,7 @@
 //! - [`crate::backend::ir::emit::statements`]
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
 use incan_core::lang::{conventions, magic_methods};
@@ -964,6 +964,377 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Collect anonymous union shapes that appear inside a type.
+    fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
+        if let Some(name) = ty.union_type_name() {
+            out.insert(name, ty.clone());
+        }
+
+        match ty {
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => Self::collect_union_types_from_type(inner, out),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::collect_union_types_from_type(key, out);
+                Self::collect_union_types_from_type(value, out);
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                for item in items {
+                    Self::collect_union_types_from_type(item, out);
+                }
+            }
+            IrType::ImplTrait(bound) => {
+                for item in &bound.type_args {
+                    Self::collect_union_types_from_type(item, out);
+                }
+                for (_, item) in &bound.assoc_types {
+                    Self::collect_union_types_from_type(item, out);
+                }
+            }
+            IrType::Function { params, ret } => {
+                for param in params {
+                    Self::collect_union_types_from_type(param, out);
+                }
+                Self::collect_union_types_from_type(ret, out);
+            }
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::String
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Struct(_)
+            | IrType::Enum(_)
+            | IrType::Trait(_)
+            | IrType::Generic(_)
+            | IrType::SelfType
+            | IrType::Unknown => {}
+        }
+    }
+
+    /// Collect anonymous union shapes referenced by an expression tree.
+    fn collect_union_types_from_expr(expr: &TypedExpr, out: &mut HashMap<String, IrType>) {
+        Self::collect_union_types_from_type(&expr.ty, out);
+        match &expr.kind {
+            IrExprKind::Call { func, args, .. } => {
+                Self::collect_union_types_from_expr(func, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::BuiltinCall { args, .. } => {
+                for arg in args {
+                    Self::collect_union_types_from_expr(arg, out);
+                }
+            }
+            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+                Self::collect_union_types_from_expr(receiver, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                Self::collect_union_types_from_expr(left, out);
+                Self::collect_union_types_from_expr(right, out);
+            }
+            IrExprKind::UnaryOp { operand, .. }
+            | IrExprKind::Try(operand)
+            | IrExprKind::Await(operand)
+            | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::InteropCoerce { expr: operand, .. } => Self::collect_union_types_from_expr(operand, out),
+            IrExprKind::Index { object, index } => {
+                Self::collect_union_types_from_expr(object, out);
+                Self::collect_union_types_from_expr(index, out);
+            }
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                Self::collect_union_types_from_expr(target, out);
+                for part in [start, end, step].into_iter().flatten() {
+                    Self::collect_union_types_from_expr(part, out);
+                }
+            }
+            IrExprKind::Field { object, .. } => Self::collect_union_types_from_expr(object, out),
+            IrExprKind::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                            Self::collect_union_types_from_expr(value, out);
+                        }
+                    }
+                }
+            }
+            IrExprKind::Dict(entries) => {
+                for entry in entries {
+                    match entry {
+                        IrDictEntry::Pair(key, value) => {
+                            Self::collect_union_types_from_expr(key, out);
+                            Self::collect_union_types_from_expr(value, out);
+                        }
+                        IrDictEntry::Spread(value) => Self::collect_union_types_from_expr(value, out),
+                    }
+                }
+            }
+            IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+                for item in items {
+                    Self::collect_union_types_from_expr(item, out);
+                }
+            }
+            IrExprKind::Struct { fields, .. } => {
+                for (_, value) in fields {
+                    Self::collect_union_types_from_expr(value, out);
+                }
+            }
+            IrExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::collect_union_types_from_expr(condition, out);
+                Self::collect_union_types_from_expr(then_branch, out);
+                if let Some(else_branch) = else_branch {
+                    Self::collect_union_types_from_expr(else_branch, out);
+                }
+            }
+            IrExprKind::Match { scrutinee, arms } => {
+                Self::collect_union_types_from_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        Self::collect_union_types_from_expr(guard, out);
+                    }
+                    Self::collect_union_types_from_expr(&arm.body, out);
+                }
+            }
+            IrExprKind::Closure { params, body, .. } => {
+                for (_, ty) in params {
+                    Self::collect_union_types_from_type(ty, out);
+                }
+                Self::collect_union_types_from_expr(body, out);
+            }
+            IrExprKind::Block { stmts, value } => {
+                for stmt in stmts {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+                if let Some(value) = value {
+                    Self::collect_union_types_from_expr(value, out);
+                }
+            }
+            IrExprKind::Loop { body } => {
+                for stmt in body {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+            }
+            IrExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    Self::collect_union_types_from_expr(start, out);
+                }
+                if let Some(end) = end {
+                    Self::collect_union_types_from_expr(end, out);
+                }
+            }
+            IrExprKind::Format { parts } => {
+                for part in parts {
+                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                        Self::collect_union_types_from_expr(expr, out);
+                    }
+                }
+            }
+            IrExprKind::ListComp {
+                element,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::collect_union_types_from_expr(element, out);
+                Self::collect_union_types_from_expr(iterable, out);
+                if let Some(filter) = filter {
+                    Self::collect_union_types_from_expr(filter, out);
+                }
+            }
+            IrExprKind::DictComp {
+                key,
+                value,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::collect_union_types_from_expr(key, out);
+                Self::collect_union_types_from_expr(value, out);
+                Self::collect_union_types_from_expr(iterable, out);
+                if let Some(filter) = filter {
+                    Self::collect_union_types_from_expr(filter, out);
+                }
+            }
+            IrExprKind::Unit
+            | IrExprKind::None
+            | IrExprKind::Bool(_)
+            | IrExprKind::Int(_)
+            | IrExprKind::Float(_)
+            | IrExprKind::String(_)
+            | IrExprKind::Bytes(_)
+            | IrExprKind::Var { .. }
+            | IrExprKind::StaticRead { .. }
+            | IrExprKind::StaticBinding { .. }
+            | IrExprKind::Literal(_)
+            | IrExprKind::FieldsList(_)
+            | IrExprKind::SerdeToJson
+            | IrExprKind::SerdeFromJson(_) => {}
+        }
+    }
+
+    /// Collect anonymous union shapes referenced by a statement tree.
+    fn collect_union_types_from_stmt(stmt: &IrStmt, out: &mut HashMap<String, IrType>) {
+        match &stmt.kind {
+            IrStmtKind::Let { ty, value, .. } => {
+                Self::collect_union_types_from_type(ty, out);
+                Self::collect_union_types_from_expr(value, out);
+            }
+            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) => {
+                Self::collect_union_types_from_expr(expr, out);
+            }
+            IrStmtKind::Assign { value, .. } => Self::collect_union_types_from_expr(value, out),
+            IrStmtKind::CompoundAssign { value, lhs_ty, .. } => {
+                Self::collect_union_types_from_type(lhs_ty, out);
+                Self::collect_union_types_from_expr(value, out);
+            }
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::collect_union_types_from_expr(condition, out);
+                for stmt in then_branch {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+                if let Some(else_branch) = else_branch {
+                    for stmt in else_branch {
+                        Self::collect_union_types_from_stmt(stmt, out);
+                    }
+                }
+            }
+            IrStmtKind::While { condition, body, .. } => {
+                Self::collect_union_types_from_expr(condition, out);
+                for stmt in body {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+            }
+            IrStmtKind::For {
+                pattern: _,
+                iterable,
+                body,
+                ..
+            } => {
+                Self::collect_union_types_from_expr(iterable, out);
+                for stmt in body {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                Self::collect_union_types_from_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        Self::collect_union_types_from_expr(guard, out);
+                    }
+                    Self::collect_union_types_from_expr(&arm.body, out);
+                }
+            }
+            IrStmtKind::Block(stmts) | IrStmtKind::Loop { body: stmts, .. } => {
+                for stmt in stmts {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+            }
+            IrStmtKind::Break { value, .. } => {
+                if let Some(value) = value {
+                    Self::collect_union_types_from_expr(value, out);
+                }
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
+        }
+    }
+
+    /// Collect anonymous union shapes referenced by a declaration.
+    fn collect_union_types_from_decl(decl: &IrDecl, out: &mut HashMap<String, IrType>) {
+        match &decl.kind {
+            IrDeclKind::Function(func) => {
+                for param in &func.params {
+                    Self::collect_union_types_from_type(&param.ty, out);
+                    if let Some(default) = &param.default {
+                        Self::collect_union_types_from_expr(default, out);
+                    }
+                }
+                Self::collect_union_types_from_type(&func.return_type, out);
+                for stmt in &func.body {
+                    Self::collect_union_types_from_stmt(stmt, out);
+                }
+            }
+            IrDeclKind::Struct(strukt) => {
+                for field in &strukt.fields {
+                    Self::collect_union_types_from_type(&field.ty, out);
+                    if let Some(default) = &field.default {
+                        Self::collect_union_types_from_expr(default, out);
+                    }
+                }
+            }
+            IrDeclKind::Enum(_) | IrDeclKind::Trait(_) | IrDeclKind::Import { .. } => {}
+            IrDeclKind::TypeAlias { ty, interop_edges, .. } => {
+                Self::collect_union_types_from_type(ty, out);
+                for edge in interop_edges {
+                    Self::collect_union_types_from_type(&edge.ty, out);
+                    Self::collect_union_types_from_expr(&edge.adapter, out);
+                }
+            }
+            IrDeclKind::Const { ty, value, .. } | IrDeclKind::Static { ty, value, .. } => {
+                Self::collect_union_types_from_type(ty, out);
+                Self::collect_union_types_from_expr(value, out);
+            }
+            IrDeclKind::Impl(impl_block) => {
+                for ty in &impl_block.trait_type_args {
+                    Self::collect_union_types_from_type(ty, out);
+                }
+                for method in &impl_block.methods {
+                    for param in &method.params {
+                        Self::collect_union_types_from_type(&param.ty, out);
+                    }
+                    Self::collect_union_types_from_type(&method.return_type, out);
+                    for stmt in &method.body {
+                        Self::collect_union_types_from_stmt(stmt, out);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emit the generated Rust enum for one normalized anonymous union shape.
+    fn emit_generated_union_type(&self, ty: &IrType) -> Option<TokenStream> {
+        let name = ty.union_type_name()?;
+        let members = ty.union_members()?;
+        let name_ident = format_ident!("{}", name);
+        let variants: Vec<TokenStream> = members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| {
+                let variant = format_ident!("{}", IrType::union_variant_name(index));
+                let member_ty = self.emit_type(member);
+                quote! { #variant(#member_ty) }
+            })
+            .collect();
+        Some(quote! {
+            #[derive(Clone)]
+            pub enum #name_ident {
+                #(#variants),*
+            }
+        })
+    }
+
     /// Emit a complete IR program to formatted Rust code.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn emit_program(&mut self, program: &IrProgram) -> Result<String, EmitError> {
@@ -1099,6 +1470,18 @@ impl<'a> IrEmitter<'a> {
         if uses_stdlib_error_trait {
             let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
             items.push(quote! { use crate::#std_namespace::traits::error::Error; });
+        }
+
+        let mut union_types = HashMap::new();
+        for decl in &emitted_declarations {
+            Self::collect_union_types_from_decl(decl, &mut union_types);
+        }
+        let mut union_type_items: Vec<_> = union_types.into_iter().collect();
+        union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (_, union_ty) in union_type_items {
+            if let Some(item) = self.emit_generated_union_type(&union_ty) {
+                items.push(item);
+            }
         }
 
         // RFC 052: force declaration-order static initialization once per module before any static access helper call.

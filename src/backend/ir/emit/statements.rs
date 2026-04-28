@@ -4,7 +4,7 @@
 //! including let bindings, assignments, control flow, and blocks.
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::HashSet;
 
 use super::super::expr::{IrCallArg, IrDictEntry, IrExprKind, IrListEntry, MatchArm, Pattern, TypedExpr};
@@ -806,6 +806,18 @@ impl<'a> IrEmitter<'a> {
     /// Assignment-like contexts can carry enough type information to stabilize `Ok`/`Err` emission even when plain
     /// expression emission would leave Rust inference underconstrained.
     fn emit_assignment_value(&self, value: &TypedExpr, expected_ty: Option<&IrType>) -> Result<TokenStream, EmitError> {
+        if let Some(target_ty) = expected_ty
+            && let Some(wrapped) = self.emit_union_wrapped_value(value, target_ty, false)?
+        {
+            return Ok(wrapped);
+        }
+
+        if let Some(target_ty) = expected_ty
+            && let Some(seed) = self.emit_inference_seeded_literal_arg(value, target_ty)?
+        {
+            return Ok(seed);
+        }
+
         let can_seed_result_constructor = matches!(value.kind, IrExprKind::Call { .. } | IrExprKind::Struct { .. });
 
         if can_seed_result_constructor {
@@ -822,6 +834,49 @@ impl<'a> IrEmitter<'a> {
             }
         }
         self.emit_expr(value)
+    }
+
+    /// Emit a concrete member value wrapped in the generated union variant required by the target type.
+    fn emit_union_wrapped_value(
+        &self,
+        value: &TypedExpr,
+        target_ty: &IrType,
+        in_return: bool,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if value.ty.is_union() {
+            return Ok(None);
+        }
+        let Some(variant_index) = target_ty.union_variant_index_for_member(&value.ty) else {
+            return Ok(None);
+        };
+        let Some(members) = target_ty.union_members() else {
+            return Ok(None);
+        };
+        let Some(member_ty) = members.get(variant_index) else {
+            return Ok(None);
+        };
+        let Some(union_name) = target_ty.union_type_name() else {
+            return Ok(None);
+        };
+
+        let union_ident = format_ident!("{}", union_name);
+        let variant_ident = format_ident!("{}", IrType::union_variant_name(variant_index));
+        let emitted = if in_return {
+            self.emit_expr_for_use(
+                value,
+                ValueUseSite::ReturnValue {
+                    target_ty: Some(member_ty),
+                },
+            )?
+        } else {
+            self.emit_expr_for_use(
+                value,
+                ValueUseSite::Assignment {
+                    target_ty: Some(member_ty),
+                },
+            )?
+        };
+        Ok(Some(quote! { #union_ident :: #variant_ident(#emitted) }))
     }
 
     /// Emit assignment through a storage-rooted field or index path.
@@ -986,12 +1041,16 @@ impl<'a> IrEmitter<'a> {
                 // Set return context so function calls inside can use move semantics
                 *self.in_return_context.borrow_mut() = true;
                 let converted = if let Some(return_type) = self.current_function_return_type.borrow().as_ref() {
-                    self.emit_expr_for_use(
-                        expr,
-                        ValueUseSite::ReturnValue {
-                            target_ty: Some(return_type),
-                        },
-                    )?
+                    if let Some(wrapped) = self.emit_union_wrapped_value(expr, return_type, true)? {
+                        wrapped
+                    } else {
+                        self.emit_expr_for_use(
+                            expr,
+                            ValueUseSite::ReturnValue {
+                                target_ty: Some(return_type),
+                            },
+                        )?
+                    }
                 } else {
                     self.emit_expr(expr)?
                 };

@@ -81,7 +81,11 @@ impl<'a> Parser<'a> {
                 self.advance(); // in
                 BinaryOp::NotIn
             } else if self.match_token(&TokenKind::Keyword(KeywordId::Is)) {
-                BinaryOp::Is
+                if self.match_token(&TokenKind::Keyword(KeywordId::Not)) {
+                    BinaryOp::IsNot
+                } else {
+                    BinaryOp::Is
+                }
             } else {
                 break;
             };

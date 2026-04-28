@@ -1,7 +1,7 @@
 //! Builtin, surface-function, and stdlib-module call dispatch.
 
 use super::TypeChecker;
-use crate::frontend::ast::{CallArg, Span, Spanned, Type};
+use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{FunctionInfo, ResolvedType};
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
@@ -118,6 +118,28 @@ impl TypeChecker {
                 return None;
             }
             return match bid {
+                BuiltinFnId::IsInstance => {
+                    if args.len() != 2 {
+                        self.errors.push(errors::builtin_arity(name, 2, args.len(), call_span));
+                        self.check_call_args(args);
+                        return Some(ResolvedType::Bool);
+                    }
+
+                    let value_expr = Self::call_arg_expr(&args[0]);
+                    self.check_expr(value_expr);
+
+                    let target_expr = Self::call_arg_expr(&args[1]);
+                    match &target_expr.node {
+                        Expr::Ident(_) | Expr::Paren(_) => {}
+                        _ => {
+                            self.check_expr(target_expr);
+                            self.errors
+                                .push(errors::type_mismatch("type", "value", target_expr.span));
+                        }
+                    }
+
+                    Some(ResolvedType::Bool)
+                }
                 BuiltinFnId::Print => {
                     self.check_call_args(args);
                     Some(ResolvedType::Unit)

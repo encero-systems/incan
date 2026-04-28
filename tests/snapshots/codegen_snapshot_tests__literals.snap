@@ -19,7 +19,7 @@ fn test_literals() {
     let _quote = "single".to_string();
     let _yes = true;
     let _no = false;
-    let _maybe = None::<_>;
+    let _maybe = None::<i64>;
 }
 fn main() {
     std::panic::set_hook(
