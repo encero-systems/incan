@@ -8,3 +8,6 @@ model Config:
     host: str
     port: int
     debug: bool
+
+def main() -> None:
+    print(Config(host="localhost", port=8080, debug=true).to_json())

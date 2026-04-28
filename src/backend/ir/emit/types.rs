@@ -11,6 +11,7 @@ use super::super::expr::{IrExprKind, Pattern};
 use super::super::types::IrType;
 use super::IrEmitter;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 impl<'a> IrEmitter<'a> {
     fn emit_path_ident(path: &str) -> TokenStream {
@@ -45,8 +46,8 @@ impl<'a> IrEmitter<'a> {
             IrType::String => quote! { String },
             IrType::StaticStr => quote! { &'static str },
             IrType::StaticBytes => quote! { &'static [u8] },
-            IrType::FrozenStr => quote! { FrozenStr },
-            IrType::FrozenBytes => quote! { FrozenBytes },
+            IrType::FrozenStr => quote! { incan_stdlib::frozen::FrozenStr },
+            IrType::FrozenBytes => quote! { incan_stdlib::frozen::FrozenBytes },
             IrType::StrRef => quote! { &str },
             IrType::List(elem) => {
                 let e = self.emit_type(elem);
@@ -59,7 +60,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Set(elem) => {
                 let e = self.emit_type(elem);
-                quote! { HashSet<#e> }
+                quote! { std::collections::HashSet<#e> }
             }
             IrType::Tuple(types) => {
                 let ts: Vec<_> = types.iter().map(|t| self.emit_type(t)).collect();
@@ -81,9 +82,19 @@ impl<'a> IrEmitter<'a> {
                 Self::emit_path_ident(name)
             }
             IrType::NamedGeneric(name, args) => {
+                let frozen_name = match collections::from_str(name) {
+                    Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),
+                    Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_stdlib::frozen::FrozenSet }),
+                    Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_stdlib::frozen::FrozenDict }),
+                    _ => None,
+                };
                 let n = Self::emit_path_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
-                quote! { #n < #(#ts),* > }
+                if let Some(n) = frozen_name {
+                    quote! { #n < #(#ts),* > }
+                } else {
+                    quote! { #n < #(#ts),* > }
+                }
             }
             IrType::ImplTrait(bound) => {
                 let bound_tokens = self.emit_trait_bound(bound);

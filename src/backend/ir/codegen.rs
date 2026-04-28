@@ -33,11 +33,14 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::frontend::ast::{Declaration, Program};
+use crate::frontend::ast::{Declaration, Expr, ImportKind, ImportPath, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::stdlib;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
@@ -77,6 +80,126 @@ fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> Has
     out
 }
 
+/// Resolve a source import path to the generated Rust module path used for dependency emission.
+fn generated_module_path_for_source_import(path: &ImportPath, current_module_path: &[String]) -> Option<Vec<String>> {
+    let resolved_segments = if path.parent_levels > 0 {
+        let keep = current_module_path.len().checked_sub(path.parent_levels)?;
+        let mut resolved = current_module_path[..keep].to_vec();
+        resolved.extend(path.segments.clone());
+        resolved
+    } else {
+        path.segments.clone()
+    };
+    let mut segments = canonicalize_source_module_segments(&resolved_segments);
+
+    if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+        segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+    }
+
+    Some(segments)
+}
+
+/// True when a dependency module should keep its public API even if the main module does not import every item.
+fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
+    if !preserve_non_stdlib_public_items {
+        return false;
+    }
+    !matches!(
+        module_path.first().map(String::as_str),
+        Some(stdlib::INCAN_STD_NAMESPACE)
+    )
+}
+
+/// Collect dependency-module declarations that are referenced through imports.
+fn collect_externally_reachable_items_by_module(
+    main: &Program,
+    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+) -> HashMap<Vec<String>, HashSet<String>> {
+    let module_paths: HashSet<Vec<String>> = dependency_modules
+        .iter()
+        .map(|(name, _, path_segments)| path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]))
+        .collect();
+
+    /// Record imported item names against the generated dependency module that owns them.
+    fn record_imports(
+        reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+        program: &Program,
+        current_module_path: &[String],
+        module_paths: &HashSet<Vec<String>>,
+    ) {
+        let mut module_import_bindings: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &program.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::From { module, items } => {
+                    let Some(module_path) = generated_module_path_for_source_import(module, current_module_path) else {
+                        continue;
+                    };
+                    let reachable_items = reachable.entry(module_path).or_default();
+                    for item in items {
+                        reachable_items.insert(item.name.clone());
+                    }
+                }
+                ImportKind::Module(path) => {
+                    let Some(segments) = generated_module_path_for_source_import(path, current_module_path) else {
+                        continue;
+                    };
+                    if module_paths.contains(&segments) {
+                        if let Some(binding) = import.alias.clone().or_else(|| path.segments.last().cloned()) {
+                            module_import_bindings.insert(binding, segments);
+                        }
+                        continue;
+                    }
+                    let Some(item_name) = segments.last() else {
+                        continue;
+                    };
+                    for module_path in module_paths {
+                        if segments.len() == module_path.len() + 1 && segments.starts_with(module_path) {
+                            reachable
+                                .entry(module_path.clone())
+                                .or_default()
+                                .insert(item_name.clone());
+                            break;
+                        }
+                    }
+                }
+                ImportKind::PubLibrary { .. }
+                | ImportKind::PubFrom { .. }
+                | ImportKind::RustCrate { .. }
+                | ImportKind::RustFrom { .. }
+                | ImportKind::Python(_) => {}
+            }
+        }
+        if !module_import_bindings.is_empty() {
+            let _ = crate::frontend::ast_walk::any_expr_in_program(program, |expr| {
+                if let Expr::Field(object, field) = expr
+                    && let Expr::Ident(binding) = &object.node
+                    && let Some(module_path) = module_import_bindings.get(binding)
+                {
+                    reachable.entry(module_path.clone()).or_default().insert(field.clone());
+                }
+                if let Expr::MethodCall(object, method, _, _) = expr
+                    && let Expr::Ident(binding) = &object.node
+                    && let Some(module_path) = module_import_bindings.get(binding)
+                {
+                    reachable.entry(module_path.clone()).or_default().insert(method.clone());
+                }
+                false
+            });
+        }
+    }
+
+    let mut reachable = HashMap::new();
+    record_imports(&mut reachable, main, &[String::from("main")], &module_paths);
+    for (name, program, path_segments) in dependency_modules {
+        let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
+        record_imports(&mut reachable, program, &module_path, &module_paths);
+    }
+    reachable
+}
+
 /// Dependency type facts gathered during codegen setup and reused by module emission.
 ///
 /// Multi-file consumers only carry short nominal type names after typechecking/lowering, so emission cannot infer
@@ -84,11 +207,13 @@ fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> Has
 /// - dependency module qualification (`module_paths`)
 /// - short-name collisions that must not be auto-qualified (`ambiguous_type_names`)
 /// - imported enum names that are safe to treat as enum loop elements (`enum_type_names`)
+/// - imported stdlib error types whose trait methods require Rust trait imports (`error_trait_type_names`)
 #[derive(Debug, Clone, Default)]
 struct DependencyTypeMetadata {
     module_paths: HashMap<String, Vec<String>>,
     ambiguous_type_names: HashSet<String>,
     enum_type_names: HashSet<String>,
+    error_trait_type_names: HashSet<String>,
 }
 
 /// Collect dependency type metadata needed by IR emission for cross-module nominal types.
@@ -102,12 +227,24 @@ fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>
     let mut ambiguous: HashSet<String> = HashSet::new();
     let mut enum_type_names: HashSet<String> = HashSet::new();
     let mut non_enum_type_names: HashSet<String> = HashSet::new();
+    let mut error_trait_type_names: HashSet<String> = HashSet::new();
+    let error_trait_name = core_traits::as_str(TraitId::Error);
 
     for (_name, program, path_segments) in deps {
         for decl in &program.declarations {
             let type_name = match &decl.node {
-                Declaration::Model(m) => Some((&m.name, false)),
-                Declaration::Class(c) => Some((&c.name, false)),
+                Declaration::Model(m) => {
+                    if m.traits.iter().any(|bound| bound.node.name == error_trait_name) {
+                        error_trait_type_names.insert(m.name.clone());
+                    }
+                    Some((&m.name, false))
+                }
+                Declaration::Class(c) => {
+                    if c.traits.iter().any(|bound| bound.node.name == error_trait_name) {
+                        error_trait_type_names.insert(c.name.clone());
+                    }
+                    Some((&c.name, false))
+                }
                 Declaration::Enum(e) => Some((&e.name, true)),
                 Declaration::TypeAlias(a) => Some((&a.name, false)),
                 Declaration::Newtype(n) => Some((&n.name, false)),
@@ -146,6 +283,7 @@ fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>
         module_paths: paths,
         ambiguous_type_names: ambiguous,
         enum_type_names,
+        error_trait_type_names,
     }
 }
 
@@ -358,6 +496,12 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Whether generated Rust should deny warning classes that normal emission suppresses at narrow scopes.
+    strict_generated_lints: bool,
+    /// Private IR items called by generated code that is appended outside normal IR emission.
+    externally_reachable_items: HashSet<String>,
+    /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
+    preserve_dependency_public_items: bool,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -376,9 +520,30 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             declared_crate_names: None,
             library_manifest_index: None,
+            strict_generated_lints: false,
+            externally_reachable_items: HashSet::new(),
+            preserve_dependency_public_items: true,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
+    pub fn set_strict_generated_lints(&mut self, enabled: bool) {
+        self.strict_generated_lints = enabled;
+    }
+
+    /// Set private generated Rust entrypoints called by code injected after IR emission.
+    pub fn set_externally_reachable_items(&mut self, names: HashSet<String>) {
+        self.externally_reachable_items = names;
+    }
+
+    /// Set whether non-stdlib dependency modules preserve their public API surface during emission.
+    ///
+    /// Library builds keep this enabled so public dependency declarations remain available at the Rust crate boundary.
+    /// Binary and test harness builds can disable it so unused dependency declarations are pruned instead of warning.
+    pub fn set_preserve_dependency_public_items(&mut self, enabled: bool) {
+        self.preserve_dependency_public_items = enabled;
     }
 
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
@@ -662,8 +827,11 @@ impl<'a> IrCodegen<'a> {
                 dependency_type_metadata.ambiguous_type_names.clone(),
             );
             inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+            inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
+            inner.set_strict_generated_lints(self.strict_generated_lints);
+            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -676,8 +844,11 @@ impl<'a> IrCodegen<'a> {
                 dependency_type_metadata.ambiguous_type_names.clone(),
             );
             emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+            emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
+            emitter.set_strict_generated_lints(self.strict_generated_lints);
+            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -720,16 +891,16 @@ impl<'a> IrCodegen<'a> {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_roots);
-            inner.set_add_clippy_allows(false);
+            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_roots);
-            emitter.set_add_clippy_allows(false);
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
             emitter.set_needs_serde(self.needs_serde);
+            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -763,6 +934,10 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_multi_file_internal(program, module_names)
     }
 
+    /// Generate flat dependency modules with generated-use pruning.
+    ///
+    /// Dependency modules keep imported/reachable declarations for binary-style emission and can preserve non-stdlib
+    /// public items when library surfaces are being generated.
     fn try_generate_multi_file_internal(
         &mut self,
         program: &'a Program,
@@ -791,10 +966,12 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let dependency_reachable_items =
+            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
         // Generate module files
         let mut lowered_modules = Vec::new();
-        for (name, ast, _) in &self.dependency_modules {
+        for (name, ast, path_segments) in &self.dependency_modules {
             if !module_names.contains(name) {
                 continue;
             }
@@ -814,47 +991,58 @@ impl<'a> IrCodegen<'a> {
             // Global serde usage in the main module must not mutate unrelated dependency
             // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
             super::trait_bound_inference::infer_trait_bounds(&mut ir);
-            lowered_modules.push((name.to_string(), ir));
+            let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
+            lowered_modules.push((name.to_string(), module_path, ir));
         }
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
             let Some((_, current_ir, tail)) = rest
                 .split_first_mut()
-                .map(|((name, ir), tail)| (name.clone(), ir, tail))
+                .map(|((name, _path, ir), tail)| (name.clone(), ir, tail))
             else {
                 continue;
             };
             let external_programs: Vec<&super::IrProgram> = left
                 .iter()
-                .map(|(_, ir)| ir)
-                .chain(tail.iter().map(|(_, ir)| ir))
+                .map(|(_, _, ir)| ir)
+                .chain(tail.iter().map(|(_, _, ir)| ir))
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
         let mut modules = HashMap::new();
-        for (name, ir) in lowered_modules {
+        for (name, module_path, ir) in lowered_modules {
+            let reachable_items = dependency_reachable_items
+                .get(&module_path)
+                .cloned()
+                .unwrap_or_default();
+            let preserve_public_items =
+                should_preserve_dependency_public_items(&module_path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
                 let mut svc = EmitService::new_from_program(&ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_preserve_public_items(preserve_public_items);
+                inner.set_externally_reachable_items(reachable_items.clone());
                 inner.set_type_module_paths(
                     dependency_type_metadata.module_paths.clone(),
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_add_clippy_allows(false);
+                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 svc.emit_program(&ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_preserve_public_items(preserve_public_items);
+                emitter.set_externally_reachable_items(reachable_items);
                 emitter.set_type_module_paths(
                     dependency_type_metadata.module_paths.clone(),
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_add_clippy_allows(false);
+                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.emit_program(&ir)?
             };
@@ -893,6 +1081,10 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_multi_file_nested_internal(program, module_paths)
     }
 
+    /// Generate nested dependency modules with generated-use pruning.
+    ///
+    /// Dependency modules keep imported/reachable declarations for binary-style emission and can preserve non-stdlib
+    /// public items when library surfaces are being generated.
     fn try_generate_multi_file_nested_internal(
         &mut self,
         program: &'a Program,
@@ -938,6 +1130,8 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let dependency_reachable_items =
+            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
@@ -986,28 +1180,35 @@ impl<'a> IrCodegen<'a> {
         }
         let mut modules = HashMap::new();
         for (path, ir) in lowered_modules {
+            let reachable_items = dependency_reachable_items.get(&path).cloned().unwrap_or_default();
+            let preserve_public_items =
+                should_preserve_dependency_public_items(&path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
                 let mut svc = EmitService::new_from_program(&ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_preserve_public_items(preserve_public_items);
+                inner.set_externally_reachable_items(reachable_items.clone());
                 inner.set_type_module_paths(
                     dependency_type_metadata.module_paths.clone(),
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_add_clippy_allows(false);
+                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 svc.emit_program(&ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_preserve_public_items(preserve_public_items);
+                emitter.set_externally_reachable_items(reachable_items);
                 emitter.set_type_module_paths(
                     dependency_type_metadata.module_paths.clone(),
                     dependency_type_metadata.ambiguous_type_names.clone(),
                 );
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_add_clippy_allows(false);
+                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.emit_program(&ir)?
             };
@@ -1056,6 +1257,462 @@ mod tests {
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         must_ok(IrCodegen::new().try_generate(&ast))
+    }
+
+    fn assert_no_generated_unused_lint_allows(code: &str) {
+        assert!(!code.contains("#[allow(dead_code)]"), "{code}");
+        assert!(!code.contains("#[allow(unused_imports)]"), "{code}");
+        assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_does_not_emit_blanket_generated_lint_allows() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+
+        assert!(!code.contains("#![allow(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("use incan_stdlib::prelude::*;"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_keeps_used_private_helpers_without_dead_code_allows() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  print(helper(1))
+"#,
+        );
+
+        assert!(code.contains("fn helper(value: i64) -> i64"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_private_helpers() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  print("done")
+"#,
+        );
+
+        assert!(!code.contains("fn helper"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_dependency_public_items_for_binary_mode() {
+        let constants_module = parse_program(
+            r#"
+pub def api_version() -> str:
+  return "v1"
+
+pub def max_page_size() -> int:
+  return 100
+
+pub def default_timeout() -> int:
+  return 30
+"#,
+        );
+        let main_module = parse_program(
+            r#"
+from shared.constants import api_version, max_page_size
+
+def main() -> None:
+  print(api_version())
+  print(max_page_size())
+"#,
+        );
+        let constants_path = vec!["shared".to_string(), "constants".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_preserve_dependency_public_items(false);
+        codegen.add_module_with_path_segments("shared_constants", &constants_module, constants_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&constants_path)));
+        let constants_code = must_some(
+            rust_modules.get(&constants_path),
+            "missing generated shared.constants module",
+        );
+
+        assert!(
+            constants_code.contains("pub fn api_version() -> String"),
+            "{constants_code}"
+        );
+        assert!(
+            constants_code.contains("pub fn max_page_size() -> i64"),
+            "{constants_code}"
+        );
+        assert!(!constants_code.contains("default_timeout"), "{constants_code}");
+        assert_no_generated_unused_lint_allows(constants_code);
+    }
+
+    #[test]
+    fn normal_codegen_can_preserve_dependency_public_items_for_library_mode() {
+        let constants_module = parse_program(
+            r#"
+pub def api_version() -> str:
+  return "v1"
+
+pub def default_timeout() -> int:
+  return 30
+"#,
+        );
+        let main_module = parse_program(
+            r#"
+from shared.constants import api_version
+
+def main() -> None:
+  print(api_version())
+"#,
+        );
+        let constants_path = vec!["shared".to_string(), "constants".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.add_module_with_path_segments("shared_constants", &constants_module, constants_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&constants_path)));
+        let constants_code = must_some(
+            rust_modules.get(&constants_path),
+            "missing generated shared.constants module",
+        );
+
+        assert!(
+            constants_code.contains("pub fn api_version() -> String"),
+            "{constants_code}"
+        );
+        assert!(
+            constants_code.contains("pub fn default_timeout() -> i64"),
+            "{constants_code}"
+        );
+        assert_no_generated_unused_lint_allows(constants_code);
+    }
+
+    #[test]
+    fn normal_codegen_keeps_external_generated_entrypoints() {
+        let tokens = must_ok(lexer::lex(
+            r#"
+def test_generated_entrypoint() -> None:
+  return
+"#,
+        ));
+        let ast = must_ok(parser::parse(&tokens));
+        let mut codegen = IrCodegen::new();
+        codegen.set_externally_reachable_items(std::collections::HashSet::from([String::from(
+            "test_generated_entrypoint",
+        )]));
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(code.contains("fn test_generated_entrypoint"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_rust_imports() {
+        let code = generate(
+            r#"
+import rust::std::collections::HashMap
+
+def main() -> None:
+  print("done")
+"#,
+        );
+
+        assert!(!code.contains("use std::collections::HashMap;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_keeps_used_rust_import_aliases() {
+        let code = generate(
+            r#"
+import rust::std::f64::consts as consts
+
+def main() -> None:
+  _ = consts.PI
+"#,
+        );
+
+        assert!(code.contains("use std::f64::consts as consts;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_use_analysis_keeps_rust_extension_trait_imports() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
+        };
+        use crate::backend::ir::expr::{
+            IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+        };
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("rand")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("Rng"),
+                    alias: None,
+                    rust_trait_methods: vec![String::from("gen_range")],
+                },
+                IrImportItem {
+                    name: String::from("thread_rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+            ],
+        }));
+        let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![
+                IrStmt::new(IrStmtKind::Let {
+                    name: String::from("rng"),
+                    ty: rng_ty.clone(),
+                    mutability: Mutability::Mutable,
+                    value: TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: String::from("thread_rng"),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::ExternalRustName,
+                                },
+                                IrType::Function {
+                                    params: Vec::new(),
+                                    ret: Box::new(rng_ty.clone()),
+                                },
+                            )),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            canonical_path: None,
+                        },
+                        rng_ty.clone(),
+                    ),
+                }),
+                IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: String::from("rng"),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            rng_ty,
+                        )),
+                        method: String::from("gen_range"),
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Range {
+                                    start: Some(Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int))),
+                                    end: Some(Box::new(TypedExpr::new(IrExprKind::Int(7), IrType::Int))),
+                                    inclusive: false,
+                                },
+                                IrType::Unknown,
+                            ),
+                        }],
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    IrType::Int,
+                ))),
+            ],
+            is_async: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use rand::Rng;"), "{code}");
+        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_expects_only_unread_private_model_fields() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+  age: int
+
+def main() -> None:
+  let user = User(name="Ada", age=42)
+  print(user.name)
+"#,
+        );
+
+        assert!(code.contains("name: String"), "{code}");
+        assert!(
+            code.contains(
+                "#[expect(dead_code, reason = \"retained for Incan private field semantics\")]\n    age: i64"
+            ),
+            "{code}"
+        );
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_rust_warning_clean() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use std::process::Command;
+
+        let code = generate(
+            r#"
+import rust::std::f64::consts as consts
+
+model User:
+  name: str
+  age: int
+
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  let user = User(name="Ada", age=42)
+  print(user.name)
+  print(helper(1))
+  _ = consts.PI
+"#,
+        );
+        assert_no_generated_unused_lint_allows(&code);
+
+        let tmp = tempfile::tempdir()?;
+        let generator = ProjectGenerator::new(tmp.path(), "warning_clean_codegen", true);
+        generator.generate(&code)?;
+
+        let output = Command::new("cargo")
+            .arg("check")
+            .current_dir(tmp.path())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("RUSTFLAGS", "-Dwarnings")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "generated Rust should pass cargo check with -Dwarnings\nstderr:\n{}\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_parameters() {
+        let code = generate(
+            r#"
+def helper(value: int, unused: int) -> int:
+  return value
+
+def main() -> None:
+  print(helper(1, 2))
+"#,
+        );
+
+        assert!(code.contains("fn helper(value: i64, _: i64) -> i64"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_locals() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "value"
+  print("done")
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("let unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_unused_local_scan_respects_shadowing() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "outer"
+  if true:
+    let unused = "inner"
+    print(unused)
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"outer\".to_string();"), "{code}");
+        assert!(code.contains("let unused = \"inner\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn strict_codegen_emits_denies_without_generated_scoped_allows() {
+        let ast = parse_program(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_strict_generated_lints(true);
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(code.contains("#![deny(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("#![allow("));
+        assert!(!code.contains("#[allow(dead_code"));
+        assert!(!code.contains("#[allow(unused_variables"));
+    }
+
+    #[test]
+    fn built_in_derive_macros_are_path_qualified() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+
+def main() -> None:
+  let user = User(name="Ada")
+  print(user.name)
+"#,
+        );
+
+        assert!(code.contains("#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
     }
 
     /// Parse an Incan program into an AST
@@ -1204,7 +1861,7 @@ def main() -> None:
     fn test_simple_function() {
         let code = generate(
             r#"
-def add(a: int, b: int) -> int:
+pub def add(a: int, b: int) -> int:
   return a + b
 "#,
         );
@@ -1216,9 +1873,9 @@ def add(a: int, b: int) -> int:
     fn test_model_generation() {
         let code = generate(
             r#"
-model User:
-  name: str
-  age: int
+pub model User:
+  pub name: str
+  pub age: int
 "#,
         );
         assert!(code.contains("struct User"));
@@ -1311,7 +1968,7 @@ def main() -> None:
     fn test_fstring_generation() {
         let code = generate(
             r#"
-def greet(name: str) -> str:
+pub def greet(name: str) -> str:
   return f"Hello, {name}!"
 "#,
         );
@@ -1340,7 +1997,7 @@ def main() -> None:
     fn test_enum_generation() {
         let code = generate(
             r#"
-enum Status:
+pub enum Status:
   Active
   Inactive
 "#,
@@ -1355,6 +2012,9 @@ enum Status:
         let store_code = generate_nested_store_code(
             r#"
 from db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
@@ -1375,10 +2035,10 @@ model Account:
             r#"
 from db.schema import Account
 
-def get_type(a: Account) -> str:
+pub def get_type(a: Account) -> str:
   return a.type
 
-def make() -> Account:
+pub def make() -> Account:
   return Account(type="x")
 "#,
         );
@@ -1424,10 +2084,10 @@ model Account:
             r#"
 from db.schema import Account as A
 
-def get_type(a: A) -> str:
+pub def get_type(a: A) -> str:
   return a.type
 
-def make() -> A:
+pub def make() -> A:
   return A(type="x")
 "#,
         );
@@ -1457,7 +2117,7 @@ def make() -> A:
     fn test_multi_file_self_alias_resolution_in_dependency_module() {
         let db_module = parse_program(
             r#"
-model Account:
+pub model Account:
   type_ [alias="type"]: str
 
   def get_type(self) -> str:
@@ -1545,6 +2205,9 @@ def main() -> None:
         let code = generate(
             r#"
 from rust::time import Duration
+
+pub def touch(duration: Duration) -> None:
+  return
 "#,
         );
         assert!(code.contains("use time::Duration;"));
@@ -1556,6 +2219,9 @@ from rust::time import Duration
         let code = generate(
             r#"
 import serde::Serialize
+
+pub def touch(value: Serialize) -> None:
+  return
 "#,
         );
         assert!(code.contains("use serde::Serialize;"));
@@ -1567,6 +2233,9 @@ import serde::Serialize
         let store_code = generate_nested_store_code(
             r#"
 from ..db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use super::db::schema::Database;"));
@@ -1578,6 +2247,9 @@ from ..db.schema import Database
         let store_code = generate_nested_store_code(
             r#"
 import db::schema::Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
@@ -1589,6 +2261,9 @@ import db::schema::Database
         let store_code = generate_non_nested_store_code(
             r#"
 from db import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
             "db",
         );
@@ -1601,6 +2276,9 @@ from db import Database
         let store_code = generate_non_nested_store_code(
             r#"
 from db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
             "db_schema",
         );
@@ -1615,14 +2293,16 @@ from db.schema import Database
 from pub::widgets import Widget as PublicWidget, make_widget
 
 def main() -> None:
-  return
+  w: PublicWidget = make_widget("ok")
 "#,
         );
         let mut codegen = IrCodegen::new();
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
-        assert!(code.contains("pub use widgets::Widget as PublicWidget;"));
-        assert!(code.contains("pub use widgets::make_widget;"));
+        assert!(code.contains("use widgets::Widget as PublicWidget;"));
+        assert!(code.contains("use widgets::make_widget;"));
+        assert!(!code.contains("pub use widgets::Widget as PublicWidget;"));
+        assert!(!code.contains("pub use widgets::make_widget;"));
         assert!(!code.contains("pub::widgets"));
     }
 
@@ -1639,7 +2319,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let mut w = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w = make_widget(DEFAULT_NAME);"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }
@@ -1651,13 +2331,14 @@ def main() -> None:
 import pub::widgets as widgets_alias
 
 def main() -> None:
-  return
+  widgets_alias.make_widget("ok")
 "#,
         );
         let mut codegen = IrCodegen::new();
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(code.contains("use widgets as widgets_alias;"));
+        assert!(!code.contains("pub use widgets as widgets_alias;"));
         assert!(!code.contains("use pub::widgets"));
     }
 
@@ -1671,7 +2352,7 @@ def main() -> None:
 from rust::demo import Thing
 from rust::demo import takes_ref
 
-def forward(value: Thing) -> None:
+pub def forward(value: Thing) -> None:
   takes_ref(value)
 "#;
         let tokens = must_ok(lexer::lex(source));
@@ -1733,7 +2414,7 @@ def forward(value: Thing) -> None:
 from rust::datafusion::execution::context import SessionContext
 from rust::datafusion::dataframe import DataFrameWriteOptions
 
-def f(uri: str) -> None:
+pub def f(uri: str) -> None:
   ctx = SessionContext.new()
   _ = ctx.write_csv(uri, DataFrameWriteOptions.new(), None)
 "#;
@@ -1778,7 +2459,7 @@ from rust::demo import State
 from rust::demo import Plan
 from rust::demo import consume
 
-async def run(state: State, plan: Plan) -> None:
+pub async def run(state: State, plan: Plan) -> None:
   await sleep(0.01)
   await consume(state, plan)
 "#;
@@ -1851,7 +2532,7 @@ from rust::ra_async_result_probe import State
 from rust::ra_async_result_probe import Plan
 from rust::ra_async_result_probe import consume
 
-async def run(state: State, plan: Plan) -> None:
+pub async def run(state: State, plan: Plan) -> None:
   await sleep(0.01)
   await consume(state, plan)
 "#;
@@ -1910,7 +2591,7 @@ from rust::foo_bar import State
 from rust::foo_bar import Plan
 from rust::foo_bar::consumer import consume
 
-async def run(state: State, plan: Plan) -> None:
+pub async def run(state: State, plan: Plan) -> None:
   await sleep(0.01)
   await consume(state, plan)
 "#;
@@ -1985,7 +2666,7 @@ from rust::foo_bar import State
 from rust::foo_bar import Plan
 from rust::foo_bar::consumer import consume
 
-async def run(state: State, plan: Plan) -> None:
+pub async def run(state: State, plan: Plan) -> None:
   await sleep(0.01)
   await consume(state, plan)
 "#,
@@ -2036,7 +2717,7 @@ from rust::ra_async_result_probe import SessionContext
 from rust::ra_async_result_probe import Plan
 from rust::ra_async_result_probe import consume
 
-async def run(plan: Plan) -> None:
+pub async def run(plan: Plan) -> None:
   ctx = SessionContext.new()
   state = ctx.state()
   await sleep(0.01)
@@ -2109,7 +2790,7 @@ from rust::foo_bar import State
 from rust::foo_bar import Plan
 from rust::foo_bar::consumer import consume
 
-async def run(state: State, plan: Plan) -> None:
+pub async def run(state: State, plan: Plan) -> None:
   await sleep(0.01)
   await consume(state, plan)
 "#;
@@ -2131,7 +2812,7 @@ async def run(state: State, plan: Plan) -> None:
 def id[T](x: T) -> T:
   return x
 
-def run() -> int:
+pub def run() -> int:
   return id[int](1)
 "#;
         let ast = parse_program(source);
@@ -2149,7 +2830,7 @@ class Box:
   def pick[T](self, value: T) -> T:
     return value
 
-def run() -> int:
+pub def run() -> int:
   let b = Box()
   return b.pick[int](1)
 "#;
@@ -2167,7 +2848,7 @@ def run() -> int:
 def pair_map[T, U](x: T, y: U) -> int:
   return 0
 
-def run() -> int:
+pub def run() -> int:
   return pair_map[int, _](1, 2)
 "#;
         let ast = parse_program(source);

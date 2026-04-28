@@ -11,4 +11,4 @@ def matches_any(root_kind: RootKind, required: list[RootKind]) -> bool:
     return false
 
 def main() -> None:
-    pass
+    print(matches_any(RootKind.A, [RootKind.A]))

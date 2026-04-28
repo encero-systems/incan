@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use crate::manifest::DependencySpec;
 use incan_core::lang::rust_keywords;
 
+const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
+
 // ============================================================================
 // RFC 023: Stdlib module naming
 // ============================================================================
@@ -232,9 +234,9 @@ impl ProjectGenerator {
             changed |= Self::write_file_if_changed(&module_file, module_code)?;
         }
 
-        // Build main.rs with the crate-level prelude first, then mod declarations.
+        // Build main.rs with the generated header first, then mod declarations.
         // Crate attributes (`#![...]`) must appear before any Rust items (including `mod ...;`),
-        // so we insert module declarations immediately after the crate-level allow attribute.
+        // so we insert module declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
 
@@ -249,9 +251,16 @@ impl ProjectGenerator {
                 .join("\n")
                 + "\n";
 
-            // Insert right after the crate-level allow attribute line (if present),
-            // otherwise prepend (best-effort).
-            if let Some(attr_pos) = full_main.find("#![allow(") {
+            // Insert at the backend marker when present. Older generated code may not have the marker, so fall back to
+            // the crate-attribute position before prepending.
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|o| marker_pos + o + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, &mods);
+                full_main.insert(marker_pos + mods.len(), '\n');
+            } else if let Some(attr_pos) = full_main.find("#![") {
                 let line_end = full_main[attr_pos..]
                     .find('\n')
                     .map(|o| attr_pos + o + 1)
@@ -419,9 +428,9 @@ impl ProjectGenerator {
             changed |= Self::write_file_if_changed(&file_path, module_code)?;
         }
 
-        // ---- Build main.rs with crate-level prelude + top-level mod declarations ----
+        // ---- Build main.rs with generated header + top-level mod declarations ----
         // Crate attributes (`#![...]`) must appear before any Rust items (including `mod ...;`), so we insert module
-        // declarations immediately after the crate-level allow attribute.
+        // declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
 
@@ -443,7 +452,14 @@ impl ProjectGenerator {
                 .join("\n")
                 + "\n";
 
-            if let Some(attr_pos) = full_main.find("#![allow(") {
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|o| marker_pos + o + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, &mods);
+                full_main.insert(marker_pos + mods.len(), '\n');
+            } else if let Some(attr_pos) = full_main.find("#![") {
                 let line_end = full_main[attr_pos..]
                     .find('\n')
                     .map(|o| attr_pos + o + 1)

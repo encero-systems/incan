@@ -9,6 +9,21 @@ use super::super::super::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, 
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit a field-level expectation for private generated fields that must remain present for Incan semantics even
+    /// when Rust cannot observe a read in the generated program.
+    fn private_field_dead_code_expect(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+        visibility: &super::super::super::decl::Visibility,
+    ) -> TokenStream {
+        if self.should_expect_private_field_dead_code(struct_name, field_name, visibility) {
+            quote! { #[expect(dead_code, reason = "retained for Incan private field semantics")] }
+        } else {
+            quote! {}
+        }
+    }
+
     /// Emit a Rust struct definition and any supported constructor surface.
     pub(in crate::backend::ir::emit) fn emit_struct(&self, s: &IrStruct) -> Result<TokenStream, EmitError> {
         let name = Self::rust_ident(&s.name);
@@ -22,6 +37,8 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 Some(DeriveId::Serialize) => quote! { serde::Serialize },
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
+                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ => {
                     if let Some(module_path) = s.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path
@@ -68,7 +85,8 @@ impl<'a> IrEmitter<'a> {
                 .map(|f| {
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
-                    quote! { #fvis #fty }
+                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
+                    quote! { #dead_code_expect #fvis #fty }
                 })
                 .collect();
 
@@ -95,6 +113,7 @@ impl<'a> IrEmitter<'a> {
                     let fname = format_ident!("{}", &f.name);
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
+                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
                     let serde_attr = if has_serde {
                         f.alias
                             .as_ref()
@@ -103,11 +122,11 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
-                    quote! { #serde_attr #fvis #fname: #fty }
+                    quote! { #dead_code_expect #serde_attr #fvis #fname: #fty }
                 })
                 .collect();
 
-            let constructor = if !s.fields.is_empty() {
+            let constructor = if !s.fields.is_empty() && self.should_emit_struct_constructor(&s.name) {
                 let param_tokens: Vec<TokenStream> = s
                     .fields
                     .iter()
@@ -197,6 +216,8 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 Some(DeriveId::Serialize) => quote! { serde::Serialize },
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
+                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
+                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ => {
                     if let Some(module_path) = e.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path

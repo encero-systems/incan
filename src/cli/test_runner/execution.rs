@@ -1056,6 +1056,45 @@ struct FixtureExecutionInfo {
     teardown: Option<YieldFixtureTeardown>,
 }
 
+/// Collect private items called by the generated Rust test harness.
+fn collect_harness_entrypoints(
+    tests: &[TestInfo],
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+) -> HashSet<String> {
+    let mut entrypoints = HashSet::new();
+    for test in tests {
+        entrypoints.insert(test.function_name.clone());
+        for fixture in &test.required_fixtures {
+            collect_fixture_entrypoints(fixture, fixtures, &mut entrypoints, &mut Vec::new());
+        }
+    }
+    entrypoints
+}
+
+/// Recursively collect fixture setup/teardown functions used by generated harness calls.
+fn collect_fixture_entrypoints(
+    name: &str,
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+    entrypoints: &mut HashSet<String>,
+    visiting: &mut Vec<String>,
+) {
+    if visiting.iter().any(|existing| existing == name) {
+        return;
+    }
+    let Some(fixture) = fixtures.get(name) else {
+        return;
+    };
+    entrypoints.insert(name.to_string());
+    if let Some(teardown) = &fixture.teardown {
+        entrypoints.insert(teardown.teardown_function.clone());
+    }
+    visiting.push(name.to_string());
+    for param in &fixture.params {
+        collect_fixture_entrypoints(param, fixtures, entrypoints, visiting);
+    }
+    let _ = visiting.pop();
+}
+
 /// Convert a fixture name into an identifier fragment suitable for generated Rust.
 fn safe_fixture_ident(name: &str) -> String {
     name.chars()
@@ -1381,7 +1420,7 @@ fn inject_file_test_harness(
     let project_root_literal = project_root.to_string_lossy().to_string();
     out.push_str("\n\n#[cfg(test)]\nmod ");
     out.push_str(INCAN_FILE_TEST_MOD);
-    out.push_str(" {\nuse super::*;\n");
+    out.push_str(" {\n");
     for (name, fixture) in fixtures {
         if fixture.scope == FixtureScope::Function {
             continue;
@@ -2028,6 +2067,7 @@ pub(super) fn run_file_tests_batch(
 
     // ---- Codegen + unified file harness (library + #[cfg(test)] module) ----
     let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(false);
     codegen.set_library_manifest_index(prepared.library_manifest_index.clone());
     #[cfg(feature = "rust_inspect")]
     {
@@ -2037,6 +2077,8 @@ pub(super) fn run_file_tests_batch(
     for module in &prepared.source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
+    let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
+    codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
 
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths);
@@ -2077,7 +2119,6 @@ pub(super) fn run_file_tests_batch(
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
         let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root, &fixtures);
         if let Err(e) = generator.generate(&rust_code) {
             return gen_err(format!("Failed to generate project: {}", e));
@@ -2092,7 +2133,6 @@ pub(super) fn run_file_tests_batch(
             Ok(result) => result,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
-        let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
         let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
         if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
             return gen_err(format!("Failed to generate project: {}", e));

@@ -2,12 +2,16 @@
 //!
 //! Handles `emit_function`, `emit_extern_function` (RFC 023), `emit_method`, `emit_trait`, and `emit_trait_method`.
 
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use incan_core::lang::conventions;
 
 use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
+use super::super::super::expr::{IrCallArg, IrDictEntry, IrExprKind, IrListEntry, MatchArm, Pattern};
+use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
@@ -40,6 +44,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit a top-level generated Rust function, including entrypoint handling and scoped lint metadata.
     pub(in crate::backend::ir::emit) fn emit_function(
         &self,
         func: &super::super::super::decl::IrFunction,
@@ -52,6 +57,7 @@ impl<'a> IrEmitter<'a> {
         let name = format_ident!("{}", &func.name);
         let is_main = func.name == conventions::ENTRYPOINT_NAME;
         let mutated_params = self.collect_mutated_params(func);
+        let used_names = Self::collect_function_used_names(func);
 
         let vis = if is_main {
             quote! {}
@@ -63,7 +69,8 @@ impl<'a> IrEmitter<'a> {
             .params
             .iter()
             .map(|p| {
-                let pname = Self::rust_ident(&p.name);
+                let param_is_used = used_names.contains(&p.name);
+                let pname = Self::emit_param_name(&p.name, &used_names);
                 let pty = self.emit_type(&p.ty);
                 if p.is_self {
                     if matches!(p.mutability, super::super::super::types::Mutability::Mutable) {
@@ -74,9 +81,16 @@ impl<'a> IrEmitter<'a> {
                 } else if mutated_params.contains(&p.name)
                     || matches!(p.mutability, super::super::super::types::Mutability::Mutable)
                 {
-                    match &p.ty {
-                        IrType::Int | IrType::Float | IrType::Bool => quote! { mut #pname: #pty },
-                        _ => quote! { #pname: &mut #pty },
+                    if !param_is_used {
+                        match &p.ty {
+                            IrType::Int | IrType::Float | IrType::Bool => quote! { _: #pty },
+                            _ => quote! { _: &mut #pty },
+                        }
+                    } else {
+                        match &p.ty {
+                            IrType::Int | IrType::Float | IrType::Bool => quote! { mut #pname: #pty },
+                            _ => quote! { #pname: &mut #pty },
+                        }
                     }
                 } else {
                     quote! { #pname: #pty }
@@ -301,6 +315,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit an inherent method body for an impl block, preserving generated lint and Rust attribute metadata.
     pub(in crate::backend::ir::emit) fn emit_method(
         &self,
         func: &super::super::super::decl::IrFunction,
@@ -313,6 +328,7 @@ impl<'a> IrEmitter<'a> {
         let name = format_ident!("{}", &func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
+        let used_names = Self::collect_function_used_names(func);
 
         let params: Vec<TokenStream> = func
             .params
@@ -324,14 +340,22 @@ impl<'a> IrEmitter<'a> {
                         super::super::super::types::Mutability::Immutable => quote! { &self },
                     }
                 } else {
-                    let pname = format_ident!("{}", &p.name);
+                    let param_is_used = used_names.contains(&p.name);
+                    let pname = Self::emit_param_name(&p.name, &used_names);
                     let pty = self.emit_type(&p.ty);
                     let needs_mut = mutated_params.contains(&p.name)
                         || matches!(p.mutability, super::super::super::types::Mutability::Mutable);
                     if needs_mut {
-                        match &p.ty {
-                            IrType::Int | IrType::Float | IrType::Bool => quote! { mut #pname: #pty },
-                            _ => quote! { #pname: &mut #pty },
+                        if !param_is_used {
+                            match &p.ty {
+                                IrType::Int | IrType::Float | IrType::Bool => quote! { _: #pty },
+                                _ => quote! { _: &mut #pty },
+                            }
+                        } else {
+                            match &p.ty {
+                                IrType::Int | IrType::Float | IrType::Bool => quote! { mut #pname: #pty },
+                                _ => quote! { #pname: &mut #pty },
+                            }
                         }
                     } else {
                         quote! { #pname: #pty }
@@ -526,11 +550,13 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Emit a trait method signature or default body with any required `Self: Sized` bound.
     pub(in crate::backend::ir::emit) fn emit_trait_method(
         &self,
         func: &super::super::super::decl::IrFunction,
     ) -> Result<TokenStream, EmitError> {
         let name = format_ident!("{}", &func.name);
+        let used_names = Self::collect_function_used_names(func);
 
         let params: Vec<TokenStream> = func
             .params
@@ -542,7 +568,12 @@ impl<'a> IrEmitter<'a> {
                         super::super::super::types::Mutability::Immutable => quote! { &self },
                     }
                 } else {
-                    let pname = format_ident!("{}", &p.name);
+                    let pname = if func.body.is_empty() {
+                        let ident = Self::rust_ident(&p.name);
+                        quote! { #ident }
+                    } else {
+                        Self::emit_param_name(&p.name, &used_names)
+                    };
                     let pty = self.emit_type(&p.ty);
                     quote! { #pname: #pty }
                 }
@@ -638,5 +669,407 @@ impl<'a> IrEmitter<'a> {
             join_path_tokens(&segments)
         });
         vec![quote! { #[allow(#(#lint_paths),*)] }]
+    }
+
+    /// Emit `_` for parameters that are provably unused in a generated body.
+    ///
+    /// This keeps normal generated Rust warning-clean without moving the former blanket `unused_variables` allow to
+    /// every function item. Parameters that are read, assigned, forwarded, or otherwise referenced keep their authored
+    /// name so the body continues to compile.
+    fn emit_param_name(name: &str, used_names: &HashSet<String>) -> TokenStream {
+        if used_names.contains(name) {
+            let ident = Self::rust_ident(name);
+            quote! { #ident }
+        } else {
+            quote! { _ }
+        }
+    }
+
+    /// Collect non-`self` parameter names that the lowered body actually references.
+    fn collect_function_used_names(func: &super::super::super::decl::IrFunction) -> HashSet<String> {
+        let param_names = func
+            .params
+            .iter()
+            .filter(|param| !param.is_self)
+            .map(|param| param.name.clone())
+            .collect::<HashSet<_>>();
+        let mut used_names = HashSet::new();
+        let mut shadowed_names = HashSet::new();
+        Self::collect_stmt_list_used_names(&func.body, &param_names, &mut shadowed_names, &mut used_names);
+        used_names
+    }
+
+    /// Record a parameter reference unless a nearer local binding has shadowed that name.
+    fn note_param_use(
+        name: &str,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        if param_names.contains(name) && !shadowed_names.contains(name) {
+            used_names.insert(name.to_string());
+        }
+    }
+
+    /// Add names bound by a pattern to the current shadow set.
+    fn shadow_pattern_bindings(pattern: &Pattern, shadowed_names: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Var(name) => {
+                shadowed_names.insert(name.clone());
+            }
+            Pattern::Tuple(items) | Pattern::Enum { fields: items, .. } | Pattern::Or(items) => {
+                for item in items {
+                    Self::shadow_pattern_bindings(item, shadowed_names);
+                }
+            }
+            Pattern::Struct { fields, .. } => {
+                for (_, pattern) in fields {
+                    Self::shadow_pattern_bindings(pattern, shadowed_names);
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
+        }
+    }
+
+    /// Walk a sequential statement list while preserving lexical shadowing across later statements.
+    fn collect_stmt_list_used_names(
+        stmts: &[IrStmt],
+        param_names: &HashSet<String>,
+        shadowed_names: &mut HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        for stmt in stmts {
+            Self::collect_stmt_used_names(stmt, param_names, shadowed_names, used_names);
+        }
+    }
+
+    /// Collect parameter references from a statement.
+    fn collect_stmt_used_names(
+        stmt: &IrStmt,
+        param_names: &HashSet<String>,
+        shadowed_names: &mut HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        match &stmt.kind {
+            IrStmtKind::Expr(expr) => Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names),
+            IrStmtKind::Let { name, value, .. } => {
+                Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+                shadowed_names.insert(name.clone());
+            }
+            IrStmtKind::Assign { target, value } => {
+                Self::collect_assign_target_used_names(target, param_names, shadowed_names, used_names);
+                Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+            }
+            IrStmtKind::CompoundAssign { target, value, .. } => {
+                Self::collect_assign_target_used_names(target, param_names, shadowed_names, used_names);
+                Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+            }
+            IrStmtKind::Return(Some(expr)) | IrStmtKind::Break { value: Some(expr), .. } => {
+                Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Break { value: None, .. } | IrStmtKind::Continue(_) => {}
+            IrStmtKind::While { condition, body, .. } => {
+                Self::collect_expr_used_names(condition, param_names, shadowed_names, used_names);
+                let mut body_shadowed = shadowed_names.clone();
+                Self::collect_stmt_list_used_names(body, param_names, &mut body_shadowed, used_names);
+            }
+            IrStmtKind::For {
+                pattern,
+                iterable,
+                body,
+                ..
+            } => {
+                Self::collect_expr_used_names(iterable, param_names, shadowed_names, used_names);
+                let mut body_shadowed = shadowed_names.clone();
+                Self::collect_pattern_used_names(pattern, param_names, &body_shadowed, used_names);
+                Self::shadow_pattern_bindings(pattern, &mut body_shadowed);
+                Self::collect_stmt_list_used_names(body, param_names, &mut body_shadowed, used_names);
+            }
+            IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => {
+                let mut body_shadowed = shadowed_names.clone();
+                Self::collect_stmt_list_used_names(body, param_names, &mut body_shadowed, used_names);
+            }
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::collect_expr_used_names(condition, param_names, shadowed_names, used_names);
+                let mut then_shadowed = shadowed_names.clone();
+                Self::collect_stmt_list_used_names(then_branch, param_names, &mut then_shadowed, used_names);
+                if let Some(branch) = else_branch {
+                    let mut else_shadowed = shadowed_names.clone();
+                    Self::collect_stmt_list_used_names(branch, param_names, &mut else_shadowed, used_names);
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                Self::collect_expr_used_names(scrutinee, param_names, shadowed_names, used_names);
+                for arm in arms {
+                    Self::collect_match_arm_used_names(arm, param_names, shadowed_names, used_names);
+                }
+            }
+        }
+    }
+
+    /// Collect parameter references needed by an assignment target.
+    fn collect_assign_target_used_names(
+        target: &AssignTarget,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        match target {
+            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) => {
+                Self::note_param_use(name, param_names, shadowed_names, used_names);
+            }
+            AssignTarget::Static(_) => {}
+            AssignTarget::Field { object, .. } => {
+                Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
+            }
+            AssignTarget::Index { object, index } => {
+                Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
+                Self::collect_expr_used_names(index, param_names, shadowed_names, used_names);
+            }
+        }
+    }
+
+    /// Collect parameter references from a call argument expression.
+    fn collect_call_arg_used_names(
+        arg: &IrCallArg,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        Self::collect_expr_used_names(&arg.expr, param_names, shadowed_names, used_names);
+    }
+
+    /// Collect parameter references from one match arm with pattern bindings scoped to that arm.
+    fn collect_match_arm_used_names(
+        arm: &MatchArm,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        let mut arm_shadowed = shadowed_names.clone();
+        Self::collect_pattern_used_names(&arm.pattern, param_names, &arm_shadowed, used_names);
+        Self::shadow_pattern_bindings(&arm.pattern, &mut arm_shadowed);
+        if let Some(guard) = &arm.guard {
+            Self::collect_expr_used_names(guard, param_names, &arm_shadowed, used_names);
+        }
+        Self::collect_expr_used_names(&arm.body, param_names, &arm_shadowed, used_names);
+    }
+
+    /// Collect parameter references embedded in non-binding pattern expressions.
+    fn collect_pattern_used_names(
+        pattern: &Pattern,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        match pattern {
+            Pattern::Literal(expr) => Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names),
+            Pattern::Tuple(items) | Pattern::Enum { fields: items, .. } | Pattern::Or(items) => {
+                for item in items {
+                    Self::collect_pattern_used_names(item, param_names, shadowed_names, used_names);
+                }
+            }
+            Pattern::Struct { fields, .. } => {
+                for (_, pattern) in fields {
+                    Self::collect_pattern_used_names(pattern, param_names, shadowed_names, used_names);
+                }
+            }
+            Pattern::Wildcard | Pattern::Var(_) => {}
+        }
+    }
+
+    /// Collect parameter references from an expression.
+    fn collect_expr_used_names(
+        expr: &super::super::super::TypedExpr,
+        param_names: &HashSet<String>,
+        shadowed_names: &HashSet<String>,
+        used_names: &mut HashSet<String>,
+    ) {
+        match &expr.kind {
+            IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+                Self::note_param_use(name, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                Self::collect_expr_used_names(left, param_names, shadowed_names, used_names);
+                Self::collect_expr_used_names(right, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::UnaryOp { operand, .. }
+            | IrExprKind::Await(operand)
+            | IrExprKind::Try(operand)
+            | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::InteropCoerce { expr: operand, .. } => {
+                Self::collect_expr_used_names(operand, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::Call { func, args, .. } => {
+                Self::collect_expr_used_names(func, param_names, shadowed_names, used_names);
+                for arg in args {
+                    Self::collect_call_arg_used_names(arg, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::BuiltinCall { args, .. } | IrExprKind::Set(args) | IrExprKind::Tuple(args) => {
+                for arg in args {
+                    Self::collect_expr_used_names(arg, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+                Self::collect_expr_used_names(receiver, param_names, shadowed_names, used_names);
+                for arg in args {
+                    Self::collect_call_arg_used_names(arg, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::Field { object, .. } => {
+                Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::Index { object, index } => {
+                Self::collect_expr_used_names(object, param_names, shadowed_names, used_names);
+                Self::collect_expr_used_names(index, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                Self::collect_expr_used_names(target, param_names, shadowed_names, used_names);
+                if let Some(expr) = start {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+                if let Some(expr) = end {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+                if let Some(expr) = step {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::ListComp {
+                element,
+                variable,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::collect_expr_used_names(iterable, param_names, shadowed_names, used_names);
+                let mut comp_shadowed = shadowed_names.clone();
+                comp_shadowed.insert(variable.clone());
+                Self::collect_expr_used_names(element, param_names, &comp_shadowed, used_names);
+                if let Some(expr) = filter {
+                    Self::collect_expr_used_names(expr, param_names, &comp_shadowed, used_names);
+                }
+            }
+            IrExprKind::DictComp {
+                key,
+                value,
+                variable,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::collect_expr_used_names(iterable, param_names, shadowed_names, used_names);
+                let mut comp_shadowed = shadowed_names.clone();
+                comp_shadowed.insert(variable.clone());
+                Self::collect_expr_used_names(key, param_names, &comp_shadowed, used_names);
+                Self::collect_expr_used_names(value, param_names, &comp_shadowed, used_names);
+                if let Some(expr) = filter {
+                    Self::collect_expr_used_names(expr, param_names, &comp_shadowed, used_names);
+                }
+            }
+            IrExprKind::List(entries) => {
+                for entry in entries {
+                    match entry {
+                        IrListEntry::Element(expr) | IrListEntry::Spread(expr) => {
+                            Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                        }
+                    }
+                }
+            }
+            IrExprKind::Dict(entries) => {
+                for entry in entries {
+                    match entry {
+                        IrDictEntry::Pair(key, value) => {
+                            Self::collect_expr_used_names(key, param_names, shadowed_names, used_names);
+                            Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+                        }
+                        IrDictEntry::Spread(expr) => {
+                            Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                        }
+                    }
+                }
+            }
+            IrExprKind::Struct { fields, .. } => {
+                for (_, expr) in fields {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::collect_expr_used_names(condition, param_names, shadowed_names, used_names);
+                let then_shadowed = shadowed_names.clone();
+                Self::collect_expr_used_names(then_branch, param_names, &then_shadowed, used_names);
+                if let Some(expr) = else_branch {
+                    let else_shadowed = shadowed_names.clone();
+                    Self::collect_expr_used_names(expr, param_names, &else_shadowed, used_names);
+                }
+            }
+            IrExprKind::Match { scrutinee, arms } => {
+                Self::collect_expr_used_names(scrutinee, param_names, shadowed_names, used_names);
+                for arm in arms {
+                    Self::collect_match_arm_used_names(arm, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::Closure { params, body, captures } => {
+                for capture in captures {
+                    Self::note_param_use(capture, param_names, shadowed_names, used_names);
+                }
+                let mut closure_shadowed = shadowed_names.clone();
+                for (name, _) in params {
+                    closure_shadowed.insert(name.clone());
+                }
+                Self::collect_expr_used_names(body, param_names, &closure_shadowed, used_names);
+            }
+            IrExprKind::Block { stmts, value } => {
+                let mut block_shadowed = shadowed_names.clone();
+                Self::collect_stmt_list_used_names(stmts, param_names, &mut block_shadowed, used_names);
+                if let Some(expr) = value {
+                    Self::collect_expr_used_names(expr, param_names, &block_shadowed, used_names);
+                }
+            }
+            IrExprKind::Loop { body } => {
+                let mut loop_shadowed = shadowed_names.clone();
+                Self::collect_stmt_list_used_names(body, param_names, &mut loop_shadowed, used_names);
+            }
+            IrExprKind::Range { start, end, .. } => {
+                if let Some(expr) = start {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+                if let Some(expr) = end {
+                    Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::Format { parts } => {
+                for part in parts {
+                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                        Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+                    }
+                }
+            }
+            IrExprKind::Unit
+            | IrExprKind::None
+            | IrExprKind::Bool(_)
+            | IrExprKind::Int(_)
+            | IrExprKind::Float(_)
+            | IrExprKind::String(_)
+            | IrExprKind::Bytes(_)
+            | IrExprKind::Literal(_)
+            | IrExprKind::FieldsList(_)
+            | IrExprKind::SerdeToJson
+            | IrExprKind::SerdeFromJson(_) => {}
+        }
     }
 }

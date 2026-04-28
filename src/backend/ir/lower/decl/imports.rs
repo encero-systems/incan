@@ -66,13 +66,24 @@ impl AstLowering {
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
-            .map(|item| super::super::super::decl::IrImportItem {
-                name: item.name.clone(),
-                alias: item.alias.clone(),
+            .map(|item| {
+                let binding_name = item.alias.as_ref().unwrap_or(&item.name);
+                let rust_trait_methods = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.rust_trait_import_methods.get(binding_name))
+                    .map(|methods| methods.iter().cloned().collect())
+                    .unwrap_or_default();
+                super::super::super::decl::IrImportItem {
+                    name: item.name.clone(),
+                    alias: item.alias.clone(),
+                    rust_trait_methods,
+                }
             })
             .collect();
 
         IrDeclKind::Import {
+            visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,

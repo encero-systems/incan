@@ -17,7 +17,7 @@ use crate::library_manifest::{
     LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport, ReceiverExport,
     StaticExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use incan_core::interop::is_rust_capability_bound;
+use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
@@ -357,11 +357,7 @@ impl TypeChecker {
                             | "u128"
                             | "usize"
                     );
-                    let should_block_for_item = !is_primitive
-                        && item_name
-                            .chars()
-                            .next()
-                            .is_some_and(|ch| ch.is_ascii_lowercase() || ch == '_');
+                    let should_block_for_item = !is_primitive;
                     let info = RustItemInfo {
                         crate_name: crate_name.clone(),
                         path: canonical_path.clone(),
@@ -1134,6 +1130,21 @@ impl TypeChecker {
     /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
     fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
+        if let Some(metadata) = &info.metadata
+            && let RustItemKind::Trait(trait_info) = &metadata.kind
+        {
+            let methods: HashSet<String> = trait_info
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RustTraitAssoc::Function { name, .. } => Some(name.clone()),
+                    RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => None,
+                })
+                .collect();
+            if !methods.is_empty() {
+                self.type_info.rust_trait_import_methods.insert(name.clone(), methods);
+            }
+        }
         self.define_rust_import_symbol(name, info, span);
     }
 

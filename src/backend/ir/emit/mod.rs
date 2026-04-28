@@ -34,9 +34,34 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::FunctionRegistry;
-use super::decl::VariantFields;
+use super::decl::{VariantFields, Visibility};
 use super::types::IrType;
 use incan_core::lang::rust_keywords;
+
+/// Usage facts collected before Rust emission.
+///
+/// This analysis is intentionally about generated Rust lints, not source-language reachability diagnostics. It records
+/// which declarations, imports, methods, and fields the emitted Rust must retain so emission can prune avoidable unused
+/// Rust items and narrowly mark unavoidable semantic retention points.
+#[derive(Clone, Default)]
+pub(super) struct GeneratedUseAnalysis {
+    /// Top-level declaration names that must be emitted.
+    pub(super) reachable_items: HashSet<String>,
+    /// Import binding names that are referenced by emitted code.
+    pub(super) used_imports: HashSet<String>,
+    /// Rust trait imports that are used implicitly by extension-method lookup.
+    pub(super) used_extension_trait_imports: HashSet<String>,
+    /// Struct/class fields that are read by emitted code.
+    pub(super) read_fields: HashSet<(String, String)>,
+    /// Methods that are called by emitted code.
+    pub(super) used_methods: HashSet<(String, String)>,
+    /// Function-like constructor names that are called by emitted code.
+    pub(super) used_constructors: HashSet<String>,
+    /// Type names whose Rust visibility prevents private helper methods from warning when retained.
+    pub(super) public_types: HashSet<String>,
+    /// Whether emitted method calls require the stdlib `Error` trait in Rust scope.
+    pub(super) uses_stdlib_error_trait: bool,
+}
 
 /// Emit Rust source code from typed IR.
 ///
@@ -49,8 +74,13 @@ use incan_core::lang::rust_keywords;
 /// - The public API is `emit_program()` (implemented in `program.rs`).
 /// - Most emission helpers are implemented on this type across submodules.
 pub struct IrEmitter<'a> {
-    /// Whether to add clippy allows (should be false for warning-free codegen)
-    add_clippy_allows: bool,
+    emit_strict_generated_lint_denies: bool,
+    /// Whether public source items should be emitted even when this crate does not reference them.
+    preserve_public_items: bool,
+    /// Private items that generated code outside the emitted IR body will call.
+    externally_reachable_items: HashSet<String>,
+    /// Pre-emission usage facts used to avoid generated `dead_code` and `unused_imports` suppressions.
+    generated_use_analysis: RefCell<GeneratedUseAnalysis>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed (for Serialize/Deserialize derives)
@@ -90,6 +120,8 @@ pub struct IrEmitter<'a> {
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
     /// side-channel to recognize that `list[name]` elements should be iterated as owned enum values.
     dependency_enum_types: HashSet<String>,
+    /// Imported stdlib error type names whose trait methods need Rust trait imports at call sites.
+    external_error_trait_types: HashSet<String>,
     /// Known internal module roots for this compilation unit (e.g. {"db", "store"}).
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
@@ -132,11 +164,10 @@ impl<'a> IrEmitter<'a> {
     /// argument conversion.
     pub fn new(function_registry: &'a FunctionRegistry) -> Self {
         Self {
-            // Enable minimal allows for patterns that can't easily be made warning-free:
-            // - dead_code: library modules export functions that may not be used by main
-            // - unused_imports: user imports may not all be used
-            // - unused_variables: pattern bindings like `_x` in destructuring
-            add_clippy_allows: true,
+            emit_strict_generated_lint_denies: false,
+            preserve_public_items: true,
+            externally_reachable_items: HashSet::new(),
+            generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
@@ -155,6 +186,7 @@ impl<'a> IrEmitter<'a> {
             type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
+            external_error_trait_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
@@ -251,19 +283,87 @@ impl<'a> IrEmitter<'a> {
         self.rust_module_path = path;
     }
 
-    /// Disable clippy allows (for strict warning-free codegen).
-    pub fn without_clippy_allows(mut self) -> Self {
-        self.add_clippy_allows = false;
+    /// Deprecated compatibility shim: generated unused/dead lint allows are no longer emitted.
+    pub fn without_clippy_allows(self) -> Self {
         self
     }
 
-    /// Set whether to emit file-level clippy allows.
-    ///
-    /// Module files generated for the multi-file pipeline must NOT emit `#![allow(...)]` because the project generator
-    /// prepends `pub mod` declarations before the emitted code. Inner attributes are only valid at the start of a
-    /// file/module, so emitting them after `pub mod` lines causes a Rust compile error.
+    /// Deprecated compatibility shim: generated unused/dead lint allows are no longer emitted.
     pub fn set_add_clippy_allows(&mut self, enabled: bool) {
-        self.add_clippy_allows = enabled;
+        let _ = enabled;
+    }
+
+    /// Enable strict generated Rust lint validation.
+    pub fn set_strict_generated_lints(&mut self, enabled: bool) {
+        self.emit_strict_generated_lint_denies = enabled;
+    }
+
+    /// Set whether public source items are treated as externally reachable during emission.
+    pub fn set_preserve_public_items(&mut self, enabled: bool) {
+        self.preserve_public_items = enabled;
+    }
+
+    /// Set private items that are called by compiler-generated code injected after IR emission.
+    pub fn set_externally_reachable_items(&mut self, names: HashSet<String>) {
+        self.externally_reachable_items = names;
+    }
+
+    /// Replace pre-emission usage facts for the program currently being emitted.
+    pub(super) fn set_generated_use_analysis(&self, analysis: GeneratedUseAnalysis) {
+        *self.generated_use_analysis.borrow_mut() = analysis;
+    }
+
+    /// True when a top-level declaration with `name` should be emitted.
+    pub(super) fn should_emit_decl_name(&self, name: &str, visibility: &Visibility) -> bool {
+        (self.preserve_public_items && !matches!(visibility, Visibility::Private))
+            || self.generated_use_analysis.borrow().reachable_items.contains(name)
+    }
+
+    /// True when an import binding should be emitted because generated code references it.
+    pub(super) fn should_emit_import_binding(&self, name: &str) -> bool {
+        self.generated_use_analysis.borrow().used_imports.contains(name)
+    }
+
+    /// True when a Rust trait import should be emitted for extension-method lookup.
+    pub(super) fn should_emit_extension_trait_import(&self, name: &str) -> bool {
+        self.generated_use_analysis
+            .borrow()
+            .used_extension_trait_imports
+            .contains(name)
+    }
+
+    /// True when a method should be emitted for a preserved public surface or an observed generated-use call.
+    pub(super) fn should_emit_method(&self, target_type: &str, method_name: &str, visibility: &Visibility) -> bool {
+        let analysis = self.generated_use_analysis.borrow();
+        analysis.public_types.contains(target_type)
+            || (!self.preserve_public_items
+                && !matches!(visibility, Visibility::Private)
+                && analysis.reachable_items.contains(target_type))
+            || analysis
+                .used_methods
+                .contains(&(target_type.to_string(), method_name.to_string()))
+    }
+
+    /// True when the generated free constructor function for a struct should be retained.
+    pub(super) fn should_emit_struct_constructor(&self, struct_name: &str) -> bool {
+        let analysis = self.generated_use_analysis.borrow();
+        analysis.used_constructors.contains(struct_name)
+    }
+
+    /// True when a generated private field needs a narrow `dead_code` expectation because Rust cannot see an
+    /// Incan-level semantic use for it in the emitted program.
+    pub(super) fn should_expect_private_field_dead_code(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+        visibility: &Visibility,
+    ) -> bool {
+        matches!(visibility, Visibility::Private)
+            && !self
+                .generated_use_analysis
+                .borrow()
+                .read_fields
+                .contains(&(struct_name.to_string(), field_name.to_string()))
     }
 
     /// Set whether to emit the Zen of Incan in main.
@@ -280,6 +380,11 @@ impl<'a> IrEmitter<'a> {
     /// Set imported enum type names discovered during codegen setup.
     pub fn set_dependency_enum_types(&mut self, enum_type_names: HashSet<String>) {
         self.dependency_enum_types = enum_type_names;
+    }
+
+    /// Set imported stdlib error types whose trait methods may be called from this module.
+    pub fn set_external_error_trait_types(&mut self, type_names: HashSet<String>) {
+        self.external_error_trait_types = type_names;
     }
 
     /// True if `ty` is a user-defined Incan enum in IR, including imported enums.

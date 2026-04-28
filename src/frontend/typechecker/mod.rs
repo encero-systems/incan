@@ -132,6 +132,11 @@ pub struct TypeCheckInfo {
     pub const_values: HashMap<String, ConstValue>,
     /// Rust-boundary coercion decisions keyed by argument expression span.
     pub rust_arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    /// Rust trait imports keyed by the source binding name with the trait method names they can place in scope.
+    ///
+    /// Lowering carries this into IR import items so codegen can retain extension-trait imports that Rust method
+    /// lookup needs even when the generated Rust tokens do not otherwise mention the trait name.
+    pub rust_trait_import_methods: HashMap<String, HashSet<String>>,
     /// Rust-boundary coercion decisions for method return values, keyed by the call expression span.
     ///
     /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the

@@ -3418,9 +3418,9 @@ async def main() -> None:
         );
 
         // Note: This test uses standalone rustc compilation, which can't access incan_stdlib/incan_derive.
-        // Skip the compilation check if stdlib imports are present (models/classes with derives).
-        if rust_code.contains("use incan_stdlib::prelude") || rust_code.contains("use incan_derive") {
-            // Skip rustc compilation test for code that requires stdlib crates
+        // Skip the compilation check if generated Rust references external Incan crates.
+        if rust_code.contains("incan_stdlib::") || rust_code.contains("incan_derive::") {
+            // Skip rustc compilation test for code that requires Incan support crates.
             return;
         }
 
@@ -3617,11 +3617,11 @@ def main() -> None:
             panic!("codegen failed");
         };
         assert!(
-            rust_code.contains("let maybe = Some(1);"),
+            rust_code.contains("let _maybe = Some(1);"),
             "expected Option[int] smoke value to lower to a Rust Option expression; got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("let names = vec![\"a\".to_string(), \"b\".to_string()];"),
+            rust_code.contains("let _names = vec![\"a\".to_string(), \"b\".to_string()];"),
             "expected List[str] smoke value to lower to an owned Rust string vec; got:\n{rust_code}"
         );
         assert!(
@@ -7985,12 +7985,20 @@ pub def display[T](data: DataSet[T]) -> None:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
+            generated_main_rs.contains("use widgets::Widget as PublicWidget;"),
             "expected pub:: item alias import emission, got:\n{generated_main_rs}"
         );
         assert!(
-            generated_main_rs.contains("pub use widgets::make_widget;"),
+            generated_main_rs.contains("use widgets::make_widget;"),
             "expected pub:: item import emission, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
+            "private pub:: item alias import should not become a public Rust reexport, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub use widgets::make_widget;"),
+            "private pub:: item import should not become a public Rust reexport, got:\n{generated_main_rs}"
         );
 
         Ok(())
