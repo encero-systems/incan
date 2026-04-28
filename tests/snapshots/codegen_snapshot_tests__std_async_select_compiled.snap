@@ -7,15 +7,10 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::r#async;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::clamp_seconds;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::RuntimeFuture;
-#[allow(unused_imports)]
-pub use tokio::time::timeout as tokio_timeout;
-#[allow(dead_code)]
+use tokio::time::timeout as tokio_timeout;
 pub async fn select_timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     seconds: f64,
     task: TaskFuture,

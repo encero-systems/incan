@@ -7,21 +7,11 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct ActiveRegistration {
     pub logical_name: String,
     pub rank: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn ActiveRegistration(logical_name: String, rank: i64) -> ActiveRegistration {
-    ActiveRegistration {
-        logical_name,
-        rank,
-    }
-}
-#[allow(dead_code)]
 impl ActiveRegistration {
     pub fn clone(&self) -> Self {
         return ActiveRegistration {

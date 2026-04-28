@@ -7,14 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
-fn are_equal<T: PartialEq>(left: T, right: T) -> bool {
-    return left == right;
-}
-#[allow(dead_code)]
-fn is_greater<T: PartialOrd>(a: T, b: T) -> bool {
-    return a > b;
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

@@ -7,9 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 const RAW: &'static [u8] = b"\0\x01";
-#[allow(dead_code)]
 const FROZEN: incan_stdlib::frozen::FrozenBytes = incan_stdlib::frozen::FrozenBytes::new(
     b"\x02\x03",
 );

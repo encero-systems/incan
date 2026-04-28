@@ -7,18 +7,15 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 pub fn small(xs: Vec<i64>) -> bool {
     return ::std::convert::identity(xs.len() as i64) < 2;
 }
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
     Column,
     Add,
 }
 impl ExprKind {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Column => "Column".to_string(),
@@ -26,23 +23,12 @@ impl ExprKind {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Expr {
     pub kind: ExprKind,
     pub column_name: String,
     pub arguments: Vec<Expr>,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn Expr(kind: ExprKind, column_name: String, arguments: Vec<Expr>) -> Expr {
-    Expr {
-        kind,
-        column_name,
-        arguments,
-    }
-}
-#[allow(dead_code)]
 impl Expr {
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -80,7 +66,6 @@ impl Expr {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 pub fn lower(expr: Expr) -> i64 {
     if expr.kind == ExprKind::Column {
         return 0;

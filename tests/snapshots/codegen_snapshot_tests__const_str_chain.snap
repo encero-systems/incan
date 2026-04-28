@@ -7,11 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 const A: &'static str = "hello";
-#[allow(dead_code)]
 const B: &'static str = concat!("hello", " world");
-#[allow(dead_code)]
 const C: &'static str = concat!("hello world", "!");
 fn main() {
     std::panic::set_hook(

@@ -7,17 +7,10 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Boxed<T> {
     pub value: T,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn Boxed<T>(value: T) -> Boxed<T> {
-    Boxed { value }
-}
-#[allow(dead_code)]
 impl<T> Boxed<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -37,7 +30,6 @@ impl<T> Boxed<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 pub fn get_value<T: Clone>(boxed: Boxed<T>) -> T {
     return boxed.value.clone();
 }

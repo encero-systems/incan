@@ -7,8 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use query::filter as __incan_vocab_helper_query_filter;
+use query::filter as __incan_vocab_helper_query_filter;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

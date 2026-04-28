@@ -7,22 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
-fn run_all<T: Send + Sync + 'static>(_: T) {
-    ();
-}
-#[allow(dead_code)]
-fn run_fn<F: Fn<i64> + Send>(_: F) {
-    ();
-}
-#[allow(dead_code)]
-fn run_fn_mut<F: FnMut<i64> + Sync>(_: F) {
-    ();
-}
-#[allow(dead_code)]
-fn run_fn_once<F: FnOnce<i64> + 'static>(_: F) {
-    ();
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

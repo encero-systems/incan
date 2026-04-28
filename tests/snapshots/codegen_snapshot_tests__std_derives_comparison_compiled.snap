@@ -7,16 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Eq {
-    fn __eq__(&self, other: Self) -> bool;
-    fn __ne__(&self, other: Self) -> bool;
-}
-pub trait Ord: PartialEq {
-    fn __lt__(&self, other: Self) -> bool;
-    fn __le__(&self, other: Self) -> bool;
-    fn __gt__(&self, other: Self) -> bool;
-    fn __ge__(&self, other: Self) -> bool;
-}
-pub trait Hash {
-    fn __hash__(&self) -> i64;
-}

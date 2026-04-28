@@ -7,37 +7,26 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::r#async;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::JoinHandle;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::TaskJoinError;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::RuntimeFuture;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::RuntimeFnOnce;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::spawn as rust_spawn;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::spawn_blocking as rust_spawn_blocking;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::yield_now as rust_yield_now;
-#[allow(dead_code)]
 pub fn spawn<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     task: TaskFuture,
 ) -> JoinHandle<T> {
     "\n    Spawn async work onto the runtime.\n\n    The generic output type `T` is constrained to `Send + Static` so this wrapper stays aligned with the host runtime's\n    task-safety requirements.\n\n    The returned task is durable once spawned. Dropping the `JoinHandle[T]` detaches the task and loses the result; call\n    `abort()` on the handle when cancellation is required.\n    ";
     return rust_spawn(task);
 }
-#[allow(dead_code)]
 pub fn spawn_blocking<T: Send + 'static, TaskFn: RuntimeFnOnce<T>>(
     task: TaskFn,
 ) -> JoinHandle<T> {
     "\n    Spawn blocking work onto the runtime's blocking pool.\n\n    Like `spawn()`, this wrapper carries explicit `Send + Static` bounds so stdlib authors can express the host runtime\n    capability requirements directly in Incan source.\n\n    Blocking work is durable once it starts running. Dropping the handle detaches it and loses the result; `abort()` only\n    has a chance to stop the work if the blocking task is still queued and has not started.\n    ";
     return rust_spawn_blocking(task);
 }
-#[allow(dead_code)]
 pub async fn yield_now() {
     "\n    Yield execution back to the scheduler.\n\n    This is useful in long-running async loops when you want to remain cooperative without sleeping for a real duration.\n\n    Example:\n        while work_left():\n            step()\n            await yield_now()\n    ";
     rust_yield_now().await;

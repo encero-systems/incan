@@ -8,7 +8,6 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 fn greet(name: String) -> String {
     "Simple function for testing calls";
     return {
@@ -17,12 +16,10 @@ fn greet(name: String) -> String {
         incan_stdlib::strings::fstring(&__parts, &__args)
     };
 }
-#[allow(dead_code)]
 fn add(a: i64, b: i64) -> i64 {
     "Test positional arguments";
     return a + b;
 }
-#[allow(dead_code)]
 fn greet_with_title(name: String, title: String) -> String {
     "Test default arguments";
     return {
@@ -31,7 +28,6 @@ fn greet_with_title(name: String, title: String) -> String {
         incan_stdlib::strings::fstring(&__parts, &__args)
     };
 }
-#[allow(dead_code)]
 fn test_function_calls() {
     let _message = greet("World".to_string());
     let _sum = add(5, 3);

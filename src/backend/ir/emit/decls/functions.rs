@@ -134,11 +134,6 @@ impl<'a> IrEmitter<'a> {
 
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
-        let generated_dead_code_allow = if is_main {
-            quote! {}
-        } else {
-            self.generated_dead_code_allow()
-        };
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
         let generics = self.emit_type_params(&func.type_params);
@@ -164,7 +159,6 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if is_main || ret_ty_is_unit {
             Ok(quote! {
-                #generated_dead_code_allow
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
@@ -177,7 +171,6 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
-                #generated_dead_code_allow
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
@@ -248,7 +241,6 @@ impl<'a> IrEmitter<'a> {
         };
         let static_init_stmt = self.emit_module_static_init_call();
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
-        let generated_dead_code_allow = self.generated_dead_code_allow();
 
         // Proc-macro crates expose macros, not callable Rust functions. Keep these decorator placeholders compilable,
         // but route runtime misuse through a named internal stdlib helper instead of emitting an open-coded `panic!`
@@ -262,7 +254,6 @@ impl<'a> IrEmitter<'a> {
             let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
             if ret_ty_is_unit {
                 return Ok(quote! {
-                    #generated_dead_code_allow
                     #(#lint_allows)*
                     #vis #async_kw fn #name #generics (#(#params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
@@ -272,7 +263,6 @@ impl<'a> IrEmitter<'a> {
 
             let ret_ty = self.emit_type(&func.return_type);
             return Ok(quote! {
-                #generated_dead_code_allow
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
@@ -307,7 +297,6 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
-                #generated_dead_code_allow
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
@@ -317,7 +306,6 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
-                #generated_dead_code_allow
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt

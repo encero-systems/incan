@@ -7,11 +7,9 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn fail_t(msg: String) {
     incan_stdlib::testing::fail_t(msg)
 }
-#[allow(dead_code)]
 fn assert_true(value: bool) {
     if !value {
         fail_t("assertion failed: expected true".to_string());

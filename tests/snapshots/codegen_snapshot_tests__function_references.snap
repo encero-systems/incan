@@ -7,25 +7,20 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn double(x: i64) -> i64 {
     return x * 2;
 }
-#[allow(dead_code)]
 fn square(x: i64) -> i64 {
     return x * x;
 }
-#[allow(dead_code)]
 fn apply_transform(func: fn(i64) -> i64, value: i64) -> i64 {
     return func(value);
 }
-#[allow(dead_code)]
 fn test_function_references() -> (i64, i64) {
     let doubled = apply_transform(double, 5);
     let squared = apply_transform(square, 3);
     return (doubled, squared);
 }
-#[allow(dead_code)]
 fn map_list(items: Vec<i64>, transformer: fn(i64) -> i64) -> Vec<i64> {
     let mut result = vec![];
     for item in items.iter().copied() {
@@ -33,7 +28,6 @@ fn map_list(items: Vec<i64>, transformer: fn(i64) -> i64) -> Vec<i64> {
     }
     return result.clone();
 }
-#[allow(dead_code)]
 fn test_callable_syntax() -> Vec<i64> {
     let nums = vec![1, 2, 3];
     let mut doubled_arrows = map_list(nums.clone(), double.clone());
@@ -43,33 +37,26 @@ fn test_callable_syntax() -> Vec<i64> {
     }
     return doubled_arrows.clone();
 }
-#[allow(dead_code)]
 fn apply_binary(func: fn(i64, i64) -> i64, a: i64, b: i64) -> i64 {
     return func(a, b);
 }
-#[allow(dead_code)]
 fn add(x: i64, y: i64) -> i64 {
     return x + y;
 }
-#[allow(dead_code)]
 fn multiply(x: i64, y: i64) -> i64 {
     return x * y;
 }
-#[allow(dead_code)]
 fn test_multi_param() -> (i64, i64) {
     let sum_result = apply_binary(add, 3, 4);
     let product_result = apply_binary(multiply, 3, 4);
     return (sum_result, product_result);
 }
-#[allow(dead_code)]
 fn constant() -> i64 {
     return 42;
 }
-#[allow(dead_code)]
 fn invoke_zero_param(func: fn() -> i64) -> i64 {
     return func();
 }
-#[allow(dead_code)]
 fn test_zero_param() -> i64 {
     return invoke_zero_param(constant);
 }

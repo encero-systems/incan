@@ -7,14 +7,12 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum RootKind {
     A,
     B,
 }
 impl RootKind {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::A => "A".to_string(),
@@ -22,7 +20,6 @@ impl RootKind {
         }
     }
 }
-#[allow(dead_code)]
 fn matches_any(root_kind: RootKind, required: Vec<RootKind>) -> bool {
     for expected in required.iter().cloned() {
         if expected == root_kind {
@@ -43,5 +40,5 @@ fn main() {
             }
         }),
     );
-    ();
+    println!("{}", matches_any(RootKind::A.clone(), vec![RootKind::A.clone()]));
 }

@@ -8,76 +8,27 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[allow(dead_code)]
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct AllowModel {
     value: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn AllowModel(value: i64) -> AllowModel {
-    AllowModel { value }
-}
-#[allow(dead_code)]
 impl AllowModel {
     #[allow(unused_variables)]
     pub fn model_method(&self, _: i64) -> i64 {
         return self.value;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct allow_class {
     value: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn allow_class(value: i64) -> allow_class {
-    allow_class { value }
-}
-#[allow(dead_code)]
 impl allow_class {
     #[allow(non_snake_case)]
     pub fn MixedMethod(&self) -> i64 {
         return self.value;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 enum AllowEnum {
@@ -85,7 +36,6 @@ enum AllowEnum {
     Large(String),
 }
 impl AllowEnum {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Small => "Small".to_string(),
@@ -93,35 +43,15 @@ impl AllowEnum {
         }
     }
 }
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy)]
 struct allow_newtype(pub i64);
-#[allow(dead_code)]
 impl allow_newtype {
     #[allow(dead_code)]
     pub fn inner(&self) -> i64 {
         return self.0;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[allow(non_snake_case, clippy::too_many_arguments)]
 fn MixedName(a: i64, b: i64, c: i64) -> i64 {
     return a + b + c;

@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn mixed_ops(x: i64, y: f64) -> f64 {
     let a = (x) as f64 + y;
     let b = y + (x) as f64;

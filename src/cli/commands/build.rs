@@ -413,6 +413,7 @@ fn prepare_project(
 
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(false);
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
@@ -750,6 +751,7 @@ pub fn build_library(
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
     let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(true);
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
     for module in dep_modules {

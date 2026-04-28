@@ -8,15 +8,12 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 fn accept_option(value: Option<i64>) -> Option<i64> {
     return value;
 }
-#[allow(dead_code)]
 fn accept_names(values: Vec<String>) -> Vec<String> {
     return values;
 }
-#[allow(dead_code)]
 fn accept_scores(
     values: std::collections::HashMap<String, f64>,
 ) -> std::collections::HashMap<String, f64> {

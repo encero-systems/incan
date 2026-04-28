@@ -31,10 +31,8 @@ fn __incan_init_module_statics() {
             std::sync::LazyLock::force(&ITEMS);
         });
 }
-#[allow(dead_code)]
 static COUNTER: std::sync::LazyLock<incan_stdlib::storage::StaticCell<i64>> = std::sync::LazyLock::new(||
 incan_stdlib::storage::StaticCell::new(0));
-#[allow(dead_code)]
 static ITEMS: std::sync::LazyLock<incan_stdlib::storage::StaticCell<Vec<i64>>> = std::sync::LazyLock::new(||
 incan_stdlib::storage::StaticCell::new(vec![]));
 fn main() {

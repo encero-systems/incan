@@ -7,29 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
-fn bump() -> i64 {
-    let mut x = 1;
-    x = x + 1;
-    return x;
-}
-#[allow(dead_code)]
-fn collatz_inner(n: i64) -> i64 {
-    let mut num = n;
-    while num != 1 {
-        if incan_stdlib::num::py_mod_i64(num, 2) == 0 {
-            num = incan_stdlib::num::py_div((num) as f64, (2) as f64);
-        } else {
-            num = 3 * num + 1;
-        }
-    }
-    return num;
-}
-#[allow(dead_code)]
-fn reassign_in_if() -> i64 {
-    let mut status = 0;
-    if status == 0 {
-        status = 1;
-    }
-    return status;
-}

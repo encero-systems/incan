@@ -8,14 +8,12 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 fn test_explicit_types() {
     let _x = 42;
     let _y = 3.14f64;
     let _z = "hello".to_string();
     let _flag = true;
 }
-#[allow(dead_code)]
 fn test_collection_types() {
     let _numbers = vec![1, 2, 3];
     let _words = vec!["a".to_string(), "b".to_string(), "c".to_string()];
@@ -23,23 +21,19 @@ fn test_collection_types() {
         .into_iter()
         .collect::<HashMap<_, _>>();
 }
-#[allow(dead_code)]
 fn test_option_types() {
     let _maybe_num = Some(42);
     let _nothing = None::<_>;
 }
-#[allow(dead_code)]
 fn test_nested_collections() {
     let _matrix = vec![vec![1, 2], vec![3, 4]];
     let _dict_of_lists = [("nums".to_string(), vec![1, 2, 3])]
         .into_iter()
         .collect::<HashMap<_, _>>();
 }
-#[allow(dead_code)]
 fn test_function_with_return_type() -> i64 {
     return 42;
 }
-#[allow(dead_code)]
 fn test_function_parameters(x: i64, y: String, z: bool) {
     println!("{}", x);
     println!("{}", y);

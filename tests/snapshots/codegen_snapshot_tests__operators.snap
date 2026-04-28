@@ -8,7 +8,6 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashSet;
-#[allow(dead_code)]
 fn test_operators() {
     let _add = 1 + 2;
     let _sub = 5 - 3;

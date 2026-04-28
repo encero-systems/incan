@@ -7,14 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use mail::Sender as RustSender;
-#[allow(dead_code)]
-type Sender = RustSender;
-#[allow(dead_code)]
-fn push(sender: Sender, value: i64) -> Result<(), String> {
-    return sender.try_send(value);
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

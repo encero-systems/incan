@@ -7,32 +7,19 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::r#async;
-#[allow(unused_imports)]
 pub use crate::__incan_std::traits::error::Error;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::JoinHandle;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::task::RuntimeFuture;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::TimeoutJoinOutcome as RustTimeoutJoinOutcome;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::clamp_seconds;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::clamp_millis;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::timeout_join as rust_timeout_join;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::time::timeout_join_ms as rust_timeout_join_ms;
-#[allow(unused_imports)]
-pub use tokio::time::sleep as tokio_sleep;
-#[allow(unused_imports)]
-pub use tokio::time::timeout as tokio_timeout;
-#[allow(dead_code)]
+use tokio::time::sleep as tokio_sleep;
+use tokio::time::timeout as tokio_timeout;
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct TimeoutError {}
-#[allow(dead_code)]
 impl TimeoutError {
     pub fn message(&self) -> String {
         return "operation timed out".to_string();
@@ -56,18 +43,11 @@ impl Error for TimeoutError {
         return None::<_>;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Duration {
     pub secs: i64,
     pub nanos: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn Duration(secs: i64, nanos: i64) -> Duration {
-    Duration { secs, nanos }
-}
-#[allow(dead_code)]
 impl Duration {
     pub fn from_secs(secs: i64) -> Duration {
         "Create a duration from whole seconds.";
@@ -122,19 +102,15 @@ impl Duration {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 pub type TimeoutJoinOutcome<T> = RustTimeoutJoinOutcome<T>;
-#[allow(dead_code)]
 pub async fn sleep(seconds: f64) {
     "\n    Sleep for a floating-point second duration.\n\n    Example:\n        await sleep(0.1)\n    ";
     tokio_sleep(clamp_seconds(seconds)).await;
 }
-#[allow(dead_code)]
 pub async fn sleep_ms(milliseconds: i64) {
     "\n    Sleep for an integer millisecond duration.\n\n    Example:\n        await sleep_ms(100)\n    ";
     tokio_sleep(clamp_millis(milliseconds)).await;
 }
-#[allow(dead_code)]
 pub async fn timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     seconds: f64,
     task: TaskFuture,
@@ -149,7 +125,6 @@ pub async fn timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
         }
     };
 }
-#[allow(dead_code)]
 pub async fn timeout_ms<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     milliseconds: i64,
     task: TaskFuture,
@@ -164,7 +139,6 @@ pub async fn timeout_ms<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
         }
     };
 }
-#[allow(dead_code)]
 pub async fn timeout_join<T: Send + 'static>(
     seconds: f64,
     handle: JoinHandle<T>,
@@ -172,7 +146,6 @@ pub async fn timeout_join<T: Send + 'static>(
     "\n    Wait up to `seconds` for a spawned task without cancelling it when the deadline expires.\n\n    Returns `TimeoutJoinOutcome.Completed(value)` when the task completes successfully,\n    `TimeoutJoinOutcome.JoinFailed(err)` when the task finishes with a join error, and\n    `TimeoutJoinOutcome.TimedOut(handle)` when the deadline wins. In the timeout case, `handle` remains live and can be\n    awaited, stored, or aborted explicitly. For blocking work created with `spawn_blocking()`, `abort()` can only prevent\n    work that has not started yet.\n    ";
     return rust_timeout_join(seconds, handle).await;
 }
-#[allow(dead_code)]
 pub async fn timeout_join_ms<T: Send + 'static>(
     milliseconds: i64,
     handle: JoinHandle<T>,

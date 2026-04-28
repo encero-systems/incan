@@ -7,40 +7,4 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::testing::assert_eq;
-#[allow(dead_code)]
-fn check_basics() {
-    if (1 + 1) != (2) {
-        panic!("AssertionError: left != right");
-    }
-    if (3) == (4) {
-        panic!("AssertionError: left == right");
-    }
-    if false {
-        panic!("AssertionError");
-    }
-    if !(true) {
-        panic!("AssertionError");
-    }
-    if !(10 > 5) {
-        {
-            let __incan_assert_msg = "ten should be greater than five";
-            if __incan_assert_msg.is_empty() {
-                panic!("AssertionError");
-            } else {
-                panic!("AssertionError: {}", __incan_assert_msg);
-            }
-        }
-    }
-}
-#[allow(dead_code)]
-fn encoded_len() -> i64 {
-    return 1;
-}
-#[allow(dead_code)]
-fn check_assert_eq_accepts_comparison_operand() {
-    if (encoded_len() > 0) != (true) {
-        panic!("AssertionError: left != right");
-    }
-}

@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn match_index(xs: Vec<String>, y: i64) -> i64 {
     let mut idx = 0;
     while idx < ::std::convert::identity(xs.len() as i64) {
@@ -21,7 +20,6 @@ fn match_index(xs: Vec<String>, y: i64) -> i64 {
     }
     return -1;
 }
-#[allow(dead_code)]
 fn helper_loop(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     let mut out = vec![];
     for y in ys.iter().copied() {
@@ -29,7 +27,6 @@ fn helper_loop(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     }
     return out.clone();
 }
-#[allow(dead_code)]
 fn helper_list(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     return (ys).iter().cloned().map(|y| match_index(xs.clone(), y)).collect::<Vec<_>>();
 }

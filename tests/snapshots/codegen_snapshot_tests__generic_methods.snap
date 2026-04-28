@@ -7,113 +7,48 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Box {}
-#[allow(dead_code)]
 impl Box {
     pub fn get<T: Clone>(&self, value: T) -> T {
         return value;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Shelf<U> {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     item: U,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Shelf<U>(item: U) -> Shelf<U> {
-    Shelf { item }
-}
-#[allow(dead_code)]
 impl<U> Shelf<U> {
     pub fn swap<T: Clone>(&self, value: T) -> T {
         return value;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("item"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("item"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("U"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 pub trait Echo {
     fn echo<T: Clone>(&self, value: T) -> T;
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Pair {}
-#[allow(dead_code)]
 impl Pair {
     pub fn swap<T: Clone, U: Clone>(&self, _: T, right: U) -> U {
         return right;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct EchoBox {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     marker: i64,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn EchoBox(marker: i64) -> EchoBox {
-    EchoBox { marker }
 }
 impl Echo for EchoBox {
     fn echo<T: Clone>(&self, value: T) -> T {
         return value;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 struct Wrapper<U>(pub U);
-#[allow(dead_code)]
 impl<U> Wrapper<U> {
     pub fn echo<T: Clone>(&self, value: T) -> T {
         return value;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("U"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {

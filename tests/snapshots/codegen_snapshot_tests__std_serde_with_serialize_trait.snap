@@ -7,9 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::serde::json::Serialize;
-#[allow(dead_code)]
 #[derive(
     serde::Serialize,
     Debug,
@@ -18,32 +16,10 @@ pub use crate::__incan_std::serde::json::Serialize;
     incan_derive::IncanClass
 )]
 struct Payload {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     value: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Payload(value: i64) -> Payload {
-    Payload { value }
-}
-#[allow(dead_code)]
 impl Payload {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
     /// Serialize this model to a JSON string
     pub fn to_json(&self) -> String {
         incan_stdlib::json::__private::stringify_or_raise(self, stringify!(Payload))

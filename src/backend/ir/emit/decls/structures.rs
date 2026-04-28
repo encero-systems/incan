@@ -9,6 +9,21 @@ use super::super::super::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, 
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit a field-level expectation for private generated fields that must remain present for Incan semantics even
+    /// when Rust cannot observe a read in the generated program.
+    fn private_field_dead_code_expect(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+        visibility: &super::super::super::decl::Visibility,
+    ) -> TokenStream {
+        if self.should_expect_private_field_dead_code(struct_name, field_name, visibility) {
+            quote! { #[expect(dead_code, reason = "retained for Incan private field semantics")] }
+        } else {
+            quote! {}
+        }
+    }
+
     /// Emit a Rust struct definition and any supported constructor surface.
     pub(in crate::backend::ir::emit) fn emit_struct(&self, s: &IrStruct) -> Result<TokenStream, EmitError> {
         let name = Self::rust_ident(&s.name);
@@ -48,7 +63,6 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&s.lint_allows);
-        let dead_code_allow = self.generated_dead_code_allow();
 
         let has_serde = s.derives.iter().any(|d| {
             matches!(
@@ -71,13 +85,13 @@ impl<'a> IrEmitter<'a> {
                 .map(|f| {
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
-                    quote! { #fvis #fty }
+                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
+                    quote! { #dead_code_expect #fvis #fty }
                 })
                 .collect();
 
             // Emit struct definition
             let struct_def = quote! {
-                #dead_code_allow
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics (#(#tuple_fields),*);
@@ -99,6 +113,7 @@ impl<'a> IrEmitter<'a> {
                     let fname = format_ident!("{}", &f.name);
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
+                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
                     let serde_attr = if has_serde {
                         f.alias
                             .as_ref()
@@ -107,11 +122,11 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
-                    quote! { #serde_attr #fvis #fname: #fty }
+                    quote! { #dead_code_expect #serde_attr #fvis #fname: #fty }
                 })
                 .collect();
 
-            let constructor = if !s.fields.is_empty() {
+            let constructor = if !s.fields.is_empty() && self.should_emit_struct_constructor(&s.name) {
                 let param_tokens: Vec<TokenStream> = s
                     .fields
                     .iter()
@@ -131,7 +146,6 @@ impl<'a> IrEmitter<'a> {
                     .collect();
 
                 quote! {
-                    #dead_code_allow
                     #[allow(non_snake_case, clippy::too_many_arguments)]
                     #vis fn #name #generics (#(#param_tokens),*) -> #name #generics_bare {
                         #name {
@@ -144,7 +158,6 @@ impl<'a> IrEmitter<'a> {
             };
 
             Ok(quote! {
-                #dead_code_allow
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics {
@@ -229,7 +242,6 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&e.lint_allows);
-        let dead_code_allow = self.generated_dead_code_allow();
 
         let variant_match_arms: Vec<TokenStream> = e
             .variants
@@ -258,7 +270,6 @@ impl<'a> IrEmitter<'a> {
         let value_enum_helpers = self.emit_value_enum_helpers(e, &name, &generics, &generics_bare)?;
 
         Ok(quote! {
-            #dead_code_allow
             #(#lint_allows)*
             #derive_attr
             #vis enum #name #generics {
@@ -266,7 +277,6 @@ impl<'a> IrEmitter<'a> {
             }
 
             impl #generics #name #generics_bare {
-                #dead_code_allow
                 pub fn message(&self) -> String {
                     match self {
                         #(#variant_match_arms),*
@@ -295,7 +305,6 @@ impl<'a> IrEmitter<'a> {
                 e.name
             )));
         }
-        let dead_code_allow = self.generated_dead_code_allow();
 
         match value_type {
             IrEnumValueType::String => {
@@ -369,14 +378,12 @@ impl<'a> IrEmitter<'a> {
 
                 Ok(quote! {
                     impl #generics #name #generics_bare {
-                        #dead_code_allow
                         pub fn value(&self) -> String {
                             match self {
                                 #(#value_arms),*
                             }
                         }
 
-                        #dead_code_allow
                         pub fn from_value(value: impl AsRef<str>) -> Option<Self> {
                             match value.as_ref() {
                                 #(#from_value_arms),*,
@@ -479,14 +486,12 @@ impl<'a> IrEmitter<'a> {
 
                 Ok(quote! {
                     impl #generics #name #generics_bare {
-                        #dead_code_allow
                         pub fn value(&self) -> i64 {
                             match self {
                                 #(#value_arms),*
                             }
                         }
 
-                        #dead_code_allow
                         pub fn from_value(value: i64) -> Option<Self> {
                             match value {
                                 #(#from_value_arms),*,

@@ -7,14 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
-fn identity<T: Clone>(value: T) -> T {
-    return value;
-}
-#[allow(dead_code)]
-fn format_pair<T: PartialEq + std::fmt::Debug>(_: T, _: T) {
-    ();
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

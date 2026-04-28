@@ -7,11 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use std::collections::HashMap;
-#[allow(unused_imports)]
-pub use std::string::String;
-#[allow(dead_code)]
-fn empty_name_index() -> std::collections::HashMap<String, i64> {
-    return HashMap::new();
-}

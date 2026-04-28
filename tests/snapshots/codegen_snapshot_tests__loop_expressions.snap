@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn find_value(flag: bool) -> i64 {
     return loop {
         if flag {
@@ -16,7 +15,6 @@ fn find_value(flag: bool) -> i64 {
         break 7;
     };
 }
-#[allow(dead_code)]
 fn spin(limit: i64) {
     let mut current = 0;
     loop {

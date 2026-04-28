@@ -434,7 +434,12 @@ pub(crate) fn ensure_rust_inspect_workspace(
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
 ) -> CliResult<PathBuf> {
-    let rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
+    let base_rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
+    let rust_inspect_manifest_dir = if project_name.starts_with("incan_cmd_") {
+        base_rust_inspect_manifest_dir.join(project_name)
+    } else {
+        base_rust_inspect_manifest_dir
+    };
     let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
     let cargo_toml_path = rust_inspect_manifest_dir.join("Cargo.toml");
     let main_rs_path = rust_inspect_manifest_dir.join("src").join("main.rs");

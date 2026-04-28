@@ -70,6 +70,7 @@ pub enum IrDeclKind {
 
     /// Import (preserved for codegen)
     Import {
+        visibility: Visibility,
         origin: IrImportOrigin,
         qualifier: IrImportQualifier,
         path: Vec<String>,
@@ -152,6 +153,11 @@ pub enum IrImportQualifier {
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
+    /// Method names provided when this item is a Rust trait import.
+    ///
+    /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.
+    /// Codegen uses these method names to retain only trait imports that can satisfy observed method calls.
+    pub rust_trait_methods: Vec<String>,
 }
 
 /// IR trait definition

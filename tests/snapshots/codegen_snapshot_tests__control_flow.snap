@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn test_if_statements() {
     let x = 10;
     if x > 5 {
@@ -28,7 +27,6 @@ fn test_if_statements() {
         }
     }
 }
-#[allow(dead_code)]
 fn test_while_loops() {
     let mut i = 0;
     while i < 5 {
@@ -52,7 +50,6 @@ fn test_while_loops() {
         println!("{}", k);
     }
 }
-#[allow(dead_code)]
 fn test_for_loops() {
     let numbers = vec![1, 2, 3, 4, 5];
     for num in numbers.iter().copied() {
@@ -74,7 +71,6 @@ fn test_for_loops() {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_nested_control_flow() {
     for i in 0_i64..(3 as i64) {
         for j in 0_i64..(3 as i64) {

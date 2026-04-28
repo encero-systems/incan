@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn combine(
     _: i64,
     _: String,
@@ -20,27 +19,17 @@ fn combine(
         )
         .clone();
 }
-#[allow(dead_code)]
 fn route(path: String, method: String) -> String {
     return incan_stdlib::strings::str_concat(
         &incan_stdlib::strings::str_concat(&method, &" "),
         &path,
     );
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Counter {}
-#[allow(dead_code)]
 impl Counter {
     pub fn add(&self, left: i64, right: i64) -> i64 {
         return left + right;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {

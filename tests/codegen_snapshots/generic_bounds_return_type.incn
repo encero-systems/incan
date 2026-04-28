@@ -1,18 +1,18 @@
 """Issue #196: infer generic bounds required by trait return types."""
 
-trait DataSet[T with Clone]:
+pub trait DataSet[T with Clone]:
     def tag(self) -> T: ...
 
 
-trait BoundedDataSet[T with Clone] with DataSet[T]:
+pub trait BoundedDataSet[T with Clone] with DataSet[T]:
     def bound(self) -> T: ...
 
 
-def upcast_bounded_to_dataset[T](value: BoundedDataSet[T]) -> DataSet[T]:
+pub def upcast_bounded_to_dataset[T](value: BoundedDataSet[T]) -> DataSet[T]:
     return value
 
 
-def upcast_bounded_to_bounded[T](value: BoundedDataSet[T]) -> BoundedDataSet[T]:
+pub def upcast_bounded_to_bounded[T](value: BoundedDataSet[T]) -> BoundedDataSet[T]:
     return value
 
 

@@ -54,3 +54,16 @@ def test_sorted_builtin() -> None:
     items: list[int] = [3, 1, 4, 1, 5]
     sorted_items: list[int] = sorted(items)
     print(sorted_items)
+
+def main() -> None:
+    test_print_builtin()
+    test_len_builtin()
+    test_range_builtin()
+    test_sum_builtin()
+    test_min_max_builtins()
+    test_abs_builtin()
+    test_str_builtin()
+    test_int_builtin()
+    test_float_builtin()
+    test_bool_builtin()
+    test_sorted_builtin()

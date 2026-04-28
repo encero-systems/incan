@@ -65,9 +65,7 @@ impl<'a> IrEmitter<'a> {
                 let name_ident = format_ident!("{}", name);
                 let ty_tokens = self.emit_type(ty);
                 let generics = self.emit_type_params(type_params);
-                let dead_code_allow = self.generated_dead_code_allow();
                 Ok(quote! {
-                    #dead_code_allow
                     #vis type #name_ident #generics = #ty_tokens;
                 })
             }
@@ -84,12 +82,13 @@ impl<'a> IrEmitter<'a> {
                 value,
             } => self.emit_static(visibility, name, ty, value),
             IrDeclKind::Import {
+                visibility,
                 origin,
                 qualifier,
                 path,
                 alias,
                 items,
-            } => self.emit_import(origin, qualifier, path, alias, items),
+            } => self.emit_import(visibility, origin, qualifier, path, alias, items),
             IrDeclKind::Impl(impl_block) => self.emit_impl(impl_block),
             IrDeclKind::Trait(trait_decl) => self.emit_trait(trait_decl),
         }
@@ -112,10 +111,8 @@ impl<'a> IrEmitter<'a> {
         let emitted_value = emitted_value?;
         let converted_value =
             plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(emitted_value);
-        let dead_code_allow = self.generated_dead_code_allow();
 
         Ok(quote! {
-            #dead_code_allow
             #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
                 std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
         })
@@ -137,10 +134,8 @@ impl<'a> IrEmitter<'a> {
         let name_ident = format_ident!("{}", name);
         let ty_tokens = self.emit_type(ty);
         let value_tokens = self.emit_const_value_for_type(ty, value)?;
-        let dead_code_allow = self.generated_dead_code_allow();
 
         Ok(quote! {
-            #dead_code_allow
             #vis const #name_ident: #ty_tokens = #value_tokens;
         })
     }
@@ -219,9 +214,10 @@ impl<'a> IrEmitter<'a> {
 
     // ---- Import emission ----
 
-    /// Emit a Rust import or re-export, including scoped unused-import allowance when normal emission needs it.
+    /// Emit a Rust import or re-export after generated-use analysis prunes private unused bindings.
     fn emit_import(
         &self,
+        visibility: &super::super::decl::Visibility,
         origin: &IrImportOrigin,
         qualifier: &IrImportQualifier,
         path: &[String],
@@ -320,32 +316,25 @@ impl<'a> IrEmitter<'a> {
         };
 
         let path_ts = join_path_tokens(&path_tokens);
-        let unused_imports_allow = self.generated_unused_imports_allow();
-
-        // `pub use` module imports in two cases:
-        // 1. Stdlib Incan-source imports (std.web.* → crate::__incan_std::web::*)
-        // 2. Rust crate imports inside a `rust.module(...)` file — these are re-exported so users can do `from
-        //    std.web.response import Json` and get axum::Json.
-        //
-        // Item imports (`from ... import X`) are always emitted as re-exports. The frontend already treats both
-        // `from module import X` and `from rust::crate import X` as module exports, so the backend must preserve that
-        // contract in generated Rust as well.
+        // Public source imports, stdlib facades, and rust.module imports are re-exported. Private `pub::` library
+        // imports behave like ordinary private imports: emit them only when generated Rust references the binding.
         let is_rust_crate_reexport =
             matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some() && !is_pub_library_import;
-        let export_module_import = is_incan_source_stdlib || is_rust_crate_reexport;
+        let is_public_reexport = !matches!(visibility, super::super::decl::Visibility::Private);
+        let export_module_import = is_public_reexport || is_incan_source_stdlib || is_rust_crate_reexport;
 
         if let Some(alias_name) = alias {
             let alias_ident = Self::rust_ident(alias_name);
             if export_module_import {
                 Ok(quote! {
-                    #unused_imports_allow
                     pub use #path_ts as #alias_ident;
                 })
-            } else {
+            } else if self.should_emit_import_binding(alias_name) {
                 Ok(quote! {
-                    #unused_imports_allow
                     use #path_ts as #alias_ident;
                 })
+            } else {
+                Ok(quote! {})
             }
         } else if !items.is_empty() {
             // ---- Track Rust import paths for alias resolution ----
@@ -361,17 +350,34 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
+            let preserves_stdlib_rust_facade = matches!(qualifier, IrImportQualifier::None)
+                && path.first().is_some_and(|segment| segment == "incan_stdlib");
+            let export_item_import = export_module_import || preserves_stdlib_rust_facade;
             let item_stmts: Vec<TokenStream> = items
                 .iter()
+                .filter(|item| {
+                    let binding = item.alias.as_ref().unwrap_or(&item.name);
+                    export_item_import
+                        || self.should_emit_import_binding(binding)
+                        || self.should_emit_extension_trait_import(binding)
+                })
                 .map(|item| {
                     let name_ident = Self::rust_ident(&item.name);
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        quote! { #unused_imports_allow pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        if export_item_import {
+                            quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                        }
                     } else {
-                        quote! { #unused_imports_allow pub use #path_ts_clone :: #name_ident; }
+                        if export_item_import {
+                            quote! { pub use #path_ts_clone :: #name_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident; }
+                        }
                     }
                 })
                 .collect();
@@ -380,14 +386,16 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {
-                #unused_imports_allow
                 pub use #path_ts;
             })
-        } else {
+        } else if let Some(binding) = path.last()
+            && self.should_emit_import_binding(binding)
+        {
             Ok(quote! {
-                #unused_imports_allow
                 use #path_ts;
             })
+        } else {
+            Ok(quote! {})
         }
     }
 }

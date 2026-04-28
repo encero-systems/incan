@@ -7,12 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Callable0<R> {
-    fn __call__(&self) -> R;
-}
-pub trait Callable1<A, R> {
-    fn __call__(&self, arg: A) -> R;
-}
-pub trait Callable2<A, B, R> {
-    fn __call__(&self, a: A, b: B) -> R;
-}

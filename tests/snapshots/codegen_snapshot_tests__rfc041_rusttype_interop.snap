@@ -7,14 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use std::string::String as RustString;
-#[allow(dead_code)]
-type Name = RustString;
-#[allow(dead_code)]
-fn takes_name(name: Name) {
-    println!("{}", name.as_str());
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

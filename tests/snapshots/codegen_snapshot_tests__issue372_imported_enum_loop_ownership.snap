@@ -7,9 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use crate::rels::ConformanceRel;
-#[allow(dead_code)]
+use crate::rels::ConformanceRel;
 fn relation_kind_name_from_conformance(rel: ConformanceRel) -> String {
     match rel {
         ConformanceRel::Read => {
@@ -20,7 +18,6 @@ fn relation_kind_name_from_conformance(rel: ConformanceRel) -> String {
         }
     };
 }
-#[allow(dead_code)]
 fn scenario_matches(required: Vec<ConformanceRel>) -> bool {
     for expected in required.iter().cloned() {
         if expected == ConformanceRel::Read {
@@ -46,5 +43,5 @@ fn main() {
             }
         }),
     );
-    ();
+    println!("{}", scenario_matches(vec![ConformanceRel::Read.clone()]));
 }

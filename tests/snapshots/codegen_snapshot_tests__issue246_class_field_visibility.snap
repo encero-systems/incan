@@ -7,18 +7,11 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct LazyFrame {
     _cursor: i64,
     pub schema: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn LazyFrame(_cursor: i64, schema: String) -> LazyFrame {
-    LazyFrame { _cursor, schema }
-}
-#[allow(dead_code)]
 impl LazyFrame {
     pub fn cursor(&self) -> i64 {
         return self._cursor;
@@ -49,8 +42,4 @@ impl LazyFrame {
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
-}
-#[allow(dead_code)]
-fn schema(frame: LazyFrame) -> String {
-    return frame.schema.clone();
 }

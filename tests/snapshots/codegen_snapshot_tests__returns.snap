@@ -7,17 +7,14 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn simple_return() -> i64 {
     return 42;
 }
-#[allow(dead_code)]
 fn return_expression() -> i64 {
     let x = 10;
     let y = 20;
     return x + y;
 }
-#[allow(dead_code)]
 fn early_return(x: i64) -> String {
     if x < 0 {
         return "negative".to_string();
@@ -29,14 +26,12 @@ fn early_return(x: i64) -> String {
         }
     }
 }
-#[allow(dead_code)]
 fn multiple_returns(x: i64) -> i64 {
     if x < 10 {
         return x * 2;
     }
     return x * 3;
 }
-#[allow(dead_code)]
 fn return_from_loop(numbers: Vec<i64>) -> i64 {
     for num in numbers.iter().copied() {
         if num > 10 {
@@ -45,12 +40,10 @@ fn return_from_loop(numbers: Vec<i64>) -> i64 {
     }
     return -1;
 }
-#[allow(dead_code)]
 fn void_return() {
     println!("{}", "Hello");
     return;
 }
-#[allow(dead_code)]
 fn implicit_void_return() {
     let x = 5;
     if x > 0 {

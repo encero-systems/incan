@@ -20,3 +20,9 @@ def take_first(values: Collection[int]) -> int:
 
 def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
     return values.sorted()
+
+def main() -> None:
+    print(take_first(BoxedValue(value=1)))
+    print(take_sorted(BoxedValue(value=2)).first())
+    print(BoxedValue(value=3).first())
+    print(BoxedValue(value=4).sorted().first())

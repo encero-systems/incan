@@ -7,11 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::serde::json::Serialize;
-#[allow(unused_imports)]
 pub use crate::__incan_std::serde::json::Deserialize;
-#[allow(dead_code)]
 #[derive(
     serde::Serialize,
     serde::Deserialize,
@@ -21,59 +18,33 @@ pub use crate::__incan_std::serde::json::Deserialize;
     incan_derive::IncanClass
 )]
 struct Config {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     host: String,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     port: i64,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     debug: bool,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Config(host: String, port: i64, debug: bool) -> Config {
-    Config { host, port, debug }
-}
-#[allow(dead_code)]
 impl Config {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("host"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("host"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("port"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("port"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("debug"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("debug"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
     /// Serialize this model to a JSON string
     pub fn to_json(&self) -> String {
         incan_stdlib::json::__private::stringify_or_raise(self, stringify!(Config))
     }
-    /// Deserialize a JSON string into this model
-    pub fn from_json(json_str: String) -> Result<Self, String> {
-        serde_json::from_str(&json_str)
-            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
-    }
+}
+fn main() {
+    std::panic::set_hook(
+        std::boxed::Box::new(|panic_info| {
+            if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
+                eprintln!("{message}");
+            } else if let Some(message) = panic_info.payload().downcast_ref::<String>() {
+                eprintln!("{message}");
+            } else {
+                eprintln!("generated program panicked");
+            }
+        }),
+    );
+    println!(
+        "{}", Config { host : "localhost".to_string(), port : 8080, debug : true }
+        .to_json()
+    );
 }

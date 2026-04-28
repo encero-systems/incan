@@ -7,68 +7,37 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::r#async;
-#[allow(unused_imports)]
 pub use crate::__incan_std::traits::error::Error;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawMutex;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawMutexGuard;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawRwLock;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawRwLockReadGuard;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawRwLockWriteGuard;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawSemaphore;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawSemaphorePermit;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::RawBarrier;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::mutex_new as rust_mutex_new;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::mutex_lock as rust_mutex_lock;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::mutex_try_lock as rust_mutex_try_lock;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::mutex_guard_get as rust_mutex_guard_get;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::mutex_guard_set as rust_mutex_guard_set;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_new as rust_rwlock_new;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_read as rust_rwlock_read;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_write as rust_rwlock_write;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_try_read as rust_rwlock_try_read;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_try_write as rust_rwlock_try_write;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_read_guard_get as rust_rwlock_read_guard_get;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_write_guard_get as rust_rwlock_write_guard_get;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::rwlock_write_guard_set as rust_rwlock_write_guard_set;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::semaphore_new as rust_semaphore_new;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::semaphore_acquire as rust_semaphore_acquire;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::semaphore_try_acquire as rust_semaphore_try_acquire;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::semaphore_available_permits as rust_semaphore_available_permits;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::barrier_new as rust_barrier_new;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::sync::barrier_wait as rust_barrier_wait;
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct SemaphoreAcquireError {}
-#[allow(dead_code)]
 impl SemaphoreAcquireError {
     pub fn message(&self) -> String {
         return "failed to acquire semaphore permit: semaphore closed".to_string();
@@ -92,10 +61,8 @@ impl Error for SemaphoreAcquireError {
         return None::<_>;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Mutex<T: Clone>(pub RawMutex<T>);
-#[allow(dead_code)]
 impl<T: Clone> Mutex<T> {
     pub fn new(value: T) -> Self {
         "Create a new mutex wrapping the given value";
@@ -134,10 +101,8 @@ impl<T: Clone> Mutex<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MutexGuard<T: Clone>(pub RawMutexGuard<T>);
-#[allow(dead_code)]
 impl<T: Clone> MutexGuard<T> {
     pub fn get(&self) -> T {
         "Get the current value (by reference)";
@@ -165,10 +130,8 @@ impl<T: Clone> MutexGuard<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RwLock<T: Clone>(pub RawRwLock<T>);
-#[allow(dead_code)]
 impl<T: Clone> RwLock<T> {
     pub fn new(value: T) -> Self {
         "Create a new RwLock wrapping the given value";
@@ -222,10 +185,8 @@ impl<T: Clone> RwLock<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct RwLockReadGuard<T: Clone>(pub RawRwLockReadGuard<T>);
-#[allow(dead_code)]
 impl<T: Clone> RwLockReadGuard<T> {
     pub fn get(&self) -> T {
         "Get the current value (read-only)";
@@ -249,10 +210,8 @@ impl<T: Clone> RwLockReadGuard<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct RwLockWriteGuard<T: Clone>(pub RawRwLockWriteGuard<T>);
-#[allow(dead_code)]
 impl<T: Clone> RwLockWriteGuard<T> {
     pub fn get(&self) -> T {
         "Get the current value (read-only)";
@@ -282,10 +241,8 @@ impl<T: Clone> RwLockWriteGuard<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Semaphore(pub RawSemaphore);
-#[allow(dead_code)]
 impl Semaphore {
     pub fn new(permits: i64) -> Self {
         "Create a new semaphore with the given number of permits";
@@ -341,13 +298,10 @@ impl Semaphore {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SemaphorePermit(pub RawSemaphorePermit);
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Barrier(pub RawBarrier);
-#[allow(dead_code)]
 impl Barrier {
     pub fn new(count: i64) -> Self {
         "Create a barrier that waits for `count` tasks";

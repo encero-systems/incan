@@ -1106,7 +1106,7 @@ def scenario_matches(required: list[ConformanceRel]) -> bool:
   return false
 
 def main() -> None:
-  pass
+  println(scenario_matches([ConformanceRel.Read]))
 "#;
     let rels_source = r#"
 @derive(Clone)
@@ -1159,7 +1159,7 @@ def selected_column_name() -> str:
   return result.column_name
 
 def main() -> None:
-  pass
+  println(selected_column_name())
 "#;
     let functions_source = r#"
 pub model ColumnRef:

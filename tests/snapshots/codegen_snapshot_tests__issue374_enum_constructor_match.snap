@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConformanceRel {
     Read,
@@ -15,7 +14,6 @@ pub enum ConformanceRel {
     Project,
 }
 impl ConformanceRel {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Read => "Read".to_string(),
@@ -24,7 +22,6 @@ impl ConformanceRel {
         }
     }
 }
-#[allow(dead_code)]
 pub fn relation_kind_name_from_conformance(rel: ConformanceRel) -> String {
     match rel {
         ConformanceRel::Read => {

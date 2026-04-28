@@ -15,65 +15,22 @@ pub trait Shape {
     fn area(&self) -> f64;
     fn perimeter(&self) -> f64;
 }
-pub trait Comparable {
-    fn compare(&self, other: Self) -> i64;
-    fn is_equal(&self, other: Self) -> bool;
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Dog {
     pub name: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Dog(name: String) -> Dog {
-    Dog { name }
-}
 impl Named for Dog {}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Rectangle {
     width: f64,
     height: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Rectangle(width: f64, height: f64) -> Rectangle {
-    Rectangle { width, height }
-}
-#[allow(dead_code)]
 impl Rectangle {
     pub fn area(&self) -> f64 {
         return self.width * self.height;
     }
     pub fn perimeter(&self) -> f64 {
         return 2f64 * self.width + self.height;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("width"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("width"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("height"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("height"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Shape for Rectangle {
@@ -84,17 +41,10 @@ impl Shape for Rectangle {
         return 2f64 * self.width + self.height;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Circle {
     radius: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Circle(radius: f64) -> Circle {
-    Circle { radius }
-}
-#[allow(dead_code)]
 impl Circle {
     pub fn draw(&self) -> String {
         return {
@@ -102,23 +52,6 @@ impl Circle {
             let __args: Vec<String> = vec![format!("{}", self.radius)];
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("radius"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("radius"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Drawable for Circle {
@@ -130,23 +63,13 @@ impl Drawable for Circle {
         };
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Square {
     side: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Square(side: f64) -> Square {
-    Square { side }
-}
-#[allow(dead_code)]
 impl Square {
     pub fn area(&self) -> f64 {
         return self.side * self.side;
-    }
-    pub fn perimeter(&self) -> f64 {
-        return 4f64 * self.side;
     }
     pub fn draw(&self) -> String {
         return {
@@ -154,23 +77,6 @@ impl Square {
             let __args: Vec<String> = vec![format!("{}", self.side)];
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("side"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("side"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Shape for Square {
@@ -193,19 +99,12 @@ impl Drawable for Square {
 pub trait Resizable {
     fn resize(&self, factor: f64);
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Carton {
     width: f64,
     height: f64,
     depth: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Carton(width: f64, height: f64, depth: f64) -> Carton {
-    Carton { width, height, depth }
-}
-#[allow(dead_code)]
 impl Carton {
     pub fn resize(&self, factor: f64) {
         self.width = self.width * factor;
@@ -214,41 +113,6 @@ impl Carton {
     }
     pub fn volume(&self) -> f64 {
         return self.width * self.height * self.depth;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("width"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("width"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("height"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("height"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("depth"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("depth"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Resizable for Carton {
@@ -264,18 +128,11 @@ pub trait Printable {
 pub trait Serializable {
     fn serialize(&self) -> String;
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Document {
     title: String,
     content: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Document(title: String, content: String) -> Document {
-    Document { title, content }
-}
-#[allow(dead_code)]
 impl Document {
     pub fn to_string(&self) -> String {
         return {
@@ -294,32 +151,6 @@ impl Document {
             ];
             incan_stdlib::strings::fstring(&__parts, &__args)
         };
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("title"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("title"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("content"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("content"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl Printable for Document {
@@ -344,12 +175,10 @@ impl Serializable for Document {
         };
     }
 }
-#[allow(dead_code)]
 fn draw_shape<__IncanTrait0: Drawable>(shape: __IncanTrait0) {
     let output = shape.draw();
     println!("{}", output);
 }
-#[allow(dead_code)]
 fn calculate_area<__IncanTrait0: Shape>(shape: __IncanTrait0) -> f64 {
     return shape.area();
 }

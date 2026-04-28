@@ -7,55 +7,22 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Cursor {}
-#[allow(dead_code)]
 impl Cursor {
     pub fn join(&self, _: Self, _: bool) -> Self {
         return Cursor {};
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Wrapper {
     _cursor: Cursor,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Wrapper(_cursor: Cursor) -> Wrapper {
-    Wrapper { _cursor }
-}
-#[allow(dead_code)]
 impl Wrapper {
     pub fn merge(&self, other: Self) -> Self {
         return Wrapper {
             _cursor: self._cursor.join(other._cursor.clone(), true),
         };
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Cursor"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {

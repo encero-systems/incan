@@ -7,11 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Serialize {
-    fn to_json(&self) -> String;
-}
-pub trait Deserialize {
-    fn from_json(json_str: String) -> Result<Self, String>
-    where
-        Self: Sized;
-}

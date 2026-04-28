@@ -7,10 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use mail::EmailAddress as RustEmailAddress;
-#[allow(dead_code)]
-type Email = RustEmailAddress;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

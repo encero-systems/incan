@@ -8,7 +8,6 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Color {
     Red,
@@ -16,7 +15,6 @@ enum Color {
     Blue,
 }
 impl Color {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Red => "Red".to_string(),
@@ -25,14 +23,12 @@ impl Color {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Maybe {
     Some(i64),
     None,
 }
 impl Maybe {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Some(_) => "Some".to_string(),
@@ -40,14 +36,12 @@ impl Maybe {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Result {
     Ok(i64),
     Err(String),
 }
 impl Result {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Ok(_) => "Ok".to_string(),
@@ -55,7 +49,6 @@ impl Result {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Message {
     Quit,
@@ -64,7 +57,6 @@ enum Message {
     ChangeColor(i64, i64, i64),
 }
 impl Message {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Quit => "Quit".to_string(),
@@ -74,7 +66,6 @@ impl Message {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Shape {
     Circle(f64),
@@ -82,7 +73,6 @@ enum Shape {
     Triangle(f64, f64),
 }
 impl Shape {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Circle(_) => "Circle".to_string(),
@@ -91,7 +81,6 @@ impl Shape {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Status {
     Pending,
@@ -100,7 +89,6 @@ enum Status {
     Failed,
 }
 impl Status {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Pending => "Pending".to_string(),
@@ -110,7 +98,6 @@ impl Status {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum Priority {
     Low,
@@ -119,7 +106,6 @@ enum Priority {
     Critical,
 }
 impl Priority {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Low => "Low".to_string(),
@@ -129,7 +115,6 @@ impl Priority {
         }
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum DataContainer {
     Empty,
@@ -138,7 +123,6 @@ enum DataContainer {
     Mapped(std::collections::HashMap<String, i64>),
 }
 impl DataContainer {
-    #[allow(dead_code)]
     pub fn message(&self) -> String {
         match self {
             Self::Empty => "Empty".to_string(),
@@ -148,7 +132,6 @@ impl DataContainer {
         }
     }
 }
-#[allow(dead_code)]
 fn get_color_name(color: Color) -> String {
     match color {
         Color::Red => {
@@ -162,7 +145,6 @@ fn get_color_name(color: Color) -> String {
         }
     };
 }
-#[allow(dead_code)]
 fn process_maybe(value: Maybe) -> i64 {
     match value {
         Maybe::Some(x) => {
@@ -173,7 +155,6 @@ fn process_maybe(value: Maybe) -> i64 {
         }
     };
 }
-#[allow(dead_code)]
 fn handle_result(result: Result) -> String {
     match result {
         Result::Ok(value) => {
@@ -192,7 +173,6 @@ fn handle_result(result: Result) -> String {
         }
     };
 }
-#[allow(dead_code)]
 fn handle_message(msg: Message) -> String {
     match msg {
         Message::Quit => {
@@ -223,7 +203,6 @@ fn handle_message(msg: Message) -> String {
         }
     };
 }
-#[allow(dead_code)]
 fn calculate_area(shape: Shape) -> f64 {
     match shape {
         Shape::Circle(r) => {
@@ -237,7 +216,6 @@ fn calculate_area(shape: Shape) -> f64 {
         }
     };
 }
-#[allow(dead_code)]
 fn get_priority_level(priority: Priority) -> i64 {
     match priority {
         Priority::Low => {
@@ -254,7 +232,6 @@ fn get_priority_level(priority: Priority) -> i64 {
         }
     };
 }
-#[allow(dead_code)]
 fn count_items(container: DataContainer) -> i64 {
     match container {
         DataContainer::Empty => {

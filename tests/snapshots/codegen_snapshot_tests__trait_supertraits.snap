@@ -13,40 +13,16 @@ pub trait Collection<T> {
 pub trait OrderedCollection<T>: Collection<T> {
     fn sorted(&self) -> Self;
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct BoxedValue<T> {
     value: T,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn BoxedValue<T>(value: T) -> BoxedValue<T> {
-    BoxedValue { value }
-}
-#[allow(dead_code)]
 impl<T: Clone> BoxedValue<T> {
     pub fn first(&self) -> T {
         return self.value.clone();
     }
     pub fn sorted(&self) -> Self {
         return self.clone();
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 impl<T: Clone> OrderedCollection<T> for BoxedValue<T> {
@@ -59,13 +35,28 @@ impl<T: Clone> Collection<T> for BoxedValue<T> {
         return self.value.clone();
     }
 }
-#[allow(dead_code)]
 fn take_first<__IncanTrait0: Collection<i64>>(values: __IncanTrait0) -> i64 {
     return values.first();
 }
-#[allow(dead_code)]
 fn take_sorted<__IncanTrait0: OrderedCollection<i64>>(
     values: __IncanTrait0,
 ) -> impl OrderedCollection<i64> {
     return values.sorted();
+}
+fn main() {
+    std::panic::set_hook(
+        std::boxed::Box::new(|panic_info| {
+            if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
+                eprintln!("{message}");
+            } else if let Some(message) = panic_info.payload().downcast_ref::<String>() {
+                eprintln!("{message}");
+            } else {
+                eprintln!("generated program panicked");
+            }
+        }),
+    );
+    println!("{}", take_first(BoxedValue { value : 1 }));
+    println!("{}", take_sorted(BoxedValue { value : 2 }).first());
+    println!("{}", BoxedValue { value : 3 } .first());
+    println!("{}", BoxedValue { value : 4 } .sorted().first());
 }

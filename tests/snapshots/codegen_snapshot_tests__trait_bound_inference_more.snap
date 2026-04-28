@@ -7,59 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::HashMap;
-#[allow(dead_code)]
-fn show<T: std::fmt::Display>(x: T) -> String {
-    return {
-        let __parts: [&str; 2usize] = ["", ""];
-        let __args: Vec<String> = vec![format!("{}", x)];
-        incan_stdlib::strings::fstring(&__parts, &__args)
-    };
-}
-#[allow(dead_code)]
-fn make_dict<T: Eq + Hash>(k: T) -> std::collections::HashMap<T, i64> {
-    return [(k, 1)].into_iter().collect::<HashMap<_, _>>();
-}
-#[allow(dead_code)]
-fn add<T: std::ops::Add<Output = T>>(a: T, b: T) -> T {
-    return a + b;
-}
-#[allow(dead_code)]
-fn subtract<T: std::ops::Sub<Output = T>>(a: T, b: T) -> T {
-    return a - b;
-}
-#[allow(dead_code)]
-fn multiply<T: std::ops::Mul<Output = T>>(a: T, b: T) -> T {
-    return a * b;
-}
-#[allow(dead_code)]
-fn divide<T: std::ops::Div<Output = T>>(a: T, b: T) -> T {
-    return incan_stdlib::num::py_div(a, b);
-}
-#[allow(dead_code)]
-fn modulo<T: std::ops::Rem<Output = T>>(a: T, b: T) -> T {
-    return incan_stdlib::num::py_mod(a, b);
-}
-#[allow(dead_code)]
-fn duplicate<T: Clone>(x: T) -> T {
-    return x.clone();
-}
-#[allow(dead_code)]
-fn are_equal<T: PartialEq>(left: T, right: T) -> bool {
-    return left == right;
-}
-#[allow(dead_code)]
-fn wrapper<T: PartialEq>(a: T, b: T) -> bool {
-    return are_equal(a, b);
-}
-#[allow(dead_code)]
-fn show_eq<T: PartialEq + std::fmt::Display>(x: T) -> String {
-    return {
-        let __parts: [&str; 2usize] = ["", ""];
-        let __args: Vec<String> = vec![format!("{}", x)];
-        incan_stdlib::strings::fstring(&__parts, &__args)
-    };
-}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

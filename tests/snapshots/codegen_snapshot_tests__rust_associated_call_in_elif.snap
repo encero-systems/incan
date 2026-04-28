@@ -7,17 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use std::path::Path;
-#[allow(dead_code)]
-fn f(kind: String, output_uri: String) -> bool {
-    if incan_stdlib::strings::str_eq(&kind, &"a") {
-        return Path::new(&output_uri).exists();
-    } else {
-        if incan_stdlib::strings::str_eq(&kind, &"b") {
-            return Path::new(&output_uri).exists();
-        } else {
-            return false;
-        }
-    }
-}

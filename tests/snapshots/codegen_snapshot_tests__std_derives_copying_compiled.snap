@@ -7,12 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Clone {
-    fn clone(&self) -> Self;
-}
-pub trait Copy {}
-pub trait Default {
-    fn default() -> Self
-    where
-        Self: Sized;
-}

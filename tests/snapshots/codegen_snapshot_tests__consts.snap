@@ -7,22 +7,17 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 const A: i64 = 1 + 2 * 3;
-#[allow(dead_code)]
 const S: incan_stdlib::frozen::FrozenStr = incan_stdlib::frozen::FrozenStr::new("hello");
-#[allow(dead_code)]
 const L: incan_stdlib::frozen::FrozenList<i64> = incan_stdlib::frozen::FrozenList::new(
     &[1, 2, 3],
 );
-#[allow(dead_code)]
 const D: incan_stdlib::frozen::FrozenDict<incan_stdlib::frozen::FrozenStr, i64> = incan_stdlib::frozen::FrozenDict::new(
     &[
         (incan_stdlib::frozen::FrozenStr::new("a"), 1),
         (incan_stdlib::frozen::FrozenStr::new("b"), 2),
     ],
 );
-#[allow(dead_code)]
 const T: (incan_stdlib::frozen::FrozenStr, i64) = (
     incan_stdlib::frozen::FrozenStr::new("x"),
     42,

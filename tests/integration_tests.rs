@@ -7985,12 +7985,20 @@ pub def display[T](data: DataSet[T]) -> None:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
+            generated_main_rs.contains("use widgets::Widget as PublicWidget;"),
             "expected pub:: item alias import emission, got:\n{generated_main_rs}"
         );
         assert!(
-            generated_main_rs.contains("pub use widgets::make_widget;"),
+            generated_main_rs.contains("use widgets::make_widget;"),
             "expected pub:: item import emission, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
+            "private pub:: item alias import should not become a public Rust reexport, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub use widgets::make_widget;"),
+            "private pub:: item import should not become a public Rust reexport, got:\n{generated_main_rs}"
         );
 
         Ok(())

@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn takes_result(value: Result<String, String>) {
     match value {
         Ok(msg) => {
@@ -18,7 +17,6 @@ fn takes_result(value: Result<String, String>) {
         }
     };
 }
-#[allow(dead_code)]
 fn returns_result() -> Result<String, String> {
     return Ok::<String, String>(("from_return").to_string());
 }

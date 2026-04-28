@@ -13,7 +13,6 @@ pub trait Root {
 pub trait Mid: Root {
     fn mid_id(&self) -> i64;
 }
-#[allow(dead_code)]
 fn upcast_mid_to_root<__IncanTrait0: Mid>(v: __IncanTrait0) -> impl Root {
     return v;
 }
@@ -23,47 +22,9 @@ pub trait DataSet<T> {
 pub trait BoundedDataSet<T>: DataSet<T> {
     fn bound(&self) -> T;
 }
-#[allow(dead_code)]
-fn upcast_bounded_to_dataset<T, __IncanTrait0: BoundedDataSet<T>>(
-    v: __IncanTrait0,
-) -> impl DataSet<T> {
-    return v;
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Thing {
     x: i64,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Thing(x: i64) -> Thing {
-    Thing { x }
-}
-#[allow(dead_code)]
-impl Thing {
-    pub fn root_id(&self) -> i64 {
-        return self.x;
-    }
-    pub fn mid_id(&self) -> i64 {
-        return self.x + 1;
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("x"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("x"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
 impl Mid for Thing {
     fn mid_id(&self) -> i64 {
@@ -75,71 +36,14 @@ impl Root for Thing {
         return self.x;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Row {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     id: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Row(id: i64) -> Row {
-    Row { id }
-}
-#[allow(dead_code)]
-impl Row {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Wrapper<T> {
     value: T,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Wrapper<T>(value: T) -> Wrapper<T> {
-    Wrapper { value }
-}
-#[allow(dead_code)]
-impl<T: Clone> Wrapper<T> {
-    pub fn tag(&self) -> T {
-        return self.value.clone();
-    }
-    pub fn bound(&self) -> T {
-        return self.value.clone();
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("value"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
 impl<T: Clone> BoundedDataSet<T> for Wrapper<T> {
     fn bound(&self) -> T {
@@ -151,7 +55,6 @@ impl<T: Clone> DataSet<T> for Wrapper<T> {
         return self.value.clone();
     }
 }
-#[allow(dead_code)]
 fn upcast_bounded_row<__IncanTrait0: BoundedDataSet<Row>>(
     v: __IncanTrait0,
 ) -> impl DataSet<Row> {

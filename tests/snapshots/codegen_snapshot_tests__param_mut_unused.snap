@@ -7,11 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
-fn energy(bodies: Vec<i64>) -> i64 {
-    let mut total = 0;
-    for b in bodies.iter().copied() {
-        total = total + b;
-    }
-    return total;
-}

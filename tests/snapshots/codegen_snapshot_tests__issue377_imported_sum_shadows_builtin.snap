@@ -7,11 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
-pub use crate::functions::col;
-#[allow(unused_imports)]
-pub use crate::functions::sum;
-#[allow(dead_code)]
+use crate::functions::col;
+use crate::functions::sum;
 fn selected_column_name() -> String {
     let amount = col("amount".to_string());
     let result = sum(amount);
@@ -29,5 +26,5 @@ fn main() {
             }
         }),
     );
-    ();
+    println!("{}", selected_column_name());
 }

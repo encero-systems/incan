@@ -7,16 +7,12 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct UserId(pub i64);
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct Ratio(pub f64);
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct Attempts(pub i64);
-#[allow(dead_code)]
 impl Attempts {
     pub fn from_underlying(n: i64) -> Result<Attempts, String> {
         if n <= 0 {
@@ -24,51 +20,15 @@ impl Attempts {
         }
         return Ok::<Attempts, String>(Attempts(n));
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 struct Email(pub String);
-#[allow(dead_code)]
 impl Email {
     pub fn from_str(v: String) -> Result<Email, String> {
         if !incan_stdlib::strings::str_contains(&v, &"@") {
             return Err::<Email, String>(("missing @").to_string());
         }
         return Ok::<Email, String>(Email(incan_stdlib::strings::str_lower(&v)));
-    }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("0"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("0"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
 fn main() {

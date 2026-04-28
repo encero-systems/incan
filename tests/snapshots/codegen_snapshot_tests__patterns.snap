@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn test_pattern_wildcard() {
     let x = 42;
     match x {
@@ -16,7 +15,6 @@ fn test_pattern_wildcard() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_literals() {
     let value = 5;
     match value {
@@ -34,7 +32,6 @@ fn test_pattern_literals() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_string_literal() {
     let name = "Alice".to_string();
     match name {
@@ -49,7 +46,6 @@ fn test_pattern_string_literal() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_bool() {
     let flag = true;
     match flag {
@@ -61,7 +57,6 @@ fn test_pattern_bool() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_option_some() {
     let maybe = Some(42);
     match maybe {
@@ -73,7 +68,6 @@ fn test_pattern_option_some() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_option_none() {
     let maybe = None::<_>;
     match maybe {
@@ -85,7 +79,6 @@ fn test_pattern_option_none() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_result_ok() {
     let result = Ok::<i64, String>(42);
     match result {
@@ -97,7 +90,6 @@ fn test_pattern_result_ok() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_result_err() {
     let result = Err::<i64, String>(("failed").to_string());
     match result {
@@ -109,7 +101,6 @@ fn test_pattern_result_err() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_nested_option() {
     let nested = Some(Some(42));
     match nested {
@@ -124,7 +115,6 @@ fn test_pattern_nested_option() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_tuple() {
     let pair = (42, "answer".to_string());
     match pair {
@@ -139,7 +129,6 @@ fn test_pattern_tuple() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_pattern_multiple_bindings() {
     let value = Some(10);
     match value {

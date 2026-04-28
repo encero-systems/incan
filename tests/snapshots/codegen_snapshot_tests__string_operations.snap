@@ -7,30 +7,25 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn test_string_methods() {
     let s = "Hello World".to_string();
     let _upper = incan_stdlib::strings::str_upper(&s);
     let _lower = incan_stdlib::strings::str_lower(&s);
     let _stripped = incan_stdlib::strings::str_strip(&s);
 }
-#[allow(dead_code)]
 fn test_string_contains() {
     let text = "hello world".to_string();
     let _has_hello = incan_stdlib::strings::str_contains(&text, &"hello");
     let _has_goodbye = incan_stdlib::strings::str_contains(&text, &"goodbye");
 }
-#[allow(dead_code)]
 fn test_string_split() {
     let text = "one,two,three".to_string();
     let _parts = incan_stdlib::strings::str_split(&text, Some(&","));
 }
-#[allow(dead_code)]
 fn test_string_replace() {
     let text = "hello world".to_string();
     let _replaced = incan_stdlib::strings::str_replace(&text, &"world", &"python");
 }
-#[allow(dead_code)]
 fn test_string_slice() {
     let text = "héllo".to_string();
     let _mid = incan_stdlib::strings::str_slice(
@@ -40,19 +35,16 @@ fn test_string_slice() {
         None,
     );
 }
-#[allow(dead_code)]
 fn test_string_startswith_endswith() {
     let text = "hello.txt".to_string();
     let _starts = incan_stdlib::strings::str_starts_with(&text, &"hello");
     let _ends = incan_stdlib::strings::str_ends_with(&text, &".txt");
 }
-#[allow(dead_code)]
 fn test_string_join() {
     let sep = ", ".to_string();
     let words = vec!["one".to_string(), "two".to_string(), "three".to_string()];
     let _joined = incan_stdlib::strings::str_join(&sep, &words);
 }
-#[allow(dead_code)]
 fn test_string_concatenation() {
     let mut result = "hello".to_string();
     result = incan_stdlib::strings::str_concat(&result, &" ");

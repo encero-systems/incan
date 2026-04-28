@@ -7,57 +7,30 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 pub use crate::__incan_std::r#async;
-#[allow(unused_imports)]
 pub use crate::__incan_std::traits::error::Error;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::RawSender;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::RawSenderPermit;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::RawReceiver;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::RawOneshotSender;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::RawOneshotReceiver;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::channel as rust_channel;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::unbounded_channel as rust_unbounded_channel;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::oneshot as rust_oneshot;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::sender_send as rust_sender_send;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::sender_reserve as rust_sender_reserve;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::sender_permit_send as rust_sender_permit_send;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::sender_try_send as rust_sender_try_send;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::sender_is_closed as rust_sender_is_closed;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::receiver_recv as rust_receiver_recv;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::receiver_try_recv as rust_receiver_try_recv;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::receiver_close as rust_receiver_close;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::oneshot_sender_send as rust_oneshot_sender_send;
-#[allow(unused_imports)]
 pub use incan_stdlib::r#async::channel::oneshot_receiver_recv as rust_oneshot_receiver_recv;
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct SendError<T> {
     pub value: T,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub fn SendError<T>(value: T) -> SendError<T> {
-    SendError { value }
-}
-#[allow(dead_code)]
 impl<T> SendError<T> {
     pub fn message(&self) -> String {
         return "channel send failed".to_string();
@@ -91,10 +64,8 @@ impl<T> Error for SendError<T> {
         return None::<_>;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct RecvError {}
-#[allow(dead_code)]
 impl RecvError {
     pub fn message(&self) -> String {
         return "channel closed: no more messages".to_string();
@@ -118,10 +89,8 @@ impl Error for RecvError {
         return None::<_>;
     }
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Sender<T>(pub RawSender<T>);
-#[allow(dead_code)]
 impl<T> Sender<T> {
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         "\n        Send a value through the channel.\n\n        For bounded channels, this waits for capacity when the buffer is full.\n        Returns `Err(SendError(...))` if the receiver has been dropped.\n\n        Cancellation contract: cancel-safe-but-lossy. If this wait is cancelled before capacity is reserved, the message\n        is not sent and `value` is dropped. Use `reserve()` first for critical sends that must not lose a value if an\n        outer cancellation boundary drops the send future.\n        ";
@@ -197,10 +166,8 @@ impl<T> Sender<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SenderPermit<T>(pub RawSenderPermit<T>);
-#[allow(dead_code)]
 impl<T> SenderPermit<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         "\n        Send a value using this permit.\n\n        Bounded permits use already-reserved capacity. Unbounded pseudo-permits send synchronously and return the value\n        on close.\n\n        Cancellation contract: synchronous. The value is either delivered or returned in `SendError[T]`.\n        ";
@@ -236,10 +203,8 @@ impl<T> SenderPermit<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Receiver<T>(pub RawReceiver<T>);
-#[allow(dead_code)]
 impl<T> Receiver<T> {
     pub async fn recv(&self) -> Option<T> {
         "\n        Receive the next value.\n\n        This waits until a value is available or the channel closes.\n        Returns `None` only after the channel is closed and fully drained.\n\n        Cancellation contract: cancel-safe. If this wait is cancelled, no message is removed from the channel.\n        ";
@@ -271,7 +236,6 @@ impl<T> Receiver<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 pub fn channel<T>(buffer: i64) -> (Sender<T>, Receiver<T>) {
     "\n    Create a bounded MPSC channel.\n\n    The channel can hold up to `buffer` messages before `send()` waits for capacity.\n\n    Example:\n        tx, rx = channel[str](32)\n\n        async def producer(tx: Sender[str]) -> None:\n            match await tx.send(\"hello\"):\n                Ok(_) => println(\"sent hello\")\n                Err(err) => println(err.message())\n\n            match await tx.send(\"world\"):\n                Ok(_) => println(\"sent world\")\n                Err(err) => println(err.message())\n\n        async def consumer(rx: Receiver[str]) -> None:\n            while True:\n                match await rx.recv():\n                    Some(msg) => println(f\"got: {msg}\")\n                    None => break\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_channel(buffer);
@@ -279,7 +243,6 @@ pub fn channel<T>(buffer: i64) -> (Sender<T>, Receiver<T>) {
     let raw_rx = __incan_tuple_unpack_raw_tx_raw_rx.1;
     return (Sender(raw_tx), Receiver(raw_rx));
 }
-#[allow(dead_code)]
 pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
     "\n    Create an unbounded MPSC channel.\n\n    The channel has no capacity limit, so `send()` completes as long as the receiver still exists.\n    Use with caution as it can cause memory issues if producers outpace consumers.\n\n    Example:\n        tx, rx = unbounded_channel[int]()\n        match await tx.send(1):\n            Ok(_) => println(\"sent\")\n            Err(err) => println(err.message())\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_unbounded_channel();
@@ -287,10 +250,8 @@ pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
     let raw_rx = __incan_tuple_unpack_raw_tx_raw_rx.1;
     return (Sender(raw_tx), Receiver(raw_rx));
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct OneshotSender<T>(pub RawOneshotSender<T>);
-#[allow(dead_code)]
 impl<T> OneshotSender<T> {
     pub fn send(&self, value: T) -> Result<(), T> {
         "\n        Send the single value carried by this one-shot sender.\n        Returns the value back if the receiver is already gone.\n\n        Cancellation contract: this operation is synchronous, so it either delivers the value or returns it immediately.\n        ";
@@ -321,10 +282,8 @@ impl<T> OneshotSender<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct OneshotReceiver<T>(pub RawOneshotReceiver<T>);
-#[allow(dead_code)]
 impl<T> OneshotReceiver<T> {
     pub async fn recv(&self) -> Result<T, RecvError> {
         "\n        Wait for the one-shot value or return `RecvError` if the sender was dropped.\n\n        Cancellation contract: cancel-safe. If this wait is cancelled, the one-shot value is not consumed.\n        ";
@@ -355,7 +314,6 @@ impl<T> OneshotReceiver<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-#[allow(dead_code)]
 pub fn oneshot<T>() -> (OneshotSender<T>, OneshotReceiver<T>) {
     "\n    Create a one-shot channel for sending a single value.\n\n    This is useful for returning one result from a background task.\n\n    Example:\n        tx, rx = oneshot[int]()\n\n        async def produce(tx: OneshotSender[int]) -> None:\n            result = 42\n            match tx.send(result):\n                Ok(_) => println(\"delivered\")\n                Err(value) => println(f\"receiver dropped before delivery: {value}\")\n\n        match await rx.recv():\n            Ok(value) => println(f\"got: {value}\")\n            Err(err) => println(err.message())\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_oneshot();

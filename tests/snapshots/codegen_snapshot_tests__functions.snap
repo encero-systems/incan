@@ -7,56 +7,30 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn greet() -> String {
     return "Hello, World!".to_string();
 }
-#[allow(dead_code)]
 fn add(a: i64, b: i64) -> i64 {
     return a + b;
 }
-#[allow(dead_code)]
-fn format_message(name: String, age: i64, is_active: bool) -> String {
-    let mut status = "inactive".to_string();
-    if is_active {
-        status = "active";
-    }
-    return {
-        let __parts: [&str; 4usize] = ["", " is ", " years old and ", ""];
-        let __args: Vec<String> = vec![
-            format!("{}", name), format!("{}", age), format!("{}", status)
-        ];
-        incan_stdlib::strings::fstring(&__parts, &__args)
-    };
-}
-#[allow(dead_code)]
-fn multiply(x: i64, y: i64) -> i64 {
-    let result = x * y;
-    return result;
-}
-#[allow(dead_code)]
 fn factorial(n: i64) -> i64 {
     if n <= 1 {
         return 1;
     }
     return n * factorial(n - 1);
 }
-#[allow(dead_code)]
 fn fibonacci(n: i64) -> i64 {
     if n <= 1 {
         return n;
     }
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
-#[allow(dead_code)]
 fn double(x: i64) -> i64 {
     return x * 2;
 }
-#[allow(dead_code)]
 fn quadruple(x: i64) -> i64 {
     return double(double(x));
 }
-#[allow(dead_code)]
 fn double_values(numbers: &mut Vec<i64>) {
     let mut idx = 0;
     *incan_stdlib::collections::list_get_mut(numbers, (idx) as i64) = *incan_stdlib::collections::list_get(
@@ -69,7 +43,6 @@ fn double_values(numbers: &mut Vec<i64>) {
         (idx) as i64,
     ) * 2;
 }
-#[allow(dead_code)]
 fn find_max(numbers: Vec<i64>) -> i64 {
     let mut max_val = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
     for num in numbers.iter().copied() {
@@ -79,7 +52,6 @@ fn find_max(numbers: Vec<i64>) -> i64 {
     }
     return max_val;
 }
-#[allow(dead_code)]
 fn classify_number(x: i64) -> String {
     if x < 0 {
         return "negative".to_string();
@@ -92,7 +64,6 @@ fn classify_number(x: i64) -> String {
     }
     return "large positive".to_string();
 }
-#[allow(dead_code)]
 fn print_greeting(name: String) {
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Hello, ", "!"]; let __args : Vec <
@@ -100,7 +71,6 @@ fn print_greeting(name: String) {
         __args) }
     );
 }
-#[allow(dead_code)]
 fn get_coordinates() -> (i64, i64) {
     return (10, 20);
 }

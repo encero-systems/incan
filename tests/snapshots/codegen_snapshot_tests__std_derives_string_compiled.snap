@@ -7,9 +7,3 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub trait Debug {
-    fn __repr__(&self) -> String;
-}
-pub trait Display {
-    fn __str__(&self) -> String;
-}

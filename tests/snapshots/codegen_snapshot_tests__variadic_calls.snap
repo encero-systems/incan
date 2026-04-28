@@ -8,7 +8,6 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 fn collect(
     _: String,
     items: Vec<i64>,
@@ -20,7 +19,6 @@ fn collect(
     }
     return total;
 }
-#[allow(dead_code)]
 fn collect_via_callable(
     xs: Vec<i64>,
     kw: std::collections::HashMap<String, String>,
@@ -42,10 +40,8 @@ fn collect_via_callable(
         },
     );
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Collector {}
-#[allow(dead_code)]
 impl Collector {
     pub fn collect(
         &self,
@@ -58,15 +54,7 @@ impl Collector {
         }
         return total;
     }
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
 }
-#[allow(dead_code)]
 fn collect_via_method(
     xs: Vec<i64>,
     kw: std::collections::HashMap<String, String>,

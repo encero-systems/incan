@@ -13,14 +13,12 @@ pub trait DataSet<T: Clone> {
 pub trait BoundedDataSet<T: Clone>: DataSet<T> {
     fn bound(&self) -> T;
 }
-#[allow(dead_code)]
-fn upcast_bounded_to_dataset<T: Clone, __IncanTrait0: BoundedDataSet<T>>(
+pub fn upcast_bounded_to_dataset<T: Clone, __IncanTrait0: BoundedDataSet<T>>(
     value: __IncanTrait0,
 ) -> impl DataSet<T> {
     return value;
 }
-#[allow(dead_code)]
-fn upcast_bounded_to_bounded<T: Clone, __IncanTrait0: BoundedDataSet<T>>(
+pub fn upcast_bounded_to_bounded<T: Clone, __IncanTrait0: BoundedDataSet<T>>(
     value: __IncanTrait0,
 ) -> impl BoundedDataSet<T> {
     return value;

@@ -8,600 +8,72 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct User {
     name: String,
     age: i64,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     email: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn User(name: String, age: i64, email: String) -> User {
-    User { name, age, email }
-}
-#[allow(dead_code)]
-impl User {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("age"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("age"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("email"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("email"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Product {
     id: i64,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     name: String,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     price: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Product(id: i64, name: String, price: f64) -> Product {
-    Product { id, name, price }
-}
-#[allow(dead_code)]
-impl Product {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("id"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("id"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("price"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("price"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Config {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     host: String,
     port: i64,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     timeout: i64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Config(host: String, port: i64, timeout: i64) -> Config {
-    Config { host, port, timeout }
-}
-#[allow(dead_code)]
-impl Config {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("host"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("host"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("port"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("port"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("timeout"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("timeout"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Debug,
-    Clone,
-    incan_derive::FieldInfo,
-    incan_derive::IncanClass
-)]
-struct ApiRequest {
-    endpoint: String,
-    method: String,
-    payload: String,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn ApiRequest(endpoint: String, method: String, payload: String) -> ApiRequest {
-    ApiRequest {
-        endpoint,
-        method,
-        payload,
-    }
-}
-#[allow(dead_code)]
-impl ApiRequest {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("endpoint"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("endpoint"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("method"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("method"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("payload"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("payload"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-    /// Serialize this model to a JSON string
-    pub fn to_json(&self) -> String {
-        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(ApiRequest))
-    }
-    /// Deserialize a JSON string into this model
-    pub fn from_json(json_str: String) -> Result<Self, String> {
-        serde_json::from_str(&json_str)
-            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
-    }
-}
-#[allow(dead_code)]
-#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
-struct Point {
-    x: i64,
-    y: i64,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Point(x: i64, y: i64) -> Point {
-    Point { x, y }
-}
-#[allow(dead_code)]
-impl Point {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("x"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("x"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("y"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("y"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct OptionalData {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     required: String,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     optional: Option<String>,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     maybe_number: Option<i64>,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn OptionalData(
-    required: String,
-    optional: Option<String>,
-    maybe_number: Option<i64>,
-) -> OptionalData {
-    OptionalData {
-        required,
-        optional,
-        maybe_number,
-    }
-}
-#[allow(dead_code)]
-impl OptionalData {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("required"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("required"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("optional"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("optional"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[str]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("maybe_number"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("maybe_number"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[int]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct StudentData {
     name: String,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     grades: Vec<i64>,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     metadata: std::collections::HashMap<String, String>,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn StudentData(
-    name: String,
-    grades: Vec<i64>,
-    metadata: std::collections::HashMap<String, String>,
-) -> StudentData {
-    StudentData {
-        name,
-        grades,
-        metadata,
-    }
-}
-#[allow(dead_code)]
-impl StudentData {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("grades"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("grades"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[int]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("metadata"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("metadata"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("dict[str, str]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
-#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
-struct ComplexModel {
-    ids: Vec<i64>,
-    mapping: std::collections::HashMap<String, i64>,
-    optional_list: Option<Vec<String>>,
-    nested_dict: std::collections::HashMap<String, Vec<i64>>,
-}
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn ComplexModel(
-    ids: Vec<i64>,
-    mapping: std::collections::HashMap<String, i64>,
-    optional_list: Option<Vec<String>>,
-    nested_dict: std::collections::HashMap<String, Vec<i64>>,
-) -> ComplexModel {
-    ComplexModel {
-        ids,
-        mapping,
-        optional_list,
-        nested_dict,
-    }
-}
-#[allow(dead_code)]
-impl ComplexModel {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("ids"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("ids"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("list[int]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("mapping"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("mapping"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("dict[str, int]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("optional_list"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("optional_list"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Option[list[str]]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("nested_dict"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("nested_dict"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("dict[str, list[int]]"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Address {
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     street: String,
     city: String,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     zipcode: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Address(street: String, city: String, zipcode: String) -> Address {
-    Address { street, city, zipcode }
-}
-#[allow(dead_code)]
-impl Address {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("street"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("street"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("city"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("city"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("zipcode"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("zipcode"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Contact {
     name: String,
     address: Address,
+    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     phone: String,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Contact(name: String, address: Address, phone: String) -> Contact {
-    Contact { name, address, phone }
-}
-#[allow(dead_code)]
-impl Contact {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("name"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("address"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("address"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("Address"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("phone"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("phone"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Coordinate {
     latitude: f64,
     longitude: f64,
 }
-#[allow(dead_code)]
-#[allow(non_snake_case, clippy::too_many_arguments)]
-fn Coordinate(latitude: f64, longitude: f64) -> Coordinate {
-    Coordinate { latitude, longitude }
-}
-#[allow(dead_code)]
-impl Coordinate {
-    /// Returns field metadata for this type.
-    pub fn __fields__(
-        &self,
-    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
-        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("latitude"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("latitude"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-            incan_stdlib::reflection::FieldInfo {
-                name: incan_stdlib::frozen::FrozenStr::new("longitude"),
-                alias: None,
-                description: None,
-                wire_name: incan_stdlib::frozen::FrozenStr::new("longitude"),
-                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
-                has_default: false,
-                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
-            },
-        ];
-        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
-    }
-}
-#[allow(dead_code)]
 fn create_coordinate(lat: f64, lon: f64) -> Coordinate {
     return Coordinate {
         latitude: lat,
         longitude: lon,
     };
 }
-#[allow(dead_code)]
 fn distance_from_origin(coord: Coordinate) -> f64 {
     let lat_sq = coord.latitude * coord.latitude;
     let lon_sq = coord.longitude * coord.longitude;

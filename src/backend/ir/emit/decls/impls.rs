@@ -24,12 +24,14 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&impl_block.type_params);
         let generics_bare = self.emit_type_params_bare(&impl_block.type_params);
-        let dead_code_allow = self.generated_dead_code_allow();
 
         let mut regular_methods = Vec::new();
         let mut trait_impls = Vec::new();
 
         for method in &impl_block.methods {
+            let method_is_needed = self.should_emit_method(&impl_block.target_type, &method.name, &method.visibility)
+                || !method.lint_allows.is_empty()
+                || !method.rust_attributes.is_empty();
             match magic_methods::from_str(method.name.as_str()) {
                 Some(magic_methods::MagicMethodId::Eq) => {
                     let body_stmts = self.emit_stmts(&method.body)?;
@@ -51,10 +53,15 @@ impl<'a> IrEmitter<'a> {
                         }
                     });
                 }
-                Some(magic_methods::MagicMethodId::ClassName) | Some(magic_methods::MagicMethodId::Fields) => {
-                    regular_methods.push(self.emit_method(method)?)
+                Some(magic_methods::MagicMethodId::ClassName) | Some(magic_methods::MagicMethodId::Fields)
+                    if method_is_needed =>
+                {
+                    regular_methods.push(self.emit_method(method)?);
                 }
-                _ => regular_methods.push(self.emit_method(method)?),
+                _ if method_is_needed => {
+                    regular_methods.push(self.emit_method(method)?);
+                }
+                _ => {}
             }
         }
 
@@ -62,6 +69,11 @@ impl<'a> IrEmitter<'a> {
         let has_fields_method = impl_block.methods.iter().any(|m| m.name == fields_name);
         if impl_block.trait_name.is_none()
             && !has_fields_method
+            && self.should_emit_method(
+                &impl_block.target_type,
+                fields_name,
+                &super::super::super::decl::Visibility::Private,
+            )
             && let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)?
         {
             regular_methods.push(fields_method);
@@ -78,7 +90,13 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize));
 
-            if has_serialize {
+            if has_serialize
+                && self.should_emit_method(
+                    &impl_block.target_type,
+                    "to_json",
+                    &super::super::super::decl::Visibility::Private,
+                )
+            {
                 regular_methods.push(quote! {
                     /// Serialize this model to a JSON string
                     pub fn to_json(&self) -> String {
@@ -86,7 +104,13 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if has_deserialize {
+            if has_deserialize
+                && self.should_emit_method(
+                    &impl_block.target_type,
+                    "from_json",
+                    &super::super::super::decl::Visibility::Private,
+                )
+            {
                 regular_methods.push(quote! {
                     /// Deserialize a JSON string into this model
                     pub fn from_json(json_str: String) -> Result<Self, String> {
@@ -106,6 +130,11 @@ impl<'a> IrEmitter<'a> {
                 .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
             if has_validate
                 && !impl_block.methods.iter().any(|m| m.name == conventions::NEW_METHOD)
+                && self.should_emit_method(
+                    &impl_block.target_type,
+                    conventions::NEW_METHOD,
+                    &super::super::super::decl::Visibility::Private,
+                )
                 && let Some(validate_fn) = impl_block
                     .methods
                     .iter()
@@ -152,44 +181,34 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        let main_impl = if !regular_methods.is_empty() || impl_block.trait_name.is_none() {
-            if let Some(trait_name) = &impl_block.trait_name {
-                let trait_methods: Vec<TokenStream> = impl_block
-                    .methods
-                    .iter()
-                    .filter(|m| {
-                        !matches!(
-                            magic_methods::from_str(m.name.as_str()),
-                            Some(
-                                magic_methods::MagicMethodId::Eq
-                                    | magic_methods::MagicMethodId::Str
-                                    | magic_methods::MagicMethodId::ClassName
-                                    | magic_methods::MagicMethodId::Fields
-                            )
+        let main_impl = if let Some(trait_name) = &impl_block.trait_name {
+            let trait_methods: Vec<TokenStream> = impl_block
+                .methods
+                .iter()
+                .filter(|m| {
+                    !matches!(
+                        magic_methods::from_str(m.name.as_str()),
+                        Some(
+                            magic_methods::MagicMethodId::Eq
+                                | magic_methods::MagicMethodId::Str
+                                | magic_methods::MagicMethodId::ClassName
+                                | magic_methods::MagicMethodId::Fields
                         )
-                    })
-                    .map(|m| self.emit_trait_method(m))
-                    .collect::<Result<_, _>>()?;
-                let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
-                quote! {
-                    impl #generics #trait_tokens for #target_type #generics_bare {
-                        #(#trait_methods)*
-                    }
-                }
-            } else if !regular_methods.is_empty() {
-                quote! {
-                    #dead_code_allow
-                    impl #generics #target_type #generics_bare {
-                        #(#regular_methods)*
-                    }
-                }
-            } else {
-                quote! {}
-            }
-        } else if let Some(trait_name) = &impl_block.trait_name {
+                    )
+                })
+                .map(|m| self.emit_trait_method(m))
+                .collect::<Result<_, _>>()?;
             let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
             quote! {
-                impl #generics #trait_tokens for #target_type #generics_bare {}
+                impl #generics #trait_tokens for #target_type #generics_bare {
+                    #(#trait_methods)*
+                }
+            }
+        } else if !regular_methods.is_empty() {
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#regular_methods)*
+                }
             }
         } else {
             quote! {}

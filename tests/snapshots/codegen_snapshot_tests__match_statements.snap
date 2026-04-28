@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn test_match_simple() {
     let x = 42;
     match x {
@@ -22,7 +21,6 @@ fn test_match_simple() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_match_with_option() {
     let value = Some(42);
     match value {
@@ -34,7 +32,6 @@ fn test_match_with_option() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_match_multiple_patterns() {
     let x = 5;
     match x {
@@ -52,7 +49,6 @@ fn test_match_multiple_patterns() {
         }
     };
 }
-#[allow(dead_code)]
 fn test_match_with_guard() {
     let x = 15;
     match x {

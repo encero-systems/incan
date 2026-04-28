@@ -7,10 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(unused_imports)]
 use widgets as w;
-#[allow(unused_imports)]
-pub use widgets::DEFAULT_NAME;
+use widgets::DEFAULT_NAME;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

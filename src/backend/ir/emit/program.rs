@@ -22,11 +22,16 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::{HashMap, HashSet};
 
-use super::super::decl::IrDeclKind;
-use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
+use incan_core::lang::{conventions, magic_methods};
+
+use super::super::decl::{
+    IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrTraitBound, IrTypeParam, Visibility,
+};
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, Pattern, VarRefKind};
+use super::super::stmt::AssignTarget;
 use super::super::types::IrType;
 use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
-use super::{EmitError, IrEmitter};
+use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
 
 /// Import tracking for warning-free codegen.
 #[derive(Default)]
@@ -36,8 +41,9 @@ struct ImportTracker {
 }
 
 impl ImportTracker {
-    fn scan_program(&mut self, program: &IrProgram) {
-        for decl in &program.declarations {
+    /// Scan emitted declarations for standard collection support imports.
+    fn scan_decls(&mut self, declarations: &[&IrDecl]) {
+        for decl in declarations {
             self.scan_decl(decl);
         }
     }
@@ -198,6 +204,765 @@ impl ImportTracker {
     }
 }
 
+/// Builder for generated Rust item/import usage facts.
+///
+/// This walks the typed IR before token emission so the backend can emit only Rust items that are reachable from the
+/// generated entrypoints/public surface and can avoid generated `unused_imports`/`dead_code` suppressions.
+struct GeneratedUseAnalyzer<'program> {
+    declarations_by_name: HashMap<String, &'program IrDecl>,
+    impls_by_target: HashMap<String, Vec<&'program super::super::decl::IrImpl>>,
+    rust_extension_trait_imports_by_method: HashMap<String, Vec<String>>,
+    external_error_trait_types: HashSet<String>,
+    preserve_public_items: bool,
+    analysis: GeneratedUseAnalysis,
+    pending: Vec<String>,
+}
+
+impl<'program> GeneratedUseAnalyzer<'program> {
+    /// Analyze one lowered IR program for generated Rust usage facts.
+    fn analyze(
+        program: &'program IrProgram,
+        externally_reachable_items: &HashSet<String>,
+        preserve_public_items: bool,
+        external_error_trait_types: &HashSet<String>,
+    ) -> GeneratedUseAnalysis {
+        let mut analyzer = Self {
+            declarations_by_name: HashMap::new(),
+            impls_by_target: HashMap::new(),
+            rust_extension_trait_imports_by_method: HashMap::new(),
+            external_error_trait_types: external_error_trait_types.clone(),
+            preserve_public_items,
+            analysis: GeneratedUseAnalysis::default(),
+            pending: Vec::new(),
+        };
+
+        for decl in &program.declarations {
+            match &decl.kind {
+                IrDeclKind::Function(func) => {
+                    analyzer.declarations_by_name.insert(func.name.clone(), decl);
+                }
+                IrDeclKind::Struct(s) => {
+                    analyzer.declarations_by_name.insert(s.name.clone(), decl);
+                    if preserve_public_items && !matches!(s.visibility, Visibility::Private) {
+                        analyzer.analysis.public_types.insert(s.name.clone());
+                    }
+                }
+                IrDeclKind::Enum(e) => {
+                    analyzer.declarations_by_name.insert(e.name.clone(), decl);
+                    if preserve_public_items && !matches!(e.visibility, Visibility::Private) {
+                        analyzer.analysis.public_types.insert(e.name.clone());
+                    }
+                }
+                IrDeclKind::Trait(trait_decl) => {
+                    analyzer.declarations_by_name.insert(trait_decl.name.clone(), decl);
+                    if preserve_public_items && !matches!(trait_decl.visibility, Visibility::Private) {
+                        analyzer.analysis.public_types.insert(trait_decl.name.clone());
+                    }
+                }
+                IrDeclKind::TypeAlias { name, visibility, .. } => {
+                    analyzer.declarations_by_name.insert(name.clone(), decl);
+                    if preserve_public_items && !matches!(visibility, Visibility::Private) {
+                        analyzer.analysis.public_types.insert(name.clone());
+                    }
+                }
+                IrDeclKind::Const { name, .. } | IrDeclKind::Static { name, .. } => {
+                    analyzer.declarations_by_name.insert(name.clone(), decl);
+                }
+                IrDeclKind::Import {
+                    origin,
+                    qualifier,
+                    items,
+                    ..
+                } if matches!(origin, IrImportOrigin::Standard) && matches!(qualifier, IrImportQualifier::None) => {
+                    for item in items {
+                        if item.rust_trait_methods.is_empty() {
+                            continue;
+                        }
+                        let binding = item.alias.as_ref().unwrap_or(&item.name).clone();
+                        for method in &item.rust_trait_methods {
+                            analyzer
+                                .rust_extension_trait_imports_by_method
+                                .entry(method.clone())
+                                .or_default()
+                                .push(binding.clone());
+                        }
+                    }
+                }
+                IrDeclKind::Import { .. } => {}
+                IrDeclKind::Impl(impl_block) => {
+                    analyzer
+                        .impls_by_target
+                        .entry(impl_block.target_type.clone())
+                        .or_default()
+                        .push(impl_block);
+                }
+            }
+        }
+
+        for decl in &program.declarations {
+            match &decl.kind {
+                IrDeclKind::Function(func) if func.name == conventions::ENTRYPOINT_NAME => {
+                    analyzer.mark_reachable_item(&func.name);
+                }
+                IrDeclKind::Function(func)
+                    if preserve_public_items && !matches!(func.visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(&func.name);
+                }
+                IrDeclKind::Function(func)
+                    if (preserve_public_items && !func.rust_attributes.is_empty()) || !func.lint_allows.is_empty() =>
+                {
+                    analyzer.mark_reachable_item(&func.name);
+                }
+                IrDeclKind::Struct(s)
+                    if (preserve_public_items && !matches!(s.visibility, Visibility::Private))
+                        || !s.lint_allows.is_empty() =>
+                {
+                    analyzer.mark_reachable_item(&s.name);
+                }
+                IrDeclKind::Enum(e)
+                    if (preserve_public_items && !matches!(e.visibility, Visibility::Private))
+                        || !e.lint_allows.is_empty() =>
+                {
+                    analyzer.mark_reachable_item(&e.name);
+                }
+                IrDeclKind::Trait(trait_decl)
+                    if preserve_public_items && !matches!(trait_decl.visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(&trait_decl.name);
+                }
+                IrDeclKind::TypeAlias { name, visibility, .. }
+                    if preserve_public_items && !matches!(visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(name);
+                }
+                IrDeclKind::Const { name, visibility, .. }
+                    if preserve_public_items && !matches!(visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(name);
+                }
+                IrDeclKind::Static { name, .. } => {
+                    analyzer.mark_reachable_item(name);
+                }
+                IrDeclKind::Import { .. } | IrDeclKind::Impl(_) | IrDeclKind::Function(_) => {}
+                IrDeclKind::Struct(_)
+                | IrDeclKind::Enum(_)
+                | IrDeclKind::Trait(_)
+                | IrDeclKind::TypeAlias { .. }
+                | IrDeclKind::Const { .. } => {}
+            }
+        }
+
+        for name in externally_reachable_items {
+            analyzer.mark_reachable_item(name);
+        }
+
+        while let Some(name) = analyzer.pending.pop() {
+            if let Some(decl) = analyzer.declarations_by_name.get(&name).copied() {
+                analyzer.scan_decl(decl);
+            }
+            if let Some(impls) = analyzer.impls_by_target.get(&name).cloned() {
+                for impl_block in impls {
+                    analyzer.scan_impl(impl_block);
+                }
+            }
+        }
+
+        analyzer.analysis
+    }
+
+    /// Mark a top-level generated item or import binding as referenced by emitted Rust.
+    fn mark_reachable_item(&mut self, name: &str) {
+        self.analysis.used_imports.insert(name.to_string());
+        if self.declarations_by_name.contains_key(name) && self.analysis.reachable_items.insert(name.to_string()) {
+            self.pending.push(name.to_string());
+        }
+    }
+
+    /// Scan one reachable declaration for further declaration, import, field, and method uses.
+    fn scan_decl(&mut self, decl: &'program IrDecl) {
+        match &decl.kind {
+            IrDeclKind::Function(func) => self.scan_function(func),
+            IrDeclKind::Struct(s) => {
+                self.scan_type_params(&s.type_params);
+                for field in &s.fields {
+                    self.scan_type(&field.ty);
+                    if let Some(default) = &field.default {
+                        self.scan_expr(default);
+                    }
+                }
+            }
+            IrDeclKind::Enum(e) => {
+                self.scan_type_params(&e.type_params);
+                for variant in &e.variants {
+                    match &variant.fields {
+                        super::super::decl::VariantFields::Unit => {}
+                        super::super::decl::VariantFields::Tuple(types) => {
+                            for ty in types {
+                                self.scan_type(ty);
+                            }
+                        }
+                        super::super::decl::VariantFields::Struct(fields) => {
+                            for field in fields {
+                                self.scan_type(&field.ty);
+                            }
+                        }
+                    }
+                }
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                self.scan_type_params(&trait_decl.type_params);
+                for (trait_path, type_args) in &trait_decl.supertraits {
+                    self.mark_trait_path_binding(trait_path);
+                    for ty in type_args {
+                        self.scan_type(ty);
+                    }
+                }
+                for method in &trait_decl.methods {
+                    self.scan_function(method);
+                }
+            }
+            IrDeclKind::TypeAlias { type_params, ty, .. } => {
+                self.scan_type_params(type_params);
+                self.scan_type(ty);
+            }
+            IrDeclKind::Const { ty, value, .. } | IrDeclKind::Static { ty, value, .. } => {
+                self.scan_type(ty);
+                self.scan_expr(value);
+            }
+            IrDeclKind::Import { .. } => {}
+            IrDeclKind::Impl(impl_block) => self.scan_impl(impl_block),
+        }
+    }
+
+    /// Scan an impl block attached to a reachable nominal type.
+    fn scan_impl(&mut self, impl_block: &'program super::super::decl::IrImpl) {
+        self.mark_reachable_item(&impl_block.target_type);
+        self.scan_type_params(&impl_block.type_params);
+        if let Some(trait_name) = &impl_block.trait_name {
+            self.mark_trait_path_binding(trait_name);
+        }
+        for type_arg in &impl_block.trait_type_args {
+            self.scan_type(type_arg);
+        }
+
+        let mut scanned_methods = HashSet::new();
+        loop {
+            let mut progressed = false;
+            for method in &impl_block.methods {
+                if scanned_methods.contains(&method.name) || !self.impl_method_body_is_emitted(impl_block, method) {
+                    continue;
+                }
+                self.scan_function(method);
+                scanned_methods.insert(method.name.clone());
+                progressed = true;
+            }
+            if !progressed {
+                break;
+            }
+        }
+    }
+
+    /// Return whether the current generated-use facts mean this lowered impl method body will be emitted.
+    fn impl_method_body_is_emitted(
+        &self,
+        impl_block: &'program super::super::decl::IrImpl,
+        method: &IrFunction,
+    ) -> bool {
+        if !method.lint_allows.is_empty() || !method.rust_attributes.is_empty() {
+            return true;
+        }
+
+        match magic_methods::from_str(method.name.as_str()) {
+            Some(magic_methods::MagicMethodId::Eq | magic_methods::MagicMethodId::Str) => true,
+            Some(magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields) => {
+                self.method_is_needed(&impl_block.target_type, method)
+            }
+            _ if impl_block.trait_name.is_some() => true,
+            _ => self.method_is_needed(&impl_block.target_type, method),
+        }
+    }
+
+    /// Mirror the emitter's method-retention predicate for generated-use analysis.
+    fn method_is_needed(&self, target_type: &str, method: &IrFunction) -> bool {
+        self.analysis.public_types.contains(target_type)
+            || (!self.preserve_public_items
+                && !matches!(method.visibility, Visibility::Private)
+                && self.analysis.reachable_items.contains(target_type))
+            || self
+                .analysis
+                .used_methods
+                .contains(&(target_type.to_string(), method.name.clone()))
+    }
+
+    /// Scan a function signature, defaults, and body for generated Rust dependencies.
+    fn scan_function(&mut self, func: &IrFunction) {
+        self.scan_type_params(&func.type_params);
+        self.scan_type(&func.return_type);
+        for param in &func.params {
+            self.scan_type(&param.ty);
+            if let Some(default) = &param.default {
+                self.scan_expr(default);
+            }
+        }
+        for stmt in &func.body {
+            self.scan_stmt(stmt);
+        }
+    }
+
+    /// Scan generic parameters and their trait bounds for imports used only in Rust generic syntax.
+    fn scan_type_params(&mut self, type_params: &[IrTypeParam]) {
+        for type_param in type_params {
+            for bound in &type_param.bounds {
+                self.scan_trait_bound(bound);
+            }
+        }
+    }
+
+    /// Scan a Rust trait bound path plus any type arguments or associated type constraints it carries.
+    fn scan_trait_bound(&mut self, bound: &IrTraitBound) {
+        self.mark_trait_path_binding(&bound.trait_path);
+        for ty in &bound.type_args {
+            self.scan_type(ty);
+        }
+        for (_, ty) in &bound.assoc_types {
+            self.scan_type(ty);
+        }
+    }
+
+    /// Mark both a full Rust path and its final segment as used so imports can satisfy generic bounds.
+    fn mark_trait_path_binding(&mut self, trait_path: &str) {
+        self.mark_reachable_item(trait_path);
+        if let Some(binding) = trait_path.rsplit("::").next()
+            && binding != trait_path
+        {
+            self.mark_reachable_item(binding);
+        }
+    }
+
+    /// Scan one IR statement for generated Rust dependencies.
+    fn scan_stmt(&mut self, stmt: &IrStmt) {
+        match &stmt.kind {
+            IrStmtKind::Expr(expr) => self.scan_expr(expr),
+            IrStmtKind::Let { ty, value, .. } => {
+                self.scan_type(ty);
+                self.scan_expr(value);
+            }
+            IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
+                self.scan_assign_target(target);
+                self.scan_expr(value);
+            }
+            IrStmtKind::Return(Some(expr)) => self.scan_expr(expr),
+            IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
+            IrStmtKind::Break { value, .. } => {
+                if let Some(expr) = value {
+                    self.scan_expr(expr);
+                }
+            }
+            IrStmtKind::While { condition, body, .. } => {
+                self.scan_expr(condition);
+                self.scan_stmt_list(body);
+            }
+            IrStmtKind::For {
+                pattern,
+                iterable,
+                body,
+                ..
+            } => {
+                self.scan_pattern(pattern);
+                self.scan_expr(iterable);
+                self.scan_stmt_list(body);
+            }
+            IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => self.scan_stmt_list(body),
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.scan_expr(condition);
+                self.scan_stmt_list(then_branch);
+                if let Some(branch) = else_branch {
+                    self.scan_stmt_list(branch);
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                self.scan_expr(scrutinee);
+                for arm in arms {
+                    self.scan_pattern(&arm.pattern);
+                    if let Some(guard) = &arm.guard {
+                        self.scan_expr(guard);
+                    }
+                    self.scan_expr(&arm.body);
+                }
+            }
+        }
+    }
+
+    /// Scan a sequential statement slice.
+    fn scan_stmt_list(&mut self, stmts: &[IrStmt]) {
+        for stmt in stmts {
+            self.scan_stmt(stmt);
+        }
+    }
+
+    /// Scan an assignment target without treating field writes as field reads.
+    fn scan_assign_target(&mut self, target: &AssignTarget) {
+        match target {
+            AssignTarget::Var(name) | AssignTarget::StaticBinding(name) | AssignTarget::Static(name) => {
+                self.mark_reachable_item(name);
+            }
+            AssignTarget::Field { object, .. } => self.scan_expr(object),
+            AssignTarget::Index { object, index } => {
+                self.scan_expr(object);
+                self.scan_expr(index);
+            }
+        }
+    }
+
+    /// Scan a pattern for nominal type references and nested literal expressions.
+    fn scan_pattern(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Var(_) => {}
+            Pattern::Tuple(items) | Pattern::Or(items) => {
+                for item in items {
+                    self.scan_pattern(item);
+                }
+            }
+            Pattern::Struct { name, fields } => {
+                self.mark_reachable_item(name);
+                for (_, pattern) in fields {
+                    self.scan_pattern(pattern);
+                }
+            }
+            Pattern::Enum { name, fields, .. } => {
+                self.mark_reachable_item(name);
+                for field in fields {
+                    self.scan_pattern(field);
+                }
+            }
+            Pattern::Literal(expr) => self.scan_expr(expr),
+            Pattern::Wildcard => {}
+        }
+    }
+
+    /// Scan an expression tree for generated Rust dependencies and observed field/method uses.
+    fn scan_expr(&mut self, expr: &TypedExpr) {
+        self.scan_type(&expr.ty);
+        match &expr.kind {
+            IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+                self.mark_reachable_item(name);
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                self.scan_expr(left);
+                self.scan_expr(right);
+            }
+            IrExprKind::UnaryOp { operand, .. }
+            | IrExprKind::Await(operand)
+            | IrExprKind::Try(operand)
+            | IrExprKind::InteropCoerce { expr: operand, .. }
+            | IrExprKind::Cast { expr: operand, .. } => self.scan_expr(operand),
+            IrExprKind::Call {
+                func, args, type_args, ..
+            } => {
+                if let IrExprKind::Var { name, .. } = &func.kind {
+                    self.analysis.used_constructors.insert(name.clone());
+                }
+                self.scan_expr(func);
+                for ty in type_args {
+                    self.scan_type(ty);
+                }
+                for arg in args {
+                    self.scan_expr(&arg.expr);
+                }
+            }
+            IrExprKind::BuiltinCall { args, .. } => {
+                for arg in args {
+                    self.scan_expr(arg);
+                }
+            }
+            IrExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                type_args,
+                ..
+            } => {
+                self.scan_expr(receiver);
+                self.mark_rust_extension_trait_imports(receiver, method);
+                self.mark_stdlib_error_trait_import(receiver, method);
+                if let Some(type_name) = Self::nominal_type_name(&receiver.ty) {
+                    self.analysis
+                        .used_methods
+                        .insert((type_name.to_string(), method.clone()));
+                } else if let IrExprKind::Var {
+                    name,
+                    ref_kind: VarRefKind::TypeName,
+                    ..
+                } = &receiver.kind
+                {
+                    self.analysis.used_methods.insert((name.clone(), method.clone()));
+                }
+                for ty in type_args {
+                    self.scan_type(ty);
+                }
+                for arg in args {
+                    self.scan_expr(&arg.expr);
+                }
+            }
+            IrExprKind::KnownMethodCall { receiver, args, .. } => {
+                self.scan_expr(receiver);
+                for arg in args {
+                    self.scan_expr(&arg.expr);
+                }
+            }
+            IrExprKind::Field { object, field } => {
+                self.scan_expr(object);
+                if let Some(type_name) = Self::nominal_type_name(&object.ty) {
+                    self.analysis.read_fields.insert((type_name.to_string(), field.clone()));
+                }
+            }
+            IrExprKind::Index { object, index } => {
+                self.scan_expr(object);
+                self.scan_expr(index);
+            }
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                self.scan_expr(target);
+                for expr in [start, end, step].into_iter().flatten() {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::ListComp {
+                element,
+                iterable,
+                filter,
+                ..
+            } => {
+                self.scan_expr(iterable);
+                self.scan_expr(element);
+                if let Some(expr) = filter {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::DictComp {
+                key,
+                value,
+                iterable,
+                filter,
+                ..
+            } => {
+                self.scan_expr(iterable);
+                self.scan_expr(key);
+                self.scan_expr(value);
+                if let Some(expr) = filter {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => self.scan_expr(value),
+                    }
+                }
+            }
+            IrExprKind::Dict(items) => {
+                for item in items {
+                    match item {
+                        IrDictEntry::Pair(key, value) => {
+                            self.scan_expr(key);
+                            self.scan_expr(value);
+                        }
+                        IrDictEntry::Spread(value) => self.scan_expr(value),
+                    }
+                }
+            }
+            IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+                for item in items {
+                    self.scan_expr(item);
+                }
+            }
+            IrExprKind::Struct { name, fields } => {
+                self.mark_reachable_item(name);
+                for (_, expr) in fields {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.scan_expr(condition);
+                self.scan_expr(then_branch);
+                if let Some(expr) = else_branch {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::Match { scrutinee, arms } => {
+                self.scan_expr(scrutinee);
+                for arm in arms {
+                    self.scan_pattern(&arm.pattern);
+                    if let Some(guard) = &arm.guard {
+                        self.scan_expr(guard);
+                    }
+                    self.scan_expr(&arm.body);
+                }
+            }
+            IrExprKind::Closure { params, body, captures } => {
+                for (_, ty) in params {
+                    self.scan_type(ty);
+                }
+                for capture in captures {
+                    self.mark_reachable_item(capture);
+                }
+                self.scan_expr(body);
+            }
+            IrExprKind::Block { stmts, value } => {
+                self.scan_stmt_list(stmts);
+                if let Some(expr) = value {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::Loop { body } => self.scan_stmt_list(body),
+            IrExprKind::Range { start, end, .. } => {
+                if let Some(expr) = start {
+                    self.scan_expr(expr);
+                }
+                if let Some(expr) = end {
+                    self.scan_expr(expr);
+                }
+            }
+            IrExprKind::Format { parts } => {
+                for part in parts {
+                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                        self.scan_expr(expr);
+                    }
+                }
+            }
+            IrExprKind::SerdeFromJson(type_name) => self.mark_reachable_item(type_name),
+            IrExprKind::Unit
+            | IrExprKind::None
+            | IrExprKind::Bool(_)
+            | IrExprKind::Int(_)
+            | IrExprKind::Float(_)
+            | IrExprKind::String(_)
+            | IrExprKind::Bytes(_)
+            | IrExprKind::Literal(_)
+            | IrExprKind::FieldsList(_)
+            | IrExprKind::SerdeToJson => {}
+        }
+    }
+
+    /// Mark Rust trait imports that can satisfy an observed extension-method call.
+    fn mark_rust_extension_trait_imports(&mut self, receiver: &TypedExpr, method: &str) {
+        if !self.receiver_can_use_rust_extension_trait(receiver) {
+            return;
+        }
+        let Some(bindings) = self.rust_extension_trait_imports_by_method.get(method).cloned() else {
+            return;
+        };
+        self.analysis.used_extension_trait_imports.extend(bindings);
+    }
+
+    /// Mark the stdlib `Error` trait import required for Rust method lookup on imported error types.
+    fn mark_stdlib_error_trait_import(&mut self, receiver: &TypedExpr, method: &str) {
+        if !matches!(method, "message" | "source") {
+            return;
+        }
+        let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
+            return;
+        };
+        if self.external_error_trait_types.contains(type_name) {
+            self.analysis.uses_stdlib_error_trait = true;
+        }
+    }
+
+    /// Return whether a method receiver may depend on Rust extension-trait lookup.
+    fn receiver_can_use_rust_extension_trait(&self, receiver: &TypedExpr) -> bool {
+        if matches!(
+            &receiver.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalName | VarRefKind::ExternalRustName | VarRefKind::TypeName,
+                ..
+            }
+        ) {
+            return false;
+        }
+        let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
+            return false;
+        };
+        !self.declarations_by_name.contains_key(type_name)
+    }
+
+    /// Scan an IR type for nominal declarations or imported type names that must remain visible.
+    fn scan_type(&mut self, ty: &IrType) {
+        match ty {
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => self.scan_type(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                self.scan_type(key);
+                self.scan_type(value);
+            }
+            IrType::Tuple(items) => {
+                for item in items {
+                    self.scan_type(item);
+                }
+            }
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::NamedGeneric(name, _) => {
+                self.mark_reachable_item(name);
+                if let IrType::NamedGeneric(_, args) = ty {
+                    for arg in args {
+                        self.scan_type(arg);
+                    }
+                }
+            }
+            IrType::ImplTrait(bound) => {
+                self.mark_reachable_item(&bound.trait_path);
+                for arg in &bound.type_args {
+                    self.scan_type(arg);
+                }
+                for (_, ty) in &bound.assoc_types {
+                    self.scan_type(ty);
+                }
+            }
+            IrType::Function { params, ret } => {
+                for param in params {
+                    self.scan_type(param);
+                }
+                self.scan_type(ret);
+            }
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::String
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Generic(_)
+            | IrType::SelfType
+            | IrType::Unknown => {}
+        }
+    }
+
+    /// Return the nominal type name after peeling explicit reference wrappers.
+    fn nominal_type_name(ty: &IrType) -> Option<&str> {
+        match ty {
+            IrType::Ref(inner) | IrType::RefMut(inner) => Self::nominal_type_name(inner),
+            _ => ty.nominal_type_name(),
+        }
+    }
+}
+
 impl<'a> IrEmitter<'a> {
     /// Emit a complete IR program to formatted Rust code.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
@@ -289,8 +1054,22 @@ impl<'a> IrEmitter<'a> {
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
         let mut items = Vec::new();
-        let static_names: Vec<String> = program
+        let analysis = GeneratedUseAnalyzer::analyze(
+            program,
+            &self.externally_reachable_items,
+            self.preserve_public_items,
+            &self.external_error_trait_types,
+        );
+        let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
+        self.set_generated_use_analysis(analysis);
+
+        let emitted_declarations: Vec<&IrDecl> = program
             .declarations
+            .iter()
+            .filter(|decl| self.should_emit_decl(decl))
+            .collect();
+
+        let static_names: Vec<String> = emitted_declarations
             .iter()
             .filter_map(|decl| match &decl.kind {
                 IrDeclKind::Static { name, .. } => Some(name.clone()),
@@ -306,7 +1085,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         let mut tracker = ImportTracker::default();
-        tracker.scan_program(program);
+        tracker.scan_decls(&emitted_declarations);
 
         let compiler_version = crate::version::INCAN_VERSION;
         items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
@@ -316,6 +1095,10 @@ impl<'a> IrEmitter<'a> {
             (true, false) => items.push(quote! { use std::collections::HashMap; }),
             (false, true) => items.push(quote! { use std::collections::HashSet; }),
             (false, false) => {}
+        }
+        if uses_stdlib_error_trait {
+            let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
+            items.push(quote! { use crate::#std_namespace::traits::error::Error; });
         }
 
         // RFC 052: force declaration-order static initialization once per module before any static access helper call.
@@ -353,7 +1136,7 @@ impl<'a> IrEmitter<'a> {
 
         // Emit all declarations.
         let mut decl_items = Vec::new();
-        for decl in &program.declarations {
+        for decl in emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
         }
 
@@ -363,5 +1146,24 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! {
             #(#items)*
         })
+    }
+
+    /// Return whether a lowered declaration should be emitted after generated-use analysis.
+    fn should_emit_decl(&self, decl: &IrDecl) -> bool {
+        match &decl.kind {
+            IrDeclKind::Function(func) => self.should_emit_decl_name(&func.name, &func.visibility),
+            IrDeclKind::Struct(s) => self.should_emit_decl_name(&s.name, &s.visibility),
+            IrDeclKind::Enum(e) => self.should_emit_decl_name(&e.name, &e.visibility),
+            IrDeclKind::Trait(trait_decl) => self.should_emit_decl_name(&trait_decl.name, &trait_decl.visibility),
+            IrDeclKind::TypeAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
+            IrDeclKind::Const { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
+            IrDeclKind::Static { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
+            IrDeclKind::Import { .. } => true,
+            IrDeclKind::Impl(impl_block) => self
+                .generated_use_analysis
+                .borrow()
+                .reachable_items
+                .contains(&impl_block.target_type),
+        }
     }
 }

@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn walk(node_id: i64, pending: &mut Vec<i64>, visited: &mut Vec<bool>) {
     if node_id < 0 {
         return;

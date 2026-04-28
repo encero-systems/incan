@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 fn test_while_loop() {
     let mut count = 0;
     while count < 5 {
@@ -15,32 +14,27 @@ fn test_while_loop() {
         count = count + 1;
     }
 }
-#[allow(dead_code)]
 fn test_for_range_one_arg() {
     for i in 0_i64..(5 as i64) {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_for_range_two_args() {
     for i in (1 as i64)..(10 as i64) {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_for_range_three_args() {
     for i in incan_stdlib::iter::range(0, 100, (10) as i64) {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_for_list() {
     let numbers = vec![1, 2, 3, 4, 5];
     for n in numbers.iter().copied() {
         println!("{}", n);
     }
 }
-#[allow(dead_code)]
 fn test_for_with_break() {
     for i in 0_i64..(10 as i64) {
         if i == 5 {
@@ -49,7 +43,6 @@ fn test_for_with_break() {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_for_with_continue() {
     for i in 0_i64..(10 as i64) {
         if incan_stdlib::num::py_mod_i64(i, 2) == 0 {
@@ -58,7 +51,6 @@ fn test_for_with_continue() {
         println!("{}", i);
     }
 }
-#[allow(dead_code)]
 fn test_nested_loops() {
     for i in 0_i64..(3 as i64) {
         for j in 0_i64..(3 as i64) {

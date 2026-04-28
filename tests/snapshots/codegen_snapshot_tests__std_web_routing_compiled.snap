@@ -7,23 +7,15 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[allow(dead_code)]
 pub fn route(path: String, methods: Vec<String>) {
     incan_stdlib::errors::__private::raise_runtime_misuse(
         "decorator marker 'incan_web_macros::route' cannot be called at runtime",
     )
 }
-#[allow(dead_code)]
 pub const GET: &'static str = "GET";
-#[allow(dead_code)]
 pub const POST: &'static str = "POST";
-#[allow(dead_code)]
 pub const PUT: &'static str = "PUT";
-#[allow(dead_code)]
 pub const DELETE: &'static str = "DELETE";
-#[allow(dead_code)]
 pub const PATCH: &'static str = "PATCH";
-#[allow(dead_code)]
 pub const HEAD: &'static str = "HEAD";
-#[allow(dead_code)]
 pub const OPTIONS: &'static str = "OPTIONS";
