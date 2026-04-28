@@ -7,6 +7,7 @@ use incan_core::lang::keywords;
 use incan_core::lang::magic_methods;
 use incan_core::lang::operators;
 use incan_core::lang::punctuation;
+use incan_core::lang::registry::{Since, RFC};
 use incan_core::lang::surface::{constructors, functions, types as surface_types};
 use incan_core::lang::traits;
 use incan_core::lang::types::{collections, numerics, stringlike};
@@ -161,6 +162,36 @@ fn punctuation_spellings_unique_and_resolvable() {
         from_str: punctuation::from_str,
         as_str: punctuation::as_str,
     });
+}
+
+#[test]
+fn punctuation_provenance_matches_introducing_release() {
+    let expected = [
+        (punctuation::PunctuationId::Comma, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::Colon, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::Question, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::At, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::Pipe, RFC::_040, Since(0, 3)),
+        (punctuation::PunctuationId::Dot, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::ColonColon, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::Arrow, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::FatArrow, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::Ellipsis, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::LParen, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::RParen, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::LBracket, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::RBracket, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::LBrace, RFC::_000, Since(0, 1)),
+        (punctuation::PunctuationId::RBrace, RFC::_000, Since(0, 1)),
+    ];
+
+    assert_eq!(expected.len(), punctuation::PUNCTUATION.len());
+
+    for (id, introduced_in_rfc, since) in expected {
+        let info = punctuation::info_for(id);
+        assert_eq!(info.introduced_in_rfc, introduced_in_rfc, "wrong RFC for {id:?}");
+        assert_eq!(info.since, since, "wrong since-version for {id:?}");
+    }
 }
 
 #[test]
