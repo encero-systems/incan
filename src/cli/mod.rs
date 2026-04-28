@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::manifest::ProjectManifest;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::tools::ToolsDoctorFormat;
 
@@ -716,9 +716,20 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 commands::check_file(&file.to_string_lossy())
             } else {
                 // No command and no file - show help
-                Err(CliError::new("", ExitCode::FAILURE))
+                Err(CliError::new(render_cli_help_text(), ExitCode::FAILURE))
             }
         }
+    }
+}
+
+/// Render top-level CLI help text.
+fn render_cli_help_text() -> String {
+    let mut command = Cli::command();
+    let mut out = Vec::new();
+    if command.write_help(&mut out).is_ok() {
+        String::from_utf8_lossy(&out).to_string()
+    } else {
+        "Run `incan --help` for usage.".to_string()
     }
 }
 
@@ -1161,6 +1172,29 @@ mod tests {
         assert!(!command_prefers_banner(&parse_cli(["incan", "version", "patch"])?));
         assert!(!command_prefers_banner(&parse_cli(["incan", "new", "demo"])?));
         assert!(!command_prefers_banner(&parse_cli(["incan", "--check", "main.incn"])?));
+        Ok(())
+    }
+
+    #[test]
+    fn test_execute_without_args_returns_help_text() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan"])?;
+        let result = execute(cli, false);
+        let Err(err) = result else {
+            return Err(expected_command("help failure"));
+        };
+        assert_eq!(err.exit_code, ExitCode::FAILURE);
+        assert!(
+            !err.message.trim().is_empty(),
+            "expected help text for no-arg invocation"
+        );
+        assert!(
+            err.message.contains("Usage:"),
+            "expected clap usage block in help output"
+        );
+        assert!(
+            err.message.contains("build") && err.message.contains("run"),
+            "expected top-level command tokens in help output"
+        );
         Ok(())
     }
 }

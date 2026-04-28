@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use super::common::{
     build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
     format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
-    module_key_index, resolve_project_root, validate_output_dir,
+    module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -385,40 +385,13 @@ fn prepare_project(
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
-    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
-    let mut all_errors: String = String::new();
-    let module_idx_by_key = module_key_index(&modules);
-    for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
-        let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
-        checker.set_library_manifest_index(library_manifest_index.clone());
-
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
-            Ok(()) => {
-                for warn in checker.warnings() {
-                    eprint!(
-                        "{}",
-                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
-                    );
-                }
-            }
-            Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
-            }
-        }
-    }
-    if !all_errors.is_empty() {
-        return Err(CliError::failure(all_errors.trim_end()));
-    }
+    typecheck_modules_with_import_graph(
+        &modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        None,
+    )?;
 
     // Derive project name (manifest overrides filename)
     let project_name = manifest

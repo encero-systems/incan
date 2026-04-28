@@ -17,7 +17,7 @@ use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{canonicalize_source_module_segments, resolve_source_module_from_base};
-use crate::frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
+use crate::frontend::{diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
@@ -1302,6 +1302,61 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
         .collect()
 }
 
+/// Typecheck all collected modules in dependency-safe order using shared CLI diagnostics formatting.
+///
+/// This helper centralizes the per-module checker setup used by `build` and `check` paths so warning/error rendering
+/// stays consistent across command flows.
+pub(crate) fn typecheck_modules_with_import_graph(
+    modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    library_manifest_index: &LibraryManifestIndex,
+    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+) -> CliResult<()> {
+    let declared = manifest.map(|m| m.declared_rust_crate_names());
+    let module_idx_by_key = module_key_index(modules);
+    let mut all_errors = String::new();
+
+    for (idx, module) in modules.iter().enumerate() {
+        let deps_for_module = imported_module_deps_for_with_index(modules, idx, &module_idx_by_key);
+
+        let mut checker = typechecker::TypeChecker::new();
+        if let Some(names) = declared.clone() {
+            checker.set_declared_crate_names(names);
+        }
+        checker.set_library_manifest_index(library_manifest_index.clone());
+        #[cfg(feature = "rust_inspect")]
+        if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir {
+            checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.to_path_buf());
+        }
+
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                for warn in checker.warnings() {
+                    eprint!(
+                        "{}",
+                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
+                    );
+                }
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+
+    if all_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::failure(all_errors.trim_end()))
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -2293,6 +2348,47 @@ pub def main() -> int:
             1,
             "second call with identical inputs should skip regeneration"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn typecheck_modules_with_import_graph_accepts_valid_program() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+def main() -> None:
+    pass
+"#,
+        )?;
+
+        typecheck_modules_with_import_graph(
+            &[module],
+            None,
+            &LibraryManifestIndex::default(),
+            #[cfg(feature = "rust_inspect")]
+            None,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn typecheck_modules_with_import_graph_reports_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+def main() -> None:
+    missing_symbol()
+"#,
+        )?;
+
+        let result = typecheck_modules_with_import_graph(
+            &[module],
+            None,
+            &LibraryManifestIndex::default(),
+            #[cfg(feature = "rust_inspect")]
+            None,
+        );
+        assert!(result.is_err(), "expected unresolved symbol to fail typecheck");
 
         Ok(())
     }

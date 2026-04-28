@@ -5,14 +5,12 @@
 use crate::backend::IrCodegen;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::{diagnostics, lexer, parser, typechecker};
+use crate::frontend::{diagnostics, lexer, parser};
 use crate::manifest::ProjectManifest;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use super::common::{
-    collect_modules, imported_module_deps_for_with_index, module_key_index, read_source, resolve_project_root,
-};
+use super::common::{collect_modules, read_source, resolve_project_root, typecheck_modules_with_import_graph};
 
 /// Lex and display tokens.
 pub fn lex_file(file_path: &str) -> CliResult<ExitCode> {
@@ -76,46 +74,17 @@ pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
     };
     let project_root = resolve_project_root(&normalized_file_path);
     let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
     let library_manifest_index = manifest
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
-
-    let mut all_errors: String = String::new();
-    let module_idx_by_key = module_key_index(&modules);
-    for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
-
-        let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
-        checker.set_library_manifest_index(library_manifest_index.clone());
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
-            Ok(()) => {
-                for warn in checker.warnings() {
-                    eprint!(
-                        "{}",
-                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
-                    );
-                }
-            }
-            Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
-            }
-        }
-    }
-
-    if !all_errors.is_empty() {
-        return Err(CliError::failure(all_errors.trim_end()));
-    }
+    typecheck_modules_with_import_graph(
+        &modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        None,
+    )?;
 
     println!("✓ Type check passed!");
     Ok(ExitCode::SUCCESS)
@@ -171,4 +140,27 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
 
     println!("{}", output);
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn check_file_reports_type_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let source_path = tmp.path().join("main.incn");
+        fs::write(
+            &source_path,
+            r#"
+def main() -> None:
+    missing_symbol()
+"#,
+        )?;
+
+        let result = check_file(source_path.to_string_lossy().as_ref());
+        assert!(result.is_err(), "expected unresolved symbol to fail check_file");
+        Ok(())
+    }
 }
