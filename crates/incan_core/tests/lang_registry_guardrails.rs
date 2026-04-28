@@ -7,7 +7,7 @@ use incan_core::lang::keywords;
 use incan_core::lang::magic_methods;
 use incan_core::lang::operators;
 use incan_core::lang::punctuation;
-use incan_core::lang::registry::{Since, RFC};
+use incan_core::lang::registry::{RFC, Since};
 use incan_core::lang::surface::{constructors, functions, types as surface_types};
 use incan_core::lang::traits;
 use incan_core::lang::types::{collections, numerics, stringlike};
