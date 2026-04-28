@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 040: Scoped DSL Surface Forms - Incan Documentation</title>
+        <title>RFC 081: Language-shaped DSL embeddings - Incan Documentation</title>
       
     
     
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-040-scoped-dsl-surface-forms" class="md-skip">
+        <a href="#rfc-081-language-shaped-dsl-embeddings" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 040: Scoped DSL Surface Forms
+              RFC 081: Language-shaped DSL embeddings
             
           </span>
         </div>
@@ -4378,48 +4378,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Motivation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#global-operator-overloading-is-not-the-right-model-for-every-dsl" class="md-nav__link">
-    <span class="md-ellipsis">
-      Global operator overloading is not the right model for every DSL
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFC 027 already provides the right substrate, but not the full glyph model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dsls-need-concise-chaining-and-concise-naming" class="md-nav__link">
-    <span class="md-ellipsis">
-      DSLs need concise chaining and concise naming
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-real-restriction-is-not-the-glyph-but-the-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      The real restriction is not the glyph, but the contract
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -4434,7 +4392,7 @@
         <li class="md-nav__item">
   <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-goals
+      Non-Goals
     </span>
   </a>
   
@@ -4447,111 +4405,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Guide-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#same-spelling-separate-semantic-namespace" class="md-nav__link">
-    <span class="md-ellipsis">
-      Same spelling, separate semantic namespace
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-pipeline-linking" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: pipeline linking
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-query-style-pipes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: query-style pipes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-route-head-composition" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: route-head composition
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-rails-style-routing-families" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: Rails-style routing families
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-r-style-data-pipelines" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: R-style data pipelines
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-matillion-style-orchestration-graphs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: Matillion-style orchestration graphs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-taskbuild-automation-dsls" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: task/build automation DSLs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-future-binding-like-glyphs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: future binding-like glyphs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#example-leading-dot-field-access-expression-form-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Example: leading-dot field access (expression-form surface)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#canonical-acceptance-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      Canonical acceptance examples
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -4560,111 +4413,6 @@
       Reference-level explanation
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#core-rule" class="md-nav__link">
-    <span class="md-ellipsis">
-      Core rule
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#registration-and-conflict-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Registration and conflict policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#expression-form-surfaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      Expression-form surfaces
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#registration-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Registration model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#surface-recognition" class="md-nav__link">
-    <span class="md-ellipsis">
-      Surface recognition
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#resolution-order" class="md-nav__link">
-    <span class="md-ellipsis">
-      Resolution order
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#nested-and-competing-descriptors" class="md-nav__link">
-    <span class="md-ellipsis">
-      Nested and competing descriptors
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pairwise-chaining" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pairwise chaining
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#implicit-block-receivercontext" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implicit block receiver/context
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#formatter-and-lsp-metadata" class="md-nav__link">
-    <span class="md-ellipsis">
-      Formatter and LSP metadata
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4679,18 +4427,27 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#interaction-with-rfc-028" class="md-nav__link">
+  <a href="#syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with RFC 028
+      Syntax
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-rfc-027" class="md-nav__link">
+  <a href="#semantics" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with RFC 027
+      Semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
     </span>
   </a>
   
@@ -4738,9 +4495,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design Decisions
+      Unresolved questions
     </span>
   </a>
   
@@ -4764,540 +4521,124 @@
   
 
 
-<h1 id="rfc-040-scoped-dsl-surface-forms">RFC 040: Scoped DSL Surface Forms<a class="headerlink" href="#rfc-040-scoped-dsl-surface-forms" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-081-language-shaped-dsl-embeddings">RFC 081: Language-shaped DSL embeddings<a class="headerlink" href="#rfc-081-language-shaped-dsl-embeddings" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-03-08</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-04-27</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
 <li>RFC 027 (<code>incan-vocab</code> block registration and desugaring)</li>
-<li>RFC 028 (global operator overloading)</li>
-<li>RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)</li>
+<li>RFC 040 (scoped DSL surface forms)</li>
+<li>RFC 045 (scoped DSL symbol surfaces)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/174</li>
+<li><strong>Issue:</strong> —</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Introduce <strong>scoped DSL surface forms</strong> for explicit DSL blocks and their registered subgrammars: a registered DSL may give a local syntax shape positive meaning inside eligible positions of an owning block, while preserving negative misuse diagnostics outside that block in the activating file or module. Operator-like glyphs such as <code>&gt;&gt;</code>, <code>&lt;&lt;</code>, <code>|&gt;</code>, <code>&lt;|</code>, <code>-&gt;</code>, <code>&lt;-</code>, or <code>+</code> can support chaining, routing, linking, or composition within a DSL block without implying that the operand types globally implement the corresponding RFC 028 operator traits. Binding-like glyphs such as <code>:=</code> are reserved for block-local alias/binding forms and are specified as a separate family from operators. Expression-form surfaces such as leading-dot paths (<code>.column</code>, <code>.order.amount</code>) provide implicit-receiver syntax that is valid only inside eligible DSL positions, without becoming a general Incan expression form.</p>
-<p>This RFC does <strong>not</strong> define a closed whitelist of legal DSL surfaces. It defines the descriptor contract, scoping rules, parsing-eligibility rules, semantic artifact requirements, diagnostic rules, and conflict policy that make scoped surfaces safe to use. The surface set is open-ended as long as a DSL registers the shape explicitly and it coexists cleanly with the core grammar and tooling.</p>
+<p>This RFC captures the language-embedding design track for DSLs that need to look like established languages or language fragments: CSS, HTML, XML, Ruby, JavaScript, TypeScript, Java, Kotlin, Groovy, and similar surfaces. The goal is not to make those syntaxes part of ordinary Incan. The goal is to define when an explicit DSL block may opt into descriptor-gated token forms, lexical submodes, and language-shaped ambiguity rules without leaking them into core Incan parsing.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<h3 id="global-operator-overloading-is-not-the-right-model-for-every-dsl">Global operator overloading is not the right model for every DSL<a class="headerlink" href="#global-operator-overloading-is-not-the-right-model-for-every-dsl" title="Permanent link">&para;</a></h3>
-<p>RFC 028 defines ordinary global operator overloading. That is the right tool when a type truly supports an operator everywhere:</p>
-<ul>
-<li>a matrix type can globally support <code>@</code></li>
-<li>a custom numeric type can globally support <code>+</code></li>
-<li>a pipeline object can globally support <code>&gt;&gt;</code></li>
-</ul>
-<p>But some DSLs need the same glyphs with a meaning that exists <strong>only inside an explicit block and specific DSL positions within it</strong>.</p>
-<p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
-</code></pre></div>
-<p>The intent here is not necessarily that <code>Step</code> globally implements <code>Shr</code>. The real meaning may be "inside a <code>pipeline</code> block, register directed links between adjacent steps." Outside that block, <code>extract &gt;&gt; normalize</code> should be an error with a targeted message.</p>
-<p>If the types globally implement RFC 028 operator traits, the compiler can no longer honestly say "this is only valid inside a pipeline block." That is why block-local surface meaning needs its own mechanism.</p>
-<h3 id="rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model">RFC 027 already provides the right substrate, but not the full glyph model<a class="headerlink" href="#rfc-027-already-provides-the-right-substrate-but-not-the-full-glyph-model" title="Permanent link">&para;</a></h3>
-<p>RFC 027 gives Incan an explicit DSL block model:</p>
-<ul>
-<li>libraries register block keywords and placement rules</li>
-<li>block structure remains explicit and available to later compilation phases</li>
-<li>DSL blocks can contribute library-owned surface meaning without mutating ordinary language semantics</li>
-</ul>
-<p>That is already the correct architectural home for DSL-owned glyphs. What is missing is a way for a block to say "inside these positions, this glyph has a local meaning."</p>
-<h3 id="dsls-need-concise-chaining-and-concise-naming">DSLs need concise chaining and concise naming<a class="headerlink" href="#dsls-need-concise-chaining-and-concise-naming" title="Permanent link">&para;</a></h3>
-<p>The immediate motivating cases are operator-like glyphs:</p>
-<ul>
-<li><code>&gt;&gt;</code> / <code>&lt;&lt;</code> for directional linking</li>
-<li><code>|&gt;</code> / <code>&lt;|</code> for pipe-style flow or reverse application inside a block</li>
-<li><code>-&gt;</code> / <code>&lt;-</code> for transitions, edges, mappings, or directional flow inside a block</li>
-</ul>
-<p>But the same family also needs room for future binding-like surfaces such as <code>:=</code>, where the glyph is not a global walrus operator, but a block-local alias or slot-binding form.</p>
-<p>Beyond operators and bindings, DSLs also need <strong>expression-form surfaces</strong>: syntax shapes that are only valid inside eligible DSL positions. The leading example is <code>.column</code> notation — a leading-dot path with an implicit receiver supplied by the owning block's context. Outside DSL positions, <code>.field</code> at expression start is not valid Incan syntax and must be rejected. Inside a query or relational block, <code>.amount</code> means "the <code>amount</code> field of the primary relation" without needing a named receiver.</p>
-<p>This RFC therefore covers <strong>scoped DSL surface forms</strong> as the parent category, split into operator-like glyph, binding-like glyph, and expression-form families.</p>
-<h3 id="the-real-restriction-is-not-the-glyph-but-the-contract">The real restriction is not the glyph, but the contract<a class="headerlink" href="#the-real-restriction-is-not-the-glyph-but-the-contract" title="Permanent link">&para;</a></h3>
-<p>The language does not need to pre-decide that only a handful of symbols are ever valid in DSLs. A DSL may reasonably want shapes like:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</code></pre></div>
-<p>where <code>+</code> combines route verbs and <code>-&gt;</code> maps a route specification to a handler or body.</p>
-<p>That is fine. The thing the language must restrict is not <em>which</em> glyphs are imaginable, but <em>how</em> a DSL claims them:</p>
-<ul>
-<li>the glyph must be explicitly registered</li>
-<li>the DSL must declare the positions where it becomes special</li>
-<li>the DSL must declare its family and surface shape</li>
-<li>conflicts with core grammar must be explicit and tooling-safe</li>
-</ul>
-<p>That is the real safety boundary for this RFC.</p>
+<p>RFC 040 defines the base scoped-surface layer: scoped operator-like glyphs, binding-like glyphs, leading-dot expression forms, descriptor metadata, diagnostics, formatting, and desugaring handoff. That layer is sufficient for query-like blocks, workflow/application DSLs, and other purpose-built surfaces that mostly reuse ordinary Incan tokens.</p>
+<p>Language-shaped DSLs need more than that. CSS needs selector tokens, declaration values, dimensions, colors, and custom properties. HTML and XML need markup submodes, attributes, raw text, entity-like references, comments, and expression holes. Ruby needs sigil identifiers, symbols, block parameter bars, regex and percent literal modes. JavaScript and TypeScript need optional access, strict equality, template literals, regex literals, comments, type-position syntax, and JSX/TSX-like markup if enabled. JVM-family surfaces add annotations, generic type syntax, lambdas, nullable/member-access forms, string interpolation, optional punctuation, closures, and regex operators.</p>
+<p>Putting all of that in RFC 040 would collapse two compiler-layer concerns into one RFC. RFC 081 exists because language-shaped DSLs need lexical modes and token forms that build on RFC 040's base scoped-surface contract without redefining it.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Define the registration, scoping, parsing-eligibility, semantic artifact, diagnostic, and conflict rules under which explicit DSL blocks may own position-scoped surface forms.</li>
-<li>Cover three surface families: operator-like glyphs (e.g. <code>&gt;&gt;</code>, <code>|&gt;</code>), binding-like glyphs (e.g. <code>:=</code>), and expression-form surfaces (e.g. leading-dot <code>.field</code> access).</li>
-<li>Ensure scoped surface meaning is block-local and position-scoped: a surface gains DSL-owned semantics only inside eligible positions of an explicit owning block, not as a blanket redefinition for the whole block body.</li>
-<li>Require accepted scoped-surface occurrences to carry descriptor identity, owning block identity, eligible-position identity, parsed payload, source span, and lowering/tooling handoff metadata through later phases.</li>
-<li>Provide targeted misuse diagnostics when DSL-shaped surfaces appear outside eligible positions but inside an activating file or module.</li>
-<li>Coexist cleanly with RFC 028 global operator overloading and the rest of the core grammar.</li>
-<li>Keep the surface set open-ended: any surface form that satisfies the registration and conflict rules is valid, with no pre-closed whitelist.</li>
+<li>Define how explicit DSL blocks may opt into language-shaped lexical modes and token forms.</li>
+<li>Keep language-shaped syntax descriptor-gated and position-scoped.</li>
+<li>Preserve core Incan tokenization and parsing outside eligible DSL positions.</li>
+<li>Define how embedded language fragments expose typed syntax artifacts to desugarers, formatters, diagnostics, and LSP tooling.</li>
+<li>Support narrow product-specific template/style fragments without requiring a full implementation of every target language.</li>
+<li>Provide a compatibility target for CSS, HTML, XML, Ruby, JavaScript, TypeScript, Java, Kotlin, Groovy, and similar language-shaped DSLs.</li>
 </ul>
-<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Arbitrary ad-hoc punctuation with no registration or conflict policy</li>
-<li>Project-wide or import-only operator redefinition</li>
-<li>Hidden ambient runtime state as the source of block-local meaning</li>
-<li>A global walrus operator for ordinary Incan code</li>
-<li>Scoped identifier symbol semantics (e.g. <code>sum</code>, <code>count</code> gaining DSL-specific meaning by position) — that belongs to RFC 045</li>
-<li>One-off parser exceptions for individual libraries without a registered descriptor</li>
+<li>Making CSS, HTML, XML, Ruby, JavaScript, TypeScript, Java, Kotlin, Groovy, or any other external language valid ordinary Incan syntax.</li>
+<li>Defining a universal parser generator for arbitrary languages.</li>
+<li>Guaranteeing source-compatible implementations of every external language grammar.</li>
+<li>Replacing RFC 040 scoped operator-like glyphs, binding-like glyphs, or leading-dot expression forms.</li>
+<li>Allowing libraries to mutate global lexical behavior through imports alone.</li>
+<li>Implementing this feature as part of the RFC 040 delivery slice.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="same-spelling-separate-semantic-namespace">Same spelling, separate semantic namespace<a class="headerlink" href="#same-spelling-separate-semantic-namespace" title="Permanent link">&para;</a></h3>
-<p>The central rule is:</p>
-<ul>
-<li>the <strong>surface spelling</strong> may be the same</li>
-<li>the <strong>owner of the meaning</strong> is different</li>
-</ul>
-<p>Outside an owning DSL block, or outside the DSL positions that block explicitly marks as eligible, the surface falls back to the ordinary language surface and is interpreted according to RFC 028 and the rest of the core grammar.</p>
-<p>Inside an explicit DSL block, the enclosing block may own a position-scoped meaning for the same surface spelling.</p>
-<p>That means:</p>
-<ul>
-<li><code>a &gt;&gt; b</code> in ordinary code uses global operator resolution</li>
-<li><code>a &gt;&gt; b</code> inside a <code>pipeline</code> block may mean "link these two steps"</li>
-<li><code>a &gt;&gt; b</code> outside a <code>pipeline</code> block, but in a file that activated the pipeline DSL, may receive a targeted "outside the block" diagnostic</li>
-</ul>
-<p>The latter does <strong>not</strong> imply that <code>a</code> or <code>b</code> globally implement <code>Shr</code>.</p>
-<h3 id="example-pipeline-linking">Example: pipeline linking<a class="headerlink" href="#example-pipeline-linking" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
+<p>A DSL author should be able to register a block whose body is parsed in a scoped lexical mode:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">css</span><span class="p">:</span>
+    <span class="o">.</span><span class="n">card</span><span class="p">:</span><span class="n">hover</span> <span class="o">&gt;</span> <span class="c1">#title {</span>
+        <span class="o">--</span><span class="n">accent</span><span class="o">-</span><span class="n">color</span><span class="p">:</span> <span class="c1">#1166ff;</span>
+        <span class="n">color</span><span class="p">:</span> <span class="n">var</span><span class="p">(</span><span class="o">--</span><span class="n">accent</span><span class="o">-</span><span class="n">color</span><span class="p">);</span>
+    <span class="p">}</span>
 </code></pre></div>
-<p>Inside the block, the DSL may interpret that chain pairwise:</p>
-<ul>
-<li><code>extract &gt;&gt; normalize</code></li>
-<li><code>normalize &gt;&gt; validate</code></li>
-<li><code>validate &gt;&gt; store</code></li>
-</ul>
-<p>Conceptually, the desugared meaning might be:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">extract</span><span class="p">,</span> <span class="n">normalize</span><span class="p">)</span>
-<span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">normalize</span><span class="p">,</span> <span class="n">validate</span><span class="p">)</span>
-<span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">validate</span><span class="p">,</span> <span class="n">store</span><span class="p">)</span>
+<p>Inside the <code>style</code> block, selector tokens, custom-property names, dimensions, colors, and declaration values may be meaningful to the DSL. Outside that block, <code>#1166ff</code>, <code>.card:hover</code>, and <code>--accent-color</code> are not ordinary Incan expression syntax.</p>
+<p>Markup-shaped DSLs need a different mode:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">html</span><span class="p">:</span>
+    <span class="o">&lt;</span><span class="n">section</span> <span class="k">class</span><span class="o">=</span><span class="s2">&quot;card&quot;</span><span class="o">&gt;</span>
+        <span class="o">&lt;</span><span class="n">h1</span><span class="o">&gt;</span><span class="p">{</span><span class="n">title</span><span class="p">}</span><span class="o">&lt;/</span><span class="n">h1</span><span class="o">&gt;</span>
+        <span class="o">&lt;</span><span class="n">img</span> <span class="n">src</span><span class="o">=</span><span class="p">{</span><span class="n">image_url</span><span class="p">}</span> <span class="n">alt</span><span class="o">=</span><span class="s2">&quot;Preview&quot;</span> <span class="o">/&gt;</span>
+    <span class="o">&lt;/</span><span class="n">section</span><span class="o">&gt;</span>
 </code></pre></div>
-<p>Outside the block, but still in a file that activated the pipeline DSL:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
+<p>Here the DSL owns tags, attributes, text nodes, comments, entity-like references, and expression holes. The compiler should not pretend that <code>&lt;section&gt;</code> is just a chain of less-than and greater-than operators.</p>
+<p>Some language-shaped DSLs mix expression and declaration syntax:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">script</span><span class="p">:</span>
+    <span class="k">const</span> <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="o">?.</span><span class="n">profile</span><span class="o">?.</span><span class="n">name</span> <span class="o">??</span> <span class="s2">&quot;Guest&quot;</span><span class="p">;</span>
+    <span class="k">const</span> <span class="n">view</span> <span class="o">=</span> <span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">item</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="err">`$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">id</span><span class="p">}:</span><span class="err">$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">name</span><span class="p">}</span><span class="err">`</span><span class="p">);</span>
 </code></pre></div>
-<p>can produce a targeted diagnostic such as:</p>
-<div class="language-text highlight"><pre><span></span><code>`&gt;&gt;` between pipeline steps is only valid inside a `pipeline` block
-</code></pre></div>
-<h3 id="example-query-style-pipes">Example: query-style pipes<a class="headerlink" href="#example-query-style-pipes" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_users</span><span class="p">:</span>
-    <span class="n">users</span> <span class="o">|&gt;</span> <span class="nb">filter</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">|&gt;</span> <span class="n">group_by</span><span class="p">(</span><span class="n">country</span><span class="p">)</span>
-</code></pre></div>
-<p>The exact desugaring is library-defined, but the important rule is that <code>|&gt;</code> here is owned by the <code>query</code> block, not by a global <code>PipeForward</code> implementation on every participating type.</p>
-<h3 id="example-route-head-composition">Example: route-head composition<a class="headerlink" href="#example-route-head-composition" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">destroy</span>
-</code></pre></div>
-<p>Here <code>+</code> and <code>-&gt;</code> do not need to mean anything special everywhere in the <code>api</code> block. They only need to be special in the DSL's registered route-head position:</p>
-<ul>
-<li><code>+</code> combines route verbs</li>
-<li><code>-&gt;</code> maps the route specification to its handler/body</li>
-</ul>
-<p>The same <code>api</code> block may still contain ordinary Incan expressions elsewhere. That is why this RFC models scoped surfaces as block-owned but position-scoped, not as blanket operator redefinition for the whole block body.</p>
-<h3 id="example-rails-style-routing-families">Example: Rails-style routing families<a class="headerlink" href="#example-rails-style-routing-families" title="Permanent link">&para;</a></h3>
-<p>Ruby on Rails routing shows how much mileage a DSL can get from a small amount of declarative syntax. Incan should be able to support similarly expressive surfaces:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">namespace</span> <span class="n">admin</span><span class="p">:</span>
-        <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">post</span> <span class="s2">&quot;/users&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="nb">index</span>
-        <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">patch</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">member</span>
-</code></pre></div>
-<p>The important point is not that Incan must copy Rails literally. The point is that a library author should be able to define:</p>
-<ul>
-<li>a route-head position where <code>+</code> combines verbs</li>
-<li>a mapping position where <code>-&gt;</code> binds a route spec to a handler</li>
-<li>nested DSL blocks such as <code>namespace admin:</code> that preserve structure for desugaring</li>
-</ul>
-<p>This is a good example of a DSL that is simultaneously:</p>
-<ul>
-<li>block-oriented</li>
-<li>position-scoped</li>
-<li>highly declarative</li>
-</ul>
-<h3 id="example-r-style-data-pipelines">Example: R-style data pipelines<a class="headerlink" href="#example-r-style-data-pipelines" title="Permanent link">&para;</a></h3>
-<p>R's data DSLs show that users often want left-to-right, readable pipeline syntax with small operator-like connectors:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_users</span><span class="p">:</span>
-    <span class="n">users</span>
-        <span class="o">|&gt;</span> <span class="nb">filter</span><span class="p">(</span><span class="n">active</span> <span class="o">==</span> <span class="kc">True</span><span class="p">)</span>
-        <span class="o">|&gt;</span> <span class="n">group_by</span><span class="p">(</span><span class="n">country</span><span class="p">)</span>
-        <span class="o">|&gt;</span> <span class="n">summarize</span><span class="p">(</span><span class="n">total</span> <span class="o">=</span> <span class="nb">count</span><span class="p">())</span>
-</code></pre></div>
-<p>or, with a block-owned assignment/binding form:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">revenue</span><span class="p">:</span>
-    <span class="n">net</span> <span class="o">:=</span> <span class="n">sales</span> <span class="o">|&gt;</span> <span class="n">mutate</span><span class="p">(</span><span class="n">net</span> <span class="o">=</span> <span class="n">gross</span> <span class="o">-</span> <span class="n">tax</span><span class="p">)</span>
-    <span class="n">net</span> <span class="o">|&gt;</span> <span class="n">summarize</span><span class="p">(</span><span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">net</span><span class="p">))</span>
-</code></pre></div>
-<p>Here the library may want:</p>
-<ul>
-<li><code>|&gt;</code> in a query-expression position</li>
-<li><code>:=</code> in a query-binding position</li>
-<li>ordinary arithmetic like <code>gross - tax</code> to remain ordinary Incan even inside the same enclosing block</li>
-</ul>
-<p>That combination only works cleanly if the glyph semantics are position-scoped rather than whole-block overrides.</p>
-<h3 id="example-matillion-style-orchestration-graphs">Example: Matillion-style orchestration graphs<a class="headerlink" href="#example-matillion-style-orchestration-graphs" title="Permanent link">&para;</a></h3>
-<p>Matillion-style orchestration and transformation flows are another strong fit for scoped surface forms:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">orchestration</span> <span class="n">nightly_sales</span><span class="p">:</span>
-    <span class="n">extract_sales</span> <span class="o">-&gt;</span> <span class="n">stage_raw</span> <span class="o">-&gt;</span> <span class="n">run</span> <span class="n">transform_sales</span> <span class="o">-&gt;</span> <span class="n">publish_dashboard</span>
-    <span class="n">on_failure</span> <span class="o">&lt;-</span> <span class="n">notify_slack</span>
-</code></pre></div>
-<p>or with nested orchestration/transformation blocks:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">nightly_sales</span><span class="p">:</span>
-    <span class="n">orchestration</span><span class="p">:</span>
-        <span class="n">extract</span> <span class="o">-&gt;</span> <span class="n">stage</span> <span class="o">-&gt;</span> <span class="n">run</span> <span class="n">transform</span>
-
-    <span class="n">transformation</span><span class="p">:</span>
-        <span class="n">raw</span> <span class="o">|&gt;</span> <span class="n">clean</span> <span class="o">|&gt;</span> <span class="n">aggregate</span> <span class="o">|&gt;</span> <span class="n">publish</span>
-</code></pre></div>
-<p>This kind of library may want:</p>
-<ul>
-<li><code>-&gt;</code> for forward stage dependencies</li>
-<li><code>&lt;-</code> for reverse notification or fallback relationships</li>
-<li><code>|&gt;</code> for transformation threading</li>
-<li>multiple related subgrammars inside one higher-level block</li>
-</ul>
-<p>Again, the same DSL might reserve these glyphs only in graph-head or transform-chain positions, while leaving other expressions alone.</p>
-<h3 id="example-taskbuild-automation-dsls">Example: task/build automation DSLs<a class="headerlink" href="#example-taskbuild-automation-dsls" title="Permanent link">&para;</a></h3>
-<p>Ruby's Rake and Groovy/Kotlin-style build DSLs suggest another useful family:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">build</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">task</span> <span class="n">lint</span> <span class="o">+</span> <span class="k">test</span> <span class="o">+</span> <span class="n">package</span> <span class="o">-&gt;</span> <span class="n">publish</span>
-    <span class="n">file</span> <span class="s2">&quot;dist/app.tar.gz&quot;</span> <span class="o">&lt;-</span> <span class="n">package</span>
-</code></pre></div>
-<p>or:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">tasks</span> <span class="n">ci</span><span class="p">:</span>
-    <span class="n">namespace</span> <span class="n">release</span><span class="p">:</span>
-        <span class="n">build</span> <span class="o">-&gt;</span> <span class="k">test</span> <span class="o">-&gt;</span> <span class="n">deploy</span>
-</code></pre></div>
-<p>This reinforces a key point of the RFC: a glyph like <code>+</code> need not be globally special, or even special throughout the whole DSL block. It only needs a well-defined meaning in the DSL positions that register it.</p>
-<h3 id="example-future-binding-like-glyphs">Example: future binding-like glyphs<a class="headerlink" href="#example-future-binding-like-glyphs" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">totals</span><span class="p">:</span>
-    <span class="n">total</span> <span class="o">:=</span> <span class="nb">count</span><span class="p">()</span>
-</code></pre></div>
-<p>This RFC reserves space for binding-like glyphs inside explicit blocks. <code>:=</code> in this design is <strong>not</strong> a global walrus operator. It is a DSL-owned glyph family that may create aliases, named slots, or intermediate bindings according to the DSL's registered contract.</p>
-<h3 id="example-leading-dot-field-access-expression-form-surface">Example: leading-dot field access (expression-form surface)<a class="headerlink" href="#example-leading-dot-field-access-expression-form-surface" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_orders</span><span class="p">:</span>
-    <span class="nc">FROM</span> <span class="n">orders</span>
-    <span class="nc">WHERE</span> <span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span>
-    <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">amount</span>
-</code></pre></div>
-<p><code>.status</code>, <code>.customer_id</code>, and <code>.amount</code> are leading-dot field references. They resolve against the implicit primary relation supplied by the <code>FROM</code> clause. Outside this query block, <code>.status</code> at expression start is not valid Incan syntax.</p>
-<p>The same pattern applies to method-chain relational arguments:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">orders</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">region</span><span class="p">)</span>
-</code></pre></div>
-<p>Here <code>.amount</code>, <code>.customer_id</code>, and <code>.region</code> are in relational argument positions owned by the DSL that registered the <code>filter</code> and <code>select</code> operations. The implicit receiver is the dataset value the method is called on.</p>
-<p>Conceptually, the meaning of <code>.amount</code> might be:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_relation_ctx</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>The DSL supplies the implicit context; the leading dot is the surface syntax. Outside eligible DSL positions, <code>.field</code> at expression start must be rejected.</p>
-<h3 id="canonical-acceptance-examples">Canonical acceptance examples<a class="headerlink" href="#canonical-acceptance-examples" title="Permanent link">&para;</a></h3>
-<p>A conforming implementation must be able to preserve the local meaning of each accepted surface without treating it as ordinary syntax that later phases rediscover by string matching.</p>
-<p>For a pipeline block:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span> <span class="o">&gt;&gt;</span> <span class="n">validate</span> <span class="o">&gt;&gt;</span> <span class="n">store</span>
-</code></pre></div>
-<p>The <code>&gt;&gt;</code> occurrences are accepted only in the registered pipeline step-chain position. If the descriptor declares pairwise chaining, the semantic payload is the adjacent pairs <code>(extract, normalize)</code>, <code>(normalize, validate)</code>, and <code>(validate, store)</code>, with descriptor identity and source spans preserved for lowering, formatting, and diagnostics.</p>
-<p>For a query block:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">query</span> <span class="n">active_orders</span><span class="p">:</span>
-    <span class="nc">FROM</span> <span class="n">orders</span>
-    <span class="nc">WHERE</span> <span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span> <span class="ow">and</span> <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
-    <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">order</span><span class="o">.</span><span class="n">amount</span>
-</code></pre></div>
-<p>The leading-dot paths are accepted only in registered query predicate and projection positions. Their semantic payload is the path segments (<code>["status"]</code>, <code>["amount"]</code>, <code>["customer_id"]</code>, <code>["order", "amount"]</code>) plus the descriptor-provided receiver derivation, such as the primary relation introduced by <code>FROM orders</code>.</p>
-<p>For an API block:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">api</span> <span class="n">app</span><span class="p">:</span>
-    <span class="n">route</span> <span class="nb">get</span> <span class="o">+</span> <span class="n">delete</span> <span class="s2">&quot;/users/:id&quot;</span> <span class="o">-&gt;</span> <span class="n">users</span><span class="o">.</span><span class="n">destroy</span>
-</code></pre></div>
-<p>The <code>+</code> and <code>-&gt;</code> occurrences are accepted only in the registered route-head and route-mapping positions. The same glyphs remain ordinary Incan syntax elsewhere.</p>
-<p>Negative examples must also be precise:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.query</span><span class="w"> </span><span class="kn">import</span> <span class="n">query</span>
-
-<span class="n">value</span> <span class="o">=</span> <span class="o">.</span><span class="n">amount</span>
-</code></pre></div>
-<p>If the query DSL is active but the occurrence is not in an eligible query position, the compiler emits the descriptor's outside-scope diagnostic for the leading-dot surface. Without the active query descriptor, ordinary parser diagnostics apply.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">pipeline</span>
-
-<span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
-</code></pre></div>
-<p>If ordinary <code>&gt;&gt;</code> resolution fails and the active pipeline descriptor exactly matches the surface shape, the compiler emits the descriptor's outside-scope diagnostic rather than a generic unknown-operator error.</p>
+<p>For these surfaces, a descriptor must say which lexical forms are enabled, which positions admit them, and what typed artifact the DSL receives.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="core-rule">Core rule<a class="headerlink" href="#core-rule" title="Permanent link">&para;</a></h3>
-<p>Scoped surface forms are owned by the enclosing explicit DSL block, not by operand types alone and not by ambient runtime state.</p>
-<p>Their semantics are <strong>position-scoped</strong> within that block. A DSL does not claim a surface for every expression in the block body; it claims the surface only for the eligible positions or subgrammars it explicitly registers.</p>
-<p>Scoped surface activation has two scopes:</p>
-<ul>
-<li><strong>positive scope</strong>: entering a registered block may activate DSL-owned surface meaning for eligible positions in that block body</li>
-<li><strong>negative scope</strong>: activating the DSL in a file/module may enable targeted misuse diagnostics for that surface family elsewhere in that same file/module</li>
-</ul>
-<p>Imports or other activation hooks do <strong>not</strong> globally change operator meaning. They only make the DSL's surface descriptors available to the current file/module so the compiler can:</p>
-<ul>
-<li>apply DSL-owned meaning inside eligible positions in eligible blocks</li>
-<li>emit better diagnostics for misplaced DSL-shaped surface use outside those blocks</li>
-</ul>
-<p>This is analogous to method bodies having an implicit <code>self</code>: the body gets extra meaning from the enclosing construct, not from ambient runtime state. The difference here is that the DSL may also reserve a file-local "negative space" for misuse diagnostics.</p>
-<h3 id="registration-and-conflict-policy">Registration and conflict policy<a class="headerlink" href="#registration-and-conflict-policy" title="Permanent link">&para;</a></h3>
-<p>This RFC does <strong>not</strong> standardize a permanently closed surface inventory. Instead, it standardizes the rules under which a DSL may claim block-owned, position-scoped surface meaning.</p>
-<p>A scoped surface is allowed if all of the following hold:</p>
-<ul>
-<li>the surface is explicitly registered by the DSL</li>
-<li>the surface shape is explicitly declared (symbolic glyph for operator-like or binding-like forms, or a declared expression-form shape such as leading-dot access)</li>
-<li>the surface declares its family (<code>OperatorLike</code>, <code>BindingLike</code>, or <code>ExpressionForm</code>)</li>
-<li>the surface does not collide with a core grammar form in the same position unless the DSL also declares an explicit eligibility/disambiguation rule</li>
-<li>the formatter and tooling can preserve it without ad-hoc special cases</li>
-</ul>
-<p>Common operator-like examples include:</p>
-<ul>
-<li><code>&gt;&gt;</code></li>
-<li><code>&lt;&lt;</code></li>
-<li><code>|&gt;</code></li>
-<li><code>&lt;|</code></li>
-<li><code>-&gt;</code></li>
-<li><code>&lt;-</code></li>
-<li><code>+</code></li>
-</ul>
-<p>These are infix glyphs with operator-like shape. A DSL may interpret them as linking, piping, chaining, directional flow, verb composition, or other block-local relations.</p>
-<p>Arrow-shaped glyphs deserve one extra constraint: scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> must not silently override existing core-language arrow forms such as function return annotations or other grammar positions that already reserve <code>-&gt;</code>. They are valid only where the enclosing block grammar explicitly admits a scoped surface occurrence.</p>
-<p>Common binding-like examples include:</p>
-<ul>
-<li><code>:=</code></li>
-</ul>
-<p>This is a binding-shaped glyph family, not an RFC 028 global operator. A DSL may interpret it as aliasing, named slots, or block-local binding according to its own surface contract.</p>
-<h3 id="expression-form-surfaces">Expression-form surfaces<a class="headerlink" href="#expression-form-surfaces" title="Permanent link">&para;</a></h3>
-<p>An expression-form surface is a syntax shape that is only valid inside eligible DSL positions and relies on an implicit receiver or context supplied by the owning block. The leading example is <code>.field</code> or <code>.path.to.field</code> — leading-dot field-path access.</p>
-<p>Expression-form surfaces follow the same scoping contract as operator-like and binding-like surfaces:</p>
-<ul>
-<li><strong>positive scope</strong>: inside eligible positions of an owning block, the expression form is parsed and resolved against the block-supplied implicit context.</li>
-<li><strong>negative scope</strong>: outside eligible positions, the form must be rejected by the parser with a targeted diagnostic.</li>
-<li><strong>no global effect</strong>: expression-form registration must not make the syntax form valid in ordinary Incan code.</li>
-</ul>
-<p>A DSL registering an expression-form surface must declare:</p>
-<ul>
-<li>the syntactic shape (e.g. leading-dot followed by one or more identifiers)</li>
-<li>the eligible positions where it is valid</li>
-<li>how the implicit receiver/context is determined (e.g. primary relation from <code>FROM</code>, dataset value from method receiver)</li>
-<li>whether chained path segments are supported and how those segments are interpreted</li>
-</ul>
-<p>Expression-form surfaces do not use <code>chain_mode</code> or <code>inherits_core_precedence</code>; those fields apply only to operator-like surfaces.</p>
-<h3 id="registration-model">Registration model<a class="headerlink" href="#registration-model" title="Permanent link">&para;</a></h3>
-<p>A vocab provider that registers a block keyword may also register scoped surface forms for that block.</p>
-<p>Conceptually, a scoped surface descriptor needs to capture:</p>
-<ul>
-<li><code>surface</code>: the glyph spelling or expression-form shape being claimed</li>
-<li><code>family</code>: whether the surface is <code>OperatorLikeGlyph</code>, <code>BindingLikeGlyph</code>, or <code>ExpressionForm</code></li>
-<li><code>owning_block</code>: which explicit block kind owns the surface</li>
-<li><code>eligible_positions</code>: which positions within the owning block are allowed to interpret the surface specially</li>
-<li><code>misuse_scope</code>: where targeted misuse diagnostics may fire outside eligible positions</li>
-<li><code>payload_shape</code>: what parsed data the accepted surface contributes, such as ordered operands or leading-dot path segments</li>
-<li><code>receiver_context</code>: for expression-form surfaces, how the implicit receiver or context is derived</li>
-<li><code>chain_mode</code>: whether repeated use is nested, pairwise, or not chainable</li>
-<li>precedence/disambiguation policy: whether the surface reuses ordinary token precedence or requires a narrower DSL-specific rule</li>
-<li>operand or target constraints: used for validation and diagnostics</li>
-<li>diagnostic templates: author-provided messages for outside-scope use, wrong operand kinds, invalid binding targets, ambiguous surface ownership, and related failures</li>
-<li>lowering/desugaring handoff identity: the stable identity later phases use to dispatch to the owning DSL behavior</li>
-</ul>
-<p>The descriptor is the single source of truth for surface ownership. Later compiler phases, the formatter, and the LSP must not infer DSL-owned meaning by re-parsing source text or by string-matching raw glyphs.</p>
-<h3 id="surface-recognition">Surface recognition<a class="headerlink" href="#surface-recognition" title="Permanent link">&para;</a></h3>
-<p>Scoped surfaces must remain distinguishable from ordinary language surfaces when they are used with DSL-owned meaning.</p>
-<p>The semantic artifact requirement is simple:</p>
-<ul>
-<li>global operator expressions remain global operator expressions</li>
-<li>DSL-owned glyph occurrences remain identifiable as DSL-owned glyph occurrences</li>
-<li>expression-form surfaces such as leading-dot access remain identifiable as DSL-owned forms, not as newly general-purpose Incan syntax</li>
-</ul>
-<p>Every accepted scoped-surface occurrence must carry at least:</p>
-<ul>
-<li>descriptor identity</li>
-<li>owning block identity</li>
-<li>eligible-position identity</li>
-<li>parsed payload</li>
-<li>receiver/context derivation, when applicable</li>
-<li>source span</li>
-<li>diagnostic identity</li>
-<li>lowering/desugaring handoff identity</li>
-</ul>
-<p>The concrete AST or IR representation is an implementation detail, but the information above is not optional. Typechecking, lowering, formatting, and LSP features must receive enough metadata to preserve the DSL-owned meaning without rediscovering it from raw text.</p>
-<h3 id="resolution-order">Resolution order<a class="headerlink" href="#resolution-order" title="Permanent link">&para;</a></h3>
-<p>Resolution is deterministic:</p>
-<ol>
-<li>Core grammar wins in core-only positions.</li>
-<li>In eligible DSL positions, the innermost eligible owning block wins.</li>
-<li>Same-depth competing descriptors for the same surface in the same eligible position are an ambiguity diagnostic.</li>
-<li>Outside eligible DSL positions, ordinary Incan semantics apply, including RFC 028 global operator resolution where applicable.</li>
-<li>If ordinary semantics fail and an active descriptor exactly matches the surface shape, the compiler may emit that descriptor's outside-scope diagnostic instead of a generic parser/operator error.</li>
-</ol>
-<p>This yields the intended behavior:</p>
-<ul>
-<li>inside the owning block and an eligible position: DSL-owned meaning</li>
-<li>outside the owning block but inside the activating file/module: targeted diagnostic when the DSL can exactly recognize the surface shape</li>
-<li>ordinary code elsewhere: ordinary global operator semantics</li>
-</ul>
-<p>For glyphs that already have a core syntactic role, such as <code>-&gt;</code>, ordinary language meaning remains authoritative outside positions the enclosing block has explicitly marked as eligible for DSL-owned interpretation.</p>
-<h3 id="nested-and-competing-descriptors">Nested and competing descriptors<a class="headerlink" href="#nested-and-competing-descriptors" title="Permanent link">&para;</a></h3>
-<p>Nested DSL blocks compose through an active descriptor stack.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">nightly</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
-
-    <span class="n">query</span> <span class="n">orders</span><span class="p">:</span>
-        <span class="nc">FROM</span> <span class="n">orders</span>
-        <span class="nc">WHERE</span> <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
-        <span class="nc">SELECT</span> <span class="o">.</span><span class="n">customer_id</span>
-</code></pre></div>
-<p>Inside <code>query orders</code>, leading-dot expression forms are owned by the <code>query</code> descriptor if the current position is an eligible query predicate or projection position. The surrounding <code>pipeline</code> block does not claim that surface there merely because it is lexically active outside the nested block.</p>
-<p>If both <code>pipeline</code> and <code>query</code> register <code>|&gt;</code>, the innermost eligible block wins inside eligible query positions, and the pipeline descriptor wins inside eligible pipeline positions. If two active descriptors at the same lexical depth both claim <code>|&gt;</code> for the same eligible position and neither is more specific, the occurrence is rejected as ambiguous rather than resolved by declaration order.</p>
-<h3 id="pairwise-chaining">Pairwise chaining<a class="headerlink" href="#pairwise-chaining" title="Permanent link">&para;</a></h3>
-<p>Operator-like scoped surfaces may opt into pairwise chaining.</p>
-<p>In pairwise mode:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">a</span> <span class="o">&gt;&gt;</span> <span class="n">b</span> <span class="o">&gt;&gt;</span> <span class="n">c</span> <span class="o">&gt;&gt;</span> <span class="n">d</span>
-</code></pre></div>
-<p>means:</p>
-<ul>
-<li><code>(a, b)</code></li>
-<li><code>(b, c)</code></li>
-<li><code>(c, d)</code></li>
-</ul>
-<p>not:</p>
-<ul>
-<li><code>((a &gt;&gt; b) &gt;&gt; c) &gt;&gt; d</code></li>
-</ul>
-<p>This is important for DSLs that describe edges, links, or dataflow between adjacent stages.</p>
-<p>In nested mode, the DSL receives the ordinary nested parse shape instead.</p>
-<h3 id="implicit-block-receivercontext">Implicit block receiver/context<a class="headerlink" href="#implicit-block-receivercontext" title="Permanent link">&para;</a></h3>
-<p>Scoped surface semantics are not ambient runtime magic. They are lexical semantics supplied by the enclosing block and the specific DSL position being parsed.</p>
-<p>Conceptually, a DSL-owned surface acts against an implicit block context such as:</p>
-<ul>
-<li><code>_pipeline_ctx</code></li>
-<li><code>_query_ctx</code></li>
-<li><code>_machine_ctx</code></li>
-</ul>
-<p>That context is supplied by the block/desugaring machinery, not discovered at runtime by a plain global dunder method.</p>
-<p>So:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pipeline</span> <span class="n">user_sync</span><span class="p">:</span>
-    <span class="n">extract</span> <span class="o">&gt;&gt;</span> <span class="n">normalize</span>
-</code></pre></div>
-<p>is conceptually closer to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">_pipeline_ctx</span><span class="o">.</span><span class="n">link</span><span class="p">(</span><span class="n">extract</span><span class="p">,</span> <span class="n">normalize</span><span class="p">)</span>
-</code></pre></div>
-<p>than to:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">extract</span><span class="o">.</span><span class="fm">__rshift__</span><span class="p">(</span><span class="n">normalize</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>This RFC requires targeted diagnostics for scoped surface misuse.</p>
-<p>Required classes:</p>
-<ul>
-<li>outside-scope use<ul>
-<li>example: "<code>&gt;&gt;</code> between pipeline steps is only valid inside a <code>pipeline</code> block"</li>
-</ul>
-</li>
-<li>wrong operand kinds inside the block<ul>
-<li>example: "<code>&gt;&gt;</code> in a <code>pipeline</code> block expects <code>PipelineStep</code> operands, got <code>Foo</code> and <code>Bar</code>"</li>
-</ul>
-</li>
-<li>invalid binding target for binding-like glyphs<ul>
-<li>example: "<code>:=</code> in a <code>query</code> block expects an identifier on the left-hand side"</li>
-</ul>
-</li>
-<li>ambiguous surface ownership<ul>
-<li>example: "<code>|&gt;</code> is ambiguous here: both <code>query</code> and <code>pipeline</code> register it for this position"</li>
-</ul>
-</li>
-</ul>
-<p>DSL authors may provide diagnostic templates for these classes as part of the descriptor. The compiler controls when those templates may fire: an outside-scope diagnostic requires an active descriptor, an exact surface-shape match, and failure of ordinary parsing or ordinary operator resolution. The compiler must not use a DSL-authored message merely because the operands are vaguely similar to a DSL example.</p>
-<h3 id="formatter-and-lsp-metadata">Formatter and LSP metadata<a class="headerlink" href="#formatter-and-lsp-metadata" title="Permanent link">&para;</a></h3>
-<p>The formatter and LSP consume scoped-surface metadata; they do not infer DSL semantics from punctuation alone.</p>
-<p>For a leading-dot path such as <code>.order.amount</code>, tooling receives the descriptor family, path segments, owning DSL, eligible position, source span, and receiver/context derivation. A hover can therefore report that <code>.amount</code> is a query field reference resolved against the active relation, while the formatter can preserve the leading-dot path without treating it as ordinary field access.</p>
-<p>For operator-like glyphs, the descriptor provides semantic hints such as <code>chain_mode = pairwise</code>, but line-breaking remains formatter policy. The formatter may consult <code>chain_mode</code> to avoid rewriting a pairwise chain as if it were an ordinary nested binary expression, but the descriptor does not prescribe exact line width or wrapping layout.</p>
+<p>A language-shaped DSL descriptor must name an owning block kind and one or more eligible positions within that block. The descriptor must not apply to ordinary Incan code outside those positions.</p>
+<p>A descriptor may declare lexical submodes for markup, style rules, raw text, comments, regex literals, template strings, interpolation holes, type positions, selector positions, declaration values, and similar language-shaped regions.</p>
+<p>A descriptor may declare token forms that are not ordinary Incan tokens, including custom-property names, dimensions, color literals, entity references, sigil identifiers, symbol literals, at-keywords, annotations, template-literal segments, regex literals, and namespace-qualified names.</p>
+<p>A descriptor must define how each accepted token form or submode contributes to a typed syntax artifact. Later compiler phases must not rediscover the meaning of accepted surfaces by matching raw source text.</p>
+<p>A descriptor must define the boundaries of expression holes when an embedded surface allows Incan expressions inside foreign-looking syntax. Expression holes must re-enter ordinary Incan parsing using an explicit delimiter or another unambiguous descriptor-owned boundary.</p>
+<p>When a token spelling is valid both in ordinary Incan and in an embedded language-shaped DSL, the ordinary meaning must remain authoritative outside eligible DSL positions. Inside eligible positions, the innermost eligible descriptor owns the language-shaped interpretation.</p>
+<p>If two same-depth descriptors claim the same token form or lexical submode in the same eligible position, the compiler must reject the combination as ambiguous unless this RFC or a successor RFC defines an explicit conflict-resolution rule.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="interaction-with-rfc-028">Interaction with RFC 028<a class="headerlink" href="#interaction-with-rfc-028" title="Permanent link">&para;</a></h3>
-<p>RFC 028 defines ordinary global operator semantics.</p>
-<p>This RFC does <strong>not</strong> add more global operators to the language. Instead, it defines how an explicit DSL block may reuse a registered glyph in eligible local positions without implying global trait adoption.</p>
-<p>That means these are different statements:</p>
-<ul>
-<li>"<code>Query</code> globally implements <code>PipeForward</code>" (RFC 028)</li>
-<li>"<code>query</code> blocks own <code>|&gt;</code> in registered query positions" (this RFC)</li>
-</ul>
-<p>Both may exist in the language, but they are not the same mechanism and must not be conflated.</p>
-<h3 id="interaction-with-rfc-027">Interaction with RFC 027<a class="headerlink" href="#interaction-with-rfc-027" title="Permanent link">&para;</a></h3>
-<p>RFC 027 remains the substrate for:</p>
-<ul>
-<li>block registration</li>
-<li>placement rules</li>
-<li>scoped functions</li>
-<li>block desugaring</li>
-</ul>
-<p>This RFC extends that world with block-owned, position-scoped surface forms. It does not replace RFC 027; it builds on it.</p>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>This RFC does not reserve global syntax. It reserves descriptor space for explicit DSL blocks that choose a language-shaped body or subposition.</p>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>Accepted embedded fragments are DSL-owned syntax artifacts. Their runtime meaning is supplied by the owning DSL's desugarer or lowering hook, not by core Incan evaluation.</p>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<p>RFC 040 remains the base model for scoped ownership, positive eligibility, misuse diagnostics, and descriptor identity. RFC 045 remains the home for scoped identifier-level meaning. This RFC extends those ideas to token forms and lexical submodes that cannot be modeled honestly as ordinary operator-like glyphs.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Non-breaking</strong>: no existing syntax or semantics change. Scoped surface forms are additive and only activate inside explicit DSL blocks that register them.</li>
-<li><strong>No migration needed</strong>: code that does not use scoped DSL blocks is unaffected.</li>
-<li><strong>Library adoption</strong>: DSL authors opt in by registering scoped surface descriptors alongside their block keywords.</li>
-</ul>
+<p>This RFC is additive. Code that does not import and use a DSL with language-shaped descriptors is unaffected.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p>Force DSL chaining through global RFC 028 operators
-    Rejected because it makes block-local syntax pretend to be global type capability. That weakens diagnostics and blurs the boundary between ordinary operator overloading and explicit DSL context.</p>
+<p>Put full language-shaped embedding into RFC 040. Rejected because it would make a useful scoped-surface RFC carry the cost of every language-shaped lexical submode before it can ship.</p>
 </li>
 <li>
-<p>Let plain global dunder methods inspect ambient block state
-    Rejected because it turns lexical language context into hidden runtime magic. Scoped surface meaning should come from the compiler's explicit block context, similar to how method bodies get <code>self</code>, not from "look around and see where I am" behavior.</p>
+<p>Require external files for all CSS, HTML, XML, or script-like content. Rejected as the only model because small embedded fragments are useful in application and template DSLs, and forcing every fragment into a sidecar file weakens locality.</p>
 </li>
 <li>
-<p>Allow glyph semantics without explicit registration or conflict rules
-    Rejected because it would make parsing, formatting, highlighting, and language tooling much harder to keep coherent. The problem is not that a DSL wants <code>+</code> or <code>-&gt;</code>; the problem is allowing those meanings without an explicit contract about where and how they apply.</p>
+<p>Treat foreign-looking syntax as strings. Rejected as the only model because strings hide structure from diagnostics, formatting, LSP, desugaring, and policy.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Parser and formatter complexity increase because some glyphs can now be block-local as well as global.</li>
-<li>Readers must understand that the same glyph can mean different things in ordinary code versus an explicit DSL block.</li>
-<li>Libraries and tooling need good diagnostics and clear docs; otherwise scoped surfaces can become opaque.</li>
+<li>Descriptor-gated lexical modes increase parser, formatter, and LSP complexity.</li>
+<li>Embedded language fragments can make source files visually dense if overused.</li>
+<li>Partial language-shaped implementations may create user confusion if they look like a full external language but intentionally support only a subset.</li>
+<li>Tooling must make ownership visible enough that readers can tell where ordinary Incan ends and the DSL-owned surface begins.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Frontend recognition</strong> — the language frontend must distinguish scoped-surface occurrences in eligible DSL positions from ordinary expressions; <code>-&gt;</code> and other glyphs with existing core meanings must continue to mean their ordinary language form outside registered positions; expression-form surfaces such as leading-dot access must only be accepted in eligible DSL positions and rejected elsewhere</li>
-<li><strong>Semantic analysis</strong> — block-local surface resolution must follow the defined order (DSL-owned first, then core, then outside-scope diagnostic); active DSL descriptors must remain available to the current file/module</li>
-<li><strong>Lowering / execution handoff</strong> — DSL-owned surface occurrences must preserve their block-owned meaning through later compilation stages; pairwise chaining must be expanded correctly</li>
-<li><strong>RFC 027 extension</strong> — the vocab registration surface needs a scoped-surface descriptor so DSL authors can declare surfaces alongside block keywords; expression-position block kinds may need a small extension to support forms such as <code>race for value:</code></li>
-<li><strong>Formatter</strong> — must preserve scoped surface markers without ad-hoc special-casing; repeated chainable surfaces should format coherently</li>
-<li><strong>LSP</strong> — hover and syntax highlighting should distinguish block-local glyph use from global operator use; misuse diagnostics should be actionable</li>
+<li><strong>Parser / AST</strong> — must support descriptor-gated token forms, lexical submodes, expression-hole re-entry, and typed embedded-fragment artifacts.</li>
+<li><strong>Typechecker / symbol resolution</strong> — must keep embedded DSL ownership separate from ordinary Incan expression typing while still typechecking explicit Incan expression holes.</li>
+<li><strong>Lowering / IR emission</strong> — must pass embedded artifacts to the owning DSL rather than lowering them as ordinary Incan syntax.</li>
+<li><strong>Formatter</strong> — must format language-shaped fragments from structured artifacts or preserve source layout where the DSL declares itself layout-sensitive.</li>
+<li><strong>LSP / tooling</strong> — must expose ownership, highlighting, hover, diagnostics, and completions across ordinary Incan and embedded submodes.</li>
+<li><strong>Docs / examples</strong> — must clearly distinguish narrow product-specific fragments from full language-compatible embeddings.</li>
 </ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong>Scoped surface forms are the parent model.</strong> Operator-like glyphs, binding-like glyphs, and expression-form shapes such as leading-dot paths are all registered scoped surface forms. The RFC keeps these families together because they share the same ownership, eligibility, diagnostic, semantic artifact, formatting, and tooling contracts.</p>
-</li>
-<li>
-<p><strong>Positive scope and misuse scope are separate descriptor concerns.</strong> A descriptor declares the eligible positions where a surface gains positive DSL-owned meaning and separately declares the misuse scope where targeted diagnostics may fire. Keeping those concerns separate lets a DSL accept a surface narrowly while still offering helpful file- or module-local diagnostics outside the owning block.</p>
-</li>
-<li>
-<p><strong>Accepted scoped surfaces produce durable semantic artifacts.</strong> The compiler must preserve descriptor identity, owning block identity, eligible-position identity, parsed payload, receiver/context derivation when applicable, source span, diagnostic identity, and lowering/desugaring handoff identity. Later phases and tooling must not rediscover scoped surface meaning by matching raw punctuation.</p>
-</li>
-<li>
-<p><strong>Nested DSL ownership is lexical and deterministic.</strong> In eligible DSL positions, the innermost eligible owning block wins. Same-depth competing descriptors for the same surface in the same eligible position are rejected as ambiguous. Core grammar remains authoritative in core-only positions.</p>
-</li>
-<li>
-<p><strong>Formatter layout is formatter policy, but semantic hints come from descriptors.</strong> A descriptor may expose <code>chain_mode</code>, payload shape, and surface family so the formatter preserves semantics. Exact line-breaking, wrapping, and width decisions remain formatter policy rather than descriptor metadata.</p>
-</li>
-<li>
-<p><strong>LSP and formatter consume scoped-surface metadata.</strong> Hover, highlighting, completions, formatting, and diagnostics receive the same scoped-surface identity and payload metadata as later compiler phases. Tooling must be able to distinguish block-local surface use from ordinary global operator or field-access syntax.</p>
-</li>
-<li>
-<p><strong>Arrow-shaped glyphs require explicit eligible positions.</strong> Scoped reuse of <code>-&gt;</code> or <code>&lt;-</code> cannot opt out of core grammar globally. It is valid only where the owning block grammar explicitly admits a scoped surface occurrence; ordinary language meaning remains authoritative elsewhere.</p>
-</li>
-<li>
-<p><strong>Expression-form receivers are descriptor-defined.</strong> The language does not hardcode a single "primary relation" concept. A DSL registering an expression-form surface must declare how the implicit receiver/context is derived, such as a <code>FROM</code> clause or a method receiver.</p>
-</li>
-<li>
-<p><strong>Leading-dot expression forms may support chained paths.</strong> A descriptor may register leading-dot paths with one or more segments. Once a leading-dot path is accepted in an eligible DSL position, subsequent <code>.name</code> segments belong to that DSL-owned expression-form payload rather than ordinary field access on an already-resolved value.</p>
-</li>
-<li>
-<p><strong>Targeted diagnostics are author-provided but compiler-gated.</strong> DSL authors may provide diagnostic templates for outside-scope use, wrong operands, invalid binding targets, ambiguous ownership, and related failures. The compiler decides when those templates may fire; outside-scope diagnostics require an active descriptor, exact surface-shape match, and ordinary parsing or operator-resolution failure.</p>
-</li>
-</ol>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Which embedded surfaces should be standardized first: CSS-like style fragments, HTML/XML-like markup fragments, or script/type-expression fragments?</li>
+<li>How much of a target language grammar may a DSL claim before it must identify itself as a partial subset?</li>
+<li>Should descriptor declarations name external language compatibility levels, or should every embedded surface be described only in Incan-owned terms?</li>
+<li>How should formatter fallback behave when a DSL provides tokenization but not a full formatter?</li>
+<li>What is the smallest template/style fragment needed before full language-shaped embedding work is planned?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 

@@ -4712,7 +4712,7 @@ Contract-backed materialization is an additional path.</li>
 <p>When someone needs to read or review the shape, they run emit through the CLI, an artifact browser, or an editor command. The tool prints or inserts formatted Incan, the same <code>model</code> surface they already use for pipeline, application, and contract authoring, instead of a parallel YAML dialect.</p>
 <p>That means a registry or marketplace can show a user the contract for a published binary by reading embedded canonical metadata and rendering it as Incan <code>model</code> source. This is not reverse-engineering arbitrary binaries. It is a stable metadata contract that the build pipeline chose to ship.</p>
 <p>This view is intentionally the structural contract view. A registry or governance portal may choose to enrich that rendered model with live policy data such as PII classification, retention, freshness SLAs, or ownership, but those are adjacent runtime layers, not the embedded structural bundle itself.</p>
-<p>In v1, the guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer such as InQL may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.</p>
+<p>In v1, the guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="canonical-model-description">Canonical model description<a class="headerlink" href="#canonical-model-description" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4841,7 +4841,7 @@ lifecycle and tooling conventions rather than inventing a disconnected formatter
 the human-readable contract view for published artifacts that carry RFC 048 metadata.</li>
 <li><strong>Governance / policy layers</strong>: runtime classifications, retention rules,
 ownership, and SLAs may enrich the structural model view in higher-level products, but they are not part of this RFC’s embedded structural contract unless a future RFC says otherwise.</li>
-<li><strong>Companion producer specs</strong>: systems such as InQL may define how canonical
+<li><strong>Companion producer specs</strong>: companion systems may define how canonical
 bundles are derived, named, and validated before they reach Incan. Those specs are upstream of this RFC and must produce bundles that satisfy this RFC’s completeness and determinism requirements.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
@@ -4919,7 +4919,7 @@ encoding for embedded bundles so CLI, registry, and third-party tooling can inte
 <li><strong>Logical identity</strong>: is the logical type name alone sufficient for
 artifact-facing identity, or should v1 require an additional stable model identifier to support registry diffing and compatibility views?</li>
 <li><strong>Companion producer boundary</strong>: what is the minimum producer-side contract
-a host such as InQL must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?</li>
+a host must satisfy before its derived bundles are considered publishable artifact metadata rather than editor-only transient output?</li>
 </ol>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 

@@ -4977,7 +4977,7 @@
   session.incn.tpl
 </code></pre></div>
 <p>The template is not compiled directly. It is provider-side data:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">inql</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">sample_session</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
 <span class="kn">from</span><span class="w"> </span><span class="p">{{</span> <span class="n">config_module</span> <span class="p">}}</span> <span class="kn">import</span><span class="w"> </span><span class="p">{{</span> <span class="n">config_type</span> <span class="p">}}</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">default_session</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Session</span><span class="p">:</span>
@@ -5016,7 +5016,7 @@
 <div class="language-text highlight"><pre><span></span><code>src/data/session.incn
 </code></pre></div>
 <p>The rendered file is ordinary source:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">inql</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">sample_session</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">data.config</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DataConfig</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">default_session</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Session</span><span class="p">:</span>
@@ -5029,10 +5029,10 @@
 <h3 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h3>
 <p>If the descriptor requests tracked provenance, the lifecycle tool records enough metadata to explain the file later:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.templates.</span><span class="s2">&quot;src/data/session.incn&quot;</span><span class="k">]</span>
-<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;inql:templates/session.incn.tpl&quot;</span>
-<span class="n">package</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;inql&quot;</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session:templates/session.incn.tpl&quot;</span>
+<span class="n">package</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<span class="n">origin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;capability:inql.session&quot;</span>
+<span class="n">origin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;capability:sample_session.session&quot;</span>
 <span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
 <span class="n">renderer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan-template-v1&quot;</span>
 <span class="n">template_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:4b5a...&quot;</span>
@@ -5042,7 +5042,7 @@
 <p>This record is tooling provenance. Removing it must not break compilation. Keeping it allows the toolchain to answer questions about generated files.</p>
 <h3 id="generating-a-values-file">Generating a values file<a class="headerlink" href="#generating-a-values-file" title="Permanent link">&para;</a></h3>
 <p>A user may ask the toolchain to write the values a template expects before applying it:</p>
-<div class="language-text highlight"><pre><span></span><code>incan template values-file inql:templates/session.incn.tpl --output session.values.toml
+<div class="language-text highlight"><pre><span></span><code>incan template values-file sample_session:templates/session.incn.tpl --output session.values.toml
 </code></pre></div>
 <p>The generated file contains declared parameters, defaults, choices, and prompt text:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[values]</span>
@@ -5051,7 +5051,7 @@
 <span class="n">backend_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataFusion&quot;</span>
 </code></pre></div>
 <p>This gives teams something concrete to review in automation and allows non-interactive application:</p>
-<div class="language-text highlight"><pre><span></span><code>incan template render inql:templates/session.incn.tpl --values session.values.toml --dry-run
+<div class="language-text highlight"><pre><span></span><code>incan template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
 </code></pre></div>
 <p>The exact command spelling may change, but the lifecycle layer must expose the same capability: inspect required values, write a values file, and render from that file without interactive prompts.</p>
 <h3 id="checking-generated-files">Checking generated files<a class="headerlink" href="#checking-generated-files" title="Permanent link">&para;</a></h3>
@@ -5062,12 +5062,12 @@
 <div class="language-text highlight"><pre><span></span><code>tracked templates:
   src/data/session.incn
     status: edited
-    source: inql:templates/session.incn.tpl
-    origin: capability:inql.session
+    source: sample_session:templates/session.incn.tpl
+    origin: capability:sample_session.session
 
   tests/test_session.incn
     status: current
-    source: inql:templates/test_session.incn.tpl
+    source: sample_session:templates/test_session.incn.tpl
 </code></pre></div>
 <p><code>edited</code> means the current file hash differs from the recorded <code>rendered_hash</code>. It does not mean the file is invalid. Users are expected to edit generated files.</p>
 <h3 id="checking-template-status">Checking template status<a class="headerlink" href="#checking-template-status" title="Permanent link">&para;</a></h3>
@@ -5076,8 +5076,8 @@
 </code></pre></div>
 <p>Example output:</p>
 <div class="language-text highlight"><pre><span></span><code>target                   source                         current   latest    file
-src/data/session.incn    inql:templates/session.incn    0.1.0     0.2.0     edited
-tests/test_session.incn  inql:templates/test_session    0.1.0     0.1.0     current
+src/data/session.incn    sample_session:templates/session.incn    0.1.0     0.2.0     edited
+tests/test_session.incn  sample_session:templates/test_session    0.1.0     0.1.0     current
 </code></pre></div>
 <p>If the source catalog is unavailable, status may fall back to local provenance and report the version as unknown or cached. Machine-readable status should include the provenance record path, source package, source version, latest compatible version, and file drift state.</p>
 <h3 id="diffing-an-update">Diffing an update<a class="headerlink" href="#diffing-an-update" title="Permanent link">&para;</a></h3>

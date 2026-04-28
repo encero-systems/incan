@@ -4020,27 +4020,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#4-add-scoped-surface-forms" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Add an optional desugarer
+      4. Add scoped surface forms
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-build-the-library-artifact" class="md-nav__link">
+  <a href="#5-add-an-optional-desugarer" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Build the library artifact
+      5. Add an optional desugarer
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#6-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Consume the DSL from another project
+      6. Build the library artifact
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-consume-the-dsl-from-another-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Consume the DSL from another project
     </span>
   </a>
   
@@ -4564,27 +4573,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#4-add-scoped-surface-forms" class="md-nav__link">
     <span class="md-ellipsis">
-      4. Add an optional desugarer
+      4. Add scoped surface forms
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-build-the-library-artifact" class="md-nav__link">
+  <a href="#5-add-an-optional-desugarer" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Build the library artifact
+      5. Add an optional desugarer
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#6-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Consume the DSL from another project
+      6. Build the library artifact
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-consume-the-dsl-from-another-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Consume the DSL from another project
     </span>
   </a>
   
@@ -4692,7 +4710,7 @@
 <span class="n">crate-type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;rlib&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;cdylib&quot;</span><span class="p">]</span>
 
 <span class="k">[dependencies]</span>
-<span class="n">incan_vocab</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1&quot;</span>
+<span class="n">incan_vocab</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.2&quot;</span>
 </code></pre></div>
 <p>Keep the companion crate as a real Rust crate with <code>Cargo.toml</code> and <code>src/lib.rs</code>, even when the DSL description itself is quite small.</p>
 <p>Both crate types are intentional:</p>
@@ -4730,6 +4748,122 @@
 <li><code>LibraryManifest</code> is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.</li>
 <li><code>KeywordRegistration</code> remains available only as a lower-level escape hatch for especially simple or incremental cases.</li>
 </ul>
+<h2 id="4-add-scoped-surface-forms">4. Add scoped surface forms<a class="headerlink" href="#4-add-scoped-surface-forms" title="Permanent link">&para;</a></h2>
+<p>Scoped DSL surface forms can be registered alongside the declaration that owns them. Use scoped surfaces when a glyph or expression shape should have meaning only inside an explicit DSL block, while remaining ordinary syntax or an error elsewhere:</p>
+<p>Start with the consumer syntax you want to enable:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">querykit</span> <span class="kn">import</span><span class="w"> </span><span class="nn">querykit_name</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">query</span><span class="p">:</span>
+        <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
+        <span class="o">.</span><span class="n">customer_id</span>
+        <span class="n">orders</span> <span class="o">|&gt;</span> <span class="n">paid_orders</span>
+        <span class="n">orders</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;paid&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">region</span><span class="p">)</span>
+</code></pre></div>
+<p>That surface has four distinct jobs:</p>
+<ul>
+<li><code>query:</code> introduces the owning DSL block.</li>
+<li><code>.amount</code> and <code>.customer_id</code> are expression-form surfaces owned by the <code>query:</code> block body.</li>
+<li><code>orders |&gt; paid_orders</code> is an operator-like surface owned by the same block body.</li>
+<li><code>.status</code> and <code>.region</code> are expression-form surfaces owned by query method arguments, not by every method call in the file.</li>
+</ul>
+<p>The registration describes those jobs directly:</p>
+<table>
+<thead>
+<tr>
+<th>Consumer surface</th>
+<th>Descriptor shape</th>
+<th>Eligibility</th>
+<th>Receiver</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query:</code></td>
+<td><code>DeclarationSurface::named("query")</code></td>
+<td>import-activated by <code>pub::querykit</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>.amount</code></td>
+<td><code>ScopedSurfaceDescriptor::leading_dot_path("query.field")</code></td>
+<td><code>in_declaration_body("query")</code></td>
+<td>owning declaration</td>
+</tr>
+<tr>
+<td><code>orders |&gt; paid_orders</code></td>
+<td><code>ScopedSurfaceDescriptor::operator("query.pipe", "|&gt;")</code></td>
+<td><code>in_declaration_body("query")</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>.status</code> in <code>filter(...)</code></td>
+<td><code>leading_dot_path("query.method_field")</code></td>
+<td><code>in_call_argument("query", "filter")</code></td>
+<td>custom method receiver</td>
+</tr>
+</tbody>
+</table>
+<p>The descriptor key is intentionally separate from the glyph or source text. The key is the stable identity that later compiler phases and the desugarer see. For example, <code>query.pipe</code> can use <code>|&gt;</code> today and still remain a stable semantic concept if the library later adds aliases or richer validation.</p>
+<p>Once accepted, the compiler hands the desugarer typed payloads rather than raw source text:</p>
+<div class="language-text highlight"><pre><span></span><code>.amount
+  descriptor_key: query.field
+  payload: leading-dot path [&quot;amount&quot;]
+
+orders |&gt; paid_orders
+  descriptor_key: query.pipe
+  payload: scoped glyph &quot;|&gt;&quot; with left and right expression operands
+
+.status inside filter(...)
+  descriptor_key: query.method_field
+  payload: leading-dot path [&quot;status&quot;]
+</code></pre></div>
+<p>This is the point of RFC 040: the DSL author registers where a surface is legal, the parser preserves what it means, and the desugarer consumes structured artifacts instead of guessing by string matching.</p>
+<p>Here is the matching companion-crate registration:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span>
+<span class="w">    </span><span class="n">DeclarationSurface</span><span class="p">,</span><span class="w"> </span><span class="n">DslSurface</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSurfaceDescriptor</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSurfaceDiagnosticKind</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ScopedSurfaceDiagnosticTemplate</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSurfaceEligibility</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSurfaceMisuseScope</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSurfaceReceiver</span><span class="p">,</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">,</span>
+<span class="p">};</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">library_vocab</span><span class="p">()</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">VocabRegistration</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">::</span><span class="n">new</span><span class="p">().</span><span class="n">with_surface</span><span class="p">(</span>
+<span class="w">        </span><span class="n">DslSurface</span><span class="p">::</span><span class="n">on_import</span><span class="p">(</span><span class="s">&quot;querykit&quot;</span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_declaration</span><span class="p">(</span>
+<span class="w">                </span><span class="n">DeclarationSurface</span><span class="p">::</span><span class="n">named</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_statement_body</span><span class="p">(),</span>
+<span class="w">            </span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_scoped_surface</span><span class="p">(</span>
+<span class="w">                </span><span class="n">ScopedSurfaceDescriptor</span><span class="p">::</span><span class="n">operator</span><span class="p">(</span><span class="s">&quot;query.pipe&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;|&gt;&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">in_declaration_body</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">pairwise_chain</span><span class="p">(),</span>
+<span class="w">            </span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_scoped_surface</span><span class="p">(</span>
+<span class="w">                </span><span class="n">ScopedSurfaceDescriptor</span><span class="p">::</span><span class="n">leading_dot_path</span><span class="p">(</span><span class="s">&quot;query.field&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">in_declaration_body</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_receiver</span><span class="p">(</span><span class="n">ScopedSurfaceReceiver</span><span class="p">::</span><span class="n">OwningDeclaration</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_misuse_scope</span><span class="p">(</span><span class="n">ScopedSurfaceMisuseScope</span><span class="p">::</span><span class="n">ActivatingFile</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_diagnostic</span><span class="p">(</span>
+<span class="w">                        </span><span class="n">ScopedSurfaceDiagnosticTemplate</span><span class="p">::</span><span class="n">new</span><span class="p">(</span>
+<span class="w">                            </span><span class="s">&quot;query-field-outside-scope&quot;</span><span class="p">,</span>
+<span class="w">                            </span><span class="n">ScopedSurfaceDiagnosticKind</span><span class="p">::</span><span class="n">OutsideScope</span><span class="p">,</span>
+<span class="w">                            </span><span class="s">&quot;query field shorthand is only valid inside query blocks&quot;</span><span class="p">,</span>
+<span class="w">                        </span><span class="p">)</span>
+<span class="w">                        </span><span class="p">.</span><span class="n">with_help</span><span class="p">(</span><span class="s">&quot;move this expression into a `query:` block&quot;</span><span class="p">),</span>
+<span class="w">                    </span><span class="p">),</span>
+<span class="w">            </span><span class="p">),</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_scoped_surface</span><span class="p">(</span>
+<span class="w">                </span><span class="n">ScopedSurfaceDescriptor</span><span class="p">::</span><span class="n">leading_dot_path</span><span class="p">(</span><span class="s">&quot;query.method_field&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_eligibilities</span><span class="p">([</span>
+<span class="w">                        </span><span class="n">ScopedSurfaceEligibility</span><span class="p">::</span><span class="n">call_argument</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;filter&quot;</span><span class="p">),</span>
+<span class="w">                        </span><span class="n">ScopedSurfaceEligibility</span><span class="p">::</span><span class="n">call_argument</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;select&quot;</span><span class="p">),</span>
+<span class="w">                    </span><span class="p">])</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_receiver</span><span class="p">(</span><span class="n">ScopedSurfaceReceiver</span><span class="p">::</span><span class="n">custom</span><span class="p">(</span><span class="s">&quot;method-receiver&quot;</span><span class="p">)),</span>
+<span class="w">            </span><span class="p">),</span>
+<span class="w">    </span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The descriptor <code>key</code> must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as <code>pairwise_chain()</code>. RFC 040 supports selected descriptor-gated non-core glyphs such as <code>|&gt;</code>, <code>%&gt;%</code>, <code>:=</code>, and <code>===</code>; broader language-shaped token forms remain RFC 081 work.</p>
 <p>If your desugared output needs extra runtime requirements, declare them in <code>LibraryManifest</code>:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span><span class="n">CargoDependency</span><span class="p">,</span><span class="w"> </span><span class="n">CargoDependencySource</span><span class="p">,</span><span class="w"> </span><span class="n">LibraryManifest</span><span class="p">};</span>
 
@@ -4760,7 +4894,7 @@
 <li>each <code>exported_name</code> must point at a real public export from the library artifact</li>
 <li>empty keys or export names are rejected before the <code>.incnlib</code> artifact is written</li>
 </ul>
-<h2 id="4-add-an-optional-desugarer">4. Add an optional desugarer<a class="headerlink" href="#4-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
+<h2 id="5-add-an-optional-desugarer">5. Add an optional desugarer<a class="headerlink" href="#5-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
 <p>Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same <code>library_vocab()</code> bundle.</p>
 <div class="language-rust highlight"><span class="filename">routekit/vocab_companion/src/desugar.rs</span><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span><span class="n">DesugarError</span><span class="p">,</span><span class="w"> </span><span class="n">DesugarOutput</span><span class="p">,</span><span class="w"> </span><span class="n">IncanExpr</span><span class="p">,</span><span class="w"> </span><span class="n">IncanStatement</span><span class="p">,</span><span class="w"> </span><span class="n">VocabDesugarer</span><span class="p">,</span><span class="w"> </span><span class="n">VocabSyntaxNode</span><span class="p">};</span>
 
@@ -4797,7 +4931,7 @@
 <li>the canonical <code>__incan_*</code> runtime cell globals</li>
 </ul>
 <p>Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.</p>
-<h2 id="5-build-the-library-artifact">5. Build the library artifact<a class="headerlink" href="#5-build-the-library-artifact" title="Permanent link">&para;</a></h2>
+<h2 id="6-build-the-library-artifact">6. Build the library artifact<a class="headerlink" href="#6-build-the-library-artifact" title="Permanent link">&para;</a></h2>
 <p>Run library mode from the Incan project root:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
@@ -4809,7 +4943,7 @@
 <li>packages the derived metadata and any registered desugarer into <code>target/lib/&lt;library&gt;.incnlib</code></li>
 </ol>
 <p>Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.</p>
-<h2 id="6-consume-the-dsl-from-another-project">6. Consume the DSL from another project<a class="headerlink" href="#6-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
+<h2 id="7-consume-the-dsl-from-another-project">7. Consume the DSL from another project<a class="headerlink" href="#7-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
 <p>The consumer depends on the built library artifact:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">routekit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../routekit/target/lib&quot;</span><span class="w"> </span><span class="p">}</span>
