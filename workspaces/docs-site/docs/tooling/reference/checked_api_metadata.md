@@ -34,6 +34,10 @@ Output:
 ```json
 {
   "schema_version": 1,
+  "package": {
+    "name": "catalog",
+    "version": "0.1.0"
+  },
   "modules": [
     {
       "schema_version": 1,
@@ -72,6 +76,14 @@ Output:
             }
           },
           "docstring": "Return the catalog label.",
+          "docstring_sections": {
+            "summary": "Return the catalog label.",
+            "params": [],
+            "returns": null,
+            "fields": [],
+            "aliases": [],
+            "decorators": []
+          },
           "decorators": [
             {
               "path": [
@@ -116,10 +128,11 @@ Output:
 
 The top-level JSON object is a metadata package:
 
-| Field            | Type   | Meaning                                                    |
-| ---------------- | ------ | ---------------------------------------------------------- |
-| `schema_version` | number | Metadata package schema version                            |
-| `modules`        | array  | Checked metadata documents for the entry and local imports |
+| Field            | Type           | Meaning                                                    |
+| ---------------- | -------------- | ---------------------------------------------------------- |
+| `schema_version` | number         | Metadata package schema version                            |
+| `package`        | object or null | Project identity from `incan.toml`, when available         |
+| `modules`        | array          | Checked metadata documents for the entry and local imports |
 
 Each module document contains:
 
@@ -142,6 +155,7 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 - enum variants and value-enum raw values
 - public import aliases with resolved `target_path` segments
 - raw docstring text when the declaration or method has a docstring
+- parsed docstring sections in `docstring_sections`, including summary, parameters, returns, fields, aliases, and decorators
 - decorator metadata with resolved decorator paths
 - safe const values for public consts and safe decorator arguments
 
@@ -164,8 +178,44 @@ Decorator arguments that are not literals, type arguments, or const references a
 
 ## Docstrings
 
-The metadata command preserves raw docstring text for public declarations and checked methods. It does not currently parse docstring sections or validate documented parameters, returns, fields, aliases, or decorator facts. Consumers that need rendered reference documentation should treat docstring parsing as a separate documentation-generation step.
+The metadata command preserves raw docstring text for public declarations and checked methods and also emits parsed `docstring_sections` when a docstring is present. Recognized section headings are `Args:`, `Parameters:`, `Returns:`, `Fields:`, `Aliases:`, and `Decorators:`. Text before the first recognized heading becomes the `summary`.
+
+Named sections use `name: description` entries:
+
+```incan
+pub def avg(values: List[float]) -> float:
+    """
+    Return the arithmetic mean.
+
+    Args:
+        values: Input values.
+
+    Returns:
+        float: Mean value.
+    """
+    return 0.0
+```
+
+`Returns:` may either be free-form prose or `type: description`. When a type spelling is present, the metadata command validates it against the checked return type.
+
+Docstring validation is strict for mechanically checkable drift. If an `Args:` or `Fields:` section is present, every checked parameter or field must be documented and every documented name must exist. `Decorators:` and `Aliases:` entries must name decorators or aliases that exist in checked metadata. Drift diagnostics fail `incan tools metadata api` before JSON is printed.
+
+## Editor Previews
+
+The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, or a public model/class field can show the checked signature, raw docstring text, field alias/description metadata, derives, trait adoption, and safe const values.
+
+The LSP exposes these facts through `textDocument/hover`. Use `incan tools metadata api` when an integration needs the full JSON package.
+
+If a document has parse or type errors, the LSP keeps reporting diagnostics and falls back to the older syntax-oriented hover details instead of presenting checked API metadata for an invalid program.
+
+## Artifact and Model Boundaries
+
+`incan tools metadata api` inspects source files or a project directory and emits JSON. It does not build the project, emit generated Rust, or read a `.incnlib` artifact. Use `incan build --lib` for library artifact emission and `incan tools metadata model` for model bundle inspection.
+
+The metadata JSON describes public declarations from checked Incan source and materialized contract models visible to the checked program. Model bundle schema, emit, materialization, and artifact inspection are documented separately in [Checked contract metadata](contract_metadata.md).
 
 ## Current Boundaries
 
-Checked API metadata extraction does not emit Incan source, inspect built `.incnlib` artifacts, or materialize contract-backed models. Those are separate compiler/tooling surfaces from the JSON metadata command.
+Checked API metadata extraction does not inspect built `.incnlib` artifacts. Artifact inspection remains a separate tooling surface from source/project metadata extraction.
+
+The extractor exposes only checked compiler facts and safe literal/const values. Unsupported decorator expressions are reported as `unsupported` metadata rather than evaluated, and consumers should not treat docstrings or decorator payloads as trusted executable input.

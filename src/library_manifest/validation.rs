@@ -15,14 +15,31 @@ use super::{
     EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
     ParamKindExport, VocabProviderManifest,
 };
+use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
 pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
     validate_manifest_version(raw)?;
     validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
+    validate_contract_metadata(raw)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Validate RFC 048 metadata embedded in a manifest before consumers trust it.
+fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let metadata = &raw.contract_metadata.models;
+    if metadata.schema_version != CONTRACT_METADATA_SCHEMA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "contract_metadata.models.schema_version {} is unsupported (expected {})",
+            metadata.schema_version, CONTRACT_METADATA_SCHEMA_VERSION
+        )));
+    }
+    metadata
+        .validate()
+        .map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
     Ok(())
 }
 

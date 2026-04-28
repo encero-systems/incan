@@ -8,8 +8,8 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
-    LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport, ReceiverExport,
-    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    LibraryContractMetadata, LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport,
+    ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -270,6 +270,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         },
         vocab: None,
         soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -309,6 +310,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         },
         vocab: None,
         soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -512,6 +514,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         },
         vocab: None,
         soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(

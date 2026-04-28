@@ -45,7 +45,7 @@ use std::process;
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
-use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat};
+use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 
 // ============================================================================
 // CLI Error handling
@@ -479,6 +479,18 @@ pub enum ToolsMetadataCommand {
         #[arg(long = "format", value_enum, default_value = "json")]
         format: ToolsMetadataFormat,
     },
+    /// Emit a contract-backed model from checked model metadata
+    Model {
+        /// Project directory, bundle JSON, or `.incnlib` artifact to inspect
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Logical type name or stable model id to emit
+        #[arg(value_name = "MODEL")]
+        model: String,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "incan")]
+        format: ToolsModelMetadataFormat,
+    },
 }
 
 // ============================================================================
@@ -678,6 +690,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             ToolsCommand::Doctor { format } => commands::tools_doctor(format),
             ToolsCommand::Metadata { command } => match command {
                 ToolsMetadataCommand::Api { path, format } => commands::tools_metadata_api(&path, format),
+                ToolsMetadataCommand::Model { path, model, format } => {
+                    commands::tools_metadata_model(&path, &model, format)
+                }
             },
         },
         Some(Command::New {

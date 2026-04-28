@@ -34,7 +34,10 @@ pub use format::format_files;
 pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
-pub use tools::{ToolsDoctorFormat, ToolsMetadataFormat, tools_doctor, tools_metadata_api};
+pub use tools::{
+    ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
+    tools_metadata_model,
+};
 
 // Crate-internal API (used by test_runner and other CLI modules)
 pub(crate) use lock::{LockResolutionRequest, resolve_lock_payload};

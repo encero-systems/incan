@@ -234,6 +234,18 @@ pub struct IncanToolSection {
     /// Named RFC 015 environment definitions.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub envs: HashMap<String, EnvSection>,
+    /// RFC 048 checked metadata configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<MetadataToolSection>,
+}
+
+/// RFC 048 metadata inputs owned by the Incan toolchain.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct MetadataToolSection {
+    /// Manifest-relative JSON files containing canonical model bundles or RFC 048 metadata packages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_bundles: Vec<String>,
 }
 
 /// Serializable shape for `[tool.incan.envs.<name>]`.
@@ -409,6 +421,14 @@ impl ProjectManifest {
     /// Optional Incan-owned tool configuration.
     pub fn incan_tool(&self) -> Option<&IncanToolSection> {
         self.tool.as_ref().and_then(|tool| tool.incan.as_ref())
+    }
+
+    /// RFC 048 model bundle JSON paths declared under `[tool.incan.metadata]`.
+    pub fn contract_model_bundle_paths(&self) -> Vec<String> {
+        self.incan_tool()
+            .and_then(|tool| tool.metadata.as_ref())
+            .map(|metadata| metadata.model_bundles.clone())
+            .unwrap_or_default()
     }
 
     /// Canonical env definitions as parsed from `[tool.incan.envs]`.
@@ -1505,6 +1525,26 @@ version = "1"
 
         assert!(unit.dependencies.contains_key("serde"));
         assert!(unit.dev_dependencies.contains_key("proptest"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_contract_model_bundle_paths() -> TestResult {
+        let content = r#"
+[project]
+name = "contract-demo"
+
+[project.scripts]
+main = "src/main.incn"
+
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        assert_eq!(
+            manifest.contract_model_bundle_paths(),
+            vec!["contracts/order_summary.json".to_string()]
+        );
         Ok(())
     }
 

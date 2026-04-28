@@ -5,14 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ClassExport;
 use super::{
-    ConstExport, DslSurface, EnumExport, FunctionExport, LibraryExports, LibraryManifest, LibraryManifestError,
-    ModelExport, NewtypeExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport,
-    VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
+    ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata, LibraryExports,
+    LibraryManifest, LibraryManifestError, ModelExport, NewtypeExport, SoftKeywordActivation, SoftKeywordExports,
+    StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration,
+    VocabProviderManifest,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct RawLibraryManifest {
     pub(super) name: String,
     pub(super) version: String,
@@ -22,6 +22,8 @@ pub(super) struct RawLibraryManifest {
     #[serde(default)]
     pub(super) vocab: Option<RawVocabExports>,
     pub(super) soft_keywords: RawSoftKeywordExports,
+    #[serde(default)]
+    pub(super) contract_metadata: LibraryContractMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -67,6 +69,7 @@ pub(super) struct RawVocabExports {
 }
 
 impl RawLibraryManifest {
+    /// Convert the compiler-facing manifest model into the serialized manifest transport shape.
     pub(super) fn from_semantic(semantic: &LibraryManifest) -> Self {
         Self {
             name: semantic.name.clone(),
@@ -95,9 +98,11 @@ impl RawLibraryManifest {
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
             },
+            contract_metadata: semantic.contract_metadata.clone(),
         }
     }
 
+    /// Decode a validated raw manifest into the compiler-facing manifest model.
     pub(super) fn into_semantic(self) -> Result<LibraryManifest, LibraryManifestError> {
         Ok(LibraryManifest {
             name: self.name,
@@ -126,6 +131,7 @@ impl RawLibraryManifest {
             soft_keywords: SoftKeywordExports {
                 activations: self.soft_keywords.activations,
             },
+            contract_metadata: self.contract_metadata,
         })
     }
 }

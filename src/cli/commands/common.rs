@@ -15,6 +15,7 @@ use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Program, Span};
+use crate::frontend::contract_metadata::{materialize_contract_models, read_project_model_bundles};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
@@ -703,6 +704,12 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         .unwrap_or_default();
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
+    let contract_model_bundles = manifest
+        .as_ref()
+        .map(|manifest| read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths()))
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .unwrap_or_default();
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
@@ -768,8 +775,16 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
             }
             return Err(CliError::failure(msg.trim_end()));
         }
+        let file_path_obj = Path::new(&file_path);
+        let is_incan_source_stdlib_module = path_segments
+            .first()
+            .is_some_and(|segment| segment == stdlib::INCAN_STD_NAMESPACE);
+        if !is_incan_source_stdlib_module {
+            materialize_contract_models(&mut ast, &contract_model_bundles)
+                .map_err(|error| CliError::failure(error.to_string()))?;
+        }
 
-        let current_base = Path::new(&file_path).parent().unwrap_or(base_dir);
+        let current_base = file_path_obj.parent().unwrap_or(base_dir);
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&source_root)) {
             match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
