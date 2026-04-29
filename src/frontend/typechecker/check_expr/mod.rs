@@ -178,6 +178,12 @@ impl TypeChecker {
     ) -> ResolvedType {
         let ty = match (&expr.node, expected) {
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
+            (Expr::Binary(left, op, right), Some(expected_ty)) => {
+                self.check_binary_with_expected(left, *op, right, expr.span, Some(expected_ty))
+            }
+            (Expr::Unary(op, operand), Some(expected_ty)) => {
+                self.check_unary_with_expected(*op, operand, expr.span, Some(expected_ty))
+            }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
             }

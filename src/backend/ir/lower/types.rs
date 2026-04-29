@@ -11,6 +11,7 @@
 use super::super::expr::BinOp;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::AstLowering;
+use super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::ResolvedType;
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
@@ -469,8 +470,8 @@ impl AstLowering {
     /// # Returns
     ///
     /// The corresponding IR binary operator.
-    pub(super) fn lower_binop(&self, op: &ast::BinaryOp) -> BinOp {
-        match op {
+    pub(super) fn lower_binop(&self, op: &ast::BinaryOp, span: ast::Span) -> Result<BinOp, LoweringError> {
+        let binop = match op {
             ast::BinaryOp::Add => BinOp::Add,
             ast::BinaryOp::Sub => BinOp::Sub,
             ast::BinaryOp::Mul => BinOp::Mul,
@@ -478,6 +479,11 @@ impl AstLowering {
             ast::BinaryOp::FloorDiv => BinOp::FloorDiv,
             ast::BinaryOp::Mod => BinOp::Mod,
             ast::BinaryOp::Pow => BinOp::Pow,
+            ast::BinaryOp::BitAnd => BinOp::BitAnd,
+            ast::BinaryOp::BitOr => BinOp::BitOr,
+            ast::BinaryOp::BitXor => BinOp::BitXor,
+            ast::BinaryOp::Shl => BinOp::Shl,
+            ast::BinaryOp::Shr => BinOp::Shr,
             ast::BinaryOp::Eq => BinOp::Eq,
             ast::BinaryOp::NotEq => BinOp::Ne,
             ast::BinaryOp::Lt => BinOp::Lt,
@@ -488,7 +494,14 @@ impl AstLowering {
             ast::BinaryOp::Or => BinOp::Or,
             ast::BinaryOp::In | ast::BinaryOp::NotIn | ast::BinaryOp::Is => BinOp::Eq,
             ast::BinaryOp::IsNot => BinOp::Ne,
-        }
+            ast::BinaryOp::MatMul | ast::BinaryOp::PipeForward | ast::BinaryOp::PipeBackward => {
+                return Err(LoweringError {
+                    message: format!("operator `{op}` must resolve to a user-defined operator hook before lowering"),
+                    span: span.into(),
+                });
+            }
+        };
+        Ok(binop)
     }
 
     /// Determine the result type of a binary operation using Python-like numeric semantics.
@@ -524,6 +537,18 @@ impl AstLowering {
             | ast::BinaryOp::NotIn
             | ast::BinaryOp::Is
             | ast::BinaryOp::IsNot => IrType::Bool,
+            ast::BinaryOp::BitAnd
+            | ast::BinaryOp::BitOr
+            | ast::BinaryOp::BitXor
+            | ast::BinaryOp::Shl
+            | ast::BinaryOp::Shr => {
+                if matches!((left, right), (IrType::Int, IrType::Int)) {
+                    IrType::Int
+                } else {
+                    IrType::Unknown
+                }
+            }
+            ast::BinaryOp::MatMul | ast::BinaryOp::PipeForward | ast::BinaryOp::PipeBackward => IrType::Unknown,
             ast::BinaryOp::Add
             | ast::BinaryOp::Sub
             | ast::BinaryOp::Mul

@@ -761,15 +761,7 @@ impl<'a> Parser<'a> {
                 return self.assignment_stmt();
             }
             // Check for compound assignment: ident += expr, ident -= expr, etc.
-            let compound_op = match &self.peek_next().kind {
-                TokenKind::Operator(OperatorId::PlusEq) => Some(CompoundOp::Add),
-                TokenKind::Operator(OperatorId::MinusEq) => Some(CompoundOp::Sub),
-                TokenKind::Operator(OperatorId::StarEq) => Some(CompoundOp::Mul),
-                TokenKind::Operator(OperatorId::SlashEq) => Some(CompoundOp::Div),
-                TokenKind::Operator(OperatorId::SlashSlashEq) => Some(CompoundOp::FloorDiv),
-                TokenKind::Operator(OperatorId::PercentEq) => Some(CompoundOp::Mod),
-                _ => None,
-            };
+            let compound_op = Self::compound_op_from_token_kind(&self.peek_next().kind);
             if let Some(op) = compound_op {
                 let name = self.identifier()?;
                 self.advance(); // consume the compound operator
@@ -828,15 +820,7 @@ impl<'a> Parser<'a> {
         }
 
         // Check for compound assignment on field/index: expr.field += value, expr[i] -= value
-        let compound_op = match &self.peek().kind {
-            TokenKind::Operator(OperatorId::PlusEq) => Some(CompoundOp::Add),
-            TokenKind::Operator(OperatorId::MinusEq) => Some(CompoundOp::Sub),
-            TokenKind::Operator(OperatorId::StarEq) => Some(CompoundOp::Mul),
-            TokenKind::Operator(OperatorId::SlashEq) => Some(CompoundOp::Div),
-            TokenKind::Operator(OperatorId::SlashSlashEq) => Some(CompoundOp::FloorDiv),
-            TokenKind::Operator(OperatorId::PercentEq) => Some(CompoundOp::Mod),
-            _ => None,
-        };
+        let compound_op = Self::compound_op_from_token_kind(&self.peek().kind);
         if let Some(op) = compound_op {
             self.advance(); // consume the compound operator
             let rhs = self.expression()?;
@@ -844,14 +828,7 @@ impl<'a> Parser<'a> {
                 Expr::Field(object, field) => {
                     // Convert field += rhs to field = field + rhs
                     let field_expr = Spanned::new(Expr::Field(object.clone(), field.clone()), expr.span);
-                    let bin_op = match op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                    };
+                    let bin_op = Self::binary_op_from_compound(op);
                     let new_value = Spanned::new(Expr::Binary(Box::new(field_expr), bin_op, Box::new(rhs)), expr.span);
                     return Ok(Statement::FieldAssignment(FieldAssignmentStmt {
                         target_span: expr.span,
@@ -863,14 +840,7 @@ impl<'a> Parser<'a> {
                 Expr::Index(object, index) => {
                     // Convert arr[i] += rhs to arr[i] = arr[i] + rhs
                     let index_expr = Spanned::new(Expr::Index(object.clone(), index.clone()), expr.span);
-                    let bin_op = match op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                    };
+                    let bin_op = Self::binary_op_from_compound(op);
                     let new_value = Spanned::new(Expr::Binary(Box::new(index_expr), bin_op, Box::new(rhs)), expr.span);
                     return Ok(Statement::IndexAssignment(IndexAssignmentStmt {
                         object: *object,
@@ -894,6 +864,43 @@ impl<'a> Parser<'a> {
 
         // Otherwise it's an expression statement
         Ok(Statement::Expr(expr))
+    }
+
+    /// Convert an assignment operator token such as `+=` or `<<=` into its AST compound operator.
+    fn compound_op_from_token_kind(kind: &TokenKind) -> Option<CompoundOp> {
+        match kind {
+            TokenKind::Operator(OperatorId::PlusEq) => Some(CompoundOp::Add),
+            TokenKind::Operator(OperatorId::MinusEq) => Some(CompoundOp::Sub),
+            TokenKind::Operator(OperatorId::StarEq) => Some(CompoundOp::Mul),
+            TokenKind::Operator(OperatorId::SlashEq) => Some(CompoundOp::Div),
+            TokenKind::Operator(OperatorId::SlashSlashEq) => Some(CompoundOp::FloorDiv),
+            TokenKind::Operator(OperatorId::PercentEq) => Some(CompoundOp::Mod),
+            TokenKind::Operator(OperatorId::MatMulEq) => Some(CompoundOp::MatMul),
+            TokenKind::Operator(OperatorId::AmpEq) => Some(CompoundOp::BitAnd),
+            TokenKind::Operator(OperatorId::PipeEq) => Some(CompoundOp::BitOr),
+            TokenKind::Operator(OperatorId::CaretEq) => Some(CompoundOp::BitXor),
+            TokenKind::Operator(OperatorId::ShlEq) => Some(CompoundOp::Shl),
+            TokenKind::Operator(OperatorId::ShrEq) => Some(CompoundOp::Shr),
+            _ => None,
+        }
+    }
+
+    /// Return the ordinary binary operator used by a compound-assignment fallback.
+    fn binary_op_from_compound(op: CompoundOp) -> BinaryOp {
+        match op {
+            CompoundOp::Add => BinaryOp::Add,
+            CompoundOp::Sub => BinaryOp::Sub,
+            CompoundOp::Mul => BinaryOp::Mul,
+            CompoundOp::Div => BinaryOp::Div,
+            CompoundOp::FloorDiv => BinaryOp::FloorDiv,
+            CompoundOp::Mod => BinaryOp::Mod,
+            CompoundOp::MatMul => BinaryOp::MatMul,
+            CompoundOp::BitAnd => BinaryOp::BitAnd,
+            CompoundOp::BitOr => BinaryOp::BitOr,
+            CompoundOp::BitXor => BinaryOp::BitXor,
+            CompoundOp::Shl => BinaryOp::Shl,
+            CompoundOp::Shr => BinaryOp::Shr,
+        }
     }
 
 }

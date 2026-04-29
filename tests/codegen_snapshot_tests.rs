@@ -748,6 +748,13 @@ fn test_operators_codegen() {
 }
 
 #[test]
+fn test_user_defined_operators_codegen() {
+    let source = load_test_file("user_defined_operators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_operators", rust_code);
+}
+
+#[test]
 fn test_mixed_numeric_codegen() {
     let source = load_test_file("mixed_numeric");
     let rust_code = generate_rust(&source);

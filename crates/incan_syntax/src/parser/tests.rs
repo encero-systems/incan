@@ -4183,4 +4183,122 @@ def run() -> int:
         assert!(matches!(value.node, Expr::Literal(Literal::Int(_))));
         Ok(())
     }
+
+    #[test]
+    fn test_parse_rfc028_operator_spellings() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def ops(a: Any, b: Any, c: Any) -> None:
+  mat = a @ b
+  piped = a |> b <| c
+  bits = a & b | c ^ a << b >> c
+  inv = ~a
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assignment(mat) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected mat assignment".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        assert!(matches!(mat.value.node, Expr::Binary(_, BinaryOp::MatMul, _)));
+
+        let Statement::Assignment(piped) = &function.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected piped assignment".to_string(),
+                function.body[1].span,
+            )]);
+        };
+        let Expr::Binary(left, BinaryOp::PipeBackward, _) = &piped.value.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected pipe-backward expression".to_string(),
+                piped.value.span,
+            )]);
+        };
+        assert!(matches!(left.node, Expr::Binary(_, BinaryOp::PipeForward, _)));
+
+        let Statement::Assignment(bits) = &function.body[2].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected bits assignment".to_string(),
+                function.body[2].span,
+            )]);
+        };
+        let Expr::Binary(_, BinaryOp::BitOr, right) = &bits.value.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected bit-or expression".to_string(),
+                bits.value.span,
+            )]);
+        };
+        assert!(matches!(right.node, Expr::Binary(_, BinaryOp::BitXor, _)));
+
+        let Statement::Assignment(inv) = &function.body[3].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected inv assignment".to_string(),
+                function.body[3].span,
+            )]);
+        };
+        assert!(matches!(inv.value.node, Expr::Unary(UnaryOp::Invert, _)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rfc028_compound_assignment_spellings() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def update(x: Any, y: Any) -> None:
+  x @= y
+  x &= y
+  x |= y
+  x ^= y
+  x <<= y
+  x >>= y
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let expected = [
+            CompoundOp::MatMul,
+            CompoundOp::BitAnd,
+            CompoundOp::BitOr,
+            CompoundOp::BitXor,
+            CompoundOp::Shl,
+            CompoundOp::Shr,
+        ];
+        for (stmt, op) in function.body.iter().zip(expected) {
+            assert!(
+                matches!(&stmt.node, Statement::CompoundAssignment(assign) if assign.op == op),
+                "expected compound assignment {op:?}, got {:?}",
+                stmt.node
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_matmul_preserves_decorator_and_rust_import_at() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+from rust::libm @ "0.2" import sqrt
+
+@derive(Clone)
+class Tensor:
+  def apply(self, other: Tensor) -> Tensor:
+    return self @ other
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[1])?;
+        assert_eq!(class.decorators.len(), 1);
+        let Some(body) = class.methods[0].node.body.as_ref() else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected concrete method body".to_string(),
+                class.methods[0].span,
+            )]);
+        };
+        let Statement::Return(Some(expr)) = &body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                body[0].span,
+            )]);
+        };
+        assert!(matches!(expr.node, Expr::Binary(_, BinaryOp::MatMul, _)));
+        Ok(())
+    }
 }

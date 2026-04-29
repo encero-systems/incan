@@ -52,7 +52,11 @@ impl AstLowering {
         }
     }
 
-    pub(super) fn callable_signature_for_call_span(&self, span: ast::Span) -> Option<FunctionSignature> {
+    /// Return the typechecker-proven callable signature for a full call expression span.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_call_span(
+        &self,
+        span: ast::Span,
+    ) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         let params = info.call_site_callable_params(span)?;
         Some(FunctionSignature {

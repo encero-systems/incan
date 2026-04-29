@@ -354,6 +354,37 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
+        let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
+  mat=a@b
+  piped=a|>b<|c
+  bits=~a&b|c^a<<b>>c
+  a @= b
+  a &= b
+  a |= b
+  a ^= b
+  a <<= b
+  a >>= b
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(
+            formatted,
+            r#"def ops(a: Any, b: Any, c: Any) -> None:
+    mat = a @ b
+    piped = a |> b <| c
+    bits = ~a & b | c ^ a << b >> c
+    a @= b
+    a &= b
+    a |= b
+    a ^= b
+    a <<= b
+    a >>= b
+"#
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_model() {
         let source = r#"model User:
   name: str

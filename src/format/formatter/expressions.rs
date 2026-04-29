@@ -360,6 +360,14 @@ impl Formatter {
             BinaryOp::FloorDiv => "//",
             BinaryOp::Mod => "%",
             BinaryOp::Pow => "**",
+            BinaryOp::MatMul => "@",
+            BinaryOp::PipeForward => "|>",
+            BinaryOp::PipeBackward => "<|",
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            BinaryOp::Shl => "<<",
+            BinaryOp::Shr => ">>",
             BinaryOp::Eq => "==",
             BinaryOp::NotEq => "!=",
             BinaryOp::Lt => "<",
@@ -375,10 +383,12 @@ impl Formatter {
         });
     }
 
+    /// Write the source spelling for a unary operator.
     fn format_unary_op(&mut self, op: &UnaryOp) {
         self.writer.write(match op {
             UnaryOp::Neg => "-",
             UnaryOp::Not => "not ",
+            UnaryOp::Invert => "~",
         });
     }
 

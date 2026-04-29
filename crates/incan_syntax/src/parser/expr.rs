@@ -62,7 +62,11 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            let op = if self.match_token(&TokenKind::Operator(OperatorId::EqEq)) {
+            let op = if self.match_token(&TokenKind::Operator(OperatorId::PipeForward)) {
+                BinaryOp::PipeForward
+            } else if self.match_token(&TokenKind::Operator(OperatorId::PipeBackward)) {
+                BinaryOp::PipeBackward
+            } else if self.match_token(&TokenKind::Operator(OperatorId::EqEq)) {
                 BinaryOp::Eq
             } else if self.match_token(&TokenKind::Operator(OperatorId::NotEq)) {
                 BinaryOp::NotEq
@@ -93,6 +97,8 @@ impl<'a> Parser<'a> {
             let right = self.range_expr()?;
             let span = left.span.merge(right.span);
             let glyph = match op {
+                BinaryOp::PipeForward => Some("|>"),
+                BinaryOp::PipeBackward => Some("<|"),
                 BinaryOp::Eq => Some("=="),
                 BinaryOp::NotEq => Some("!="),
                 BinaryOp::Lt => Some("<"),
@@ -115,7 +121,7 @@ impl<'a> Parser<'a> {
 
     /// Parse range expressions: `start..end` or `start..=end`
     fn range_expr(&mut self) -> Result<Spanned<Expr>, CompileError> {
-        let left = self.additive()?;
+        let left = self.bit_or()?;
 
         // Check for range operators
         let is_inclusive = if self.match_token(&TokenKind::Operator(OperatorId::DotDotEq)) {
@@ -126,7 +132,7 @@ impl<'a> Parser<'a> {
             return Ok(left);
         };
 
-        let right = self.additive()?;
+        let right = self.bit_or()?;
         let span = left.span.merge(right.span);
 
         Ok(Spanned::new(
@@ -137,6 +143,91 @@ impl<'a> Parser<'a> {
             },
             span,
         ))
+    }
+
+    /// Parse bitwise-or expressions while preserving scoped vocab ownership of `|`.
+    fn bit_or(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.bit_xor()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("|").is_some() {
+                break;
+            }
+            if !(self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe))
+                || self.match_token(&TokenKind::Operator(OperatorId::Pipe)))
+            {
+                break;
+            }
+
+            let right = self.bit_xor()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitOr, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise-xor expressions unless the active vocab scope owns `^`.
+    fn bit_xor(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.bit_and()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("^").is_some()
+                || !self.match_token(&TokenKind::Operator(OperatorId::Caret))
+            {
+                break;
+            }
+
+            let right = self.bit_and()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitXor, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise-and expressions unless the active vocab scope owns `&`.
+    fn bit_and(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.shift()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("&").is_some()
+                || !self.match_token(&TokenKind::Operator(OperatorId::Amp))
+            {
+                break;
+            }
+
+            let right = self.shift()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitAnd, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bit-shift expressions, deferring to vocab glyph handlers when scoped.
+    fn shift(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.additive()?;
+
+        loop {
+            let op = if self.active_scoped_glyph_surface_descriptor("<<").is_none()
+                && self.match_token(&TokenKind::Operator(OperatorId::Shl))
+            {
+                BinaryOp::Shl
+            } else if self.active_scoped_glyph_surface_descriptor(">>").is_none()
+                && self.match_token(&TokenKind::Operator(OperatorId::Shr))
+            {
+                BinaryOp::Shr
+            } else {
+                break;
+            };
+
+            let right = self.additive()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+        }
+
+        Ok(left)
     }
 
     /// Parse additive expressions, preserving DSL-owned `+`/`-` glyphs in eligible vocab blocks.
@@ -174,6 +265,11 @@ impl<'a> Parser<'a> {
         loop {
             let op = if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
                 BinaryOp::Mul
+            } else if self.active_scoped_glyph_surface_descriptor("@").is_none()
+                && (self.match_token(&TokenKind::Punctuation(PunctuationId::At))
+                    || self.match_token(&TokenKind::Operator(OperatorId::MatMul)))
+            {
+                BinaryOp::MatMul
             } else if self.match_token(&TokenKind::Operator(OperatorId::SlashSlash)) {
                 // Check // before / since lexer produces distinct tokens
                 BinaryOp::FloorDiv
@@ -189,6 +285,7 @@ impl<'a> Parser<'a> {
             let span = left.span.merge(right.span);
             let glyph = match op {
                 BinaryOp::Mul => "*",
+                BinaryOp::MatMul => "@",
                 BinaryOp::FloorDiv => "//",
                 BinaryOp::Div => "/",
                 BinaryOp::Mod => "%",
@@ -255,12 +352,18 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
+    /// Parse prefix unary expressions, including RFC 028 bitwise inversion.
     fn unary(&mut self) -> Result<Spanned<Expr>, CompileError> {
         if self.match_token(&TokenKind::Operator(OperatorId::Minus)) {
             let start = self.tokens[self.pos - 1].span.start;
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
             Ok(Spanned::new(Expr::Unary(UnaryOp::Neg, Box::new(expr)), span))
+        } else if self.match_token(&TokenKind::Operator(OperatorId::Tilde)) {
+            let start = self.tokens[self.pos - 1].span.start;
+            let expr = self.unary()?;
+            let span = Span::new(start, expr.span.end);
+            Ok(Spanned::new(Expr::Unary(UnaryOp::Invert, Box::new(expr)), span))
         } else if let Some(id) = self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression) {
             self.advance();
             let start = self.tokens[self.pos - 1].span.start;

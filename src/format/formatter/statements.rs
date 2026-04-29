@@ -7,6 +7,7 @@ use incan_semantics_core::SurfaceFeatureKey;
 use super::Formatter;
 
 impl Formatter {
+    /// Format one statement and preserve its leading blank-line intent.
     pub(super) fn format_statement(&mut self, stmt: &Spanned<Statement>) {
         self.writer.blank_lines(stmt.leading_blank_lines as usize);
         match &stmt.node {
@@ -46,6 +47,12 @@ impl Formatter {
                     CompoundOp::Div => "/=",
                     CompoundOp::FloorDiv => "//=",
                     CompoundOp::Mod => "%=",
+                    CompoundOp::MatMul => "@=",
+                    CompoundOp::BitAnd => "&=",
+                    CompoundOp::BitOr => "|=",
+                    CompoundOp::BitXor => "^=",
+                    CompoundOp::Shl => "<<=",
+                    CompoundOp::Shr => ">>=",
                 });
                 self.writer.write(" ");
                 self.format_expr(&assign.value.node);

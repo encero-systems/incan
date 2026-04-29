@@ -140,7 +140,7 @@ fn exceptions_spellings_unique_and_resolvable() {
 fn operators_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "operator",
-        expected_len: 27,
+        expected_len: 42,
         items: operators::OPERATORS,
         id_of: |info| info.id,
         canonical_of: |info| info.spellings[0],

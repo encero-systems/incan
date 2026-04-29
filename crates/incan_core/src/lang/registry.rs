@@ -61,6 +61,9 @@ pub const RFC_022: RfcId = "RFC 022";
 /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
 pub const RFC_023: RfcId = "RFC 023";
 
+/// RFC 028 — trait-based operator overloading.
+pub const RFC_028: RfcId = "RFC 028";
+
 /// RFC 029 — union types and narrowing predicates.
 pub const RFC_029: RfcId = "RFC 029";
 
@@ -106,6 +109,8 @@ impl RFC {
     pub const _022: RfcId = RFC_022;
     /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
     pub const _023: RfcId = RFC_023;
+    /// RFC 028 — trait-based operator overloading.
+    pub const _028: RfcId = RFC_028;
     /// RFC 029 — union types and narrowing predicates.
     pub const _029: RfcId = RFC_029;
     /// RFC 040 — scoped DSL surface forms.

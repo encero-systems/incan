@@ -20,8 +20,9 @@ use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
-use crate::frontend::typechecker::IdentKind;
+use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
+use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
@@ -203,80 +204,117 @@ impl AstLowering {
 
             // ---- Binary operations ----
             ast::Expr::Binary(l, op, r) => {
-                // Special handling for `in` and `not in` operators
-                // - `x in collection` → builtin-aware `collection.contains(x)`
-                // - `x not in collection` → `!collection.contains(x)`
-                match op {
-                    ast::BinaryOp::In | ast::BinaryOp::NotIn => {
-                        let item = self.lower_expr_spanned(l)?;
-                        let collection = self.lower_expr_spanned(r)?;
+                if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(expr_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::Binary
+                    // `__eq__` is represented in generated Rust as `PartialEq::eq`, not as an inherent method.
+                    && resolved_operator.method != magic_methods::as_str(MagicMethodId::Eq)
+                {
+                    let receiver = self.lower_expr_spanned(l)?;
+                    let arg_expr = self.lower_expr_spanned(r)?;
+                    let result_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: resolved_operator.method,
+                            type_args: Vec::new(),
+                            args: vec![IrCallArg {
+                                name: None,
+                                kind: IrCallArgKind::Positional,
+                                expr: arg_expr,
+                            }],
+                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        result_ty,
+                    )
+                } else {
+                    // Special handling for `in` and `not in` operators
+                    // - `x in collection` → builtin-aware `collection.contains(x)`
+                    // - `x not in collection` → `!collection.contains(x)`
+                    match op {
+                        ast::BinaryOp::In | ast::BinaryOp::NotIn => {
+                            let item = self.lower_expr_spanned(l)?;
+                            let collection = self.lower_expr_spanned(r)?;
 
-                        // Generate `collection.contains(item)` using the same receiver-aware classification path as
-                        // ordinary method syntax so containment keeps builtin semantics for strings, lists, sets, and
-                        // dicts without emitter-side name guessing.
-                        let contains_args = vec![IrCallArg {
-                            name: None,
-                            kind: IrCallArgKind::Positional,
-                            expr: item,
-                        }];
-                        let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
-                            let mut receiver_ty = &collection.ty;
-                            while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
-                                receiver_ty = inner.as_ref();
-                            }
-                            matches!(receiver_ty, IrType::Dict(_, _))
-                                .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
-                        });
-                        let contains_call = if let Some(kind) = contains_kind {
-                            IrExprKind::KnownMethodCall {
-                                receiver: Box::new(collection),
-                                kind,
-                                args: contains_args,
-                            }
-                        } else {
-                            let arg_policy =
-                                self.regular_method_call_arg_policy(r.span, &collection, "contains", &contains_args);
-                            IrExprKind::MethodCall {
-                                receiver: Box::new(collection),
-                                method: "contains".to_string(),
-                                type_args: Vec::new(),
-                                args: contains_args,
-                                callable_signature: None,
-                                arg_policy,
-                            }
-                        };
+                            // Generate `collection.contains(item)` using the same receiver-aware classification path as
+                            // ordinary method syntax so containment keeps builtin semantics for strings, lists, sets,
+                            // and dicts without emitter-side name guessing.
+                            let contains_args = vec![IrCallArg {
+                                name: None,
+                                kind: IrCallArgKind::Positional,
+                                expr: item,
+                            }];
+                            let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
+                                let mut receiver_ty = &collection.ty;
+                                while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+                                    receiver_ty = inner.as_ref();
+                                }
+                                matches!(receiver_ty, IrType::Dict(_, _))
+                                    .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
+                            });
+                            let contains_call = if let Some(kind) = contains_kind {
+                                IrExprKind::KnownMethodCall {
+                                    receiver: Box::new(collection),
+                                    kind,
+                                    args: contains_args,
+                                }
+                            } else {
+                                let arg_policy = self.regular_method_call_arg_policy(
+                                    r.span,
+                                    &collection,
+                                    "contains",
+                                    &contains_args,
+                                );
+                                IrExprKind::MethodCall {
+                                    receiver: Box::new(collection),
+                                    method: "contains".to_string(),
+                                    type_args: Vec::new(),
+                                    args: contains_args,
+                                    callable_signature: None,
+                                    arg_policy,
+                                }
+                            };
 
-                        if matches!(op, ast::BinaryOp::NotIn) {
-                            // Wrap in negation for `not in`
-                            (
-                                IrExprKind::UnaryOp {
-                                    op: UnaryOp::Not,
-                                    operand: Box::new(IrExpr::new(contains_call, IrType::Bool)),
-                                },
-                                IrType::Bool,
-                            )
-                        } else {
-                            (contains_call, IrType::Bool)
+                            if matches!(op, ast::BinaryOp::NotIn) {
+                                // Wrap in negation for `not in`
+                                (
+                                    IrExprKind::UnaryOp {
+                                        op: UnaryOp::Not,
+                                        operand: Box::new(IrExpr::new(contains_call, IrType::Bool)),
+                                    },
+                                    IrType::Bool,
+                                )
+                            } else {
+                                (contains_call, IrType::Bool)
+                            }
                         }
-                    }
-                    _ => {
-                        let left = self.lower_expr_spanned(l)?;
-                        let right = self.lower_expr_spanned(r)?;
-                        // For Pow, compute exponent kind for policy-based result type
-                        let pow_exp_kind = if matches!(op, ast::BinaryOp::Pow) {
-                            Some(Self::pow_exponent_kind(r, &right.ty))
-                        } else {
-                            None
-                        };
-                        let result_ty = self.binary_result_type(&left.ty, &right.ty, op, pow_exp_kind);
-                        (
-                            IrExprKind::BinOp {
-                                op: self.lower_binop(op),
-                                left: Box::new(left),
-                                right: Box::new(right),
-                            },
-                            result_ty,
-                        )
+                        _ => {
+                            let left = self.lower_expr_spanned(l)?;
+                            let right = self.lower_expr_spanned(r)?;
+                            // For Pow, compute exponent kind for policy-based result type
+                            let pow_exp_kind = if matches!(op, ast::BinaryOp::Pow) {
+                                Some(Self::pow_exponent_kind(r, &right.ty))
+                            } else {
+                                None
+                            };
+                            let result_ty = self.binary_result_type(&left.ty, &right.ty, op, pow_exp_kind);
+                            (
+                                IrExprKind::BinOp {
+                                    op: self.lower_binop(op, expr_span)?,
+                                    left: Box::new(left),
+                                    right: Box::new(right),
+                                },
+                                result_ty,
+                            )
+                        }
                     }
                 }
             }
@@ -284,17 +322,43 @@ impl AstLowering {
             // ---- Unary operations ----
             ast::Expr::Unary(op, e) => {
                 let operand = self.lower_expr_spanned(e)?;
-                let ty = operand.ty.clone();
-                (
-                    IrExprKind::UnaryOp {
-                        op: match op {
-                            ast::UnaryOp::Neg => UnaryOp::Neg,
-                            ast::UnaryOp::Not => UnaryOp::Not,
+                if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(expr_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::Unary
+                {
+                    let result_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(operand),
+                            method: resolved_operator.method,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            arg_policy: MethodCallArgPolicy::Default,
                         },
-                        operand: Box::new(operand),
-                    },
-                    ty,
-                )
+                        result_ty,
+                    )
+                } else {
+                    let ty = operand.ty.clone();
+                    (
+                        IrExprKind::UnaryOp {
+                            op: match op {
+                                ast::UnaryOp::Neg => UnaryOp::Neg,
+                                ast::UnaryOp::Not => UnaryOp::Not,
+                                ast::UnaryOp::Invert => UnaryOp::Not,
+                            },
+                            operand: Box::new(operand),
+                        },
+                        ty,
+                    )
+                }
             }
 
             // ---- Function / constructor calls (delegated to calls submodule) ----
@@ -374,19 +438,48 @@ impl AstLowering {
             ast::Expr::Index(o, i) => {
                 let obj = self.lower_expr_spanned(o)?;
                 let idx = self.lower_expr_spanned(i)?;
-                let elem_ty = match &obj.ty {
-                    IrType::List(e) => (**e).clone(),
-                    IrType::Dict(_, v) => (**v).clone(),
-                    IrType::String => IrType::String,
-                    _ => IrType::Unknown,
-                };
-                (
-                    IrExprKind::Index {
-                        object: Box::new(obj),
-                        index: Box::new(idx),
-                    },
-                    elem_ty,
-                )
+                if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(expr_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::Index
+                {
+                    let result_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(obj),
+                            method: resolved_operator.method,
+                            type_args: Vec::new(),
+                            args: vec![IrCallArg {
+                                name: None,
+                                kind: IrCallArgKind::Positional,
+                                expr: idx,
+                            }],
+                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        result_ty,
+                    )
+                } else {
+                    let elem_ty = match &obj.ty {
+                        IrType::List(e) => (**e).clone(),
+                        IrType::Dict(_, v) => (**v).clone(),
+                        IrType::String => IrType::String,
+                        _ => IrType::Unknown,
+                    };
+                    (
+                        IrExprKind::Index {
+                            object: Box::new(obj),
+                            index: Box::new(idx),
+                        },
+                        elem_ty,
+                    )
+                }
             }
 
             // ---- Field access ----

@@ -7179,6 +7179,378 @@ def main() -> int:
 }
 
 #[test]
+fn test_rfc028_dunder_only_add_operator_records_resolution() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Money:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+def main() -> None:
+  total = Money(cents=100) + Money(cents=25)
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
+        "expected + to resolve to __add__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_trait_backed_operator_dispatch_typechecks() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Money with Add[Money, Money]:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+def main() -> Money:
+  return Money(cents=100) + Money(cents=25)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc028_multi_instantiation_operator_dispatch_uses_operand_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Acc with Add[int, int], Add[str, str]:
+  value: int
+
+  def __add__(self, other: int) -> int:
+    return self.value + other
+
+  def __add__(self, other: str) -> str:
+    return other
+
+def main() -> None:
+  acc = Acc(value=2)
+  n: int = acc + 3
+  s: str = acc + "x"
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc028_trait_dunder_signature_mismatch_is_rejected() {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model BadMoney with Add[BadMoney, int]:
+  cents: int
+
+  def __add__(self, other: BadMoney) -> BadMoney:
+    return self
+"#;
+
+    let errs = check_str_err(source, "expected operator trait/dunder signature mismatch");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'Add' requires 'BadMoney'::__add__ to match its signature")),
+        "expected operator trait conformance diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_multi_instantiation_operator_without_hint_is_ambiguous() {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Acc with Add[int, int], Add[int, str]:
+  value: int
+
+  def __add__(self, other: int) -> int:
+    return self.value + other
+
+  def __add__(self, other: int) -> str:
+    return "x"
+
+def main() -> None:
+  acc = Acc(value=2)
+  result = acc + 3
+"#;
+
+    let errs = check_str_err(source, "expected ambiguous operator method call");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method call '__add__")),
+        "expected operator ambiguity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_missing_operator_hook_reports_missing_dunder() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  value = Box(value=1) + Box(value=2)
+"#;
+
+    let errs = check_str_err(source, "expected missing __add__ hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__add__(...)'")),
+        "expected missing __add__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_compound_assignment_missing_operator_hook_reports_missing_dunder() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  mut value = Box(value=1)
+  value += Box(value=2)
+"#;
+
+    let errs = check_str_err(source, "expected missing compound assignment fallback hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__add__(...)'")),
+        "expected missing __add__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_compound_assignment_resolves_binary_dunder_fallback() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Box:
+  value: int
+
+  def __add__(self, other: Box) -> Box:
+    return Box(value=self.value + other.value)
+
+def main() -> None:
+  mut value = Box(value=1)
+  value += Box(value=2)
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
+        "expected compound assignment to resolve to __add__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_comparison_requires_exact_explicit_hook() {
+    let source = r#"
+model Rank:
+  value: int
+
+  def __lt__(self, other: Rank) -> bool:
+    return self.value < other.value
+
+def main() -> None:
+  a = Rank(value=1)
+  b = Rank(value=2)
+  ok = a < b
+  missing = a <= b
+"#;
+
+    let errs = check_str_err(source, "expected missing __le__ hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__le__(...)'")),
+        "expected missing __le__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_indexing_resolves_getitem_dunder() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Row:
+  value: int
+
+  def __getitem__(self, index: int) -> int:
+    return self.value + index
+
+def main() -> int:
+  row = Row(value=4)
+  return row[3]
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__getitem__" && call.kind == ResolvedOperatorKind::Index),
+        "expected indexing to resolve to __getitem__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_index_assignment_resolves_setitem_dunder() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Row:
+  value: int
+
+  def __setitem__(self, index: int, value: int) -> None:
+    pass
+
+def main() -> None:
+  row = Row(value=4)
+  row[3] = 9
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__setitem__" && call.kind == ResolvedOperatorKind::IndexAssign),
+        "expected index assignment to resolve to __setitem__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_extended_operator_glyphs_resolve_dunders() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model OpBox:
+  value: int
+
+  def __matmul__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __pipe_forward__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __pipe_backward__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __and__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __or__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __xor__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __lshift__(self, other: int) -> OpBox:
+    return self
+
+  def __rshift__(self, other: int) -> OpBox:
+    return self
+
+  def __invert__(self) -> OpBox:
+    return self
+
+def main() -> None:
+  a = OpBox(value=1)
+  b = OpBox(value=2)
+  mat = a @ b
+  forward = a |> b
+  backward = a <| b
+  anded = a & b
+  ored = a | b
+  xored = a ^ b
+  left = a << 1
+  right = a >> 1
+  inverted = ~a
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let resolved: Vec<_> = checker
+        .type_info()
+        .resolved_operator_calls
+        .values()
+        .map(|call| call.method.as_str())
+        .collect();
+    for expected in [
+        "__matmul__",
+        "__pipe_forward__",
+        "__pipe_backward__",
+        "__and__",
+        "__or__",
+        "__xor__",
+        "__lshift__",
+        "__rshift__",
+        "__invert__",
+    ] {
+        assert!(
+            resolved.contains(&expected),
+            "expected {expected} to resolve in {:?}",
+            checker.type_info().resolved_operator_calls
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_primitive_bitwise_compound_assignment_typechecks() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def main() -> int:
+  mut value = 8
+  value &= 3
+  value |= 4
+  value ^= 1
+  value <<= 2
+  value >>= 1
+  return value
+"#;
+
+    check_str(source)
+}
+
+#[test]
 fn test_enum_multi_instantiation_trait_method_return_hint_disambiguates() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Convert[T]:

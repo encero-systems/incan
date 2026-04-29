@@ -1,0 +1,56 @@
+model Money:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+  def __lt__(self, other: Money) -> bool:
+    return self.cents < other.cents
+
+
+model User:
+  id: int
+
+  def __eq__(self, other: User) -> bool:
+    return self.id == other.id
+
+
+model Row:
+  value: int
+
+  def __getitem__(self, index: int) -> int:
+    return self.value + index
+
+  def __setitem__(self, index: int, value: int) -> None:
+    pass
+
+
+model OpBox:
+  value: int
+
+  def __matmul__(self, other: OpBox) -> OpBox:
+    return OpBox(value=self.value + other.value)
+
+  def __and__(self, other: OpBox) -> OpBox:
+    return OpBox(value=self.value + other.value)
+
+  def __invert__(self) -> OpBox:
+    return OpBox(value=0 - self.value)
+
+
+def main() -> None:
+  a = Money(cents=100)
+  b = Money(cents=25)
+  total = a + b
+  cheaper = b < a
+  first = User(id=1)
+  second = User(id=1)
+  same = first == second
+  row = Row(value=4)
+  item = row[3]
+  row[3] = 9
+  left = OpBox(value=2)
+  right = OpBox(value=3)
+  mat = left @ right
+  both = left & right
+  inverted = ~left

@@ -1,9 +1,9 @@
 # RFC 028: trait-based operator overloading
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
+- **Related:** RFC 025 (multi-instantiation trait dispatch), RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 029 (union types), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
 - **Issue:** [#162](https://github.com/dannys-code-corner/incan/issues/162)
 - **RFC PR:** —
 - **Written against:** v0.2
@@ -251,6 +251,10 @@ When the typechecker encounters `a + b` on a non-primitive or explicitly operato
 
 The same rule applies to the other operator traits in this RFC.
 
+The dunder method is the implementation surface. The operator trait is the nominal capability surface. A type that explicitly adopts an operator trait must expose a compatible dunder method with the trait-required signature; a dunder-only implementation may still let the compiler synthesize the matching operator-trait view for generic reasoning. If explicit trait adoption and the visible dunder method disagree, the type declaration is invalid rather than leaving the call site to guess which surface is authoritative.
+
+When RFC 025 multi-instantiation trait dispatch is available, the same operator trait may be adopted multiple times with different right-hand operand types, and each trait instantiation may provide its own same-name dunder implementation. Without that mechanism, a type has at most one implementation body per operator dunder name. RFC 029 union types do not replace this rule: a union-typed operand must be narrowed before member-specific operator traits or methods are used.
+
 Primitive operators retain their existing language-defined semantics. This RFC extends operator resolution for user-defined types and generic, trait-constrained code; it does not replace the builtin numeric/string rules with a mandatory trait-dispatch path for every operator expression.
 
 ### Comparison semantics
@@ -258,12 +262,11 @@ Primitive operators retain their existing language-defined semantics. This RFC e
 `Eq` and `Ord` are specified in Incan terms:
 
 - `Eq` provides `__eq__`
-- `__ne__` is optional; if absent, `a != b` is defined as `not (a == b)`
+- `Eq` may explicitly provide `__ne__` as a default method, commonly as `not self.__eq__(other)`
 - `Ord` requires `Eq` and `__lt__`
-- `__le__`, `__gt__`, and `__ge__` are optional convenience hooks
-- if those hooks are absent, the compiler derives their semantics from `__lt__` and `__eq__`
+- `Ord` may explicitly provide `__le__`, `__gt__`, and `__ge__` as default methods
 
-As with arithmetic operators, a type may advertise this surface through the trait, through compatible dunders, or through both. This keeps the public language model consistent even if a backend chooses a different internal lowering strategy.
+As with arithmetic operators, a type may advertise this surface through the trait, through compatible dunders, or through both. Comparison fallback behavior must be explicit in a trait definition or a user-defined dunder method; the compiler does not invent hidden comparison hooks merely because another comparison hook exists. This keeps the public language model consistent with the explicit vocabulary-hook surface even if a backend chooses a different internal lowering strategy.
 
 ### Indexing semantics
 
@@ -278,11 +281,11 @@ Slice protocols, multi-index semantics, and range-based indexing conventions are
 
 Python-style reflected operators such as `__radd__` and `__rmul__` are important for mixed-type expressions and pipeline-heavy DSLs.
 
-This RFC should not hard-rule them out. What remains to be nailed down is the exact dispatch order and ambiguity behavior when both the left-hand and right-hand types offer applicable operator hooks. That part needs a deeper design pass, especially for future pipeline-oriented work.
+This RFC should not hard-rule them out, but it does not specify them. The initial dispatch model is left-hand dunder/trait resolution only. A follow-up design can add reflected hooks once the language has a precise rule for dispatch order, ambiguity, and explicit qualification when both operands expose applicable operator capabilities.
 
 ### Augmented assignment operators
 
-In this RFC, compound assignment has a clear baseline meaning: desugar through the corresponding binary operator. For the compound-assignment forms that exist in the language grammar today:
+In this RFC, compound assignment has a clear baseline meaning: desugar through the corresponding binary operator. The initial implementation covers the arithmetic compound forms that already existed plus the compound forms for the new bitwise, shift, and matmul operators:
 
 - `a += b` → `a = a + b`
 - `a -= b` → `a = a - b`
@@ -290,8 +293,29 @@ In this RFC, compound assignment has a clear baseline meaning: desugar through t
 - `a /= b` → `a = a / b`
 - `a //= b` → `a = a // b`
 - `a %= b` → `a = a % b`
+- `a @= b` → `a = a @ b`
+- `a &= b` → `a = a & b`
+- `a |= b` → `a = a | b`
+- `a ^= b` → `a = a ^ b`
+- `a <<= b` → `a = a << b`
+- `a >>= b` → `a = a >> b`
 
-That desugaring is the minimum semantic contract. This RFC does not rule out specialized in-place hooks such as `__iadd__` / `AddAssign`; it simply does not fully specify their dispatch rules yet.
+That desugaring is the fallback semantic contract. Before applying the fallback, compound assignment first looks for an explicit in-place operator hook for the same glyph:
+
+- `a += b` may resolve through `__iadd__` / `AddAssign`
+- `a -= b` may resolve through `__isub__` / `SubAssign`
+- `a *= b` may resolve through `__imul__` / `MulAssign`
+- `a /= b` may resolve through `__idiv__` / `DivAssign`
+- `a //= b` may resolve through `__ifloordiv__` / `FloorDivAssign`
+- `a %= b` may resolve through `__imod__` / `ModAssign`
+- `a @= b` may resolve through `__imatmul__` / `MatMulAssign`
+- `a &= b` may resolve through `__iand__` / `BitAndAssign`
+- `a |= b` may resolve through `__ior__` / `BitOrAssign`
+- `a ^= b` may resolve through `__ixor__` / `BitXorAssign`
+- `a <<= b` may resolve through `__ilshift__` / `ShlAssign`
+- `a >>= b` may resolve through `__irshift__` / `ShrAssign`
+
+An in-place hook is an explicit operator-protocol hook, not hidden compiler magic. It must return a value assignable to the left-hand target type. The implementation may mutate and return the receiver or construct a replacement value, but the source-level contract remains `a = <hook-result>`. If no in-place hook is available, compound assignment falls back to the corresponding binary operator assignment listed above.
 
 ### The `@` (matmul) operator
 
@@ -332,8 +356,7 @@ The important point is that user-defined operator expressions resolve through In
 
 ### Interaction with existing features
 
-**`@derive(Eq, Ord)`:** Models with `@derive(Eq)` get auto-generated `__eq__` (field-wise comparison). Manually
-implementing `__eq__` overrides the derived version. This RFC relies on that comparison-trait surface but does not redefine derive semantics; those remain governed by RFC 024.
+**`@derive(Eq, Ord)`:** Models with `@derive(Eq)` get auto-generated `__eq__` (field-wise comparison). Manually implementing `__eq__` overrides the derived version. This RFC relies on that comparison-trait surface but does not redefine derive semantics; those remain governed by RFC 024.
 
 **Trait composition:** A type can implement multiple operator traits: `model Vec3 with Add[Vec3, Vec3], Mul[float, Vec3], Neg[Vec3]`. Each trait impl is independent.
 
@@ -341,7 +364,11 @@ implementing `__eq__` overrides the derived version. This RFC relies on that com
 
 **Generics:** Operator traits are generic (`Add[Rhs, Output]`). A type can implement `Add[int, MyType]` and `Add[float, MyType]` — different behavior for different right-hand types. Generic constraints still speak in trait language even when a concrete type chooses to declare its operator support through dunders alone; the compiler may infer the trait view from the matching dunder surface.
 
-**Rust interop:** Raw `rust::...` imported types are not assumed to satisfy Incan operator protocols automatically. If a Rust-backed type should participate in Incan operators, the normal path is to wrap it in an Incan type/newtype and define the relevant dunders or traits there. **[RFC 043](043_rust_trait_impl_from_incan.md)** (`impl` on `rusttype`, `@rust.derive`) is the normative place for Rust-side trait contracts on those wrappers; [RFC 026](closed/superseded/026_user_defined_trait_bridges.md) is superseded.
+**Multi-instantiation trait dispatch:** Multiple implementations of the same operator dunder for different right-hand operand types are governed by RFC 025. This RFC relies on that dispatch model rather than defining a separate operator-specific overload system.
+
+**Union types:** RFC 029 union values do not implicitly expose the operator surface of their member types. A union-typed value must be narrowed before member-specific operator traits or dunders are available.
+
+**Rust interop:** Raw `rust::...` imported types are not assumed to satisfy Incan operator protocols automatically. If a Rust-backed type should participate in Incan operators, the normal path is to wrap it in an Incan type/newtype and define the relevant dunders or traits there. RFC 043 (`impl` on `rusttype`, `@rust.derive`) is the normative place for Rust-side trait contracts on those wrappers; RFC 026 is superseded.
 
 ## Alternatives considered
 
@@ -379,7 +406,7 @@ def add_vectors(a: Vector, b: Vector) -> Vector: ...
 - **Compile-time cost**: Each operator trait impl generates a Rust `impl` block. Types with many operator overloads generate many impl blocks. This is the same trade-off Rust makes — acceptable for types that genuinely need operator semantics.
 - **Potential for abuse**: Redefining `+` to mean something unexpected (e.g., `+` as string concatenation on non-string types) hurts readability. This is a cultural concern, not a technical one — Python has the same issue.
 - **Backend complexity**: Some Incan operator semantics map neatly to host-language primitives, and some do not. Backends may need helper traits, shims, or direct method lowering to preserve the language semantics.
-- **Open dispatch details**: Reflected operators and in-place operator hooks are likely useful, but their exact dispatch rules still need sharper specification. Leaving those details under-specified for too long would create confusion.
+- **Open reflected dispatch details**: Reflected operators are likely useful, but their exact dispatch rules still need sharper specification. Leaving reflected dispatch under-specified for too long would create confusion.
 
 ## Layers affected
 
@@ -389,10 +416,115 @@ def add_vectors(a: Vector, b: Vector) -> Vector: ...
 - **Stdlib / runtime**: the nominal operator trait surface used for generic capability expression and documentation must be available.
 - **Docs / tooling**: operator capability, trait vocabulary, and dispatch behavior must be explained clearly enough that overloaded operators remain understandable.
 
-## Unresolved questions
+## Implementation Plan
 
-- What is the exact fallback order between direct dunder methods, reflected operators, and trait-inferred operator capability?
-- Which in-place operator hooks are part of the initial contract, and when should they fall back to ordinary binary operator lowering?
-- How should diagnostics present operator ambiguity when multiple plausible trait-driven resolutions exist?
+### Phase 1: Spec and lifecycle
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Record the settled operator dispatch decisions in the RFC.
+- Verify RFC 025 and RFC 029 dependencies against `main`.
+- Move RFC 028 into `In Progress` with a checklist that can track implementation slices.
+
+### Phase 2: Stdlib operator protocol surface
+
+- Extend `std.traits.ops` with the missing operator traits standardized by this RFC.
+- Add explicit compound-assignment traits for in-place hooks.
+- Keep comparison fallback behavior explicit in trait definitions rather than hidden in compiler logic.
+- Update stdlib trait docs so users understand dunders as implementation hooks and traits as capability contracts.
+
+### Phase 3: Parser, AST, formatter, and surface syntax
+
+- Add or verify parser support for operator tokens that are not already represented in expression positions, including `@`, `|>`, `<|`, bitwise glyphs, and compound assignment forms.
+- Preserve decorator `@` versus matmul `@` as a positional grammar distinction.
+- Ensure AST, formatter, and syntax diagnostics round-trip the new operator forms consistently.
+
+### Phase 4: Typechecker operator resolution
+
+- Add a shared operator-protocol mapping from operator syntax to dunder name, trait name, and result contract.
+- Resolve user-defined binary, unary, comparison, indexing, and compound-assignment operators through the left-hand dunder/trait surface.
+- Use RFC 025 multi-instantiation dispatch when the same operator trait is adopted for multiple right-hand operand types.
+- Reject trait/dunder disagreement and ambiguous candidates with diagnostics that name the operator, operand types, and competing candidates.
+- Preserve builtin primitive, string, list, membership, identity, logical, and range semantics where this RFC says they are not overloadable.
+
+### Phase 5: Lowering and emission
+
+- Preserve the typechecked operator-resolution result into IR rather than re-resolving against backend behavior.
+- Lower resolved operator calls through the same call/method-call machinery used for ordinary dunder calls where possible.
+- Emit Rust infix or `std::ops` forms only when they faithfully preserve the resolved Incan semantics; otherwise emit helper or direct method calls.
+- Route ownership, borrowing, and clone decisions through the existing IR ownership policy.
+
+### Phase 6: Tests, diagnostics, docs, and release notes
+
+- Add parser, formatter, typechecker, lowering, codegen snapshot, and integration coverage for custom operators.
+- Add targeted negative tests for missing hooks, trait/dunder mismatch, ambiguity, non-overloadable operators, and union operands that require narrowing.
+- Update authored language docs and stdlib trait reference pages.
+- Add a release notes entry for the active development version.
+- Run targeted verification for each slice and the repository-level gate before closeout.
+
+## Progress Checklist
+
+### Spec / lifecycle
+
+- [x] Settle dunder-versus-trait authority and record it in `Design Decisions`.
+- [x] Verify RFC 029 union-type boundary on `main`.
+- [x] Verify RFC 025 multi-instantiation trait dispatch on `main`.
+- [x] Move RFC 028 to `In Progress`.
+
+### Stdlib / runtime
+
+- [x] Add missing operator trait stubs to `std.traits.ops`.
+- [x] Add explicit compound-assignment operator traits.
+- [x] Ensure comparison trait defaults remain explicit trait methods.
+- [x] Update stdlib trait docs for operator protocols.
+
+### Parser / AST / formatter
+
+- [x] Verify existing operator tokens and add missing expression-position operators.
+- [x] Parse matmul `@` without confusing decorator `@`.
+- [x] Parse pipe operators `|>` and `<|`.
+- [x] Parse bitwise operators and compound-assignment forms required by the RFC.
+- [x] Add formatter round-trip coverage for newly supported operator forms.
+
+### Typechecker
+
+- [x] Add canonical operator-to-dunder/trait metadata.
+- [x] Resolve user-defined binary operators through dunder/trait capability.
+- [x] Resolve user-defined unary operators through dunder/trait capability.
+- [x] Resolve comparison operators through explicit dunder/trait capability.
+- [x] Resolve indexing and assignment indexing through explicit operator protocol hooks.
+- [x] Resolve compound assignment through explicit in-place hooks before binary fallback.
+- [x] Use RFC 025 dispatch for multiple same-trait operator instantiations.
+- [x] Emit diagnostics for missing hooks, trait/dunder mismatch, and ambiguous candidates.
+- [x] Preserve non-overloadable operator behavior for identity, membership, logical, and range operators.
+
+### Lowering / IR / emission
+
+- [x] Preserve resolved operator calls in IR.
+- [x] Lower resolved dunder/operator calls through existing call or method-call machinery where possible.
+- [x] Emit Rust infix or `std::ops` only when it matches resolved Incan semantics.
+- [x] Add helper/direct method emission for operator semantics without native Rust syntax.
+- [x] Keep ownership and argument-shape handling centralized in IR ownership policy.
+
+### Tests
+
+- [x] Add parser and formatter tests for newly supported operators.
+- [x] Add typechecker tests for valid operator protocols.
+- [x] Add typechecker diagnostics for invalid or ambiguous operator protocols.
+- [x] Add codegen snapshot tests that exercise operators in expressions.
+- [x] Add integration tests for custom operator behavior.
+
+### Docs / release notes
+
+- [x] Update authored operator-overloading documentation.
+- [x] Update stdlib trait reference documentation.
+- [x] Add release notes for the active development version.
+
+## Design Decisions
+
+- Operator implementation canonicalizes through the left-hand dunder method for the operator. Operator traits are the nominal capability vocabulary; their required methods are the corresponding dunders.
+- A dunder-only implementation may synthesize the corresponding trait view for generic reasoning. Explicit trait adoption and direct dunder definitions must agree; disagreement is a type error.
+- Multiple same-name operator dunder implementations for different operand types are governed by RFC 025 multi-instantiation trait dispatch. RFC 028 does not define a separate operator-specific overload system.
+- RFC 029 union types are not a substitute for multi-instantiation dispatch. Union values must be narrowed before member-specific operator methods or traits are available.
+- Compound assignment first resolves an explicit in-place operator hook when present, then falls back to ordinary binary operator assignment. In-place hooks are explicit dunder/trait hooks and return the replacement value assigned back to the left-hand target.
+- Reflected right-hand operators are deferred to a follow-up design.
+- Candidate ambiguity is a hard diagnostic. Exact type matches may beat compatible matches, but equally specific candidates must not be guessed. When ambiguity comes from trait inheritance, library composition, or RFC 025 multi-instantiation dispatch, the diagnostic must name the competing candidates and point to the explicit-qualification mechanism once that syntax exists.
+- Comparison fallback behavior must be explicit in trait definitions or user dunders. The compiler does not synthesize hidden comparison hooks merely because a related hook exists.

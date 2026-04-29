@@ -491,6 +491,7 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             match op {
                 ast::UnaryOp::Neg => incan_vocab::IncanUnaryOp::Neg,
                 ast::UnaryOp::Not => incan_vocab::IncanUnaryOp::Not,
+                ast::UnaryOp::Invert => incan_vocab::IncanUnaryOp::Invert,
             },
             Box::new(internal_expr_to_public(&value.node)?),
         )),
@@ -663,6 +664,7 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             match op {
                 incan_vocab::IncanUnaryOp::Neg => ast::UnaryOp::Neg,
                 incan_vocab::IncanUnaryOp::Not => ast::UnaryOp::Not,
+                incan_vocab::IncanUnaryOp::Invert => ast::UnaryOp::Invert,
                 _ => {
                     return Err(VocabAstBridgeError::UnsupportedPublicExpression(
                         "unary operator is not currently bridgeable",
@@ -822,6 +824,17 @@ fn map_internal_binary_op(op: ast::BinaryOp) -> Result<incan_vocab::IncanBinaryO
         ast::BinaryOp::Sub => Ok(incan_vocab::IncanBinaryOp::Sub),
         ast::BinaryOp::Mul => Ok(incan_vocab::IncanBinaryOp::Mul),
         ast::BinaryOp::Div => Ok(incan_vocab::IncanBinaryOp::Div),
+        ast::BinaryOp::FloorDiv => Ok(incan_vocab::IncanBinaryOp::FloorDiv),
+        ast::BinaryOp::Mod => Ok(incan_vocab::IncanBinaryOp::Mod),
+        ast::BinaryOp::Pow => Ok(incan_vocab::IncanBinaryOp::Pow),
+        ast::BinaryOp::MatMul => Ok(incan_vocab::IncanBinaryOp::MatMul),
+        ast::BinaryOp::PipeForward => Ok(incan_vocab::IncanBinaryOp::PipeForward),
+        ast::BinaryOp::PipeBackward => Ok(incan_vocab::IncanBinaryOp::PipeBackward),
+        ast::BinaryOp::BitAnd => Ok(incan_vocab::IncanBinaryOp::BitAnd),
+        ast::BinaryOp::BitOr => Ok(incan_vocab::IncanBinaryOp::BitOr),
+        ast::BinaryOp::BitXor => Ok(incan_vocab::IncanBinaryOp::BitXor),
+        ast::BinaryOp::Shl => Ok(incan_vocab::IncanBinaryOp::Shl),
+        ast::BinaryOp::Shr => Ok(incan_vocab::IncanBinaryOp::Shr),
         ast::BinaryOp::Eq => Ok(incan_vocab::IncanBinaryOp::Eq),
         ast::BinaryOp::NotEq => Ok(incan_vocab::IncanBinaryOp::NotEq),
         ast::BinaryOp::Lt => Ok(incan_vocab::IncanBinaryOp::Lt),
@@ -851,6 +864,17 @@ fn map_public_binary_op(op: incan_vocab::IncanBinaryOp) -> Result<ast::BinaryOp,
         incan_vocab::IncanBinaryOp::Sub => Ok(ast::BinaryOp::Sub),
         incan_vocab::IncanBinaryOp::Mul => Ok(ast::BinaryOp::Mul),
         incan_vocab::IncanBinaryOp::Div => Ok(ast::BinaryOp::Div),
+        incan_vocab::IncanBinaryOp::FloorDiv => Ok(ast::BinaryOp::FloorDiv),
+        incan_vocab::IncanBinaryOp::Mod => Ok(ast::BinaryOp::Mod),
+        incan_vocab::IncanBinaryOp::Pow => Ok(ast::BinaryOp::Pow),
+        incan_vocab::IncanBinaryOp::MatMul => Ok(ast::BinaryOp::MatMul),
+        incan_vocab::IncanBinaryOp::PipeForward => Ok(ast::BinaryOp::PipeForward),
+        incan_vocab::IncanBinaryOp::PipeBackward => Ok(ast::BinaryOp::PipeBackward),
+        incan_vocab::IncanBinaryOp::BitAnd => Ok(ast::BinaryOp::BitAnd),
+        incan_vocab::IncanBinaryOp::BitOr => Ok(ast::BinaryOp::BitOr),
+        incan_vocab::IncanBinaryOp::BitXor => Ok(ast::BinaryOp::BitXor),
+        incan_vocab::IncanBinaryOp::Shl => Ok(ast::BinaryOp::Shl),
+        incan_vocab::IncanBinaryOp::Shr => Ok(ast::BinaryOp::Shr),
         incan_vocab::IncanBinaryOp::Eq => Ok(ast::BinaryOp::Eq),
         incan_vocab::IncanBinaryOp::NotEq => Ok(ast::BinaryOp::NotEq),
         incan_vocab::IncanBinaryOp::Lt => Ok(ast::BinaryOp::Lt),
@@ -993,6 +1017,50 @@ mod tests {
                             && field == "filter"
                 ) && args == &vec![incan_vocab::IncanExpr::Name("predicate".to_string())]
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_rfc028_operator_enums_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let left = ast::Spanned::new(ast::Expr::Ident("left".to_string()), ast::Span::default());
+        let right = ast::Spanned::new(ast::Expr::Ident("right".to_string()), ast::Span::default());
+        let cases = [
+            (ast::BinaryOp::FloorDiv, incan_vocab::IncanBinaryOp::FloorDiv),
+            (ast::BinaryOp::Mod, incan_vocab::IncanBinaryOp::Mod),
+            (ast::BinaryOp::Pow, incan_vocab::IncanBinaryOp::Pow),
+            (ast::BinaryOp::MatMul, incan_vocab::IncanBinaryOp::MatMul),
+            (ast::BinaryOp::PipeForward, incan_vocab::IncanBinaryOp::PipeForward),
+            (ast::BinaryOp::PipeBackward, incan_vocab::IncanBinaryOp::PipeBackward),
+            (ast::BinaryOp::BitAnd, incan_vocab::IncanBinaryOp::BitAnd),
+            (ast::BinaryOp::BitOr, incan_vocab::IncanBinaryOp::BitOr),
+            (ast::BinaryOp::BitXor, incan_vocab::IncanBinaryOp::BitXor),
+            (ast::BinaryOp::Shl, incan_vocab::IncanBinaryOp::Shl),
+            (ast::BinaryOp::Shr, incan_vocab::IncanBinaryOp::Shr),
+        ];
+
+        for (internal_op, public_op) in cases {
+            let internal = ast::Expr::Binary(Box::new(left.clone()), internal_op, Box::new(right.clone()));
+            let public = internal_expr_to_public(&internal)?;
+            assert!(
+                matches!(&public, incan_vocab::IncanExpr::Binary(_, op, _) if *op == public_op),
+                "expected public operator {public_op:?}, got {public:?}"
+            );
+            assert_eq!(public_expression_to_internal(&public)?, internal);
+        }
+
+        let internal = ast::Expr::Unary(
+            ast::UnaryOp::Invert,
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident("value".to_string()),
+                ast::Span::default(),
+            )),
+        );
+        let public = internal_expr_to_public(&internal)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::Unary(incan_vocab::IncanUnaryOp::Invert, _)
+        ));
+        assert_eq!(public_expression_to_internal(&public)?, internal);
         Ok(())
     }
 

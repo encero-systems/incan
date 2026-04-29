@@ -125,6 +125,12 @@ pub enum CompoundOp {
     Div,      // /=
     FloorDiv, // //=
     Mod,      // %=
+    MatMul,   // @=
+    BitAnd,   // &=
+    BitOr,    // |=
+    BitXor,   // ^=
+    Shl,      // <<=
+    Shr,      // >>=
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -7,6 +7,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
+use crate::frontend::typechecker::IdentKind;
 use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty, option_ty,
     string_method_return,
@@ -508,7 +509,7 @@ impl TypeChecker {
     /// Inherent methods and trait-provided methods both substitute `Self` in formal parameters and the return type
     /// using the call-site receiver so generic carriers typecheck consistently (#237).
     #[allow(clippy::too_many_arguments)]
-    fn resolve_named_method(
+    pub(in crate::frontend::typechecker) fn resolve_named_method(
         &mut self,
         methods: &std::collections::HashMap<String, MethodInfo>,
         method_overloads: Option<&std::collections::HashMap<String, Vec<MethodInfo>>>,
@@ -701,7 +702,7 @@ impl TypeChecker {
 
     #[allow(clippy::too_many_arguments)]
     /// Resolve a method call on a generic placeholder using the active `T with Trait[...]` bound stack.
-    fn resolve_generic_placeholder_method(
+    pub(in crate::frontend::typechecker) fn resolve_generic_placeholder_method(
         &mut self,
         placeholder_name: &str,
         method: &str,
@@ -741,7 +742,11 @@ impl TypeChecker {
     }
 
     /// Resolve a newtype/rusttype rebound method alias to its target method name.
-    fn resolve_newtype_method_name<'a>(&self, newtype: &'a NewtypeInfo, method: &'a str) -> &'a str {
+    pub(in crate::frontend::typechecker) fn resolve_newtype_method_name<'a>(
+        &self,
+        newtype: &'a NewtypeInfo,
+        method: &'a str,
+    ) -> &'a str {
         newtype
             .method_rebindings
             .get(method)
@@ -812,6 +817,17 @@ impl TypeChecker {
         Some(idx as usize)
     }
 
+    /// Recognize `TypeName[T]` receiver expressions used for type-owned calls.
+    fn resolve_type_index_expression(&self, base_ty: &ResolvedType, base: &Spanned<Expr>) -> Option<ResolvedType> {
+        let ResolvedType::Named(_) = base_ty else {
+            return None;
+        };
+        if !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName)) {
+            return None;
+        }
+        Some(ResolvedType::Unknown)
+    }
+
     /// Type-check an indexing expression (`base[index]`) and return the element type.
     pub(in crate::frontend::typechecker::check_expr) fn check_index(
         &mut self,
@@ -820,6 +836,9 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_expr(base);
+        if let Some(ty) = self.resolve_type_index_expression(&base_ty, base) {
+            return ty;
+        }
         let index_ty = self.check_expr(index);
 
         match base_ty {
@@ -873,6 +892,15 @@ impl TypeChecker {
                     return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                 }
                 ResolvedType::Unknown
+            }
+            ty if self.is_user_operator_receiver(&ty) => {
+                if let Some(ret) = self.resolve_index_dunder(&ty, index, &index_ty, span) {
+                    ret
+                } else {
+                    self.errors
+                        .push(errors::missing_method(&ty.to_string(), "__getitem__", span));
+                    ResolvedType::Unknown
+                }
             }
             _ => ResolvedType::Unknown,
         }

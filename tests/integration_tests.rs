@@ -167,6 +167,85 @@ main = "src/main.incn"
     Ok(())
 }
 
+#[test]
+fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "rfc028_user_defined_operators"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("main.incn"),
+        r#"model Money:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+  def __lt__(self, other: Money) -> bool:
+    return self.cents < other.cents
+
+
+model Row:
+  value: int
+
+  def __getitem__(self, index: int) -> int:
+    return self.value + index
+
+  def __setitem__(self, index: int, value: int) -> None:
+    pass
+
+
+model OpBox:
+  value: int
+
+  def __matmul__(self, other: OpBox) -> OpBox:
+    return OpBox(value=self.value + other.value)
+
+  def __invert__(self) -> OpBox:
+    return OpBox(value=0 - self.value)
+
+
+def main() -> None:
+  total = Money(cents=100) + Money(cents=25)
+  println(total.cents)
+  println(Money(cents=25) < Money(cents=100))
+  row = Row(value=4)
+  row[3] = 9
+  println(row[3])
+  mat = OpBox(value=2) @ OpBox(value=3)
+  println(mat.value)
+  inverted = ~OpBox(value=8)
+  println(inverted.value)
+"#,
+    )?;
+
+    let output = Command::new(incan_debug_binary())
+        .arg("run")
+        .arg("src/main.incn")
+        .current_dir(tmp.path())
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "expected RFC 028 operator program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("125") && stdout.contains("true") && stdout.contains("7") && stdout.contains("5"),
+        "unexpected RFC 028 operator output:\n{stdout}"
+    );
+
+    Ok(())
+}
+
 /// Locate the `incan` binary for subprocess tests.
 ///
 /// Uses `CARGO_BIN_EXE_incan` when present (integration tests under `cargo test`) so we always run the artifact from

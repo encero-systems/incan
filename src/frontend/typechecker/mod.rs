@@ -166,6 +166,29 @@ pub struct TypeCheckInfo {
     /// Function-value calls can recover this from the callee expression type, but method calls need a snapshot because
     /// lowering does not retain the frontend method table.
     pub call_site_callable_params: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// RFC 028: User-defined operator dispatch resolved by the typechecker.
+    ///
+    /// Lowering consumes this map so `a + b`, `-a`, and `a[b]` can become direct dunder method calls without
+    /// re-running backend-side infix/index semantics. Primitive operators are intentionally absent from this map.
+    pub resolved_operator_calls: HashMap<(usize, usize), ResolvedOperatorCall>,
+}
+
+/// A typechecker-resolved user-defined operator call consumed by IR lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedOperatorCall {
+    /// The concrete dunder method name selected by frontend method/trait dispatch.
+    pub method: String,
+    /// The AST operator shape this call replaces.
+    pub kind: ResolvedOperatorKind,
+}
+
+/// Operator expression shape for a resolved user-defined operator call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedOperatorKind {
+    Binary,
+    Unary,
+    Index,
+    IndexAssign,
 }
 
 /// Typechecker-proven call-unpack shape consumed by IR lowering.
@@ -292,6 +315,27 @@ impl TypeCheckInfo {
             self.call_site_callable_params
                 .insert((span.start, span.end), params.to_vec());
         }
+    }
+
+    /// Return a typechecker-resolved user-defined operator call for `span`, if any.
+    pub fn resolved_operator_call(&self, span: Span) -> Option<&ResolvedOperatorCall> {
+        self.resolved_operator_calls.get(&(span.start, span.end))
+    }
+
+    /// Record a user-defined operator call that lowering should emit as a direct dunder method call.
+    pub(crate) fn record_resolved_operator_call(
+        &mut self,
+        span: Span,
+        method: impl Into<String>,
+        kind: ResolvedOperatorKind,
+    ) {
+        self.resolved_operator_calls.insert(
+            (span.start, span.end),
+            ResolvedOperatorCall {
+                method: method.into(),
+                kind,
+            },
+        );
     }
 }
 

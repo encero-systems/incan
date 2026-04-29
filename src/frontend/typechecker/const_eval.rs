@@ -252,6 +252,23 @@ impl TypeChecker {
                             None
                         }
                     }
+                    UnaryOp::Invert => {
+                        if matches!(r.ty, ResolvedType::Int) {
+                            let value = match r.value.as_ref() {
+                                Some(ConstValue::Int(n)) => Some(ConstValue::Int(!n)),
+                                _ => None,
+                            };
+                            Some(ConstEvalResult {
+                                ty: ResolvedType::Int,
+                                kind: r.kind,
+                                value,
+                            })
+                        } else {
+                            self.errors
+                                .push(errors::const_unary_op_not_supported("~", &r.ty.to_string(), expr.span));
+                            None
+                        }
+                    }
                 }
             }
             Expr::Binary(left, op, right) => {
@@ -373,6 +390,42 @@ impl TypeChecker {
                             }
                         }
                     }
+                    BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr => {
+                        if !matches!((&l.ty, &r.ty), (ResolvedType::Int, ResolvedType::Int)) {
+                            self.errors.push(errors::const_binary_op_not_supported(
+                                &op.to_string(),
+                                &l.ty.to_string(),
+                                &r.ty.to_string(),
+                                expr.span,
+                            ));
+                            return None;
+                        }
+                        let value = match (l.value.as_ref(), r.value.as_ref(), op) {
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitAnd) => {
+                                Some(ConstValue::Int(lhs & rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitOr) => {
+                                Some(ConstValue::Int(lhs | rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitXor) => {
+                                Some(ConstValue::Int(lhs ^ rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shl) if *rhs >= 0 => {
+                                u32::try_from(*rhs)
+                                    .ok()
+                                    .and_then(|rhs| lhs.checked_shl(rhs))
+                                    .map(ConstValue::Int)
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shr) if *rhs >= 0 => {
+                                u32::try_from(*rhs)
+                                    .ok()
+                                    .and_then(|rhs| lhs.checked_shr(rhs))
+                                    .map(ConstValue::Int)
+                            }
+                            _ => None,
+                        };
+                        (ResolvedType::Int, ConstKind::RustNative, value)
+                    }
                     // Comparisons always yield bool (mixed numeric allowed)
                     BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
                         // Validate operands are comparable (same type or both numeric)
@@ -416,7 +469,13 @@ impl TypeChecker {
                             return None;
                         }
                     }
-                    BinaryOp::In | BinaryOp::NotIn | BinaryOp::Is | BinaryOp::IsNot => {
+                    BinaryOp::MatMul
+                    | BinaryOp::PipeForward
+                    | BinaryOp::PipeBackward
+                    | BinaryOp::In
+                    | BinaryOp::NotIn
+                    | BinaryOp::Is
+                    | BinaryOp::IsNot => {
                         self.errors
                             .push(errors::const_operator_not_allowed(&op.to_string(), expr.span));
                         return None;

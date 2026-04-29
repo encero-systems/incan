@@ -205,6 +205,14 @@ pub enum BinaryOp {
     FloorDiv, // // (Python-style floor division)
     Mod,
     Pow,
+    MatMul,
+    PipeForward,
+    PipeBackward,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     NotEq,
     Lt,
@@ -230,6 +238,14 @@ impl fmt::Display for BinaryOp {
             BinaryOp::FloorDiv => write!(f, "//"),
             BinaryOp::Mod => write!(f, "%"),
             BinaryOp::Pow => write!(f, "**"),
+            BinaryOp::MatMul => write!(f, "@"),
+            BinaryOp::PipeForward => write!(f, "|>"),
+            BinaryOp::PipeBackward => write!(f, "<|"),
+            BinaryOp::BitAnd => write!(f, "&"),
+            BinaryOp::BitOr => write!(f, "|"),
+            BinaryOp::BitXor => write!(f, "^"),
+            BinaryOp::Shl => write!(f, "<<"),
+            BinaryOp::Shr => write!(f, ">>"),
             BinaryOp::Eq => write!(f, "=="),
             BinaryOp::NotEq => write!(f, "!="),
             BinaryOp::Lt => write!(f, "<"),
@@ -250,6 +266,7 @@ impl fmt::Display for BinaryOp {
 pub enum UnaryOp {
     Neg,
     Not,
+    Invert,
 }
 
 #[derive(Debug, Clone, PartialEq)]

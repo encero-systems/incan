@@ -45,6 +45,24 @@ struct BranchRefinement {
     span: Span,
 }
 
+/// Return the fallback binary dunder used when compound assignment cannot resolve an explicit in-place hook.
+fn compound_assignment_fallback_dunder(op: CompoundOp) -> &'static str {
+    match op {
+        CompoundOp::Add => "__add__",
+        CompoundOp::Sub => "__sub__",
+        CompoundOp::Mul => "__mul__",
+        CompoundOp::Div => "__div__",
+        CompoundOp::FloorDiv => "__floordiv__",
+        CompoundOp::Mod => "__mod__",
+        CompoundOp::MatMul => "__matmul__",
+        CompoundOp::BitAnd => "__and__",
+        CompoundOp::BitOr => "__or__",
+        CompoundOp::BitXor => "__xor__",
+        CompoundOp::Shl => "__lshift__",
+        CompoundOp::Shr => "__rshift__",
+    }
+}
+
 impl TypeChecker {
     // ========================================================================
     // Statements
@@ -112,6 +130,12 @@ impl TypeChecker {
                         CompoundOp::Div => BinaryOp::Div,
                         CompoundOp::FloorDiv => BinaryOp::FloorDiv,
                         CompoundOp::Mod => BinaryOp::Mod,
+                        CompoundOp::MatMul => BinaryOp::MatMul,
+                        CompoundOp::BitAnd => BinaryOp::BitAnd,
+                        CompoundOp::BitOr => BinaryOp::BitOr,
+                        CompoundOp::BitXor => BinaryOp::BitXor,
+                        CompoundOp::Shl => BinaryOp::Shl,
+                        CompoundOp::Shr => BinaryOp::Shr,
                     };
 
                     let lhs_num = numeric_ty_from_resolved(&var_ty);
@@ -131,6 +155,46 @@ impl TypeChecker {
                                     compound.value.span,
                                 ));
                             }
+                        } else if matches!(
+                            binop,
+                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
+                        {
+                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &var_ty.to_string(),
+                                    &ResolvedType::Int.to_string(),
+                                    compound.value.span,
+                                ));
+                            }
+                        } else {
+                            self.errors.push(errors::type_mismatch(
+                                "supported compound operator operands",
+                                &format!("{} {} {}", var_ty, binop, value_ty),
+                                compound.value.span,
+                            ));
+                        }
+                    } else if self.is_user_operator_receiver(&var_ty) {
+                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
+                            &var_ty,
+                            compound.op,
+                            &compound.value,
+                            &value_ty,
+                            stmt.span,
+                        ) {
+                            if !self.types_compatible(&res_ty, &var_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &var_ty.to_string(),
+                                    &res_ty.to_string(),
+                                    compound.value.span,
+                                ));
+                            }
+                        } else {
+                            self.errors.push(errors::missing_method(
+                                &var_ty.to_string(),
+                                compound_assignment_fallback_dunder(compound.op),
+                                stmt.span,
+                            ));
                         }
                     } else if !self.types_compatible(&value_ty, &var_ty) {
                         // Non-numeric: fall back to simple compatibility check.
@@ -158,6 +222,12 @@ impl TypeChecker {
                         CompoundOp::Div => BinaryOp::Div,
                         CompoundOp::FloorDiv => BinaryOp::FloorDiv,
                         CompoundOp::Mod => BinaryOp::Mod,
+                        CompoundOp::MatMul => BinaryOp::MatMul,
+                        CompoundOp::BitAnd => BinaryOp::BitAnd,
+                        CompoundOp::BitOr => BinaryOp::BitOr,
+                        CompoundOp::BitXor => BinaryOp::BitXor,
+                        CompoundOp::Shl => BinaryOp::Shl,
+                        CompoundOp::Shr => BinaryOp::Shr,
                     };
 
                     let lhs_num = numeric_ty_from_resolved(&var_ty);
@@ -177,6 +247,46 @@ impl TypeChecker {
                                     compound.value.span,
                                 ));
                             }
+                        } else if matches!(
+                            binop,
+                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
+                        {
+                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &var_ty.to_string(),
+                                    &ResolvedType::Int.to_string(),
+                                    compound.value.span,
+                                ));
+                            }
+                        } else {
+                            self.errors.push(errors::type_mismatch(
+                                "supported compound operator operands",
+                                &format!("{} {} {}", var_ty, binop, value_ty),
+                                compound.value.span,
+                            ));
+                        }
+                    } else if self.is_user_operator_receiver(&var_ty) {
+                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
+                            &var_ty,
+                            compound.op,
+                            &compound.value,
+                            &value_ty,
+                            stmt.span,
+                        ) {
+                            if !self.types_compatible(&res_ty, &var_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &var_ty.to_string(),
+                                    &res_ty.to_string(),
+                                    compound.value.span,
+                                ));
+                            }
+                        } else {
+                            self.errors.push(errors::missing_method(
+                                &var_ty.to_string(),
+                                compound_assignment_fallback_dunder(compound.op),
+                                stmt.span,
+                            ));
                         }
                     } else if !self.types_compatible(&value_ty, &var_ty) {
                         self.errors.push(errors::type_mismatch(
@@ -388,6 +498,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate list/dict index assignment or RFC 028 `__setitem__` dispatch for user-defined receivers.
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
@@ -440,7 +551,24 @@ impl TypeChecker {
                     }
                 }
                 _ => {
-                    self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
+                    if self.is_user_operator_receiver(&obj_ty) {
+                        if self
+                            .resolve_index_set_dunder(
+                                &obj_ty,
+                                &index_assign.index,
+                                &index_ty,
+                                &index_assign.value,
+                                &value_ty,
+                                span,
+                            )
+                            .is_none()
+                        {
+                            self.errors
+                                .push(errors::missing_method(&obj_ty.to_string(), "__setitem__", span));
+                        }
+                    } else {
+                        self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
+                    }
                 }
             },
             ResolvedType::Tuple(_) => {
@@ -453,6 +581,15 @@ impl TypeChecker {
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
+            }
+            ty if self.is_user_operator_receiver(ty) => {
+                if self
+                    .resolve_index_set_dunder(ty, &index_assign.index, &index_ty, &index_assign.value, &value_ty, span)
+                    .is_none()
+                {
+                    self.errors
+                        .push(errors::missing_method(&ty.to_string(), "__setitem__", span));
+                }
             }
             _ => {
                 self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));

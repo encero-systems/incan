@@ -257,6 +257,17 @@ pub enum IncanBinaryOp {
     Sub,
     Mul,
     Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    MatMul,
+    PipeForward,
+    PipeBackward,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     NotEq,
     Lt,
@@ -274,6 +285,7 @@ pub enum IncanBinaryOp {
 pub enum IncanUnaryOp {
     Neg,
     Not,
+    Invert,
 }
 
 /// A minimal public expression surface for desugaring contracts.

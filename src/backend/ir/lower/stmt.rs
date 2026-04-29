@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use super::super::expr::{
-    IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, Pattern as IrPattern, VarAccess, VarRefKind,
+    IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern as IrPattern,
+    VarAccess, VarRefKind,
 };
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
@@ -14,6 +15,7 @@ use super::super::{IrSpan, Mutability, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::typechecker::ResolvedOperatorKind;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::SurfaceStmtLoweringAction;
@@ -421,7 +423,7 @@ impl AstLowering {
         let lowered = (|| -> Result<Vec<IrStmt>, LoweringError> {
             let mut result = Vec::new();
             for s in stmts {
-                let stmt = self.lower_statement(&s.node)?;
+                let stmt = self.lower_statement(&s.node, s.span)?;
                 result.push(stmt);
             }
             Ok(result)
@@ -744,7 +746,11 @@ impl AstLowering {
     /// # Errors
     ///
     /// Returns `LoweringError` if the statement cannot be lowered.
-    pub(super) fn lower_statement(&mut self, stmt: &ast::Statement) -> Result<IrStmt, LoweringError> {
+    pub(super) fn lower_statement(
+        &mut self,
+        stmt: &ast::Statement,
+        stmt_span: ast::Span,
+    ) -> Result<IrStmt, LoweringError> {
         let kind = match stmt {
             ast::Statement::Expr(e) => IrStmtKind::Expr(self.lower_expr_spanned(e)?),
             ast::Statement::Assert(assert_stmt) => return Ok(IrStmt::new(self.lower_assert_stmt(assert_stmt)?)),
@@ -858,13 +864,49 @@ impl AstLowering {
                 value: self.lower_expr_spanned(&fa.value)?,
             },
 
-            ast::Statement::IndexAssignment(ia) => IrStmtKind::Assign {
-                target: AssignTarget::Index {
-                    object: Box::new(self.lower_expr_spanned(&ia.object)?),
-                    index: Box::new(self.lower_expr_spanned(&ia.index)?),
-                },
-                value: self.lower_expr_spanned(&ia.value)?,
-            },
+            ast::Statement::IndexAssignment(ia) => {
+                let object = self.lower_expr_spanned(&ia.object)?;
+                let index = self.lower_expr_spanned(&ia.index)?;
+                let value = self.lower_expr_spanned(&ia.value)?;
+
+                if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
+                {
+                    IrStmtKind::Expr(TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(object),
+                            method: resolved_operator.method,
+                            type_args: Vec::new(),
+                            args: vec![
+                                IrCallArg {
+                                    name: None,
+                                    kind: IrCallArgKind::Positional,
+                                    expr: index,
+                                },
+                                IrCallArg {
+                                    name: None,
+                                    kind: IrCallArgKind::Positional,
+                                    expr: value,
+                                },
+                            ],
+                            callable_signature: self.callable_signature_for_call_span(stmt_span),
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Unit,
+                    ))
+                } else {
+                    IrStmtKind::Assign {
+                        target: AssignTarget::Index {
+                            object: Box::new(object),
+                            index: Box::new(index),
+                        },
+                        value,
+                    }
+                }
+            }
 
             ast::Statement::Return(opt) => {
                 IrStmtKind::Return(opt.as_ref().map(|e| self.lower_expr_spanned(e)).transpose()?)
@@ -1057,6 +1099,34 @@ impl AstLowering {
                 };
                 let rhs_expr = self.lower_expr_spanned(&ca.value)?;
 
+                if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::Binary
+                {
+                    let method_call = TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(lhs_expr),
+                            method: resolved_operator.method,
+                            type_args: Vec::new(),
+                            args: vec![IrCallArg {
+                                name: None,
+                                kind: IrCallArgKind::Positional,
+                                expr: rhs_expr,
+                            }],
+                            callable_signature: self.callable_signature_for_call_span(stmt_span),
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        lhs_ty.clone(),
+                    );
+
+                    return Ok(IrStmt::new(IrStmtKind::Assign {
+                        target: assign_target,
+                        value: method_call,
+                    }));
+                }
+
                 // Determine result type using the same policy as binary ops.
                 let binop_ast = match ca.op {
                     ast::CompoundOp::Add => ast::BinaryOp::Add,
@@ -1065,12 +1135,18 @@ impl AstLowering {
                     ast::CompoundOp::Div => ast::BinaryOp::Div,
                     ast::CompoundOp::FloorDiv => ast::BinaryOp::FloorDiv,
                     ast::CompoundOp::Mod => ast::BinaryOp::Mod,
+                    ast::CompoundOp::MatMul => ast::BinaryOp::MatMul,
+                    ast::CompoundOp::BitAnd => ast::BinaryOp::BitAnd,
+                    ast::CompoundOp::BitOr => ast::BinaryOp::BitOr,
+                    ast::CompoundOp::BitXor => ast::BinaryOp::BitXor,
+                    ast::CompoundOp::Shl => ast::BinaryOp::Shl,
+                    ast::CompoundOp::Shr => ast::BinaryOp::Shr,
                 };
                 let result_ty = self.binary_result_type(&lhs_ty, &rhs_expr.ty, &binop_ast, None);
 
                 let binop_expr = TypedExpr::new(
                     IrExprKind::BinOp {
-                        op: self.lower_binop(&binop_ast),
+                        op: self.lower_binop(&binop_ast, stmt_span)?,
                         left: Box::new(lhs_expr),
                         right: Box::new(rhs_expr),
                     },
