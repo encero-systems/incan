@@ -12,7 +12,7 @@ use crate::frontend::symbols::{CallableParam, ResolvedType};
 ///
 /// This keeps manifest type encoding in one place so producers write a deterministic type spelling regardless of where
 /// the export originated.
-pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
+pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
     match ty {
         ResolvedType::Int => named_type_ref(numerics::as_str(NumericTypeId::Int)),
         ResolvedType::Float => named_type_ref(numerics::as_str(NumericTypeId::Float)),

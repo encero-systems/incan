@@ -7,6 +7,8 @@ use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
 use super::wire::RawLibraryManifest;
 use super::{DslSurface, LIBRARY_MANIFEST_FORMAT, VocabKeywordRegistration, VocabProviderManifest};
+use crate::frontend::api_metadata::CheckedApiMetadataPackage;
+use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
     CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedFunctionExport,
     CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport, CheckedTraitExport,
@@ -39,7 +41,7 @@ pub enum LibraryManifestError {
 /// This is the compiler-facing form used after the raw transport payload has been validated and decoded. It captures
 /// the exported library surface, optional vocab metadata, and optional soft-keyword activations in a transport-agnostic
 /// shape.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LibraryManifest {
     /// Published library name.
     pub name: String,
@@ -55,6 +57,8 @@ pub struct LibraryManifest {
     pub vocab: Option<VocabExports>,
     /// Optional soft-keyword activations exported by this library.
     pub soft_keywords: SoftKeywordExports,
+    /// Optional RFC 048 checked metadata embedded in the manifest.
+    pub contract_metadata: LibraryContractMetadata,
 }
 
 /// Public library exports grouped by declaration kind.
@@ -69,6 +73,17 @@ pub struct LibraryExports {
     pub newtypes: Vec<NewtypeExport>,
     pub consts: Vec<ConstExport>,
     pub statics: Vec<StaticExport>,
+}
+
+/// RFC 048 metadata persisted into `.incnlib`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct LibraryContractMetadata {
+    /// Canonical model bundles that this artifact publishes.
+    #[serde(default)]
+    pub models: ModelContractMetadataPackage,
+    /// Checked public API metadata extracted from the producer source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<CheckedApiMetadataPackage>,
 }
 
 /// Soft keywords that become active when the library is imported.
@@ -378,6 +393,7 @@ impl LibraryManifest {
             exports: LibraryExports::default(),
             vocab: None,
             soft_keywords: SoftKeywordExports::default(),
+            contract_metadata: LibraryContractMetadata::default(),
         }
     }
 

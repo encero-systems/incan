@@ -1561,6 +1561,113 @@ def main() -> None:
     }
 
     #[test]
+    fn generated_use_analysis_keeps_rust_trait_candidates_without_metadata() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
+        };
+        use crate::backend::ir::expr::{
+            IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+        };
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("rand")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("Rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+                IrImportItem {
+                    name: String::from("thread_rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+            ],
+        }));
+        let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![
+                IrStmt::new(IrStmtKind::Let {
+                    name: String::from("rng"),
+                    ty: rng_ty.clone(),
+                    mutability: Mutability::Mutable,
+                    value: TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: String::from("thread_rng"),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::ExternalRustName,
+                                },
+                                IrType::Function {
+                                    params: Vec::new(),
+                                    ret: Box::new(rng_ty.clone()),
+                                },
+                            )),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            canonical_path: None,
+                        },
+                        rng_ty.clone(),
+                    ),
+                }),
+                IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: String::from("rng"),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            rng_ty,
+                        )),
+                        method: String::from("gen_range"),
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Range {
+                                    start: Some(Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int))),
+                                    end: Some(Box::new(TypedExpr::new(IrExprKind::Int(7), IrType::Int))),
+                                    inclusive: false,
+                                },
+                                IrType::Unknown,
+                            ),
+                        }],
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    IrType::Int,
+                ))),
+            ],
+            is_async: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use rand::Rng;"), "{code}");
+        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
     fn normal_codegen_expects_only_unread_private_model_fields() {
         let code = generate(
             r#"

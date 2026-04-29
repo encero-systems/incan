@@ -14,6 +14,7 @@ use super::super::super::expr::{
 use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
+use incan_core::interop::RustCollectionFamily;
 
 mod collection_methods;
 mod string_methods;
@@ -44,6 +45,16 @@ impl ReceiverInfo {
         };
         let r_borrow = quote! { &#r };
         Self { r, r_borrow }
+    }
+}
+
+fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
+    match ty {
+        IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+            RustCollectionFamily::for_canonical_path(name).or(RustCollectionFamily::for_type_name(name))
+        }
+        IrType::Ref(inner) | IrType::RefMut(inner) => rust_collection_family_for_ir_type(inner),
+        _ => None,
     }
 }
 
@@ -307,6 +318,9 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
             _ => None,
         };
+        let preserve_lookup_arg_shape = matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
+            || rust_collection_family_for_ir_type(&receiver.ty)
+                .is_some_and(|family| family.preserves_lookup_arg_shape(method));
         let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
             && self.is_incan_owned_nominal_receiver(&receiver.ty)
         {
@@ -323,9 +337,9 @@ impl<'a> IrEmitter<'a> {
                 callee_param: None,
                 in_return,
             }
-        } else if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
-            // Lowering recorded that this ordinary Rust method call must keep borrow-sensitive lookup semantics, so do
-            // not apply function-style coercions such as `.to_string()` / `.into()`.
+        } else if preserve_lookup_arg_shape {
+            // Borrow-sensitive collection lookups must keep the source argument shape instead of applying
+            // function-style coercions such as `.to_string()` / `.into()`.
             ValueUseSite::MethodArg
         } else {
             ValueUseSite::ExternalCallArg { target_ty: None }

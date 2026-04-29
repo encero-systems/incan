@@ -119,8 +119,8 @@ jobs:
       - name: Run cargo udeps
         run: cargo +nightly udeps --all-targets
 
-  smoke-test:
-    name: Smoke Test
+  smoke-release:
+    name: Smoke Release Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,14 +128,85 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
-      - uses: taiki-e/install-action@nextest
-      - name: Install make
-        run: sudo apt-get update && sudo apt-get install -y make
+      - name: Build release compiler once
+        run: make smoke-test-release
+      - name: Upload release compiler
+        uses: actions/upload-artifact@v4
+        with:
+          name: incan-release-bin
+          path: target/release/incan
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke-test-shards:
+    name: Smoke Test Shard (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: smoke-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: canary
+            make-target: smoke-test-canary
+            wasi: false
+            examples-timeout: 5
+          - name: web-example
+            make-target: smoke-test-web-example
+            wasi: false
+            examples-timeout: 5
+          - name: nested-project
+            make-target: smoke-test-nested-project-example
+            wasi: false
+            examples-timeout: 5
+          - name: examples
+            make-target: smoke-test-examples
+            wasi: true
+            examples-timeout: 20
+          - name: benchmarks
+            make-target: smoke-test-benchmarks-incan
+            wasi: true
+            examples-timeout: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          cache-targets: false
       - name: Install WASI target for vocab desugarers
+        if: ${{ matrix.wasi }}
         run: rustup target add wasm32-wasip1
-      # The `test` job already runs the full nextest suite; avoid running it twice on Ubuntu.
-      - name: Run smoke test (release, canary, examples, benchmarks)
-        run: make smoke-test-fast
+      - name: Download release compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: incan-release-bin
+          path: target/release
+      - name: Restore executable bit
+        run: chmod +x target/release/incan
+      - name: Run smoke shard
+        run: make ${{ matrix.make-target }}
+        env:
+          INCAN_EXAMPLES_TIMEOUT: ${{ matrix.examples-timeout }}
+
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs:
+      - smoke-release
+      - smoke-test-shards
+    if: ${{ always() }}
+    steps:
+      - name: Verify smoke jobs
+        run: |
+          if [ "${{ needs.smoke-release.result }}" != "success" ]; then
+            echo "smoke-release finished with ${{ needs.smoke-release.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.smoke-test-shards.result }}" != "success" ]; then
+            echo "smoke-test-shards finished with ${{ needs.smoke-test-shards.result }}"
+            exit 1
+          fi
+          echo "smoke jobs passed"
 
   generate-rust-docs:
     name: Docs Build

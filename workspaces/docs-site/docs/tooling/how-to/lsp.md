@@ -94,6 +94,29 @@ Hover over any symbol to see its type:
 def process(data: List[str]) -> Result[int, Error]
 ```
 
+When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public model/class fields, and checked public methods. These previews use the same checked metadata extractor as `incan tools metadata api`, so they can include raw docstrings, checked signatures, field aliases/descriptions, derives, trait adoption, and safe const values.
+
+If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use `incan tools metadata api` for that.
+
+### Contract model emit command
+
+Editor integrations can call `workspace/executeCommand` command `incan.metadata.model.emit` to emit a contract-backed model from the same checked metadata used by the CLI:
+
+```json
+{
+  "command": "incan.metadata.model.emit",
+  "arguments": [
+    {
+      "uri": "file:///path/to/project/src/main.incn",
+      "model": "OrderSummary",
+      "format": "incan"
+    }
+  ]
+}
+```
+
+The command accepts a source URI inside a project, a project path, a bundle JSON file, or a `.incnlib` artifact path. `model` may be the logical type name or stable model id. `format` is `incan` or `json`.
+
 ### Go-to-Definition
 
 - **VS Code/Cursor**: Cmd+Click (macOS) or Ctrl+Click (Windows/Linux)
@@ -193,6 +216,7 @@ The extension validates configured paths before starting the language server. If
 - LSP must successfully parse the file first
 - Check for diagnostics/errors in the file
 - Ensure cursor is on a symbol (function name, type name, etc.)
+- Checked API metadata hover requires a successful typecheck and only applies to public API declarations or selected public model/class members
 
 ## See also
 

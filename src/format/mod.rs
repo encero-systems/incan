@@ -913,6 +913,27 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
         Ok(formatted)
     }
 
+    #[test]
+    fn test_format_source_union_annotations_round_trip_as_canonical_generic() -> Result<(), FormatError> {
+        let source = r#"def parse(values: List[int | str], maybe: int | str | None) -> int | str:
+    return values[0]
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("values: List[Union[int, str]]"),
+            "expected nested pipe annotation to format as canonical Union generic; got: {formatted}"
+        );
+        assert!(
+            formatted.contains("maybe: Union[int, str, None]"),
+            "expected None-containing pipe annotation to remain parseable in formatted AST form; got: {formatted}"
+        );
+        assert!(
+            formatted.contains("-> Union[int, str]:"),
+            "expected return pipe annotation to format as canonical Union generic; got: {formatted}"
+        );
+        Ok(())
+    }
+
     /// Regression (GitHub #289): escaped newlines inside f-strings must stay textual (`\\n`) after formatting.
     #[test]
     fn test_format_source_preserves_fstring_escaped_newline() -> Result<(), FormatError> {

@@ -1,6 +1,6 @@
 # RFC 048: Checked contract metadata, Incan emit, and interrogation tooling
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-30
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/205, https://github.com/dannys-code-corner/incan/issues/438
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.20
 
 ## Summary
 
@@ -292,6 +292,130 @@ The guaranteed editor workflow starts from a materialized model symbol already k
 - **Documentation consumers**: docs generators and downstream catalogs should consume the JSON inspection model rather than scraping Incan source or generated Rust.
 - **Governance / runtime policy consumers**: any higher-level system that overlays live classifications or SLAs onto an RFC 048 model view should identify those overlays as runtime data distinct from the embedded structural contract.
 - **Stdlib / Runtime**: reflection and metadata surfaces **must** stay consistent with RFC 021 for represented fields.
+
+## Implementation Plan
+
+### Phase 1: Metadata contract and shared vocabulary
+
+- Define the RFC 048 metadata schema families for canonical model bundles and checked API metadata documents, including schema versions, package identity, stable anchors, safe value representation, and diagnostics.
+- Establish one compiler-facing normalized metadata vocabulary that can be serialized to JSON, persisted into package artifacts, and consumed by CLI and editor tooling.
+- Keep bundle ingress out of the user-facing language syntax; host integrations, package readers, and compiler-facing APIs may supply validated bundles.
+
+### Phase 2: Canonical model validation and materialization
+
+- Validate canonical model bundles for logical type name, stable model id where publishable, format version, complete ordered fields, Incan type mappings, nullability, and RFC 021-compatible field metadata.
+- Register accepted bundles as nominal model types in checked program state, with collision diagnostics and parity with handwritten model interrogation for represented fields.
+- Reuse existing model lowering, interop, and reflection guarantees wherever practical so materialized models do not fork handwritten model behavior.
+
+### Phase 3: Artifact embedding and inspection
+
+- Extend supported package/library artifact metadata so `.incnlib` is the ordinary discovery document for RFC 048 model bundles and checked API metadata.
+- Preserve publishable public/exported contract-backed models and explicitly selected producer models in a lossless artifact representation.
+- Add artifact inspection behavior that reports missing RFC 048 metadata clearly instead of attempting best-effort reconstruction from generated code.
+
+### Phase 4: Deterministic model emit
+
+- Implement deterministic Incan model emit for validated canonical bundles, named materialized model symbols, and supported artifacts carrying RFC 048 metadata.
+- Route emitted source through the project formatter path and preserve canonical field order, metadata syntax, logical names, aliases, and type spelling required by this RFC.
+- Document lossy projection behavior for comments, imports, author-only formatting, and metadata that is not present in the canonical bundle.
+
+### Phase 5: Checked API metadata extraction
+
+- Extract checked public API structure from parsed and typechecked Incan semantics, including public declarations, signatures, models/classes/traits/enums/newtypes/type aliases, field metadata, docstrings, decorators, aliases, and stable anchors.
+- Represent resolved decorator arguments, aliases, and relevant constants only when the compiler can expose checked safe values without executing user code.
+- Validate mechanically checkable docstring sections against checked parameters, returns, fields, aliases, and decorator metadata, with strict and non-strict extraction behavior documented.
+
+### Phase 6: CLI and editor tooling
+
+- Add CLI commands or documented tooling paths for model emit from compiler-visible symbols, model emit from supported artifacts, and checked API metadata JSON extraction from a package or source root.
+- Add editor-accessible commands that invoke the same emit and inspection paths for resolved materialized model symbols and, where practical, selected public declarations.
+- Surface diagnostics for unsupported contexts, ambiguous symbols, missing bundles, non-introspectable artifacts, and unsafe external bytes.
+
+### Phase 7: Tests, docs, and release integration
+
+- Add focused tests for schema validation, materialization, collision diagnostics, reflection parity, artifact persistence, deterministic emit, checked API JSON shape, decorator/constant/alias resolution, docstring diagnostics, CLI behavior, and at least one multi-module package.
+- Update user-facing reference and tooling documentation for the new inspection and emit commands; do not treat the RFC alone as documentation.
+- Bump the active development version and add release notes when implementation work lands on the dev line.
+
+## Implementation log
+
+### Spec / lifecycle
+
+- [x] Review RFC 048 after the checked API metadata scope was merged in and RFC 082 was split out as the documentation-generation layer.
+- [x] Establish the active implementation boundary: RFC 048 owns checked metadata extraction, model emit, artifact inspection, CLI/editor tooling, and docstring diagnostics; RFC 082 owns generated documentation output contracts.
+- [x] Keep issue #205 as the implementation tracker for RFC 048 and issue #438 as the adjacent checked API metadata extraction context.
+
+### Metadata contract
+
+- [x] Define serializable schema types for canonical model bundles.
+- [x] Define serializable schema types for checked API metadata JSON.
+- [x] Define schema versioning and stable anchor rules.
+- [x] Define safe value representation for decorator arguments, constants, and metadata values.
+- [x] Add diagnostics for incomplete, unknown, opaque, or unsafe metadata values.
+
+### Canonical model materialization
+
+- [x] Validate bundle logical type names, stable model ids, format versions, ordered fields, field types, nullability, and RFC 021-compatible metadata.
+- [x] Register accepted bundles as nominal model types in checked program state.
+- [x] Reject name collisions with user-declared or already materialized visible types.
+- [x] Preserve model interrogation and reflection parity for represented fields.
+- [x] Reuse existing model lowering and Rust interop behavior for represented fields.
+
+### Artifact introspection
+
+- [x] Extend package/library artifact metadata so `.incnlib` discovers RFC 048 metadata without ordinary sidecar discovery.
+- [x] Persist publishable model bundles and checked API metadata losslessly in supported artifacts.
+- [x] Add artifact inspection behavior for supported artifacts carrying RFC 048 metadata.
+- [x] Report non-introspectable artifacts with clear diagnostics.
+
+### Emit and formatter
+
+- [x] Emit syntactically valid Incan `model` source from canonical bundles.
+- [x] Preserve canonical field order, type spelling, aliases, and field metadata in emitted source.
+- [x] Route emitted source through the project formatter path and prove idempotence.
+- [x] Add deterministic output tests for repeated emit.
+- [x] Document lossy projection behavior.
+
+### Checked API metadata extraction
+
+- [x] Extract public declarations, signatures, type parameters, bounds, and model field metadata from checked program state.
+- [x] Extract decorators with resolved paths and checked safe argument structures.
+- [x] Extract aliases with resolved targets.
+- [x] Extract relevant safe constants and metadata values without executing user code.
+- [x] Parse Incan-standard docstrings into structured sections.
+- [x] Validate documented parameters, returns, fields, aliases, and decorator metadata against checked source structure.
+- [x] Emit stable JSON suitable for RFC 082 and downstream renderers.
+
+### CLI / LSP
+
+- [x] Add a CLI path for model emit from a compiler-visible contract-backed model.
+- [x] Add a CLI or documented tooling path for model emit from a supported artifact.
+- [x] Add a CLI path for checked public API metadata JSON extraction.
+- [x] Add editor-accessible emit for selected or resolved materialized model symbols.
+- [x] Expose checked metadata previews for selected public declarations where practical.
+- [x] Document trust boundaries for external bytes and unsupported contexts.
+
+### Tests
+
+- [x] Add schema validation tests for valid and invalid bundles.
+- [x] Add typechecker/materialization tests for nominal behavior and collisions.
+- [x] Add reflection/interrogation parity tests against handwritten models.
+- [x] Add artifact persistence and inspection tests.
+- [x] Add CLI tests for checked API JSON extraction.
+- [x] Add CLI tests for model emit.
+- [x] Add tests for checked API JSON shape, decorator argument resolution, safe constant extraction, and model field metadata.
+- [x] Add tests for alias target extraction and multi-module package metadata.
+- [x] Add tests for docstring parsing and docstring drift diagnostics.
+- [x] Run targeted tests plus the repository pre-commit gate before closeout.
+
+### Docs / release
+
+- [x] Update user-facing CLI/tooling documentation for checked API metadata extraction.
+- [x] Update user-facing CLI/tooling documentation for artifact inspection and model emit.
+- [x] Update reference documentation for checked API metadata structure and parsed docstring handling.
+- [x] Update reference documentation for docstring validation once validation lands.
+- [x] Add release notes for checked API metadata extraction.
+- [x] Bump the active `0.3.0-dev.N` version for the full RFC 048 implementation.
 
 ## Design Decisions
 

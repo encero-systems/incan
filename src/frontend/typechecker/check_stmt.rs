@@ -4,6 +4,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
+use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::errors as runtime_errors;
 use incan_core::lang::keywords;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -12,7 +13,7 @@ use incan_core::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 
 use super::{LoopContextKind, TypeChecker};
-use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition};
+use crate::frontend::typechecker::helpers::{collection_type_id, ensure_bool_condition, option_ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssertIsPatternKind {
@@ -25,6 +26,23 @@ enum AssertIsPatternKind {
 struct AssertIsPattern {
     kind: AssertIsPatternKind,
     binding: Option<(String, Span)>,
+}
+
+#[derive(Clone)]
+struct BranchNarrowing {
+    name: String,
+    true_ty: ResolvedType,
+    false_ty: Option<ResolvedType>,
+    is_mutable: bool,
+    span: Span,
+}
+
+#[derive(Clone)]
+struct BranchRefinement {
+    name: String,
+    ty: ResolvedType,
+    is_mutable: bool,
+    span: Span,
 }
 
 impl TypeChecker {
@@ -553,23 +571,252 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve the type argument used by a narrowing expression.
+    fn resolve_narrowing_type_expr(&self, expr: &Spanned<Expr>) -> Option<ResolvedType> {
+        match &expr.node {
+            Expr::Ident(name) => Some(resolve_type(&Type::Simple(name.clone()), &self.symbols)),
+            Expr::Paren(inner) => self.resolve_narrowing_type_expr(inner),
+            _ => None,
+        }
+    }
+
+    /// Return whether two union member candidates are equivalent for narrowing.
+    fn union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
+        self.types_compatible(member, target) && self.types_compatible(target, member)
+    }
+
+    /// Return the type available in the true branch of an `isinstance` check.
+    fn narrowed_type_for_isinstance(
+        &self,
+        current_ty: &ResolvedType,
+        target_ty: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if let Some(members) = current_ty.union_members() {
+            return members
+                .iter()
+                .find(|member| self.union_member_matches(member, target_ty))
+                .cloned();
+        }
+
+        if let Some(inner) = current_ty.option_inner_type() {
+            if let Some(members) = inner.union_members() {
+                return members
+                    .iter()
+                    .find(|member| self.union_member_matches(member, target_ty))
+                    .cloned();
+            }
+            if self.union_member_matches(inner, target_ty) {
+                return Some(inner.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Return the union-minus-target type after a failed `isinstance` check.
+    fn union_minus_type(&self, members: &[ResolvedType], target_ty: &ResolvedType) -> Option<ResolvedType> {
+        let remaining: Vec<_> = members
+            .iter()
+            .filter(|member| !self.union_member_matches(member, target_ty))
+            .cloned()
+            .collect();
+        if remaining.len() == members.len() {
+            None
+        } else {
+            Some(union_ty(remaining))
+        }
+    }
+
+    /// Return the else-branch type for an `isinstance` check.
+    fn else_type_for_isinstance(&self, current_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<ResolvedType> {
+        if let Some(members) = current_ty.union_members() {
+            return self.union_minus_type(members, target_ty);
+        }
+
+        if let Some(inner) = current_ty.option_inner_type() {
+            if let Some(members) = inner.union_members() {
+                return self.union_minus_type(members, target_ty).map(option_ty);
+            }
+            if self.union_member_matches(inner, target_ty) {
+                return Some(ResolvedType::Unit);
+            }
+        }
+
+        None
+    }
+
+    /// Return whether an expression is the source-level `None` value.
+    fn is_none_expr(expr: &Spanned<Expr>) -> bool {
+        matches!(&expr.node, Expr::Literal(Literal::None))
+            || matches!(&expr.node, Expr::Ident(name) if name == constructors::as_str(ConstructorId::None))
+    }
+
+    /// Determine branch-local narrowing introduced by a boolean condition.
+    fn condition_branch_narrowing(&self, expr: &Spanned<Expr>) -> Option<BranchNarrowing> {
+        if let Some(narrowing) = self.isinstance_branch_narrowing(expr) {
+            return Some(narrowing);
+        }
+        self.none_check_branch_narrowing(expr)
+    }
+
+    /// Determine branch-local narrowing introduced by `isinstance`.
+    fn isinstance_branch_narrowing(&self, expr: &Spanned<Expr>) -> Option<BranchNarrowing> {
+        let Expr::Call(callee, _, args) = &expr.node else {
+            return None;
+        };
+        let Expr::Ident(call_name) = &callee.node else {
+            return None;
+        };
+        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+            return None;
+        }
+        let value_expr = match &args[0] {
+            CallArg::Positional(expr) => expr,
+            _ => return None,
+        };
+        let Expr::Ident(var_name) = &value_expr.node else {
+            return None;
+        };
+
+        let target_expr = match &args[1] {
+            CallArg::Positional(expr) => expr,
+            _ => return None,
+        };
+        let target_ty = self.resolve_narrowing_type_expr(target_expr)?;
+        let var_info = self.lookup_variable_info(var_name)?;
+        let true_ty = self.narrowed_type_for_isinstance(&var_info.ty, &target_ty)?;
+        let false_ty = self.else_type_for_isinstance(&var_info.ty, &target_ty);
+
+        Some(BranchNarrowing {
+            name: var_name.clone(),
+            true_ty,
+            false_ty,
+            is_mutable: var_info.is_mutable,
+            span: value_expr.span,
+        })
+    }
+
+    /// Determine branch-local narrowing introduced by `x is None` or `x is not None`.
+    fn none_check_branch_narrowing(&self, expr: &Spanned<Expr>) -> Option<BranchNarrowing> {
+        let Expr::Binary(value_expr, op @ (BinaryOp::Is | BinaryOp::IsNot), right_expr) = &expr.node else {
+            return None;
+        };
+        if !Self::is_none_expr(right_expr) {
+            return None;
+        }
+        let Expr::Ident(var_name) = &value_expr.node else {
+            return None;
+        };
+        let var_info = self.lookup_variable_info(var_name)?;
+        let inner = var_info.ty.option_inner_type()?.clone();
+        let (true_ty, false_ty) = if matches!(op, BinaryOp::IsNot) {
+            (inner, ResolvedType::Unit)
+        } else {
+            (ResolvedType::Unit, inner)
+        };
+
+        Some(BranchNarrowing {
+            name: var_name.clone(),
+            true_ty,
+            false_ty: Some(false_ty),
+            is_mutable: var_info.is_mutable,
+            span: value_expr.span,
+        })
+    }
+
+    /// Shadow a binding inside a branch with its narrowed type.
+    fn define_narrowed_binding(&mut self, name: String, ty: ResolvedType, is_mutable: bool, span: Span) {
+        self.symbols.define(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty,
+                is_mutable,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+        if is_mutable {
+            self.mutable_bindings.insert(name);
+        }
+    }
+
+    /// Convert a condition narrowing result into the refinement available after the condition is false.
+    fn branch_false_refinement(narrowing: BranchNarrowing) -> Option<BranchRefinement> {
+        narrowing.false_ty.map(|ty| BranchRefinement {
+            name: narrowing.name,
+            ty,
+            is_mutable: narrowing.is_mutable,
+            span: narrowing.span,
+        })
+    }
+
+    /// Shadow all currently-known branch refinements in the active scope.
+    fn apply_branch_refinements(&mut self, refinements: &[BranchRefinement]) {
+        for refinement in refinements {
+            self.define_narrowed_binding(
+                refinement.name.clone(),
+                refinement.ty.clone(),
+                refinement.is_mutable,
+                refinement.span,
+            );
+        }
+    }
+
+    /// Insert or replace the accumulated false-branch refinement for one binding.
+    fn upsert_branch_refinement(refinements: &mut Vec<BranchRefinement>, refinement: BranchRefinement) {
+        if let Some(existing) = refinements.iter_mut().find(|existing| existing.name == refinement.name) {
+            *existing = refinement;
+        } else {
+            refinements.push(refinement);
+        }
+    }
+
+    /// Check one expression-conditioned branch under incoming false-branch refinements.
+    fn check_expr_condition_body(
+        &mut self,
+        expr: &Spanned<Expr>,
+        body: &[Spanned<Statement>],
+        incoming_refinements: &[BranchRefinement],
+    ) -> Option<BranchRefinement> {
+        self.symbols.enter_scope(ScopeKind::Block);
+        self.apply_branch_refinements(incoming_refinements);
+
+        let cond_ty = self.check_expr(expr);
+        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
+        ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
+        let true_narrowing = self.condition_branch_narrowing(expr);
+        let false_refinement = true_narrowing.as_ref().cloned().and_then(Self::branch_false_refinement);
+
+        if let Some(narrowing) = true_narrowing {
+            self.define_narrowed_binding(narrowing.name, narrowing.true_ty, narrowing.is_mutable, narrowing.span);
+        }
+        for stmt in body {
+            self.check_statement(stmt);
+        }
+        self.symbols.exit_scope();
+
+        false_refinement
+    }
+
+    /// Validate an `if` statement and apply branch-local narrowing where supported.
     fn check_if_stmt(&mut self, if_stmt: &IfStmt) {
-        self.check_condition_body(&if_stmt.condition, &if_stmt.then_body);
+        let mut false_refinements = Vec::new();
+
+        if let Some(refinement) = self.check_condition_body(&if_stmt.condition, &if_stmt.then_body, &false_refinements)
+        {
+            Self::upsert_branch_refinement(&mut false_refinements, refinement);
+        }
 
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
-            let elif_cond_ty = self.check_expr(elif_cond);
-            let elif_is_compatible = self.types_compatible(&elif_cond_ty, &ResolvedType::Bool);
-            ensure_bool_condition(&elif_cond_ty, elif_cond.span, elif_is_compatible, &mut self.errors);
-
-            self.symbols.enter_scope(ScopeKind::Block);
-            for stmt in elif_body {
-                self.check_statement(stmt);
+            if let Some(refinement) = self.check_expr_condition_body(elif_cond, elif_body, &false_refinements) {
+                Self::upsert_branch_refinement(&mut false_refinements, refinement);
             }
-            self.symbols.exit_scope();
         }
 
         if let Some(else_body) = &if_stmt.else_body {
             self.symbols.enter_scope(ScopeKind::Block);
+            self.apply_branch_refinements(&false_refinements);
             for stmt in else_body {
                 self.check_statement(stmt);
             }
@@ -739,27 +986,25 @@ impl TypeChecker {
         }
     }
 
-    fn check_condition_body(&mut self, condition: &Condition, body: &[Spanned<Statement>]) {
+    /// Validate a condition and its true branch body.
+    fn check_condition_body(
+        &mut self,
+        condition: &Condition,
+        body: &[Spanned<Statement>],
+        incoming_refinements: &[BranchRefinement],
+    ) -> Option<BranchRefinement> {
         match condition {
-            Condition::Expr(expr) => {
-                let cond_ty = self.check_expr(expr);
-                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-                ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
-
-                self.symbols.enter_scope(ScopeKind::Block);
-                for stmt in body {
-                    self.check_statement(stmt);
-                }
-                self.symbols.exit_scope();
-            }
+            Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
                 self.symbols.enter_scope(ScopeKind::Block);
+                self.apply_branch_refinements(incoming_refinements);
                 self.check_pattern(pattern, &value_ty);
                 for stmt in body {
                     self.check_statement(stmt);
                 }
                 self.symbols.exit_scope();
+                None
             }
         }
     }

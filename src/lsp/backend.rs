@@ -13,6 +13,8 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::RwLock;
 
+use serde::Deserialize;
+use serde_json::json;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -26,11 +28,21 @@ use crate::cli::commands::common::{
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
+use crate::frontend::api_metadata::{
+    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiStatic, ApiTrait,
+    ApiTypeAlias, CheckedApiMetadata, SourceAnchor, collect_checked_api_metadata, validate_checked_api_docstrings,
+};
 use crate::frontend::ast::{Declaration, MethodDecl, Program, Span, Type, TypeParam};
+use crate::frontend::contract_metadata::{
+    CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
+};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
+use crate::library_manifest::{
+    FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::call_site_type_args;
@@ -42,6 +54,8 @@ use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
+
+const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
 
 /// Document state stored by the LSP
 #[derive(Debug, Clone)]
@@ -59,6 +73,8 @@ pub struct DocumentState {
     /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g.
     /// `"Name"` -> `"std::string::String"`).  Populated from the typechecker's resolved `NewtypeInfo.underlying`.
     rusttype_info: HashMap<String, String>,
+    /// Checked public API metadata snippets that can be shown through hover after a successful typecheck.
+    api_metadata_previews: Vec<ApiMetadataPreview>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +87,12 @@ struct RustOriginSymbol {
 #[derive(Debug, Clone)]
 struct ClassmethodContext {
     owner_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApiMetadataPreview {
+    span: Span,
+    markdown: String,
 }
 
 /// Incan Language Server
@@ -112,6 +134,7 @@ impl IncanLanguageServer {
         let mut library_imported_vocab = HashMap::new();
         let mut library_imported_dsl_surfaces = HashMap::new();
         let mut library_manifest_index = LibraryManifestIndex::default();
+        let mut contract_model_bundles = Vec::new();
         #[cfg(feature = "rust_inspect")]
         let mut project_manifest: Option<ProjectManifest> = None;
         #[cfg(feature = "rust_inspect")]
@@ -128,6 +151,18 @@ impl IncanLanguageServer {
             library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
             library_imported_vocab = library_manifest_index.library_imported_vocab();
             library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
+            match read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths()) {
+                Ok(bundles) => contract_model_bundles = bundles,
+                Err(error) => {
+                    diagnostics.push(lsp_root_error_diagnostic(format!(
+                        "Invalid checked contract metadata: {error}"
+                    )));
+                    self.client
+                        .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                        .await;
+                    return;
+                }
+            }
         }
 
         // Step 2: Parse
@@ -173,6 +208,16 @@ impl IncanLanguageServer {
                 .await;
             return;
         }
+        let mut typecheck_ast = ast.clone();
+        if let Err(error) = materialize_contract_models(&mut typecheck_ast, &contract_model_bundles) {
+            diagnostics.push(lsp_root_error_diagnostic(format!(
+                "Invalid checked contract metadata: {error}"
+            )));
+            self.client
+                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                .await;
+            return;
+        }
 
         let (deps, mut dep_summary_diags) = self
             .collect_dependency_modules(
@@ -184,6 +229,18 @@ impl IncanLanguageServer {
                 Some(&library_manifest_index),
             )
             .await;
+        let mut typecheck_deps = deps.clone();
+        for dep in &mut typecheck_deps {
+            if let Err(error) = materialize_contract_models(&mut dep.ast, &contract_model_bundles) {
+                diagnostics.push(lsp_root_error_diagnostic(format!(
+                    "Invalid checked contract metadata: {error}"
+                )));
+                self.client
+                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                    .await;
+                return;
+            }
+        }
         #[cfg(feature = "rust_inspect")]
         if let (Some(manifest), Some(path)) = (project_manifest.as_ref(), module_path.as_ref()) {
             let mut metadata_modules = Vec::with_capacity(deps.len() + 1);
@@ -209,9 +266,22 @@ impl IncanLanguageServer {
             checker.set_rust_inspect_manifest_dir(dir);
         }
 
-        let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|module| (module.name.as_str(), &module.ast)).collect();
+        let dep_refs: Vec<(&str, &Program)> = typecheck_deps
+            .iter()
+            .map(|module| (module.name.as_str(), &module.ast))
+            .collect();
 
-        let check_result = checker.check_with_imports(&ast, &dep_refs);
+        let check_result = checker.check_with_imports(&typecheck_ast, &dep_refs);
+        let api_metadata_previews = if check_result.is_ok() {
+            let metadata =
+                collect_checked_api_metadata(&ast, &checker, lsp_metadata_module_path(module_path.as_deref()));
+            for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&metadata)) {
+                diagnostics.push(compile_error_to_diagnostic(&diagnostic.error, source, uri));
+            }
+            api_metadata_previews(&ast, &metadata)
+        } else {
+            Vec::new()
+        };
         let rust_origin_symbols = collect_rust_origin_symbols(&checker);
 
         if let Err(errors) = check_result {
@@ -277,6 +347,7 @@ impl IncanLanguageServer {
                     const_types,
                     rust_origin_symbols,
                     rusttype_info,
+                    api_metadata_previews,
                 },
             );
         }
@@ -980,6 +1051,210 @@ class Box[T with Clone]:
     }
 }
 
+#[cfg(test)]
+mod lsp_api_metadata_preview_tests {
+    use super::{api_metadata_preview_at_offset, api_metadata_previews};
+    use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
+    use crate::frontend::{lexer, parser, typechecker};
+
+    fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
+        Ok((ast, metadata))
+    }
+
+    #[test]
+    fn checked_api_previews_include_public_model_fields_and_methods() -> Result<(), String> {
+        let source = r#"
+pub const DEFAULT_LABEL = "none"
+
+@derive(Clone)
+pub model Order:
+    """
+    Order contract.
+    """
+    id [description="Stable id"] as "orderId": int
+    label: str = DEFAULT_LABEL
+
+    def label(self) -> str:
+        """
+        Return the display label.
+        """
+        return DEFAULT_LABEL
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let field_offset = source
+            .find("orderId")
+            .ok_or_else(|| "expected field alias in fixture".to_string())?;
+        let field_preview = api_metadata_preview_at_offset(&previews, field_offset)
+            .ok_or_else(|| "expected checked field preview".to_string())?;
+        assert!(
+            field_preview.markdown.contains("*checked API metadata: public field*"),
+            "expected public field metadata preview, got:\n{}",
+            field_preview.markdown
+        );
+        assert!(
+            field_preview.markdown.contains("alias: `orderId`"),
+            "expected field alias in preview, got:\n{}",
+            field_preview.markdown
+        );
+        assert!(
+            field_preview.markdown.contains("description: `Stable id`"),
+            "expected field description in preview, got:\n{}",
+            field_preview.markdown
+        );
+
+        let method_offset = source
+            .find("def label")
+            .ok_or_else(|| "expected method in fixture".to_string())?;
+        let method_preview = api_metadata_preview_at_offset(&previews, method_offset)
+            .ok_or_else(|| "expected checked method preview".to_string())?;
+        assert!(
+            method_preview.markdown.contains("def Order.label(self) -> str"),
+            "expected checked method signature, got:\n{}",
+            method_preview.markdown
+        );
+        assert!(
+            method_preview
+                .markdown
+                .contains("docstring: `Return the display label.`"),
+            "expected method docstring in preview, got:\n{}",
+            method_preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_skip_private_declarations() -> Result<(), String> {
+        let source = r#"
+model Secret:
+    value: int
+
+pub model Public:
+    value: int
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let private_offset = source
+            .find("Secret")
+            .ok_or_else(|| "expected private model in fixture".to_string())?;
+        assert!(
+            api_metadata_preview_at_offset(&previews, private_offset).is_none(),
+            "private declarations must not expose checked API metadata previews"
+        );
+
+        let public_offset = source
+            .find("Public")
+            .ok_or_else(|| "expected public model in fixture".to_string())?;
+        assert!(
+            api_metadata_preview_at_offset(&previews, public_offset).is_some(),
+            "public declarations should expose checked API metadata previews"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_escape_backticks_in_inline_metadata() -> Result<(), String> {
+        let escaped = super::inline_code("Use `code` here.");
+        assert_eq!(escaped, "`` Use `code` here. ``");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_contract_model_command_tests {
+    use super::{
+        ContractModelCommandFormat, emit_contract_model_command_payload, parse_emit_contract_model_command_args,
+    };
+
+    fn write_project_bundle(root: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("contracts"))?;
+        std::fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "lsp_contract_model"
+version = "0.1.0"
+
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#,
+        )?;
+        std::fs::write(
+            root.join("contracts").join("order_summary.json"),
+            r#"{
+  "schema_version": 1,
+  "stable_model_id": "orders.summary",
+  "logical_type_name": "OrderSummary",
+  "publishable": true,
+  "fields": [
+    {
+      "name": "order_id",
+      "type": "str",
+      "alias": "orderId"
+    }
+  ]
+}
+"#,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn emit_contract_model_command_payload_returns_incan_source() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_project_bundle(tmp.path())?;
+
+        let payload =
+            emit_contract_model_command_payload(tmp.path(), "orders.summary", ContractModelCommandFormat::Incan)?;
+
+        assert_eq!(
+            payload.pointer("/format").and_then(serde_json::Value::as_str),
+            Some("incan")
+        );
+        assert_eq!(
+            payload.pointer("/model").and_then(serde_json::Value::as_str),
+            Some("OrderSummary")
+        );
+        let source = payload
+            .pointer("/source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("expected source payload")?;
+        assert!(
+            source.contains("pub model OrderSummary:"),
+            "expected model source payload, got:\n{source}"
+        );
+        assert!(
+            source.contains("order_id as \"orderId\": str") || source.contains("order_id [alias=\"orderId\"]: str"),
+            "expected alias-preserving field source, got:\n{source}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_emit_contract_model_command_args_accepts_object_argument() -> Result<(), Box<dyn std::error::Error>> {
+        let args = parse_emit_contract_model_command_args(vec![serde_json::json!({
+            "uri": "file:///tmp/project/src/main.incn",
+            "model": "OrderSummary",
+            "format": "json"
+        })])?;
+
+        assert_eq!(args.uri.as_deref(), Some("file:///tmp/project/src/main.incn"));
+        assert_eq!(args.model, "OrderSummary");
+        assert_eq!(args.format.as_deref(), Some("json"));
+        Ok(())
+    }
+}
+
 /// Symbol information for hover/goto
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
@@ -1037,6 +1312,507 @@ fn format_type(ty: &Type) -> String {
         Type::SelfType => "Self".to_string(),
         Type::Infer => "_".to_string(),
     }
+}
+
+/// Return the logical metadata module path used for LSP previews of one open document.
+fn lsp_metadata_module_path(path: Option<&Path>) -> Vec<String> {
+    path.and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(|stem| vec![stem.to_string()])
+        .unwrap_or_else(|| vec!["main".to_string()])
+}
+
+/// Build a document-level LSP diagnostic for errors that do not have a source span in the open file.
+fn lsp_root_error_diagnostic(message: String) -> Diagnostic {
+    Diagnostic {
+        range: Range {
+            start: Position::new(0, 0),
+            end: Position::new(0, 0),
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("incan".to_string()),
+        message,
+        related_information: None,
+        tags: None,
+        data: None,
+    }
+}
+
+/// Build hover-ready checked API snippets for public metadata declarations in an analyzed document.
+fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<ApiMetadataPreview> {
+    let mut previews = Vec::new();
+    for declaration in &metadata.declarations {
+        match declaration {
+            ApiDeclaration::Function(function) => {
+                previews.push(preview_for_anchor(&function.anchor, api_function_markdown(function)))
+            }
+            ApiDeclaration::Model(model) => {
+                previews.push(preview_for_anchor(&model.anchor, api_model_markdown(model)));
+                if let Some(Declaration::Model(ast_model)) = find_top_level_decl(ast, &model.name) {
+                    push_field_previews(&mut previews, &model.name, &model.fields, &ast_model.fields);
+                }
+                push_method_previews(&mut previews, &model.name, &model.methods);
+            }
+            ApiDeclaration::Class(class) => {
+                previews.push(preview_for_anchor(&class.anchor, api_class_markdown(class)));
+                if let Some(Declaration::Class(ast_class)) = find_top_level_decl(ast, &class.name) {
+                    push_field_previews(&mut previews, &class.name, &class.fields, &ast_class.fields);
+                }
+                push_method_previews(&mut previews, &class.name, &class.methods);
+            }
+            ApiDeclaration::Trait(trait_decl) => {
+                previews.push(preview_for_anchor(&trait_decl.anchor, api_trait_markdown(trait_decl)));
+                push_method_previews(&mut previews, &trait_decl.name, &trait_decl.methods);
+            }
+            ApiDeclaration::Enum(enum_decl) => {
+                previews.push(preview_for_anchor(&enum_decl.anchor, api_enum_markdown(enum_decl)))
+            }
+            ApiDeclaration::Newtype(newtype) => {
+                previews.push(preview_for_anchor(&newtype.anchor, api_newtype_markdown(newtype)));
+                push_method_previews(&mut previews, &newtype.name, &newtype.methods);
+            }
+            ApiDeclaration::TypeAlias(alias) => {
+                previews.push(preview_for_anchor(&alias.anchor, api_type_alias_markdown(alias)))
+            }
+            ApiDeclaration::Const(konst) => previews.push(preview_for_anchor(&konst.anchor, api_const_markdown(konst))),
+            ApiDeclaration::Static(static_decl) => previews.push(preview_for_anchor(
+                &static_decl.anchor,
+                api_static_markdown(static_decl),
+            )),
+            ApiDeclaration::Alias(alias) => previews.push(ApiMetadataPreview {
+                span: source_anchor_span(&alias.anchor),
+                markdown: checked_api_markdown(
+                    format!("pub alias {} = {}", alias.name, alias.target_path.join("::")),
+                    "public import alias",
+                    Vec::new(),
+                ),
+            }),
+        }
+    }
+    previews
+}
+
+/// Return the most precise checked API preview containing `offset`.
+fn api_metadata_preview_at_offset(previews: &[ApiMetadataPreview], offset: usize) -> Option<&ApiMetadataPreview> {
+    previews
+        .iter()
+        .filter(|preview| preview.span.start <= offset && offset < preview.span.end)
+        .min_by_key(|preview| preview.span.end.saturating_sub(preview.span.start))
+}
+
+/// Convert a metadata anchor to an LSP preview entry.
+fn preview_for_anchor(anchor: &SourceAnchor, markdown: String) -> ApiMetadataPreview {
+    ApiMetadataPreview {
+        span: source_anchor_span(anchor),
+        markdown,
+    }
+}
+
+/// Convert a metadata anchor span to the frontend span type used by LSP ranges.
+fn source_anchor_span(anchor: &SourceAnchor) -> Span {
+    Span::new(anchor.span.start, anchor.span.end)
+}
+
+/// Find a top-level declaration by its exported source name.
+fn find_top_level_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a Declaration> {
+    ast.declarations.iter().find_map(|decl| match &decl.node {
+        Declaration::Function(function) if function.name == name => Some(&decl.node),
+        Declaration::Model(model) if model.name == name => Some(&decl.node),
+        Declaration::Class(class) if class.name == name => Some(&decl.node),
+        Declaration::Trait(trait_decl) if trait_decl.name == name => Some(&decl.node),
+        Declaration::Enum(enum_decl) if enum_decl.name == name => Some(&decl.node),
+        Declaration::TypeAlias(alias) if alias.name == name => Some(&decl.node),
+        Declaration::Newtype(newtype) if newtype.name == name => Some(&decl.node),
+        Declaration::Const(konst) if konst.name == name => Some(&decl.node),
+        Declaration::Static(static_decl) if static_decl.name == name => Some(&decl.node),
+        _ => None,
+    })
+}
+
+/// Add field-level previews for checked public model/class fields using AST source spans.
+fn push_field_previews(
+    previews: &mut Vec<ApiMetadataPreview>,
+    owner: &str,
+    checked_fields: &[FieldExport],
+    ast_fields: &[crate::frontend::ast::Spanned<crate::frontend::ast::FieldDecl>],
+) {
+    for field in ast_fields {
+        let Some(checked) = checked_fields.iter().find(|checked| checked.name == field.node.name) else {
+            continue;
+        };
+        previews.push(ApiMetadataPreview {
+            span: field.span,
+            markdown: api_field_markdown(owner, checked),
+        });
+    }
+}
+
+/// Add method-level previews using checked API metadata method anchors.
+fn push_method_previews(previews: &mut Vec<ApiMetadataPreview>, owner: &str, methods: &[ApiMethod]) {
+    for method in methods {
+        previews.push(preview_for_anchor(&method.anchor, api_method_markdown(owner, method)));
+    }
+}
+
+/// Format a checked public function preview as hover markdown.
+fn api_function_markdown(function: &ApiFunction) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, function.docstring.as_deref());
+    if !function.decorators.is_empty() {
+        facts.push(format!("decorators: {}", function.decorators.len()));
+    }
+    checked_api_markdown(
+        format!("pub {}", format_api_function_signature(function)),
+        "public function",
+        facts,
+    )
+}
+
+/// Format a checked public model preview as hover markdown.
+fn api_model_markdown(model: &ApiModel) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, model.docstring.as_deref());
+    push_list_fact(&mut facts, "derives", &model.derives);
+    push_list_fact(&mut facts, "traits", &model.traits);
+    facts.push(format!("fields: {}", model.fields.len()));
+    facts.push(format!("methods: {}", model.methods.len()));
+    checked_api_markdown(
+        format!("pub model {}{}", model.name, format_type_params(&model.type_params)),
+        "public model",
+        facts,
+    )
+}
+
+/// Format a checked public class preview as hover markdown.
+fn api_class_markdown(class: &ApiClass) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, class.docstring.as_deref());
+    if let Some(parent) = &class.extends {
+        facts.push(format!("extends: `{parent}`"));
+    }
+    push_list_fact(&mut facts, "derives", &class.derives);
+    push_list_fact(&mut facts, "traits", &class.traits);
+    facts.push(format!("fields: {}", class.fields.len()));
+    facts.push(format!("methods: {}", class.methods.len()));
+    checked_api_markdown(
+        format!("pub class {}{}", class.name, format_type_params(&class.type_params)),
+        "public class",
+        facts,
+    )
+}
+
+/// Format a checked public trait preview as hover markdown.
+fn api_trait_markdown(trait_decl: &ApiTrait) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, trait_decl.docstring.as_deref());
+    if !trait_decl.supertraits.is_empty() {
+        facts.push(format!(
+            "supertraits: {}",
+            trait_decl
+                .supertraits
+                .iter()
+                .map(format_type_bound)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    facts.push(format!("requirements: {}", trait_decl.requires.len()));
+    facts.push(format!("methods: {}", trait_decl.methods.len()));
+    checked_api_markdown(
+        format!(
+            "pub trait {}{}",
+            trait_decl.name,
+            format_type_params(&trait_decl.type_params)
+        ),
+        "public trait",
+        facts,
+    )
+}
+
+/// Format a checked public enum preview as hover markdown.
+fn api_enum_markdown(enum_decl: &ApiEnum) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, enum_decl.docstring.as_deref());
+    push_list_fact(&mut facts, "derives", &enum_decl.derives);
+    facts.push(format!("variants: {}", enum_decl.variants.len()));
+    if let Some(value_type) = enum_decl.value_type {
+        facts.push(format!("value type: `{value_type:?}`"));
+    }
+    checked_api_markdown(
+        format!(
+            "pub enum {}{}",
+            enum_decl.name,
+            format_type_params(&enum_decl.type_params)
+        ),
+        "public enum",
+        facts,
+    )
+}
+
+/// Format a checked public newtype or rusttype preview as hover markdown.
+fn api_newtype_markdown(newtype: &ApiNewtype) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, newtype.docstring.as_deref());
+    facts.push(format!("underlying: `{}`", format_type_ref(&newtype.underlying)));
+    facts.push(format!("methods: {}", newtype.methods.len()));
+    let kind = if newtype.is_rusttype { "rusttype" } else { "newtype" };
+    checked_api_markdown(
+        format!(
+            "pub {kind} {}{} = {}",
+            newtype.name,
+            format_type_params(&newtype.type_params),
+            format_type_ref(&newtype.underlying)
+        ),
+        &format!("public {kind}"),
+        facts,
+    )
+}
+
+/// Format a checked public type-alias preview as hover markdown.
+fn api_type_alias_markdown(alias: &ApiTypeAlias) -> String {
+    checked_api_markdown(
+        format!(
+            "pub type {}{} = {}",
+            alias.name,
+            format_type_params(&alias.type_alias.type_params),
+            format_type_ref(&alias.type_alias.target)
+        ),
+        "public type alias",
+        Vec::new(),
+    )
+}
+
+/// Format a checked public const preview as hover markdown.
+fn api_const_markdown(konst: &ApiConst) -> String {
+    let mut facts = Vec::new();
+    if let Some(value) = &konst.value {
+        facts.push(format!("safe value: `{value:?}`"));
+    }
+    checked_api_markdown(
+        format!("pub const {}: {}", konst.name, format_type_ref(&konst.ty)),
+        "public const",
+        facts,
+    )
+}
+
+/// Format a checked public static preview as hover markdown.
+fn api_static_markdown(static_decl: &ApiStatic) -> String {
+    checked_api_markdown(
+        format!("pub static {}: {}", static_decl.name, format_type_ref(&static_decl.ty)),
+        "public static",
+        Vec::new(),
+    )
+}
+
+/// Format a checked public model/class field preview as hover markdown.
+fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
+    let mut facts = Vec::new();
+    if field.has_default {
+        facts.push("has default: `true`".to_string());
+    }
+    if let Some(alias) = &field.alias {
+        facts.push(format!("alias: `{alias}`"));
+    }
+    if let Some(description) = &field.description {
+        facts.push(format!("description: {}", inline_code(description)));
+    }
+    checked_api_markdown(
+        format!("field {}.{}: {}", owner, field.name, format_type_ref(&field.ty)),
+        "public field",
+        facts,
+    )
+}
+
+/// Format a checked public method preview as hover markdown.
+fn api_method_markdown(owner: &str, method: &ApiMethod) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, method.docstring.as_deref());
+    if !method.decorators.is_empty() {
+        facts.push(format!("decorators: {}", method.decorators.len()));
+    }
+    if !method.has_body {
+        facts.push("body: abstract".to_string());
+    }
+    checked_api_markdown(format_api_method_signature(owner, method), "public method", facts)
+}
+
+/// Wrap a checked metadata signature and fact list in LSP markdown.
+fn checked_api_markdown(signature: String, kind: &str, facts: Vec<String>) -> String {
+    let mut markdown = format!("```incan\n{signature}\n```\n\n*checked API metadata: {kind}*");
+    for fact in facts {
+        markdown.push_str("\n\n");
+        markdown.push_str(&fact);
+    }
+    markdown
+}
+
+/// Add a trimmed raw docstring fact when metadata carries one.
+fn push_docstring_fact(facts: &mut Vec<String>, docstring: Option<&str>) {
+    if let Some(docstring) = docstring.map(str::trim).filter(|docstring| !docstring.is_empty()) {
+        facts.push(format!("docstring: {}", inline_code(docstring)));
+    }
+}
+
+/// Add a comma-separated list fact when the list is non-empty.
+fn push_list_fact(facts: &mut Vec<String>, label: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    facts.push(format!(
+        "{label}: {}",
+        values
+            .iter()
+            .map(|value| inline_code(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+}
+
+/// Format a checked API function signature.
+fn format_api_function_signature(function: &ApiFunction) -> String {
+    let prefix = if function.is_async { "async def" } else { "def" };
+    format!(
+        "{prefix} {}{}({}) -> {}",
+        function.name,
+        format_type_params(&function.type_params),
+        format_params(&function.params),
+        format_type_ref(&function.return_type)
+    )
+}
+
+/// Format a checked API method signature with its owning type.
+fn format_api_method_signature(owner: &str, method: &ApiMethod) -> String {
+    let prefix = if method.is_async { "async def" } else { "def" };
+    let mut params = Vec::new();
+    if let Some(receiver) = &method.receiver {
+        params.push(match receiver {
+            ReceiverExport::Immutable => "self".to_string(),
+            ReceiverExport::Mutable => "mut self".to_string(),
+        });
+    }
+    params.extend(method.params.iter().map(format_param));
+    format!(
+        "{prefix} {owner}.{}{}({}) -> {}",
+        method.name,
+        format_type_params(&method.type_params),
+        params.join(", "),
+        format_type_ref(&method.return_type)
+    )
+}
+
+/// Format checked API type parameters in Incan source-like syntax.
+fn format_type_params(type_params: &[TypeParamExport]) -> String {
+    if type_params.is_empty() {
+        return String::new();
+    }
+    format!(
+        "[{}]",
+        type_params
+            .iter()
+            .map(|param| {
+                if param.bounds.is_empty() {
+                    param.name.clone()
+                } else {
+                    format!(
+                        "{} with {}",
+                        param.name,
+                        param
+                            .bounds
+                            .iter()
+                            .map(format_type_bound)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Format a checked API type bound.
+fn format_type_bound(bound: &TypeBoundExport) -> String {
+    if bound.type_args.is_empty() {
+        return bound.name.clone();
+    }
+    format!(
+        "{}[{}]",
+        bound.name,
+        bound
+            .type_args
+            .iter()
+            .map(format_type_ref)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Format a checked API parameter list.
+fn format_params(params: &[ParamExport]) -> String {
+    params.iter().map(format_param).collect::<Vec<_>>().join(", ")
+}
+
+/// Format one checked API parameter.
+fn format_param(param: &ParamExport) -> String {
+    let prefix = match param.kind {
+        ParamKindExport::Normal => "",
+        ParamKindExport::RestPositional => "*",
+        ParamKindExport::RestKeyword => "**",
+    };
+    let default = if param.has_default { " = ..." } else { "" };
+    format!("{prefix}{}: {}{default}", param.name, format_type_ref(&param.ty))
+}
+
+/// Format a manifest-level type reference for concise hover display.
+fn format_type_ref(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Named { name } => name.clone(),
+        TypeRef::Applied { name, args } => {
+            format!(
+                "{name}[{}]",
+                args.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
+            )
+        }
+        TypeRef::Function { params, return_type } => {
+            format!(
+                "({}) -> {}",
+                params.iter().map(format_type_ref).collect::<Vec<_>>().join(", "),
+                format_type_ref(return_type)
+            )
+        }
+        TypeRef::Tuple { elements } => {
+            format!(
+                "({})",
+                elements.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
+            )
+        }
+        TypeRef::TypeParam { name } => name.clone(),
+        TypeRef::SelfType => "Self".to_string(),
+        TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
+        TypeRef::RustPath { path } => format!("rust::{path}"),
+        TypeRef::Unknown => "_".to_string(),
+    }
+}
+
+/// Escape a short metadata value as inline markdown code.
+fn inline_code(value: &str) -> String {
+    if !value.contains('`') {
+        return format!("`{value}`");
+    }
+    let mut max_run = 0;
+    let mut current_run = 0;
+    for ch in value.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat(max_run + 1);
+    format!("{fence} {value} {fence}")
 }
 
 fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
@@ -1548,8 +2324,180 @@ fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, St
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContractModelCommandFormat {
+    Incan,
+    Json,
+}
+
+impl ContractModelCommandFormat {
+    /// Parse a client-provided format string, defaulting omitted values to Incan source output.
+    fn parse(value: Option<&str>) -> std::result::Result<Self, String> {
+        match value.unwrap_or("incan") {
+            "incan" => Ok(Self::Incan),
+            "json" => Ok(Self::Json),
+            other => Err(format!("unsupported format `{other}`; expected `incan` or `json`")),
+        }
+    }
+
+    /// Return the wire spelling used in command responses.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Incan => "incan",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmitContractModelCommandArgs {
+    /// Source URI, bundle JSON path, project directory path, or `.incnlib` artifact path.
+    uri: Option<String>,
+    /// Alternative path field for clients that do not have a document URI.
+    path: Option<String>,
+    /// Logical model name or stable model id.
+    model: String,
+    /// Output format: `incan` or `json`.
+    format: Option<String>,
+}
+
+/// Parse model-emit command arguments from either one object argument or positional `[uriOrPath, model, format?]`.
+fn parse_emit_contract_model_command_args(
+    mut args: Vec<serde_json::Value>,
+) -> std::result::Result<EmitContractModelCommandArgs, String> {
+    if args.len() == 1 && args[0].is_object() {
+        return serde_json::from_value(args.remove(0)).map_err(|error| error.to_string());
+    }
+    if args.len() < 2 {
+        return Err(format!(
+            "{EMIT_CONTRACT_MODEL_COMMAND} expects either an object argument or positional [uriOrPath, model, format?]"
+        ));
+    }
+    let uri = args[0]
+        .as_str()
+        .ok_or_else(|| "first positional argument must be a URI or path string".to_string())?
+        .to_string();
+    let model = args[1]
+        .as_str()
+        .ok_or_else(|| "second positional argument must be a model name or stable model id".to_string())?
+        .to_string();
+    let format = args.get(2).and_then(|value| value.as_str()).map(str::to_string);
+    Ok(EmitContractModelCommandArgs {
+        uri: Some(uri),
+        path: None,
+        model,
+        format,
+    })
+}
+
+/// Convert a file URI or raw client path into a local filesystem path.
+fn path_from_lsp_uri_or_path(value: &str) -> std::result::Result<PathBuf, String> {
+    if let Ok(uri) = Url::parse(value)
+        && uri.scheme() == "file"
+    {
+        return uri
+            .to_file_path()
+            .map_err(|_| format!("file URI `{value}` could not be converted to a local path"));
+    }
+    Ok(PathBuf::from(value))
+}
+
+/// Load model bundles for the LSP command from a project, source path, bundle JSON file, or library artifact.
+fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<CanonicalModelBundle>, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("failed to determine current directory: {error}"))?
+            .join(path)
+    };
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "json")
+    {
+        return read_model_bundles_from_json(&absolute).map_err(|error| error.to_string());
+    }
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "incnlib")
+    {
+        let manifest =
+            crate::library_manifest::LibraryManifest::read_from_path(&absolute).map_err(|error| error.to_string())?;
+        let bundles = manifest.contract_metadata.models.model_bundles;
+        if bundles.is_empty() {
+            return Err(format!(
+                "artifact {} does not carry checked model metadata",
+                absolute.display()
+            ));
+        }
+        return Ok(bundles);
+    }
+
+    let start_dir = if absolute.is_dir() {
+        absolute.as_path()
+    } else {
+        absolute.parent().unwrap_or(Path::new("."))
+    };
+    let manifest = ProjectManifest::discover(start_dir)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "model emit requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
+                path.display()
+            )
+        })?;
+    read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths())
+        .map_err(|error| error.to_string())
+}
+
+/// Resolve a single LSP model-emit bundle by logical type name or stable model id.
+fn find_lsp_contract_model_bundle(path: &Path, model: &str) -> std::result::Result<CanonicalModelBundle, String> {
+    let bundles = collect_lsp_contract_model_bundles(path)?;
+    bundles
+        .into_iter()
+        .find(|bundle| bundle.logical_type_name == model || bundle.stable_model_id.as_deref() == Some(model))
+        .ok_or_else(|| {
+            format!(
+                "model `{model}` was not found in checked model metadata for {}",
+                path.display()
+            )
+        })
+}
+
+/// Build the JSON-RPC response payload for model source or bundle JSON emission.
+fn emit_contract_model_command_payload(
+    path: &Path,
+    model: &str,
+    format: ContractModelCommandFormat,
+) -> std::result::Result<serde_json::Value, String> {
+    let bundle = find_lsp_contract_model_bundle(path, model)?;
+    match format {
+        ContractModelCommandFormat::Incan => {
+            let source = bundle.emit_incan_model_source().map_err(|error| error.to_string())?;
+            Ok(json!({
+                "format": format.as_str(),
+                "model": bundle.logical_type_name,
+                "stableModelId": bundle.stable_model_id,
+                "source": source
+            }))
+        }
+        ContractModelCommandFormat::Json => Ok(json!({
+            "format": format.as_str(),
+            "model": bundle.logical_type_name,
+            "stableModelId": bundle.stable_model_id,
+            "bundle": bundle
+        })),
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for IncanLanguageServer {
+    /// Advertise the LSP capabilities implemented by the Incan language server.
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -1564,6 +2512,10 @@ impl LanguageServer for IncanLanguageServer {
                 // Completions (basic)
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string(), "[".to_string()]),
+                    ..Default::default()
+                }),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string()],
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -1583,6 +2535,45 @@ impl LanguageServer for IncanLanguageServer {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Handle editor commands that need checked metadata not otherwise exposed by standard LSP requests.
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        if params.command != EMIT_CONTRACT_MODEL_COMMAND {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("unsupported Incan LSP command `{}`", params.command),
+                )
+                .await;
+            return Ok(Some(json!({
+                "error": format!("unsupported command `{}`", params.command)
+            })));
+        }
+
+        let parsed = match parse_emit_contract_model_command_args(params.arguments) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return Ok(Some(json!({ "error": error })));
+            }
+        };
+        let Some(uri_or_path) = parsed.uri.as_deref().or(parsed.path.as_deref()) else {
+            return Ok(Some(json!({
+                "error": format!("{EMIT_CONTRACT_MODEL_COMMAND} requires `uri` or `path`")
+            })));
+        };
+        let path = match path_from_lsp_uri_or_path(uri_or_path) {
+            Ok(path) => path,
+            Err(error) => return Ok(Some(json!({ "error": error }))),
+        };
+        let format = match ContractModelCommandFormat::parse(parsed.format.as_deref()) {
+            Ok(format) => format,
+            Err(error) => return Ok(Some(json!({ "error": error }))),
+        };
+        match emit_contract_model_command_payload(&path, &parsed.model, format) {
+            Ok(payload) => Ok(Some(payload)),
+            Err(error) => Ok(Some(json!({ "error": error }))),
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -1734,6 +2725,16 @@ impl LanguageServer for IncanLanguageServer {
                         value: markdown,
                     }),
                     range: Some(span_to_range(&doc.source, ty_spanned.span.start, ty_spanned.span.end)),
+                }));
+            }
+
+            if let Some(preview) = api_metadata_preview_at_offset(&doc.api_metadata_previews, offset) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: preview.markdown.clone(),
+                    }),
+                    range: Some(span_to_range(&doc.source, preview.span.start, preview.span.end)),
                 }));
             }
         }

@@ -294,6 +294,469 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn tools_metadata_api_reports_checked_json() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("metadata_app");
+    let main_path = write_minimal_project(&project_dir, "metadata_app", "")?;
+    fs::write(
+        &main_path,
+        r#"
+pub const LABEL = "metadata"
+
+pub def label() -> str:
+    """
+    Return the label.
+
+    Returns:
+        str: Label text.
+    """
+    return LABEL
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "api",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata api --format json");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json.pointer("/schema_version").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/package/name").and_then(serde_json::Value::as_str),
+        Some("metadata_app")
+    );
+    assert_eq!(
+        json.pointer("/package/version").and_then(serde_json::Value::as_str),
+        Some("0.1.0")
+    );
+    assert_eq!(
+        json.pointer("/modules/0/module_path/0")
+            .and_then(serde_json::Value::as_str),
+        Some("main")
+    );
+    assert!(
+        json.pointer("/modules/0/declarations")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|decls| decls.len() == 2),
+        "expected const and function declarations in metadata JSON: {json}"
+    );
+    assert_eq!(
+        json.pointer("/modules/0/declarations/1/docstring_sections/summary")
+            .and_then(serde_json::Value::as_str),
+        Some("Return the label.")
+    );
+    assert_eq!(
+        json.pointer("/modules/0/declarations/1/docstring_sections/returns/ty")
+            .and_then(serde_json::Value::as_str),
+        Some("str")
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_api_reports_docstring_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("metadata_docstring_drift_app");
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_dir.join("incan.toml"),
+        r#"[project]
+name = "metadata_docstring_drift_app"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("metrics.incn"),
+        r#"
+pub def avg(values: List[float]) -> float:
+    """
+    Return the arithmetic mean.
+
+    Args:
+        missing: Stale argument.
+
+    Returns:
+        str: Wrong return type.
+
+    Aliases:
+        MissingAvg: Stale public alias.
+    """
+    return 0.0
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"
+pub from crate.metrics import avg as PublicAvg
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "api",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&output, "incan tools metadata api with docstring drift");
+    assert!(
+        output.stdout.is_empty(),
+        "metadata JSON should not be printed when docstring validation fails"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("API docstring drift for `avg`"),
+        "expected docstring drift diagnostic heading, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("documented parameter `missing` does not exist"),
+        "expected stale parameter diagnostic, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("documented return type `str` does not match checked return type `float`"),
+        "expected return type diagnostic, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("documented alias `MissingAvg` does not exist"),
+        "expected stale alias diagnostic, got:\n{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_api_reports_public_import_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("metadata_alias_app");
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_dir.join("incan.toml"),
+        r#"[project]
+name = "metadata_alias_app"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("widgets.incn"),
+        r#"
+pub model Widget:
+    """
+    Widget contract.
+
+    Aliases:
+        PublicWidget: Re-exported package surface.
+    """
+    name: str
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"
+pub from crate.widgets import Widget as PublicWidget
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "api",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata api --format json");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let declarations = json
+        .pointer("/modules")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|module| module.pointer("/declarations").and_then(serde_json::Value::as_array))
+        .flatten();
+    let alias = declarations
+        .filter(|declaration| declaration.pointer("/kind").and_then(serde_json::Value::as_str) == Some("alias"))
+        .find(|declaration| declaration.pointer("/name").and_then(serde_json::Value::as_str) == Some("PublicWidget"))
+        .ok_or_else(|| format!("expected PublicWidget alias declaration in metadata JSON: {json}"))?;
+    assert_eq!(
+        alias
+            .pointer("/target_path")
+            .and_then(serde_json::Value::as_array)
+            .map(|segments| segments
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()),
+        Some(vec!["crate", "widgets", "Widget"])
+    );
+    Ok(())
+}
+
+fn write_order_summary_bundle(project_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let contract_dir = project_dir.join("contracts");
+    fs::create_dir_all(&contract_dir)?;
+    fs::write(
+        contract_dir.join("order_summary.json"),
+        r#"{
+  "schema_version": 1,
+  "stable_model_id": "orders.summary",
+  "logical_type_name": "OrderSummary",
+  "publishable": true,
+  "fields": [
+    {
+      "name": "order_id",
+      "type": "str",
+      "alias": "orderId",
+      "description": "Stable order identifier"
+    },
+    {
+      "name": "total_cents",
+      "type": "int"
+    },
+    {
+      "name": "coupon_code",
+      "type": "str",
+      "nullable": true
+    }
+  ]
+}
+"#,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_model_emits_project_contract_model() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("contract_model_app");
+    write_minimal_project(
+        &project_dir,
+        "contract_model_app",
+        r#"
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#,
+    )?;
+    write_order_summary_bundle(&project_dir)?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "model",
+            project_dir.to_str().ok_or("project path was not valid UTF-8")?,
+            "OrderSummary",
+            "--format",
+            "incan",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata model --format incan");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pub model OrderSummary:"),
+        "expected emitted model, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("order_id [alias=\"orderId\", description=\"Stable order identifier\"]: str"),
+        "expected field metadata in emitted model, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("coupon_code: Option[str]"),
+        "expected nullable field projection, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_model_materializes_project_bundle_for_run() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("contract_model_run_app");
+    let main_path = write_minimal_project(
+        &project_dir,
+        "contract_model_run_app",
+        r#"
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#,
+    )?;
+    write_order_summary_bundle(&project_dir)?;
+    fs::write(
+        project_dir.join("src").join("orders.incn"),
+        r#"
+pub def make_order() -> OrderSummary:
+    return OrderSummary(order_id="o-1", total_cents=1250, coupon_code=None)
+
+pub def order_wire_name() -> str:
+    let row = make_order()
+    for info in row.__fields__():
+        if info.name == "order_id":
+            return str(info.wire_name)
+    return ""
+
+pub def order_description() -> str:
+    let row = make_order()
+    for info in row.__fields__():
+        if info.name == "order_id":
+            match info.description:
+                Some(description) => return str(description)
+                None => return ""
+    return ""
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"
+from crate.orders import make_order, order_description, order_wire_name
+
+def main() -> None:
+    let row = make_order()
+    println(row.order_id)
+    println(order_wire_name())
+    println(order_description())
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan run with contract-backed model");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("o-1"),
+        "expected materialized model value at runtime, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("orderId"),
+        "expected RFC 021 alias reflection parity for materialized model, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Stable order identifier"),
+        "expected RFC 021 description reflection parity for materialized model, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_model_reads_built_library_artifact() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("contract_model_lib");
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_dir.join("incan.toml"),
+        r#"[project]
+name = "contract_model_lib"
+version = "0.1.0"
+
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"
+pub def ping() -> str:
+    return "pong"
+"#,
+    )?;
+    write_order_summary_bundle(&project_dir)?;
+
+    let build_output = run_incan(&project_dir, &["build", "--lib"])?;
+    assert_success(&build_output, "incan build --lib");
+
+    let artifact_path = project_dir
+        .join("target")
+        .join("lib")
+        .join("contract_model_lib.incnlib");
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "model",
+            artifact_path.to_str().ok_or("artifact path was not valid UTF-8")?,
+            "orders.summary",
+            "--format",
+            "incan",
+        ],
+    )?;
+    assert_success(&output, "incan tools metadata model from .incnlib");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pub model OrderSummary:"),
+        "expected artifact-backed model, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tools_metadata_model_reports_non_introspectable_artifact() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_dir = tmp.path().join("contract_model_lib_without_models");
+    let src_dir = project_dir.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_dir.join("incan.toml"),
+        r#"[project]
+name = "contract_model_lib_without_models"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"
+pub def ping() -> str:
+    return "pong"
+"#,
+    )?;
+
+    let build_output = run_incan(&project_dir, &["build", "--lib"])?;
+    assert_success(&build_output, "incan build --lib without model metadata");
+
+    let artifact_path = project_dir
+        .join("target")
+        .join("lib")
+        .join("contract_model_lib_without_models.incnlib");
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "tools",
+            "metadata",
+            "model",
+            artifact_path.to_str().ok_or("artifact path was not valid UTF-8")?,
+            "Missing",
+            "--format",
+            "incan",
+        ],
+    )?;
+    assert_failure(&output, "incan tools metadata model from non-introspectable .incnlib");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not carry checked model metadata"),
+        "expected non-introspectable artifact diagnostic, got:\n{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

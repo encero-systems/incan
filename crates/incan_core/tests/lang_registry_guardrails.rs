@@ -112,7 +112,7 @@ fn keywords_spellings_unique_and_resolvable() {
 fn builtins_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "builtin",
-        expected_len: 17,
+        expected_len: 18,
         items: builtins::BUILTIN_FUNCTIONS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

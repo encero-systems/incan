@@ -25,7 +25,7 @@ Commands:
 - `version` - Update the project version in `incan.toml`
 - `env` - List, inspect, or run configured project environments
 - `lock` - Generate or update `incan.lock`
-- `tools` - Inspect local toolchain and editor integration state
+- `tools` - Inspect local toolchain, editor integration state, and checked metadata
 
 ## Global options
 
@@ -415,6 +415,72 @@ Examples:
 incan tools doctor
 incan tools doctor --format json
 ```
+
+### `incan tools metadata api`
+
+Usage:
+
+```text
+incan tools metadata api [PATH] [OPTIONS]
+```
+
+Emits checked public API metadata for an Incan source file or project directory. The command parses and type-checks the target before producing JSON, so the output describes the checked API surface rather than source text alone.
+
+If `PATH` is omitted, the current directory is inspected. If `PATH` is a directory, `src/lib.incn` is preferred and `src/main.incn` is used as a fallback.
+
+This command is source/project inspection, not artifact inspection. It does not build the project, emit generated Rust, or read an existing `.incnlib`; use `incan build --lib` for library artifact emission.
+
+Options:
+
+- `--format json`: Output checked API metadata JSON (default).
+
+The JSON package contains:
+
+- `schema_version`: numeric schema version for the package payload
+- `package`: project name and version from `incan.toml`, when available
+- `modules`: checked metadata documents for the entry module and imported local modules
+- `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, and public import aliases
+- `anchor`: stable declaration ids plus source byte spans
+- `docstring`: raw declaration or method docstring text when present
+- `docstring_sections`: parsed summary, parameter, return, field, alias, and decorator sections when a docstring is present
+- `decorators`: resolved decorator paths and safe literal, type, or const-reference arguments
+
+Docstring validation is strict for mechanically checkable drift. If `Args:`, `Returns:`, `Fields:`, `Aliases:`, or `Decorators:` contradict checked source structure, the command reports diagnostics and does not print JSON.
+
+Examples:
+
+```bash
+incan tools metadata api
+incan tools metadata api src/lib.incn --format json
+incan tools metadata api path/to/project
+```
+
+See: [Checked API metadata](checked_api_metadata.md) for the JSON contract.
+
+### `incan tools metadata model`
+
+Usage:
+
+```text
+incan tools metadata model PATH MODEL [OPTIONS]
+```
+
+Emits one contract-backed model from project-declared bundle metadata, a bundle JSON file, or a built `.incnlib` artifact. `MODEL` may be the bundle `logical_type_name` or `stable_model_id`.
+
+Options:
+
+- `--format incan`: Output formatted Incan `model` source (default).
+- `--format json`: Output the selected canonical model bundle JSON.
+
+Examples:
+
+```bash
+incan tools metadata model . OrderSummary --format incan
+incan tools metadata model contracts/order_summary.json orders.summary --format json
+incan tools metadata model target/lib/orders.incnlib OrderSummary
+```
+
+See: [Checked contract metadata](contract_metadata.md) for bundle schema, materialization, artifact inspection, and the matching LSP command.
 
 ## Outputs and paths
 

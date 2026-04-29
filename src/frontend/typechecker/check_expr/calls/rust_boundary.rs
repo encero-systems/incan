@@ -194,12 +194,21 @@ impl TypeChecker {
     }
 
     fn rust_lookup_probe_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
-        match (arg_ty, target_ty) {
-            (ResolvedType::Str | ResolvedType::FrozenStr, ResolvedType::Ref(inner)) => {
-                matches!(inner.as_ref(), ResolvedType::Str)
+        let ResolvedType::Ref(inner) = target_ty else {
+            return false;
+        };
+        match arg_ty {
+            ResolvedType::Str | ResolvedType::FrozenStr => {
+                matches!(
+                    inner.as_ref(),
+                    ResolvedType::Str | ResolvedType::RustPath(_) | ResolvedType::TypeVar(_)
+                )
             }
-            (ResolvedType::Bytes | ResolvedType::FrozenBytes, ResolvedType::Ref(inner)) => {
-                matches!(inner.as_ref(), ResolvedType::Bytes)
+            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
+                matches!(
+                    inner.as_ref(),
+                    ResolvedType::Bytes | ResolvedType::RustPath(_) | ResolvedType::TypeVar(_)
+                )
             }
             _ => false,
         }
@@ -544,6 +553,50 @@ mod validate_rust_function_call_tests {
         assert!(
             checker.type_info.rust_arg_coercions.is_empty(),
             "expected lookup-preserving rust method call to preserve arg shape without coercion, got {:?}",
+            checker.type_info.rust_arg_coercions
+        );
+    }
+
+    #[test]
+    fn rust_lookup_preserving_method_accepts_string_probe_for_generic_ref_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 1);
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&Self".to_string(),
+                },
+                RustParam {
+                    name: Some("key".to_string()),
+                    type_display: "&Q".to_string(),
+                },
+            ],
+            return_type: "Option<&i64>".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+        let arg_expr = Spanned::new(Expr::Ident("word".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Str];
+
+        let _ = checker.validate_rust_method_call(
+            "rust::std::collections::HashMap.get",
+            &sig,
+            &args,
+            &arg_types,
+            true,
+            span,
+        );
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected lookup-preserving generic probe to stay permissive for string probes, errors={:?}",
+            checker.errors
+        );
+        assert!(
+            checker.type_info.rust_arg_coercions.is_empty(),
+            "expected lookup-preserving generic probe to preserve arg shape without coercion, got {:?}",
             checker.type_info.rust_arg_coercions
         );
     }

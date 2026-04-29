@@ -7,7 +7,22 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use serde_json::json;
 
+use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::frontend::api_metadata::{
+    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
+    collect_checked_api_metadata, validate_checked_api_docstrings,
+};
+use crate::frontend::contract_metadata::{
+    CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
+};
+use crate::frontend::diagnostics;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::typechecker;
+use crate::library_manifest::LibraryManifest;
+use crate::manifest::ProjectManifest;
+
+use super::common::{collect_modules, imported_module_deps_for_with_index, module_key_index, resolve_project_root};
 
 /// Output format for `incan tools doctor`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +30,22 @@ pub enum ToolsDoctorFormat {
     /// Human-readable diagnostic report.
     Text,
     /// Machine-readable JSON report for editor integrations and issue templates.
+    Json,
+}
+
+/// Output format for `incan tools metadata api`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsMetadataFormat {
+    /// Stable checked API metadata JSON.
+    Json,
+}
+
+/// Output format for `incan tools metadata model`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsModelMetadataFormat {
+    /// Formatted Incan model source.
+    Incan,
+    /// Canonical model bundle JSON.
     Json,
 }
 
@@ -26,6 +57,272 @@ pub fn tools_doctor(format: ToolsDoctorFormat) -> CliResult<ExitCode> {
         ToolsDoctorFormat::Json => report.print_json()?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Emit checked public API metadata for a source file or project directory.
+pub fn tools_metadata_api(path: &Path, format: ToolsMetadataFormat) -> CliResult<ExitCode> {
+    let package = collect_api_metadata_package(path)?;
+    match format {
+        ToolsMetadataFormat::Json => {
+            let output = serde_json::to_string_pretty(&package)
+                .map_err(|error| CliError::failure(format!("failed to serialize API metadata: {error}")))?;
+            println!("{output}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Emit one canonical model bundle from a project, bundle file, or `.incnlib` artifact.
+pub fn tools_metadata_model(path: &Path, model: &str, format: ToolsModelMetadataFormat) -> CliResult<ExitCode> {
+    let bundle = find_model_bundle(path, model)?;
+    match format {
+        ToolsModelMetadataFormat::Incan => {
+            print!(
+                "{}",
+                bundle
+                    .emit_incan_model_source()
+                    .map_err(|error| CliError::failure(error.to_string()))?
+            );
+        }
+        ToolsModelMetadataFormat::Json => {
+            let output = serde_json::to_string_pretty(&bundle)
+                .map_err(|error| CliError::failure(format!("failed to serialize model bundle: {error}")))?;
+            println!("{output}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Locate one model bundle by logical type name or stable model id and include available names when lookup fails.
+fn find_model_bundle(path: &Path, model: &str) -> CliResult<CanonicalModelBundle> {
+    let bundles = collect_model_bundles_for_path(path)?;
+    bundles
+        .into_iter()
+        .find(|bundle| bundle.logical_type_name == model || bundle.stable_model_id.as_deref() == Some(model))
+        .ok_or_else(|| {
+            let available = collect_available_model_names(path).unwrap_or_default();
+            let available = if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            };
+            CliError::failure(format!(
+                "model `{model}` was not found in checked model metadata for {} (available: {available})",
+                path.display()
+            ))
+        })
+}
+
+/// Collect validated model bundles from a project directory, source path, JSON bundle file, or library artifact.
+fn collect_model_bundles_for_path(path: &Path) -> CliResult<Vec<CanonicalModelBundle>> {
+    let absolute = absolute_path(path)?;
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "incnlib")
+    {
+        let manifest =
+            LibraryManifest::read_from_path(&absolute).map_err(|error| CliError::failure(error.to_string()))?;
+        let bundles = manifest.contract_metadata.models.model_bundles;
+        if bundles.is_empty() {
+            return Err(CliError::failure(format!(
+                "artifact {} does not carry checked model metadata",
+                absolute.display()
+            )));
+        }
+        return Ok(bundles);
+    }
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "json")
+    {
+        return read_model_bundles_from_json(&absolute).map_err(|error| CliError::failure(error.to_string()));
+    }
+
+    let project_root = if absolute.is_dir() {
+        absolute
+    } else {
+        resolve_project_root(&absolute)
+    };
+    let Some(manifest) =
+        ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        return Err(CliError::failure(format!(
+            "model metadata lookup requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
+            path.display()
+        )));
+    };
+    read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths())
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Return sorted logical model names available at the given metadata path.
+fn collect_available_model_names(path: &Path) -> CliResult<Vec<String>> {
+    let mut names: Vec<String> = collect_model_bundles_for_path(path)?
+        .into_iter()
+        .map(|bundle| bundle.logical_type_name)
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// Resolve a CLI path relative to the current working directory without requiring the path to exist.
+fn absolute_path(path: &Path) -> CliResult<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
+            .join(path))
+    }
+}
+
+/// Type-check a metadata entry path and collect checked API metadata for all local modules.
+fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPackage> {
+    let entry_path = resolve_metadata_entry_path(path)?;
+    let entry_path_string = entry_path.to_string_lossy();
+    let modules = collect_modules(&entry_path_string)?;
+    let project_root = resolve_project_root(&entry_path);
+    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let module_idx_by_key = module_key_index(&modules);
+    let mut all_errors = String::new();
+    let mut metadata_modules = Vec::new();
+
+    for (idx, module) in modules.iter().enumerate() {
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+        let mut checker = typechecker::TypeChecker::new();
+        if let Some(names) = declared.clone() {
+            checker.set_declared_crate_names(names);
+        }
+        checker.set_library_manifest_index(library_manifest_index.clone());
+
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                for warn in checker.warnings() {
+                    eprint!(
+                        "{}",
+                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
+                    );
+                }
+                metadata_modules.push(collect_checked_api_metadata(
+                    &module.ast,
+                    &checker,
+                    metadata_module_path(module, &entry_path),
+                ));
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
+    for diagnostic in validate_checked_api_docstrings(&metadata_modules) {
+        if let Some((module, _)) = modules
+            .iter()
+            .zip(metadata_modules.iter())
+            .find(|(_, metadata)| metadata.module_path == diagnostic.module_path)
+        {
+            all_errors.push_str(&diagnostics::format_error(
+                module.file_path.to_string_lossy().as_ref(),
+                &module.source,
+                &diagnostic.error,
+            ));
+        } else {
+            all_errors.push_str(&diagnostic.error.message);
+            all_errors.push('\n');
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
+    Ok(CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: manifest.as_ref().and_then(checked_api_package_identity),
+        modules: metadata_modules,
+    })
+}
+
+/// Extract checked API package identity from the project manifest when the manifest declares a non-empty name.
+fn checked_api_package_identity(manifest: &ProjectManifest) -> Option<CheckedApiPackageIdentity> {
+    let project = manifest.project.as_ref()?;
+    let name = project.name.as_ref()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(CheckedApiPackageIdentity {
+        name: name.to_string(),
+        version: project
+            .version
+            .as_ref()
+            .map(|version| version.trim())
+            .filter(|version| !version.is_empty())
+            .map(str::to_string),
+    })
+}
+
+/// Return the logical module path used in metadata for one parsed module.
+fn metadata_module_path(module: &ParsedModule, entry_path: &Path) -> Vec<String> {
+    if module.file_path == entry_path
+        && let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str())
+    {
+        return vec![stem.to_string()];
+    }
+    module.path_segments.clone()
+}
+
+/// Resolve a file or project directory to the source file used as the metadata entry point.
+fn resolve_metadata_entry_path(path: &Path) -> CliResult<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
+            .join(path)
+    };
+
+    if absolute.is_file() {
+        return Ok(absolute);
+    }
+    if absolute.is_dir() {
+        let lib = absolute.join("src").join("lib.incn");
+        if lib.is_file() {
+            return Ok(lib);
+        }
+        let main = absolute.join("src").join("main.incn");
+        if main.is_file() {
+            return Ok(main);
+        }
+        return Err(CliError::failure(format!(
+            "metadata API extraction requires an Incan source file, or a project directory with `src/lib.incn` or `src/main.incn`: {}",
+            absolute.display()
+        )));
+    }
+
+    Err(CliError::failure(format!(
+        "metadata API extraction path does not exist: {}",
+        absolute.display()
+    )))
 }
 
 #[derive(Debug)]
@@ -243,4 +540,47 @@ fn display_option_path(path: &Option<PathBuf>) -> String {
     path.as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "(not found)".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_api_metadata_package_extracts_project_lib() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            r#"
+[project]
+name = "metadata_demo"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(
+            src.join("lib.incn"),
+            r#"
+pub const LABEL = "demo"
+
+pub def label() -> str:
+    return LABEL
+"#,
+        )?;
+
+        let package = collect_api_metadata_package(tmp.path())?;
+        assert_eq!(package.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION);
+        assert_eq!(
+            package.package,
+            Some(CheckedApiPackageIdentity {
+                name: "metadata_demo".to_string(),
+                version: Some("0.1.0".to_string()),
+            })
+        );
+        assert_eq!(package.modules.len(), 1);
+        assert_eq!(package.modules[0].module_path, vec!["lib".to_string()]);
+        assert_eq!(package.modules[0].declarations.len(), 2);
+        Ok(())
+    }
 }

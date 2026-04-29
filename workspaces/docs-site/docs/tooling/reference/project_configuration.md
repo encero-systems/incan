@@ -117,6 +117,23 @@ incan env run release build
 
 See [Project lifecycle reference](../../language/reference/project_lifecycle.md) for merge and resolution rules.
 
+## `[tool.incan.metadata]`
+
+Checked contract metadata settings for project-declared model bundles.
+
+```toml
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+```
+
+Fields:
+
+| Field           | Type            | Description                                                                                                                                                                     |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model-bundles` | list of strings | Canonical model bundle JSON files to validate, materialize during build/run, embed into `.incnlib` artifacts when publishable, and expose through `incan tools metadata model`. |
+
+Bundle paths are resolved relative to the project root unless absolute. See [Checked contract metadata](contract_metadata.md) for the bundle schema and tooling commands.
+
 ## `[vocab]`
 
 Optional companion crate configuration for library-defined DSL metadata.

@@ -21,6 +21,9 @@ use incan_core::lang::types::stringlike::StringLikeId;
 /// Unique identifier for symbols
 pub type SymbolId = usize;
 
+/// Canonical semantic name for anonymous union types (RFC 029).
+pub const UNION_TYPE_NAME: &str = "Union";
+
 /// Symbol table managing all named entities
 #[derive(Debug, Default)]
 pub struct SymbolTable {
@@ -42,6 +45,7 @@ impl SymbolTable {
         table
     }
 
+    /// Populate the root scope with built-in type symbols.
     fn add_builtins(&mut self) {
         // Builtin types (from the canonical `incan_core::lang::types` registries).
         //
@@ -71,6 +75,7 @@ impl SymbolTable {
         // Unit-ish types that are not yet modeled in `incan_core::lang::types`.
         builtin_types.push(conventions::UNIT_TYPE_NAME);
         builtin_types.push(conventions::NONE_TYPE_NAME);
+        builtin_types.push(UNION_TYPE_NAME);
 
         // Deduplicate to avoid defining the same builtin twice.
         let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
@@ -697,6 +702,19 @@ impl ResolvedType {
         )
     }
 
+    /// Check if this is an anonymous union type.
+    pub fn is_union(&self) -> bool {
+        matches!(self, ResolvedType::Generic(name, _) if name == UNION_TYPE_NAME)
+    }
+
+    /// Get the normalized member list from `Union[...]`.
+    pub fn union_members(&self) -> Option<&[ResolvedType]> {
+        match self {
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => Some(args.as_slice()),
+            _ => None,
+        }
+    }
+
     /// Get the Ok type from Result[T, E]
     pub fn result_ok_type(&self) -> Option<&ResolvedType> {
         match self {
@@ -794,6 +812,38 @@ impl std::fmt::Display for ResolvedType {
     }
 }
 
+/// Construct the canonical semantic form for an anonymous union.
+///
+/// This flattens nested unions, removes duplicates, sorts members by display for deterministic equality, and rewrites
+/// `None`/`Unit`-containing unions through `Option[...]` as required by RFC 029.
+pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
+    let mut flattened = Vec::new();
+    let mut contains_none = false;
+
+    for member in members {
+        match member {
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => flattened.extend(args),
+            ResolvedType::Unit => contains_none = true,
+            other => flattened.push(other),
+        }
+    }
+
+    flattened.sort_by_key(|member| member.to_string());
+    flattened.dedup();
+
+    let inner = match flattened.as_slice() {
+        [] => ResolvedType::Unit,
+        [single] => single.clone(),
+        _ => ResolvedType::Generic(UNION_TYPE_NAME.to_string(), flattened),
+    };
+
+    if contains_none {
+        ResolvedType::Generic(collections::as_str(CollectionTypeId::Option).to_string(), vec![inner])
+    } else {
+        inner
+    }
+}
+
 /// Convert AST Type to ResolvedType
 /// Normalize type name to canonical form (uppercase for built-in generics)
 fn normalize_type_name(name: &str) -> String {
@@ -830,6 +880,7 @@ fn resolve_qualified_rust_type_path(segments: &[String], symbols: &SymbolTable) 
     ResolvedType::RustPath(path)
 }
 
+/// Resolve an AST type annotation into the canonical semantic type representation.
 pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
     match ty {
         Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
@@ -888,6 +939,10 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             let normalized_name = id
                 .map(|id| collections::as_str(id).to_string())
                 .unwrap_or_else(|| normalize_type_name(name));
+
+            if normalized_name == UNION_TYPE_NAME {
+                return union_ty(resolved_args);
+            }
 
             match id {
                 Some(CollectionTypeId::FrozenList) => {

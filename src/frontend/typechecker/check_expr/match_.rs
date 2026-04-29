@@ -36,6 +36,23 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve the member type targeted by a union type pattern.
+    fn union_pattern_member_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
+        let target_ty = resolve_type(&Type::Simple(name.to_string()), &self.symbols);
+        let members = if let Some(members) = expected_ty.union_members() {
+            members
+        } else if let Some(inner) = expected_ty.option_inner_type() {
+            inner.union_members()?
+        } else {
+            return None;
+        };
+
+        members
+            .iter()
+            .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
+            .cloned()
+    }
+
     /// Type-check a `match` expression and return its resolved type.
     pub(in crate::frontend::typechecker::check_expr) fn check_match(
         &mut self,
@@ -93,6 +110,27 @@ impl TypeChecker {
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                if enum_qualifier_opt.is_none()
+                    && let Some(member_ty) = self.union_pattern_member_type(expected_ty, ctor_name)
+                {
+                    let mut positional = None;
+                    for arg in sub_patterns {
+                        match arg {
+                            PatternArg::Positional(pat) => {
+                                positional = Some(pat);
+                                break;
+                            }
+                            PatternArg::Named(_, pat) => {
+                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                            }
+                        }
+                    }
+                    if let Some(pat) = positional {
+                        self.check_pattern(pat, &member_ty);
+                    }
+                    return;
+                }
+
                 let qualifier_matches_expected = enum_qualifier_opt
                     .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(expected_ty, qualifier));
 
@@ -453,7 +491,15 @@ impl TypeChecker {
     /// (`_`) satisfy all remaining cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match)
     /// error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
-        let variants = if let ResolvedType::Named(name) = subject_ty {
+        let variants = if let Some(members) = subject_ty.union_members() {
+            Some(members.iter().map(ToString::to_string).collect())
+        } else if let Some(inner) = subject_ty.option_inner_type()
+            && let Some(members) = inner.union_members()
+        {
+            let mut variants: Vec<String> = members.iter().map(ToString::to_string).collect();
+            variants.push(constructors::as_str(ConstructorId::None).to_string());
+            Some(variants)
+        } else if let ResolvedType::Named(name) = subject_ty {
             match self.lookup_type_info(name) {
                 Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
                 _ => None,
@@ -487,7 +533,13 @@ impl TypeChecker {
                         covered.insert(constructors::as_str(ConstructorId::None).to_string());
                     }
                     Pattern::Constructor(name, _) => {
-                        let variant_name = if name.contains("::") {
+                        let variant_name = if subject_ty.union_members().is_some()
+                            || subject_ty
+                                .option_inner_type()
+                                .is_some_and(|inner| inner.union_members().is_some())
+                        {
+                            resolve_type(&Type::Simple(name.clone()), &self.symbols).to_string()
+                        } else if name.contains("::") {
                             name.split("::").last().unwrap_or(name).to_string()
                         } else {
                             name.clone()

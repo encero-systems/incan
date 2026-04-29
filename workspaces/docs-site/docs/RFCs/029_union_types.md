@@ -1,7 +1,6 @@
 # RFC 029: union types and type narrowing
 
-
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 028 (trait-based operator overloading)
@@ -12,9 +11,7 @@
 
 ## Summary
 
-Introduce first-class union types to Incan. `Union[A, B, ...]` is the canonical form, and `A | B` is equivalent syntactic sugar.
-
-Union types let a value be one of several alternative types without requiring the user to declare a named enum at each use site. Narrowing is checked at compile time through `isinstance(...)` and exhaustive `match`, using Python-style type patterns such as `case int(n)` and `case str(s)`.
+Introduce first-class union types to Incan: `Union[A, B, ...]` is the canonical form, `A | B` is equivalent syntactic sugar, and union values are narrowed at compile time through `isinstance(...)`, `is None` / `is not None`, and exhaustive `match` with Python-style type patterns such as `case int(n)` and `case str(s)`.
 
 ## Motivation
 
@@ -64,6 +61,22 @@ A union is an anonymous, structural, closed sum type:
 - **closed**: the set of possible member types is fixed by the annotation itself
 
 This RFC adds that anonymous union facility. It does not change existing named enums such as `Option[T]`, which continue to use their own declared variants like `Some(...)` and `None`.
+
+## Goals
+
+- Add a first-class anonymous union type that can represent a closed set of possible member types without user-declared wrapper enums.
+- Support both `Union[A, B, ...]` and `A | B` in annotation positions, with normalization that makes order, duplicates, and nested unions irrelevant.
+- Preserve existing `Option[T]` semantics by canonicalizing `T | None` and `A | B | None` through `Option[...]`.
+- Typecheck assignment, return, collection, narrowing, and match behavior against the normalized union member set.
+- Lower ordinary unions to a stable closed backend representation while keeping `Option[...]`-canonicalized unions on the existing `Option` path.
+
+## Non-Goals
+
+- Do not add an open-ended runtime `Variant` or dynamic reflection type.
+- Do not make union values implicitly expose methods, operators, or trait capabilities from their members before narrowing.
+- Do not synthesize fresh union types to satisfy unconstrained generic inference.
+- Do not specify serialization, display, or ABI details for backend union representations.
+- Do not change the source-level behavior of existing named enums such as `Option[T]`, `Result[T, E]`, or user-declared enums.
 
 ## Guide-level explanation (how users think about it)
 
@@ -165,7 +178,7 @@ type_atom  ::= IDENT type_args? | "None"
 type_args  ::= "[" type_expr ("," type_expr)* ","? "]"
 ```
 
-`Union[A, B]` is the canonical form for unions that do not include `None`. `A | B` is syntactic sugar that the parser desugars to `Union[A, B]` during parsing. When `None` appears in the union, normalization rewrites the type through `Option[...]`.
+`Union[A, B]` is the canonical form for unions that do not include `None`. `A | B` is syntactic sugar that normalizes to `Union[A, B]`. When `None` appears in the union, normalization rewrites the type through `Option[...]`.
 
 The `|` operator binds looser than `[]`, so `List[int | str]` parses as `List[Union[int, str]]`.
 
@@ -213,7 +226,7 @@ Here `r` has type `Response` and `e` has type `Error`.
 - **Union-to-union assignability**: `A | B` is assignable to `A | B | C`. More generally, a source union is assignable to a target union when every source member is assignable to some target member.
 - **Equivalence**: Unions are unordered sets. `int | str == str | int`. Duplicates and nested unions are normalized.
 - **`None` canonicalization**: A union containing `None` canonicalizes through `Option[...]`. `T | None == Option[T]`, and `A | B | None == Option[Union[A, B]]`.
-- **Narrowing**: After `isinstance(x, T)`, `x` is `T` in the true branch and `Union minus T` in the else branch. After   `x is None`, `x` is `None` in the true branch and `Union minus None` in the else branch. After `x is not None`, `x` is `Union minus None` in the true branch and `None` in the else branch. Narrowing does **not** persist after the conditional block.
+- **Narrowing**: After `isinstance(x, T)`, `x` is `T` in the true branch and `Union minus T` in the else branch. After `x is None`, `x` is `None` in the true branch and `Union minus None` in the else branch. After `x is not None`, `x` is `Union minus None` in the true branch and `None` in the else branch. Narrowing does **not** persist after the conditional block.
 - **Exhaustiveness**: `match` on a union type must cover all constituent types or include a wildcard arm.
 - **No implicit generic-union synthesis**: The compiler does not invent a union type solely to satisfy an otherwise unconstrained generic parameter. When generic inference would require synthesizing a new union, the user must write the annotation explicitly.
 - **`Option[T]` integration**: `Option[T]` remains the named enum type from the standard library, and this RFC treats `T | None` as equivalent to that existing maybe-value abstraction.
@@ -325,6 +338,82 @@ Require users to define their own Rust-style enums for sum types. Rejected becau
 - **Type system**: union members must be canonicalized, narrowing rules enforced, and exhaustiveness checking performed where this RFC requires it.
 - **Execution handoff**: implementations must use a stable closed representation for unions without changing the language-level narrowing semantics.
 - **Docs / tooling**: the relationship between unions, `Option`, `match`, and narrowing must be explained clearly enough that users can predict when narrowing is required.
+
+## Implementation Plan
+
+### Phase 1: Syntax and canonical type representation
+
+- Extend type-expression parsing so `A | B` is accepted only in type positions and binds looser than generic type arguments.
+- Normalize `Union[...]`, nested unions, duplicate members, member ordering, and `None`-containing unions into the canonical semantic type shape.
+- Preserve `Option[...]` as the canonical shape for `T | None` and `A | B | None`.
+- Update formatter/display behavior and parser tests so union syntax round-trips predictably.
+
+### Phase 2: Typechecker semantics and narrowing
+
+- Add union assignability and union-to-union compatibility checks.
+- Validate returns, variable bindings, and collection literals against explicit union annotations without inventing implicit union types for generic inference.
+- Add `isinstance(x, T)` narrowing for union-typed locals and parameters.
+- Extend `is None` / `is not None` narrowing over `Option[...]`-canonicalized unions.
+- Validate union type patterns in `match`, bind narrowed member values, and require exhaustive coverage or a wildcard arm.
+
+### Phase 3: Lowering and emission
+
+- Lower non-`None` unions to deterministic generated closed sum representations.
+- Lower concrete member assignments and returns into the appropriate generated union constructors.
+- Lower `isinstance` checks and union type patterns to closed sum matches without runtime type reflection.
+- Keep `Option[...]`-canonicalized unions on the existing `Option` lowering and emission path.
+
+### Phase 4: Tests, docs, and release readiness
+
+- Add parser, typechecker, lowering/emission, snapshot, and end-to-end coverage for ordinary unions and `None`-canonicalized unions.
+- Update authored language docs for union types, narrowing, and match usage.
+- Add a release note entry for the active release line.
+- Bump the active development version by one `-dev.N` increment.
+
+## Progress Checklist
+
+### Spec / lifecycle
+
+- [x] Review RFC 029 for lifecycle readiness and move it to active implementation.
+- [x] Keep this progress checklist synchronized with accepted implementation slices.
+
+### Syntax / AST
+
+- [x] Parser accepts `Union[A, B]` and `A | B` in annotation positions.
+- [x] Parser rejects or preserves expression-position `|` according to the existing expression grammar without ambiguity.
+- [x] Type display / formatting round-trips normalized union annotations.
+- [x] Parser tests cover precedence, nested unions, duplicates, and `None`.
+
+### Typechecker
+
+- [x] Semantic type representation canonicalizes union members deterministically.
+- [x] Assignability admits member-to-union and source-union-to-target-union cases.
+- [x] Assignment, return, and collection checks require explicit union annotations and do not synthesize implicit unions for generic inference.
+- [x] `isinstance(x, T)` narrows true and else branches for union-typed values, including chained and wider union-minus narrowing.
+- [x] `x is None` and `x is not None` narrow `Option[...]`-canonicalized unions.
+- [x] `match` type patterns bind narrowed member values.
+- [x] `match` on unions requires exhaustive member coverage or a wildcard.
+
+### Lowering / emission
+
+- [x] IR represents non-`None` union shapes without losing canonical member identity.
+- [x] Emission produces deterministic closed sum definitions for union shapes.
+- [x] Member values assigned or returned into union-typed positions are wrapped in the generated representation.
+- [x] `isinstance` and union type patterns lower to closed sum matches.
+- [x] `Option[...]`-canonicalized unions continue to use the existing `Option` path.
+
+### Tests
+
+- [x] Parser unit tests cover union type syntax.
+- [x] Typechecker unit tests cover valid assignments, invalid assignments, explicit generic-boundary behavior, narrowing, and exhaustiveness diagnostics.
+- [x] Codegen snapshot tests cover union construction, match, `isinstance`, and `Option` canonicalization.
+- [x] At least one integration test compiles and runs a union-typed program end to end.
+
+### Docs / release
+
+- [x] Update authored language docs for union types and narrowing.
+- [x] Add the active release-note entry for RFC 029 / #163.
+- [x] Bump the active dev version from `0.3.0-dev.19` to `0.3.0-dev.20`.
 
 ## Design Decisions
 

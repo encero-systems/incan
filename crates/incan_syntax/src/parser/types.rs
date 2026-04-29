@@ -113,7 +113,41 @@ impl<'a> Parser<'a> {
         Ok(bounds)
     }
 
+    /// Parse a type expression, including RFC 029 `A | B` union sugar.
     fn type_expr(&mut self) -> Result<Spanned<Type>, CompileError> {
+        let first = self.type_atom()?;
+        if !self.match_punct(PunctuationId::Pipe) {
+            return Ok(first);
+        }
+
+        let start = first.span.start;
+        let mut members = vec![first];
+        loop {
+            members.push(self.type_atom()?);
+            if !self.match_punct(PunctuationId::Pipe) {
+                break;
+            }
+        }
+        let end = members
+            .last()
+            .map(|member| member.span.end)
+            .unwrap_or(start);
+        let mut flattened = Vec::new();
+        for member in members {
+            match member.node {
+                Type::Generic(name, args) if name == "Union" => flattened.extend(args),
+                other => flattened.push(Spanned::new(other, member.span)),
+            }
+        }
+
+        Ok(Spanned::new(
+            Type::Generic("Union".to_string(), flattened),
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a single type atom before any outer union composition is applied.
+    fn type_atom(&mut self) -> Result<Spanned<Type>, CompileError> {
         let start = self.current_span().start;
 
         // Unit type

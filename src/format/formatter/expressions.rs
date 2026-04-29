@@ -350,6 +350,7 @@ impl Formatter {
 
     // ---- Operators ----
 
+    /// Write a binary operator using the formatter's canonical spelling.
     fn format_binary_op(&mut self, op: &BinaryOp) {
         self.writer.write(match op {
             BinaryOp::Add => "+",
@@ -370,6 +371,7 @@ impl Formatter {
             BinaryOp::In => "in",
             BinaryOp::NotIn => "not in",
             BinaryOp::Is => "is",
+            BinaryOp::IsNot => "is not",
         });
     }
 

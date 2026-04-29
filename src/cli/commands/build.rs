@@ -10,7 +10,12 @@ use std::path::{Path, PathBuf};
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::resolve_dependencies;
+use crate::frontend::api_metadata::{
+    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
+    collect_checked_api_metadata, validate_checked_api_docstrings,
+};
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
+use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
@@ -603,6 +608,8 @@ pub fn build_library(
     let declared = manifest.declared_rust_crate_names();
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
+        .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
     let dep_modules = &modules[..modules.len() - 1];
 
@@ -671,6 +678,7 @@ pub fn build_library(
 
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+    let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
 
     for (idx, module) in modules.iter().enumerate() {
@@ -690,6 +698,11 @@ pub fn build_library(
                     );
                 }
                 let module_exports = collect_checked_public_exports(&module.ast, &checker);
+                api_metadata_modules.push(collect_checked_api_metadata(
+                    &module.ast,
+                    &checker,
+                    module.path_segments.clone(),
+                ));
                 checked_exports_by_module.insert(
                     module_key(&module.path_segments),
                     module_exports
@@ -707,6 +720,26 @@ pub fn build_library(
                     ));
                 }
             }
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
+    for diagnostic in validate_checked_api_docstrings(&api_metadata_modules) {
+        if let Some(module) = modules
+            .iter()
+            .find(|module| module.path_segments == diagnostic.module_path)
+        {
+            all_errors.push_str(&diagnostics::format_error(
+                module.file_path.to_string_lossy().as_ref(),
+                &module.source,
+                &diagnostic.error,
+            ));
+        } else {
+            all_errors.push_str(&diagnostic.error.message);
+            all_errors.push('\n');
         }
     }
 
@@ -735,7 +768,21 @@ pub fn build_library(
         .unwrap_or_else(|| "0.1.0".to_string());
 
     let mut library_manifest =
-        LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
+        LibraryManifest::from_checked_exports(project_name.clone(), project_version.clone(), &selected_exports);
+    library_manifest.contract_metadata.models = ContractMetadataPackage::new(
+        contract_model_bundles
+            .into_iter()
+            .filter(|bundle| bundle.publishable)
+            .collect(),
+    );
+    library_manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: Some(CheckedApiPackageIdentity {
+            name: project_name.clone(),
+            version: Some(project_version.clone()),
+        }),
+        modules: api_metadata_modules,
+    });
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
 
     if let Some(vocab_extraction) = collect_library_vocab_metadata(&manifest, &project_root)? {

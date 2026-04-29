@@ -868,6 +868,13 @@ fn test_type_annotations_codegen() {
 }
 
 #[test]
+fn test_rfc029_union_types_codegen() {
+    let source = load_test_file("rfc029_union_types");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc029_union_types", rust_code);
+}
+
+#[test]
 fn test_string_operations_codegen() {
     let source = load_test_file("string_operations");
     let rust_code = generate_rust(&source);

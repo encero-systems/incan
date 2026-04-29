@@ -3158,6 +3158,126 @@ def bad(f: Callable[int]) -> None:
         );
     }
 
+    // ---- RFC 029: union type parser normalization ----
+
+    #[test]
+    fn test_union_pipe_return_type_desugars_to_canonical_generic() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def parse_value(raw: str) -> int | str:
+  return raw
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                assert_eq!(args.len(), 2);
+                assert!(matches!(args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(args[1].node, Type::Simple(ref name) if name == "str"));
+            }
+            other => panic!("Expected canonical Union generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_inside_generic_binds_looser_than_type_args() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def load_values() -> List[int | str]:
+  return []
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "List");
+                assert_eq!(args.len(), 1);
+                match &args[0].node {
+                    Type::Generic(name, members) => {
+                        assert_eq!(name, "Union");
+                        assert_eq!(members.len(), 2);
+                        assert!(matches!(members[0].node, Type::Simple(ref name) if name == "int"));
+                        assert!(matches!(members[1].node, Type::Simple(ref name) if name == "str"));
+                    }
+                    other => panic!("Expected nested canonical Union generic, got: {other:?}"),
+                }
+            }
+            other => panic!("Expected List generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_accepts_none_member_in_annotation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def maybe_name() -> str | None:
+  return None
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                assert_eq!(args.len(), 2);
+                assert!(matches!(args[0].node, Type::Simple(ref name) if name == "str"));
+                assert!(matches!(args[1].node, Type::Simple(ref name) if name == "None"));
+            }
+            other => panic!("Expected canonical Union generic containing None, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_flattens_nested_union_and_preserves_duplicates() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def parse_value() -> int | Union[str, int] | None | str:
+  return 1
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                let names: Vec<_> = args
+                    .iter()
+                    .map(|arg| match &arg.node {
+                        Type::Simple(name) => name.as_str(),
+                        other => panic!("Expected simple union member, got: {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(names, vec!["int", "str", "int", "None", "str"]);
+            }
+            other => panic!("Expected flattened canonical Union generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_not_none_parses_as_identity_negation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def has_name(name: str | None) -> bool:
+  if name is not None:
+    return true
+  return false
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::If(if_stmt) = &function.body[0].node else {
+            panic!("Expected first statement to be if, got: {:?}", function.body[0].node);
+        };
+        let Condition::Expr(condition) = &if_stmt.condition else {
+            panic!("Expected expression condition");
+        };
+        match &condition.node {
+            Expr::Binary(left, BinaryOp::IsNot, right) => {
+                assert!(matches!(left.node, Expr::Ident(ref name) if name == "name"));
+                assert!(matches!(right.node, Expr::Literal(Literal::None)));
+            }
+            other => panic!("Expected `is not None` binary expression, got: {other:?}"),
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_newtype_still_parses_with_newtype_keyword() {
         // `type Foo = newtype Bar` must still produce a Newtype.
