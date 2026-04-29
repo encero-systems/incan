@@ -4664,7 +4664,11 @@ Use these modules when you want trait names explicitly in source, type annotatio
 <h2 id="importing-stdtraits">Importing std.traits<a class="headerlink" href="#importing-stdtraits" title="Permanent link">&para;</a></h2>
 <p>Import from the specific trait submodule:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.convert</span><span class="w"> </span><span class="kn">import</span> <span class="nc">From</span><span class="p">,</span> <span class="nc">Into</span><span class="p">,</span> <span class="nc">TryFrom</span><span class="p">,</span> <span class="nc">TryInto</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Add</span><span class="p">,</span> <span class="nc">Sub</span><span class="p">,</span> <span class="nc">Mul</span><span class="p">,</span> <span class="nc">Div</span><span class="p">,</span> <span class="nc">Neg</span><span class="p">,</span> <span class="nc">Mod</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Add</span><span class="p">,</span> <span class="nc">Sub</span><span class="p">,</span> <span class="nc">Mul</span><span class="p">,</span> <span class="nc">Div</span><span class="p">,</span> <span class="nc">FloorDiv</span><span class="p">,</span> <span class="nc">Mod</span><span class="p">,</span> <span class="nc">Pow</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Neg</span><span class="p">,</span> <span class="nc">Not</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Shr</span><span class="p">,</span> <span class="nc">Shl</span><span class="p">,</span> <span class="nc">BitAnd</span><span class="p">,</span> <span class="nc">BitOr</span><span class="p">,</span> <span class="nc">BitXor</span><span class="p">,</span> <span class="nc">MatMul</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">PipeForward</span><span class="p">,</span> <span class="nc">PipeBackward</span><span class="p">,</span> <span class="nc">GetItem</span><span class="p">,</span> <span class="nc">SetItem</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.ops</span><span class="w"> </span><span class="kn">import</span> <span class="nc">AddAssign</span><span class="p">,</span> <span class="nc">BitAndAssign</span><span class="p">,</span> <span class="nc">MatMulAssign</span><span class="p">,</span> <span class="nc">ShrAssign</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.error</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Error</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span><span class="p">,</span> <span class="nc">IndexMut</span><span class="p">,</span> <span class="nc">Sliceable</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.callable</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Callable0</span><span class="p">,</span> <span class="nc">Callable1</span><span class="p">,</span> <span class="nc">Callable2</span>
@@ -4674,7 +4678,8 @@ Use these modules when you want trait names explicitly in source, type annotatio
 <p>The <code>std.traits.*</code> modules define the standard trait contracts used by Incan.</p>
 <ul>
 <li>Import them directly when you want to write <code>with TraitName</code>, annotate against a trait, or refer to the trait family explicitly.</li>
-<li>Some language features map onto these traits at the surface level. For example, operator syntax corresponds to <code>std.traits.ops</code>, indexing syntax corresponds to <code>std.traits.indexing</code>, and callable-style invocation corresponds to <code>std.traits.callable</code>.</li>
+<li>Some language features map onto these traits at the surface level. For example, operator syntax corresponds to <code>std.traits.ops</code>, indexing syntax corresponds to <code>std.traits.indexing</code> and the <code>GetItem</code> / <code>SetItem</code> operator vocabulary, and callable-style invocation corresponds to <code>std.traits.callable</code>.</li>
+<li>For operators, dunder methods are implementation hooks and traits are the nominal capability vocabulary that generic code can name.</li>
 <li><code>std.traits.prelude</code> re-exports the most common trait families for convenience.</li>
 </ul>
 <h2 id="submodules">Submodules<a class="headerlink" href="#submodules" title="Permanent link">&para;</a></h2>
@@ -4699,9 +4704,35 @@ Use these modules when you want trait names explicitly in source, type annotatio
 <li><code>Sub[Rhs, Output]</code></li>
 <li><code>Mul[Rhs, Output]</code></li>
 <li><code>Div[Rhs, Output]</code></li>
-<li><code>Neg[Output]</code></li>
+<li><code>FloorDiv[Rhs, Output]</code></li>
 <li><code>Mod[Rhs, Output]</code></li>
+<li><code>Pow[Rhs, Output]</code></li>
+<li><code>Neg[Output]</code></li>
+<li><code>Not[Output]</code></li>
+<li><code>Shr[Rhs, Output]</code></li>
+<li><code>Shl[Rhs, Output]</code></li>
+<li><code>PipeForward[Rhs, Output]</code></li>
+<li><code>PipeBackward[Rhs, Output]</code></li>
+<li><code>BitAnd[Rhs, Output]</code></li>
+<li><code>BitOr[Rhs, Output]</code></li>
+<li><code>BitXor[Rhs, Output]</code></li>
+<li><code>MatMul[Rhs, Output]</code></li>
+<li><code>GetItem[Key, Output]</code></li>
+<li><code>SetItem[Key, Value]</code></li>
+<li><code>AddAssign[Rhs, Output]</code></li>
+<li><code>SubAssign[Rhs, Output]</code></li>
+<li><code>MulAssign[Rhs, Output]</code></li>
+<li><code>DivAssign[Rhs, Output]</code></li>
+<li><code>FloorDivAssign[Rhs, Output]</code></li>
+<li><code>ModAssign[Rhs, Output]</code></li>
+<li><code>MatMulAssign[Rhs, Output]</code></li>
+<li><code>BitAndAssign[Rhs, Output]</code></li>
+<li><code>BitOrAssign[Rhs, Output]</code></li>
+<li><code>BitXorAssign[Rhs, Output]</code></li>
+<li><code>ShlAssign[Rhs, Output]</code></li>
+<li><code>ShrAssign[Rhs, Output]</code></li>
 </ul>
+<p>The assignment traits are explicit in-place hooks for the currently supported compound assignment operators. When the explicit hook is absent, compound assignment falls back to ordinary binary operator assignment.</p>
 <h3 id="stdtraitserror"><code>std.traits.error</code><a class="headerlink" href="#stdtraitserror" title="Permanent link">&para;</a></h3>
 <p>Provides:</p>
 <ul>

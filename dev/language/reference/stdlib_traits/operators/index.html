@@ -2067,9 +2067,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#add-sub-mul-div-neg-mod" class="md-nav__link">
+  <a href="#binary-arithmetic" class="md-nav__link">
     <span class="md-ellipsis">
-      Add / Sub / Mul / Div / Neg / Mod
+      Binary arithmetic
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unary-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unary operators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bitwise-matrix-and-pipeline-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bitwise, matrix, and pipeline operators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexing-hooks-in-the-operator-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Indexing hooks in the operator vocabulary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compound-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compound assignment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparisons" class="md-nav__link">
+    <span class="md-ellipsis">
+      Comparisons
     </span>
   </a>
   
@@ -4468,9 +4513,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#add-sub-mul-div-neg-mod" class="md-nav__link">
+  <a href="#binary-arithmetic" class="md-nav__link">
     <span class="md-ellipsis">
-      Add / Sub / Mul / Div / Neg / Mod
+      Binary arithmetic
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unary-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unary operators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bitwise-matrix-and-pipeline-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bitwise, matrix, and pipeline operators
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexing-hooks-in-the-operator-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Indexing hooks in the operator vocabulary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compound-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compound assignment
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparisons" class="md-nav__link">
+    <span class="md-ellipsis">
+      Comparisons
     </span>
   </a>
   
@@ -4496,16 +4586,247 @@
 
 <h1 id="operator-traits-reference">Operator traits (Reference)<a class="headerlink" href="#operator-traits-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents stdlib traits that describe operator behavior for custom types.</p>
-<p>These traits define dunder-like hooks such as <code>__add__</code>, <code>__sub__</code>, etc.</p>
-<h2 id="add-sub-mul-div-neg-mod">Add / Sub / Mul / Div / Neg / Mod<a class="headerlink" href="#add-sub-mul-div-neg-mod" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>Add[Rhs, Output]</code></strong>: <code>__add__(self, other: Rhs) -&gt; Output</code></li>
-<li><strong><code>Sub[Rhs, Output]</code></strong>: <code>__sub__(self, other: Rhs) -&gt; Output</code></li>
-<li><strong><code>Mul[Rhs, Output]</code></strong>: <code>__mul__(self, other: Rhs) -&gt; Output</code></li>
-<li><strong><code>Div[Rhs, Output]</code></strong>: <code>__div__(self, other: Rhs) -&gt; Output</code></li>
-<li><strong><code>Neg[Output]</code></strong>: <code>__neg__(self) -&gt; Output</code></li>
-<li><strong><code>Mod[Rhs, Output]</code></strong>: <code>__mod__(self, other: Rhs) -&gt; Output</code></li>
-</ul>
+<p>Operator traits are capability contracts. Dunder methods are the implementation hooks that satisfy those contracts.</p>
+<p>The surface follows a split model: dunder methods are the implementation surface, while traits are the nominal capability vocabulary.</p>
+<p>A type may also define a dunder hook directly. When a dunder-only implementation matches a standard operator protocol, the compiler may expose the corresponding trait view for generic reasoning.</p>
+<h2 id="binary-arithmetic">Binary arithmetic<a class="headerlink" href="#binary-arithmetic" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Trait</th>
+<th>Required hook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a + b</code></td>
+<td><code>Add[Rhs, Output]</code></td>
+<td><code>__add__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a - b</code></td>
+<td><code>Sub[Rhs, Output]</code></td>
+<td><code>__sub__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a * b</code></td>
+<td><code>Mul[Rhs, Output]</code></td>
+<td><code>__mul__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a / b</code></td>
+<td><code>Div[Rhs, Output]</code></td>
+<td><code>__div__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a // b</code></td>
+<td><code>FloorDiv[Rhs, Output]</code></td>
+<td><code>__floordiv__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a % b</code></td>
+<td><code>Mod[Rhs, Output]</code></td>
+<td><code>__mod__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a ** b</code></td>
+<td><code>Pow[Rhs, Output]</code></td>
+<td><code>__pow__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="unary-operators">Unary operators<a class="headerlink" href="#unary-operators" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Trait</th>
+<th>Required hook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-a</code></td>
+<td><code>Neg[Output]</code></td>
+<td><code>__neg__(self) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>~a</code></td>
+<td><code>Not[Output]</code></td>
+<td><code>__invert__(self) -&gt; Output</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>Not</code> names the nominal trait to stay aligned with Rust's <code>std::ops::Not</code>; its hook is <code>__invert__</code> because the operator surface is bitwise inversion.</p>
+<h2 id="bitwise-matrix-and-pipeline-operators">Bitwise, matrix, and pipeline operators<a class="headerlink" href="#bitwise-matrix-and-pipeline-operators" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Trait</th>
+<th>Required hook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a &gt;&gt; b</code></td>
+<td><code>Shr[Rhs, Output]</code></td>
+<td><code>__rshift__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a &lt;&lt; b</code></td>
+<td><code>Shl[Rhs, Output]</code></td>
+<td><code>__lshift__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a &amp; b</code></td>
+<td><code>BitAnd[Rhs, Output]</code></td>
+<td><code>__and__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a \| b</code></td>
+<td><code>BitOr[Rhs, Output]</code></td>
+<td><code>__or__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a ^ b</code></td>
+<td><code>BitXor[Rhs, Output]</code></td>
+<td><code>__xor__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a @ b</code></td>
+<td><code>MatMul[Rhs, Output]</code></td>
+<td><code>__matmul__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a \|&gt; b</code></td>
+<td><code>PipeForward[Rhs, Output]</code></td>
+<td><code>__pipe_forward__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>a &lt;\| b</code></td>
+<td><code>PipeBackward[Rhs, Output]</code></td>
+<td><code>__pipe_backward__(self, other: Rhs) -&gt; Output</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="indexing-hooks-in-the-operator-vocabulary">Indexing hooks in the operator vocabulary<a class="headerlink" href="#indexing-hooks-in-the-operator-vocabulary" title="Permanent link">&para;</a></h2>
+<p>Indexing dunders are part of the operator protocol vocabulary:</p>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Trait</th>
+<th>Required hook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>obj[key]</code></td>
+<td><code>GetItem[Key, Output]</code></td>
+<td><code>__getitem__(self, key: Key) -&gt; Output</code></td>
+</tr>
+<tr>
+<td><code>obj[key] = value</code></td>
+<td><code>SetItem[Key, Value]</code></td>
+<td><code>__setitem__(self, key: Key, value: Value) -&gt; None</code></td>
+</tr>
+</tbody>
+</table>
+<p>The existing <code>std.traits.indexing</code> module still exposes <code>Index[K, V]</code>, <code>IndexMut[K, V]</code>, and <code>Sliceable[T]</code> for the older indexing-specific vocabulary. See <a href="../indexing_and_slicing/">Indexing and slicing</a>.</p>
+<h2 id="compound-assignment">Compound assignment<a class="headerlink" href="#compound-assignment" title="Permanent link">&para;</a></h2>
+<p>Current compound assignment syntax covers <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code>.</p>
+<p>Compound assignment first resolves an explicit in-place operator hook when present, then falls back to ordinary binary operator assignment.</p>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Explicit trait</th>
+<th>Explicit hook</th>
+<th>Fallback</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a += b</code></td>
+<td><code>AddAssign[Rhs, Output]</code></td>
+<td><code>__iadd__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a + b</code></td>
+</tr>
+<tr>
+<td><code>a -= b</code></td>
+<td><code>SubAssign[Rhs, Output]</code></td>
+<td><code>__isub__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a - b</code></td>
+</tr>
+<tr>
+<td><code>a *= b</code></td>
+<td><code>MulAssign[Rhs, Output]</code></td>
+<td><code>__imul__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a * b</code></td>
+</tr>
+<tr>
+<td><code>a /= b</code></td>
+<td><code>DivAssign[Rhs, Output]</code></td>
+<td><code>__idiv__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a / b</code></td>
+</tr>
+<tr>
+<td><code>a //= b</code></td>
+<td><code>FloorDivAssign[Rhs, Output]</code></td>
+<td><code>__ifloordiv__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a // b</code></td>
+</tr>
+<tr>
+<td><code>a %= b</code></td>
+<td><code>ModAssign[Rhs, Output]</code></td>
+<td><code>__imod__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a % b</code></td>
+</tr>
+<tr>
+<td><code>a @= b</code></td>
+<td><code>MatMulAssign[Rhs, Output]</code></td>
+<td><code>__imatmul__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a @ b</code></td>
+</tr>
+<tr>
+<td><code>a &amp;= b</code></td>
+<td><code>BitAndAssign[Rhs, Output]</code></td>
+<td><code>__iand__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a &amp; b</code></td>
+</tr>
+<tr>
+<td><code>a \|= b</code></td>
+<td><code>BitOrAssign[Rhs, Output]</code></td>
+<td><code>__ior__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a \| b</code></td>
+</tr>
+<tr>
+<td><code>a ^= b</code></td>
+<td><code>BitXorAssign[Rhs, Output]</code></td>
+<td><code>__ixor__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a ^ b</code></td>
+</tr>
+<tr>
+<td><code>a &lt;&lt;= b</code></td>
+<td><code>ShlAssign[Rhs, Output]</code></td>
+<td><code>__ilshift__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a &lt;&lt; b</code></td>
+</tr>
+<tr>
+<td><code>a &gt;&gt;= b</code></td>
+<td><code>ShrAssign[Rhs, Output]</code></td>
+<td><code>__irshift__(self, other: Rhs) -&gt; Output</code></td>
+<td><code>a = a &gt;&gt; b</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="comparisons">Comparisons<a class="headerlink" href="#comparisons" title="Permanent link">&para;</a></h2>
+<p>Comparison fallback behavior is deliberately explicit: fallback must be defined by traits or user dunders. The compiler does not synthesize hidden comparison hooks merely because a related hook exists.</p>
+<p>The comparison traits are declared with the derive-facing comparison family, not in <code>std.traits.ops</code>.
+Use <code>std.derives.comparison.Eq</code> for <code>==</code> / <code>!=</code> and <code>std.derives.comparison.Ord</code> for <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, and <code>&gt;=</code>.
+Their default methods define the fallback behavior directly.</p>
 
 
 
