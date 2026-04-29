@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../cli_reference/">
+        <link rel="prev" href="../checked_api_metadata/">
       
       
         <link rel="next" href="../lsp_protocol_support/">
@@ -3282,6 +3282,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -3324,6 +3328,48 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
   </span>
   
 
@@ -3455,6 +3501,15 @@
   <a href="#toolincanenvs" class="md-nav__link">
     <span class="md-ellipsis">
       [tool.incan.envs]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#toolincanmetadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      [tool.incan.metadata]
     </span>
   </a>
   
@@ -4732,6 +4787,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#toolincanmetadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      [tool.incan.metadata]
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vocab" class="md-nav__link">
     <span class="md-ellipsis">
       [vocab]
@@ -5032,6 +5096,29 @@ incan<span class="w"> </span>env<span class="w"> </span>show<span class="w"> </s
 incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>release<span class="w"> </span>build
 </code></pre></div>
 <p>See <a href="../../../language/reference/project_lifecycle/">Project lifecycle reference</a> for merge and resolution rules.</p>
+<h2 id="toolincanmetadata"><code>[tool.incan.metadata]</code><a class="headerlink" href="#toolincanmetadata" title="Permanent link">&para;</a></h2>
+<p>Checked contract metadata settings for project-declared model bundles.</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.metadata]</span>
+<span class="n">model-bundles</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;contracts/order_summary.json&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model-bundles</code></td>
+<td>list of strings</td>
+<td>Canonical model bundle JSON files to validate, materialize during build/run, embed into <code>.incnlib</code> artifacts when publishable, and expose through <code>incan tools metadata model</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Bundle paths are resolved relative to the project root unless absolute. See <a href="../contract_metadata/">Checked contract metadata</a> for the bundle schema and tooling commands.</p>
 <h2 id="vocab"><code>[vocab]</code><a class="headerlink" href="#vocab" title="Permanent link">&para;</a></h2>
 <p>Optional companion crate configuration for library-defined DSL metadata.</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[vocab]</span>

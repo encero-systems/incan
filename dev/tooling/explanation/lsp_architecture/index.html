@@ -3331,6 +3331,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -3373,6 +3377,48 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
   </span>
   
 
@@ -4467,7 +4513,10 @@
 <li>lexer errors (tokenization failures)</li>
 <li>parser errors (syntax errors)</li>
 <li>type errors (type mismatches, unknown symbols, etc.)</li>
+<li>checked public API metadata hover previews when typechecking succeeds</li>
+<li>Contract-backed model emit through <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code></li>
 </ul>
+<p>The LSP keeps checked API metadata in memory for hover. Full checked API metadata package retrieval remains a CLI surface through <code>incan tools metadata api</code>. Contract model emit can inspect project bundle metadata, bundle JSON files, or <code>.incnlib</code> artifacts through the explicit <code>incan.metadata.model.emit</code> command.</p>
 
 
 

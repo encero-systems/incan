@@ -14,7 +14,7 @@
         <link rel="prev" href="../../explanation/lsp_architecture/">
       
       
-        <link rel="next" href="../project_configuration/">
+        <link rel="next" href="../contract_metadata/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -3282,6 +3282,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -3491,6 +3495,24 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata api
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata model
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3536,6 +3558,48 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -4705,6 +4769,24 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata api
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata model
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4798,7 +4880,7 @@
 <li><code>version</code> - Update the project version in <code>incan.toml</code></li>
 <li><code>env</code> - List, inspect, or run configured project environments</li>
 <li><code>lock</code> - Generate or update <code>incan.lock</code></li>
-<li><code>tools</code> - Inspect local toolchain and editor integration state</li>
+<li><code>tools</code> - Inspect local toolchain, editor integration state, and checked metadata</li>
 </ul>
 <h2 id="global-options">Global options<a class="headerlink" href="#global-options" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5152,6 +5234,51 @@ inputs. Commit it to version control for reproducible builds.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
 incan<span class="w"> </span>tools<span class="w"> </span>doctor<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
+<h3 id="incan-tools-metadata-api"><code>incan tools metadata api</code><a class="headerlink" href="#incan-tools-metadata-api" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools metadata api [PATH] [OPTIONS]
+</code></pre></div>
+<p>Emits checked public API metadata for an Incan source file or project directory. The command parses and type-checks the target before producing JSON, so the output describes the checked API surface rather than source text alone.</p>
+<p>If <code>PATH</code> is omitted, the current directory is inspected. If <code>PATH</code> is a directory, <code>src/lib.incn</code> is preferred and <code>src/main.incn</code> is used as a fallback.</p>
+<p>This command is source/project inspection, not artifact inspection. It does not build the project, emit generated Rust, or read an existing <code>.incnlib</code>; use <code>incan build --lib</code> for library artifact emission.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format json</code>: Output checked API metadata JSON (default).</li>
+</ul>
+<p>The JSON package contains:</p>
+<ul>
+<li><code>schema_version</code>: numeric schema version for the package payload</li>
+<li><code>package</code>: project name and version from <code>incan.toml</code>, when available</li>
+<li><code>modules</code>: checked metadata documents for the entry module and imported local modules</li>
+<li><code>declarations</code>: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, and public import aliases</li>
+<li><code>anchor</code>: stable declaration ids plus source byte spans</li>
+<li><code>docstring</code>: raw declaration or method docstring text when present</li>
+<li><code>docstring_sections</code>: parsed summary, parameter, return, field, alias, and decorator sections when a docstring is present</li>
+<li><code>decorators</code>: resolved decorator paths and safe literal, type, or const-reference arguments</li>
+</ul>
+<p>Docstring validation is strict for mechanically checkable drift. If <code>Args:</code>, <code>Returns:</code>, <code>Fields:</code>, <code>Aliases:</code>, or <code>Decorators:</code> contradict checked source structure, the command reports diagnostics and does not print JSON.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api<span class="w"> </span>src/lib.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api<span class="w"> </span>path/to/project
+</code></pre></div>
+<p>See: <a href="../checked_api_metadata/">Checked API metadata</a> for the JSON contract.</p>
+<h3 id="incan-tools-metadata-model"><code>incan tools metadata model</code><a class="headerlink" href="#incan-tools-metadata-model" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools metadata model PATH MODEL [OPTIONS]
+</code></pre></div>
+<p>Emits one contract-backed model from project-declared bundle metadata, a bundle JSON file, or a built <code>.incnlib</code> artifact. <code>MODEL</code> may be the bundle <code>logical_type_name</code> or <code>stable_model_id</code>.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format incan</code>: Output formatted Incan <code>model</code> source (default).</li>
+<li><code>--format json</code>: Output the selected canonical model bundle JSON.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>.<span class="w"> </span>OrderSummary<span class="w"> </span>--format<span class="w"> </span>incan
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>contracts/order_summary.json<span class="w"> </span>orders.summary<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>target/lib/orders.incnlib<span class="w"> </span>OrderSummary
+</code></pre></div>
+<p>See: <a href="../contract_metadata/">Checked contract metadata</a> for bundle schema, materialization, artifact inspection, and the matching LSP command.</p>
 <h2 id="outputs-and-paths">Outputs and paths<a class="headerlink" href="#outputs-and-paths" title="Permanent link">&para;</a></h2>
 <p>Build outputs:</p>
 <ul>

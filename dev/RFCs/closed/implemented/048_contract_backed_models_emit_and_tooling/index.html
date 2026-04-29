@@ -1,0 +1,5344 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 048: Checked contract metadata, Incan emit, and interrogation tooling - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-048-checked-contract-metadata-incan-emit-and-interrogation-tooling" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 048: Checked contract metadata, Incan emit, and interrogation tooling
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="purple" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_14">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_14" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_14" id="__nav_3_5_14_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_14">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6_2_1" id="__nav_6_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_6_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation (precise rules)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#canonical-model-description" class="md-nav__link">
+    <span class="md-ellipsis">
+      Canonical model description
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-api-metadata-description" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checked API metadata description
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#artifact-introspection-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Artifact introspection contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#materialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Materialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#projection-and-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      Projection and emit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#determinism" class="md-nav__link">
+    <span class="md-ellipsis">
+      Determinism
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tooling-lsp" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tooling (LSP)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interop
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-handwritten-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to handwritten model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#authoring-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Authoring surface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identity-and-versioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      Identity and versioning
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-existing-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with existing features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility / migration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#companion-specifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      Companion specifications
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-metadata-contract-and-shared-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Metadata contract and shared vocabulary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-canonical-model-validation-and-materialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Canonical model validation and materialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-artifact-embedding-and-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Artifact embedding and inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-deterministic-model-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Deterministic model emit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-checked-api-metadata-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Checked API metadata extraction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-cli-and-editor-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 6: CLI and editor tooling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-7-tests-docs-and-release-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 7: Tests, docs, and release integration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation log
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation log">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / lifecycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Metadata contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#canonical-model-materialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Canonical model materialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#artifact-introspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Artifact introspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emit-and-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Emit and formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-api-metadata-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checked API metadata extraction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-lsp" class="md-nav__link">
+    <span class="md-ellipsis">
+      CLI / LSP
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-048-checked-contract-metadata-incan-emit-and-interrogation-tooling">RFC 048: Checked contract metadata, Incan emit, and interrogation tooling<a class="headerlink" href="#rfc-048-checked-contract-metadata-incan-emit-and-interrogation-tooling" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2026-03-30</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 021 (model field metadata and aliases)</li>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 015 (project lifecycle and CLI tooling)</li>
+<li>RFC 031 (library system phase 1)</li>
+<li>RFC 034 (<code>incan.pub</code> registry)</li>
+<li>RFC 082 (checked API documentation generation)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/205, https://github.com/dannys-code-corner/incan/issues/438</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> v0.3.0-dev.20</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC defines a shared checked metadata inspection layer for Incan contracts. It covers two related surfaces: canonical, machine-readable descriptions of row-shaped types that can materialize as nominal <code>model</code> types, and checked public API metadata extracted from source declarations for documentation and downstream tooling. Incan <code>model</code> is the language's human-facing universal data-shape surface, so the toolchain must be able to take canonical structural descriptions, materialize equivalent nominal types during compilation, guarantee the same interrogation and reflection story as handwritten models for the covered subset, and emit formatted Incan source as the readable view of those model contracts. The same inspection architecture must also expose checked package API structure such as public declarations, signatures, decorators, aliases, docstrings, field metadata, safe constant metadata, and stable anchors as machine-readable JSON. This RFC does not standardize mutable governance or SLA policy, hosted documentation generation, or product-specific renderers; those remain separate concerns.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Checked metadata families</strong>: RFC 048 metadata includes canonical model bundles and checked API metadata documents. Both are compiler-validated, versioned, machine-readable descriptions of Incan-facing contracts.</li>
+<li><strong>Canonical model description</strong>: a versioned bundle names one row type and provides a complete, ordered field list with Incan field types, nullability, and optional field-level metadata aligned with RFC 021 where applicable.</li>
+<li><strong>Checked API metadata</strong>: a versioned document describes checked public source structure for documentation and tooling: package/module paths, public declarations, signatures, decorators with resolved arguments, aliases with resolved targets, parsed docstrings, relevant safe constants or metadata values, field docs/metadata, and stable anchors.</li>
+<li><strong>Artifact contract</strong>: supported build and packaging flows may persist RFC 048 metadata into built artifacts so downstream tooling can inspect public contracts without requiring the original <code>.incn</code> source checkout.</li>
+<li><strong>Materialization</strong>: at compile time, the implementation registers a nominal type derived from a supported model bundle so uses of the type behave like a handwritten <code>model</code> of the same shape for typing, lowering, and reflection within the guarantees of this RFC.</li>
+<li><strong>Projection</strong>: model bundles must be projectable to valid formatted Incan <code>model</code> source. Checked API metadata must be projectable to a stable JSON document that renderers and downstream tools can consume. RFC 082 defines checked API documentation generation on top of this metadata, but JSON remains the stable machine-readable layer owned by this RFC.</li>
+<li><strong>Tooling</strong>: the same checked metadata pipeline must be available to CLI, artifact-inspection tooling, and LSP, or equivalent editor integration, through documented commands so users can preview, emit, inspect, or render contracts without separate ad hoc extractors.</li>
+<li><strong>Scope boundary</strong>: this RFC defines the checked metadata contract plus how Incan consumes, embeds, interrogates, and projects it once available. It does not introduce a new <code>.incn</code> syntax for declaring bundles inline, does not make Incan own every documentation renderer, and leaves producer-specific ways to obtain bundles in companion-spec territory.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Handwritten <code>model</code> types are the most readable contract Incan offers, but many systems already carry row shape in serialized or generated form, such as schemas, plan outputs, and registry artifacts. Turning that shape into a real Incan type often means duplicate maintenance or external codegen that drifts from the canonical bundle.</p>
+<p>That readability point matters because <code>model</code> is not merely a storage-schema helper. It is Incan’s universal structural data shape across pipelines, APIs, events, and other typed boundaries. If the canonical contract exists only as machine metadata, then the language loses its best human-facing representation exactly where people need to review and trust it.</p>
+<p>That problem becomes sharper once source code is no longer the thing being distributed. In a marketplace or registry flow, users may browse or download built artifacts rather than a source repository. If the contract only exists in handwritten source or ad hoc sidecar files, then the most important review surface disappears exactly where discovery and trust matter most.</p>
+<p>Authors, reviewers, and consumers therefore need a human-readable view of the structural contract inside the language, not only in YAML or binary interchange, so diffs, code review, marketplace inspection, and governance workflows stay idiomatic Incan.</p>
+<p>The same gap exists for public APIs. Incan already has public declarations, typed signatures, decorators, docstrings, exports, aliases, constants, and library manifests, but without a first-class checked metadata surface, downstream tools either scrape source text, inspect generated Rust, or duplicate compiler logic. That is fragile for ordinary documentation tooling and worse for higher-level query, catalog, or package-browser consumers, which need checked answers about registered functions, decorator arguments, aliases, and parsed docstrings without baking product-specific catalog concepts into the compiler.</p>
+<p>Finally, when a user is iterating on a pipeline-shaped or dataset-shaped surface, they should be able to materialize the output row type as Incan with minimal friction, including from the editor, to validate shape, attach tests, or align with policy, while that same canonical metadata remains suitable for later post-build interrogation.</p>
+<p>The RFC also needs a clear lifecycle boundary. Structural schema changes require rebuilds because they affect typing and code generation. Governance and contract policy changes such as PII tags, retention windows, or SLAs often do not. Those are expected to evolve independently and should not be frozen into the artifact-level structural contract defined here.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Make canonical model metadata durable enough to be embedded in, or shipped alongside, supported built artifacts so downstream tools can inspect model contracts without original source.</li>
+<li>Define normative guarantees for contract-backed nominal types: typing, lowering, and interrogation must match equivalent handwritten models for the covered field subset.</li>
+<li>Require deterministic emit: the same canonical input and emitter version must yield the same formatted Incan output within the rules this RFC fixes for naming and field order.</li>
+<li>Require tooling parity: CLI, artifact-inspection tools, and LSP, or a documented editor protocol, must expose actions to emit or preview Incan model source from the same canonical bundle contract.</li>
+<li>Define a stable checked API metadata JSON output for public API documentation and inspection tooling.</li>
+<li>Include enough checked structure for downstream renderers to describe public declarations, signatures, decorators with resolved arguments, aliases, relevant safe constants or metadata values, parsed docstrings, field metadata, and stable source anchors.</li>
+<li>Require mechanically checkable documentation validation, so stale docstring parameter, return, or field sections produce actionable diagnostics rather than silently drifting from checked source.</li>
+<li>Align field-level metadata in the canonical bundle with RFC 021 semantics where both apply, so governance and aliases do not fork between “source” and “contract” paths.</li>
+<li>Keep the structural contract layer narrow and stable enough that mutable runtime governance or SLA systems can enrich it later without redefining the artifact format.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Specifying the full type inference algorithm for arbitrary relational pipelines in host libraries. Companion specifications may define how a host produces a canonical bundle for a given pipeline. This RFC defines what Incan does once a bundle is available and how tooling surfaces emit.</li>
+<li>Reconstructing model source from arbitrary machine code, backend types, or stripped binaries that do not carry this RFC’s canonical contract metadata.</li>
+<li>Standardizing runtime governance, classification, retention, ownership, or SLA refresh semantics. Those are related but distinct concerns and may be supplied by external systems or future RFCs.</li>
+<li>Owning full hosted documentation-site generation in the compiler. The compiler/tooling responsibility is stable checked metadata extraction; RFC 082 owns checked API documentation generation, while hosted sites and product renderers remain downstream concerns.</li>
+<li>Baking query-language-specific catalog concepts into Incan. Downstream query tools may consume RFC 048 metadata, but their catalog models are outside this RFC.</li>
+<li>Copying rustdoc, Griffe, or another documentation tool wholesale. Prior art motivates the direction, but Incan needs its own checked metadata contract.</li>
+<li>Executing user code to discover documentation metadata. Extraction must use parsed, resolved, typechecked, and compiler-safe constant metadata only.</li>
+<li>Perfect round-trip of comments, import organization, or author-only formatting that is not represented in the canonical bundle.</li>
+<li><strong>Runtime-only</strong> row types with <strong>no</strong> compile-time registration: this RFC targets <strong>compiled</strong> nominal types.</li>
+<li>Replacing handwritten <code>model</code> as the primary authoring style. Contract-backed materialization is an additional path.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Authors and platform integrators treat a canonical row description as the source of truth for identity and interchange. The Incan toolchain can use that description in two main places: during compilation, to materialize a real nominal type, and after packaging, to inspect the contract carried by a built artifact.</p>
+<p>When someone needs to read or review the shape, they run emit through the CLI, an artifact browser, or an editor command. The tool prints or inserts formatted Incan, the same <code>model</code> surface they already use for pipeline, application, and contract authoring, instead of a parallel YAML dialect.</p>
+<p>A producer might provide a canonical bundle for a public order-summary row. The emitted Incan view is ordinary model source:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">OrderSummary</span><span class="p">:</span>
+    <span class="n">order_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable order identifier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;orderId&quot;</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">customer_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable customer identifier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;customerId&quot;</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">total_cents</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">coupon_code</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+<p>That source is reviewable, can be pasted into tests or documentation, and should format the same way as a handwritten <code>model</code>. It is still a projection of the canonical bundle: changing the emitted source alone does not update the producer's contract unless the producer deliberately accepts that source as input through some companion workflow.</p>
+<p>That means a registry or marketplace can show a user the contract for a published package artifact by reading embedded canonical metadata and rendering it as Incan <code>model</code> source. This is not reverse-engineering arbitrary binaries. It is a stable metadata contract that the build pipeline chose to ship.</p>
+<p>The same inspection path should let documentation tooling ask checked questions about public API declarations. For example, a package might define a reusable aggregate function with a docstring, aliases, and a decorator argument that resolves to a checked constant:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">AVG</span> <span class="o">=</span> <span class="s2">&quot;avg&quot;</span>
+
+<span class="nd">@aggregate</span><span class="p">(</span><span class="nc">AVG</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">avg</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Return the arithmetic mean.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        values: Input values.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Mean value.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>The checked API metadata JSON should describe <code>avg</code> as a public function, include its signature, identify the <code>aggregate</code> decorator, record that <code>AVG</code> resolves to the checked constant value <code>"avg"</code> when that value is safe to expose, include aliases that resolve to <code>avg</code>, and carry the parsed docstring sections. A downstream renderer can turn that JSON into Markdown, HTML, a query-language function catalog, or a package-browser card without reimplementing Incan name resolution or scraping generated Rust.</p>
+<p>This view is intentionally the structural contract view. A registry or governance portal may choose to enrich that rendered model with live policy data such as PII classification, retention, freshness SLAs, or ownership, but those are adjacent runtime layers, not the embedded structural bundle itself.</p>
+<p>The guaranteed editor workflow starts from a materialized model symbol already known to the compiler. A companion producer such as a query or pipeline tool may later define richer contexts, such as “generate output model from selected pipeline,” but those host-specific entry points are extensions on top of this RFC’s core contract, not prerequisites for it.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="canonical-model-description">Canonical model description<a class="headerlink" href="#canonical-model-description" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A canonical description must include a logical type name, a format or schema version, and an ordered list of fields.</li>
+<li>A publishable canonical description must also include an artifact-facing stable model id. The logical type name is the Incan spelling; the stable model id is the cross-version handle used by artifacts, registries, and compatibility tooling.</li>
+<li>Each field must carry a field name, an Incan type, or a documented mapping into an Incan type before registration, and nullability consistent with Incan’s model rules.</li>
+<li>Field entries may carry metadata keys and values compatible with RFC 021. If present, materialized types must expose the same metadata through the same reflection APIs as handwritten models.</li>
+<li>A canonical description must be complete for the fields it claims to describe. Bundles with unknown, opaque, or host-only field types are not supported by this RFC’s materialization path and must be rejected with a diagnostic rather than partially registered.</li>
+<li>The bundle format may include optional provenance or lineage metadata, but such metadata is non-semantic for type identity unless a companion specification explicitly says otherwise.</li>
+<li>The canonical description defined by this RFC is a structural contract only. It describes schema shape and stable field metadata, not mutable runtime governance or operational SLA state.</li>
+</ul>
+<h3 id="checked-api-metadata-description">Checked API metadata description<a class="headerlink" href="#checked-api-metadata-description" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A checked API metadata document must be produced from parsed and typechecked Incan semantics, not from generated Rust and not from source-text scraping alone.</li>
+<li>The document must include a metadata schema version, package identity when available, module paths, and stable declaration anchors for public API items.</li>
+<li>The document must include public functions and methods, public models/classes/traits/enums/newtypes/type aliases, exported constants or statics that are relevant to exposed metadata, and public aliases with their resolved targets.</li>
+<li>Function and method entries must include checked signatures: parameter names and types, return type, type parameters, and bounds where available.</li>
+<li>Type entries must include checked field/member information relevant to documentation and inspection. Model fields must include RFC 021-compatible field metadata and field documentation where available.</li>
+<li>Decorator entries must include the resolved decorator path or identity, and must include checked argument structure where the argument can be represented without executing user code.</li>
+<li>Constants and metadata values exposed through this document must be limited to compiler-known safe values such as literals, checked constant expressions, and structured metadata already accepted by the frontend. The extractor must not run arbitrary code to compute documentation output.</li>
+<li>Docstrings must be parsed according to Incan documentation standards. Mechanically checkable sections, such as documented parameters, returns, and fields, must be validated against checked signatures or fields.</li>
+<li>If a docstring claims parameters, returns, fields, aliases, or decorator metadata that contradict checked source structure, the command must report actionable diagnostics. Strict extraction modes should fail on those diagnostics; non-strict renderers may still consume partial metadata when explicitly configured to do so.</li>
+</ul>
+<h3 id="artifact-introspection-contract">Artifact introspection contract<a class="headerlink" href="#artifact-introspection-contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Artifact introspection is required for Incan library and package artifacts that claim RFC 048 support. It is not required for arbitrary standalone compiled binaries unless another RFC defines how those binaries embed the same metadata contract.</li>
+<li>Supported build or packaging flows may embed RFC 048 metadata into a produced artifact or package payload in a documented location and encoding.</li>
+<li>For package-style artifacts, the <code>.incnlib</code> manifest is the discovery document. RFC 048 model bundles and checked API metadata must be carried inside that manifest, either directly as typed entries or through manifest entries that losslessly reference embedded payloads. A second sidecar file must not be required for ordinary package introspection.</li>
+<li>Publishable artifact metadata must include public or exported contract-backed models plus models explicitly selected for publication by a producer or build integration. Private compiler-temporary materialized models must not be published by default.</li>
+<li>Any artifact that claims support for RFC 048 introspection must carry the relevant metadata verbatim, or in a losslessly recoverable container form.</li>
+<li>Artifact-level inspection must operate on embedded RFC 048 metadata, not on reverse-engineering emitted machine code or inferred backend layout.</li>
+<li>If an artifact does not carry RFC 048 metadata, tooling must report that the artifact is not introspectable under this contract rather than fabricating a best-effort reconstruction.</li>
+<li>Artifact introspection under this RFC must not be interpreted as a promise that live governance, ownership, or SLA policy can be recovered from the artifact unless another specification explicitly embeds such runtime layers.</li>
+</ul>
+<h3 id="materialization">Materialization<a class="headerlink" href="#materialization" title="Permanent link">&para;</a></h3>
+<ul>
+<li>For every supported canonical bundle in scope of a compilation, the implementation must introduce a nominal type that:</li>
+<li>participates in name resolution and generic instantiation like a declared <code>model</code> of the same field layout;</li>
+<li>lowers with the same structural guarantees as an equivalent handwritten <code>model</code> for those fields;</li>
+<li>supports the same interrogation APIs, such as field lists and schema-oriented accessors, as documented for handwritten models for the covered subset.</li>
+<li>If a bundle is ill-typed or incompatible with the containing program, the implementation must emit diagnostics at compile time and must not silently drop fields.</li>
+<li>If a bundle’s logical type name collides with a user-declared type or another materialized type visible in the same compilation scope, the implementation must raise a hard compile-time error. This RFC does not define automatic mangling, shadowing, or hidden aliases.</li>
+<li>A bundle without an artifact-facing stable model id may still be materialized for compiler-validated transient workflows, but it is not publishable artifact metadata under this RFC.</li>
+</ul>
+<h3 id="projection-and-emit">Projection and emit<a class="headerlink" href="#projection-and-emit" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Emit must produce syntactically valid Incan declaring a <code>model</code> whose field set and types correspond to the bundle.</li>
+<li>Emit must use the project formatter conventions so output matches <code>make fmt</code>, or documented formatter behavior, for the same Incan version.</li>
+<li>Field order in emitted source must follow the canonical order in the bundle.</li>
+<li>Emit must not invent or rewrite semantic metadata that is not present in the canonical bundle.</li>
+<li>Emit need not preserve comments or non-contract attributes. Documentation should list what is lossy.</li>
+<li>Checked API metadata extraction must produce stable JSON. RFC 082 may define Markdown, local HTML, or package docs artifacts over that metadata, but those formats are renderers over the checked metadata model rather than the normative metadata contract.</li>
+<li>API metadata projection must preserve Incan source concepts: public/exported declaration identity, checked signatures, docstrings, decorators, aliases, and safe metadata values. It must not substitute generated Rust names or lowering artifacts as the primary API contract.</li>
+</ul>
+<h3 id="determinism">Determinism<a class="headerlink" href="#determinism" title="Permanent link">&para;</a></h3>
+<ul>
+<li>For a fixed canonical bundle, emitter version, and formatter version, repeated emit must yield identical output, including stable naming, spacing, and field order under the chosen rule.</li>
+</ul>
+<h3 id="tooling-lsp">Tooling (LSP)<a class="headerlink" href="#tooling-lsp" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implementations must provide:</li>
+<li>at least one CLI command that emits Incan source for a named contract-backed model available to the build;</li>
+<li>at least one CLI, or equivalently documented tooling path, that emits Incan source from a supported built artifact carrying RFC 048 metadata;</li>
+<li>at least one CLI command or documented tooling path that extracts checked public API metadata as JSON from a package or source root after parsing and typechecking;</li>
+<li>at least one editor-accessible command that invokes the same emit pipeline for a selected or resolved materialized model symbol.</li>
+<li>Implementations should expose editor-accessible checked metadata for selected public declarations where practical, so LSP clients can preview docs, decorators, aliases, source anchors, and signatures through the same model as CLI extraction.</li>
+<li>Companion specifications may define additional editor contexts that first compute a canonical bundle from a host surface and then feed that bundle through the same emit pipeline. Such extensions must not weaken this RFC’s determinism or diagnostics rules.</li>
+<li>When emit is not available for the current context, whether because of an unsupported construct, an ambiguous symbol, an unavailable bundle, or an artifact without embedded metadata, the implementation must surface a clear diagnostic rather than fail silently.</li>
+<li>Commands that accept external bytes must document trust boundaries. Default behavior should prefer in-memory bundles that are already validated by the compiler or by a trusted host.</li>
+</ul>
+<h3 id="interop">Interop<a class="headerlink" href="#interop" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Materialized types must follow the same interop rules as equivalent handwritten models, within the limits of the represented field set.</li>
+</ul>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="relationship-to-handwritten-model">Relationship to handwritten <code>model</code><a class="headerlink" href="#relationship-to-handwritten-model" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Handwritten <code>model</code> remains the authoring default. Contract-backed types are additional symbols that must not change the meaning of existing declarations.</li>
+<li>If a name collision occurs between a materialized type and a user-declared type, the language must issue a hard error.</li>
+</ul>
+<h3 id="authoring-surface">Authoring surface<a class="headerlink" href="#authoring-surface" title="Permanent link">&para;</a></h3>
+<ul>
+<li>This RFC introduces no new Incan source syntax for inline bundle declarations, external bundle includes, or contract-backed <code>model</code> stubs.</li>
+<li>This RFC does not introduce new documentation syntax beyond parsing existing Incan docstrings and field metadata according to documented standards.</li>
+<li>Bundle ingress is an implementation and tooling concern. A build, host integration, compiler-facing API, or artifact metadata reader makes canonical bundles available to the compilation or inspection tool, and this RFC specifies the behavior after that point.</li>
+<li>Future RFCs may add explicit source-level declaration syntax, but such syntax is not required to implement materialization, emit, or tooling parity under this RFC.</li>
+</ul>
+<h3 id="identity-and-versioning">Identity and versioning<a class="headerlink" href="#identity-and-versioning" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Canonical bundles must carry a logical type name and a format version.</li>
+<li>Publishable canonical bundles must carry a stable model id that remains the same across compatible revisions of the same conceptual model. The stable model id may be producer-supplied or derived from package identity plus exported model path, but the derivation must be documented and deterministic.</li>
+<li>Artifact-facing compatibility tooling should use the stable model id to compare the same model across package versions, and should use bundle content or field-level metadata to determine the actual shape delta.</li>
+<li>Checked API metadata documents must carry their own schema version and should provide stable anchors derived from package/module/declaration identity rather than line numbers alone.</li>
+<li>Emitter and materialization must not silently ignore version fields when they affect field layout.</li>
+</ul>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Type identity for contract-backed models is determined by the compilation-visible logical type name plus the accepted bundle contents under the active bundle format version.</li>
+<li>Optional provenance metadata may help tooling explain where a bundle came from, but it must not change emitted field order, emitted field spelling, or reflection results for represented fields.</li>
+<li>Emitted Incan source is a readable projection of canonical bundle metadata. It is not the source of truth and does not imply that the original authored source file existed or is available.</li>
+<li>Checked API metadata is an inspection contract, not a runtime reflection promise. Runtime APIs such as <code>__fields__()</code> may expose a subset of the same facts, but RFC 048 extraction is allowed to include compile-time-only data such as docstrings, source anchors, resolved decorators, and checked constants.</li>
+<li>Structural contract metadata is expected to be build-stable. Runtime governance or SLA metadata is expected to evolve on a different lifecycle and is therefore outside the type identity and emit guarantees of this RFC.</li>
+</ul>
+<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>RFC 021</strong>: field metadata present in a bundle must surface through the same reflection APIs and emitted syntax used for handwritten models.</li>
+<li><strong>RFC 005</strong>: interop behavior for materialized models must match equivalent handwritten models for the represented field set.</li>
+<li><strong>RFC 015</strong>: any CLI exposure for emit should fit existing project lifecycle and tooling conventions rather than inventing a disconnected formatter path.</li>
+<li><strong>RFC 031</strong>: package-style artifact inspection should extend the <code>.incnlib</code> manifest contract rather than inventing a separate package sidecar for ordinary metadata discovery.</li>
+<li><strong>RFC 034</strong>: registry or marketplace workflows may expose emitted Incan as the human-readable contract view for published artifacts that carry RFC 048 metadata.</li>
+<li><strong>RFC 082</strong>: checked API documentation generation consumes RFC 048 metadata. The compiler should own correctness of extracted checked facts and diagnostics, while RFC 082 owns documentation output contracts and hosted documentation remains downstream.</li>
+<li><strong>Governance / policy layers</strong>: runtime classifications, retention rules, ownership, and SLAs may enrich the structural model view in higher-level products, but they are not part of this RFC’s embedded structural contract unless a future RFC says otherwise.</li>
+<li><strong>Companion producer specs</strong>: query, catalog, or pipeline systems may define how canonical bundles are derived, named, rendered, and validated before they reach or after they leave Incan. Those specs are upstream or downstream of this RFC and must consume/produce metadata that satisfies this RFC’s completeness and determinism requirements when they participate in RFC 048 tooling.</li>
+</ul>
+<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The feature is additive for existing handwritten Incan source.</li>
+<li>Projects adopting contract-backed models should treat emitted Incan as a reviewable artifact, not as a second source of truth. The canonical bundle remains authoritative for the materialized path.</li>
+<li>Projects that want artifact-time inspection must ensure their packaging flow preserves RFC 048 metadata in supported build outputs.</li>
+<li>Projects adopting checked API metadata extraction should treat generated docs as derived output from the JSON inspection model, not as a replacement for checked source.</li>
+<li>Because this RFC rejects partial or opaque bundles, existing producer integrations may need to tighten their schema export before they can participate in materialization.</li>
+<li>Teams that already maintain separate runtime governance systems do not need to freeze those systems into RFC 048 bundles. They can continue treating artifact introspection and live policy enrichment as separate layers.</li>
+</ul>
+<h3 id="companion-specifications">Companion specifications<a class="headerlink" href="#companion-specifications" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Host libraries or pipeline surfaces that produce canonical bundles should reference this RFC for Incan-side behavior and may define producer rules separately.</li>
+<li>Documentation renderers and catalogs that consume checked API metadata should reference this RFC for the extraction contract and RFC 082 for checked documentation generation behavior.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>YAML (or JSON) as the only human-readable contract</strong></li>
+<li>
+<p>Familiar for infra, but <strong>not</strong> Incan: review and diffs <strong>leave</strong> the language ecosystem; duplicate mental models.</p>
+</li>
+<li>
+<p><strong>External codegen only</strong></p>
+</li>
+<li>
+<p>Works without language changes but forks formatting rules, drifts from compiler upgrades, and weakens editor integration.</p>
+</li>
+<li>
+<p><strong>Reflection-only “anonymous” row types without nominal materialization</strong></p>
+</li>
+<li>
+<p>Insufficient for generic APIs, interop, and stable naming in large codebases.</p>
+</li>
+<li>
+<p><strong>Docs renderer as the compiler-owned contract</strong></p>
+</li>
+<li>
+<p>Rejected because Markdown, HTML, package cards, and query/catalog views are presentation concerns. The stable compiler/tooling contract is checked metadata extraction.</p>
+</li>
+<li>
+<p><strong>Library manifests only</strong></p>
+</li>
+<li>Rejected because manifests are necessary for dependency/import semantics, but public API documentation also needs docstrings, decorators, aliases, safe metadata values, and source anchors that should not be inferred by downstream source scraping.</li>
+</ol>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Two paths</strong> to the “same” shape, handwritten versus contract-backed, require discipline and clear diagnostics to avoid drift.</li>
+<li><strong>Artifact metadata retention</strong> increases packaging responsibility. Published outputs must carry canonical bundles if they want marketplace-grade introspection.</li>
+<li><strong>API metadata stability</strong> adds compatibility pressure. Once downstream docs tooling consumes a JSON shape, schema evolution needs versioning and migration guidance.</li>
+<li><strong>Docstring diagnostics</strong> can block documentation workflows if the checker is too strict. Implementations need a clear strictness policy so stale docs are caught without making exploratory work painful.</li>
+<li><strong>Layer separation</strong> means users may encounter both an embedded structural contract and separate live governance overlays. Products need to present that distinction clearly.</li>
+<li><strong>Deterministic emit</strong> can surprise authors who expect pretty custom ordering unless the rules are explicit.</li>
+<li><strong>Tooling surface area</strong> grows (commands, context detection, error messages).</li>
+</ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A single shared checked-metadata pipeline should feed materialization, model emit, API JSON extraction, CLI, artifact inspection, and LSP. Model bundle ingestion can normalize through a “bundle -&gt; normalized model -&gt; formatter/materializer” path, while source inspection can normalize through a “checked program -&gt; public API metadata -&gt; JSON/renderers” path. Both paths should share declaration/type/metadata vocabulary wherever practical so docs tooling, artifact browsers, and editor features do not diverge.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Language surface</strong>: this RFC should not require new user-facing syntax; contract-backed models remain a tooling and artifact capability built around ordinary <code>model</code> semantics.</li>
+<li><strong>Build / packaging</strong>: supported artifact formats that claim RFC 048 introspection must preserve RFC 048 metadata in a documented, versioned form so downstream tools can recover it losslessly.</li>
+<li><strong>Type system</strong>: registration of contract-backed nominal types must enforce completeness, collision errors, and parity with handwritten model interrogation for represented fields.</li>
+<li><strong>Shared model pipeline</strong>: materialization and emitted source should reuse the same normalized model shape used for handwritten <code>model</code> declarations wherever practical.</li>
+<li><strong>Checked API metadata extractor</strong>: tooling must extract public declarations, signatures, decorators, aliases, safe constants/metadata values, docstrings, field metadata, and stable anchors from checked Incan semantics.</li>
+<li><strong>Docstring validation</strong>: documentation-aware checks must compare mechanically checkable docstring sections against checked signatures and fields and emit actionable diagnostics on drift.</li>
+<li><strong>Formatter</strong>: emitted <code>model</code> text <strong>must</strong> be idempotent under the project formatter.</li>
+<li><strong>CLI / tooling</strong>: tooling must expose deterministic emit for named materialized model symbols, supported artifacts carrying embedded RFC 048 metadata, and checked public API metadata JSON extraction; it must document trust boundaries for any external bundle ingress.</li>
+<li><strong>LSP / tooling</strong>: editor commands must call the shared emit/inspection paths and must produce clear diagnostics when the current symbol, declaration, or context cannot provide valid metadata.</li>
+<li><strong>Registry / marketplace consumers</strong>: downstream viewers should treat emitted Incan and rendered docs as projections of embedded metadata and must not assume they were reconstructed from full source.</li>
+<li><strong>Documentation consumers</strong>: docs generators and downstream catalogs should consume the JSON inspection model rather than scraping Incan source or generated Rust.</li>
+<li><strong>Governance / runtime policy consumers</strong>: any higher-level system that overlays live classifications or SLAs onto an RFC 048 model view should identify those overlays as runtime data distinct from the embedded structural contract.</li>
+<li><strong>Stdlib / Runtime</strong>: reflection and metadata surfaces <strong>must</strong> stay consistent with RFC 021 for represented fields.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-metadata-contract-and-shared-vocabulary">Phase 1: Metadata contract and shared vocabulary<a class="headerlink" href="#phase-1-metadata-contract-and-shared-vocabulary" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Define the RFC 048 metadata schema families for canonical model bundles and checked API metadata documents, including schema versions, package identity, stable anchors, safe value representation, and diagnostics.</li>
+<li>Establish one compiler-facing normalized metadata vocabulary that can be serialized to JSON, persisted into package artifacts, and consumed by CLI and editor tooling.</li>
+<li>Keep bundle ingress out of the user-facing language syntax; host integrations, package readers, and compiler-facing APIs may supply validated bundles.</li>
+</ul>
+<h3 id="phase-2-canonical-model-validation-and-materialization">Phase 2: Canonical model validation and materialization<a class="headerlink" href="#phase-2-canonical-model-validation-and-materialization" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Validate canonical model bundles for logical type name, stable model id where publishable, format version, complete ordered fields, Incan type mappings, nullability, and RFC 021-compatible field metadata.</li>
+<li>Register accepted bundles as nominal model types in checked program state, with collision diagnostics and parity with handwritten model interrogation for represented fields.</li>
+<li>Reuse existing model lowering, interop, and reflection guarantees wherever practical so materialized models do not fork handwritten model behavior.</li>
+</ul>
+<h3 id="phase-3-artifact-embedding-and-inspection">Phase 3: Artifact embedding and inspection<a class="headerlink" href="#phase-3-artifact-embedding-and-inspection" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extend supported package/library artifact metadata so <code>.incnlib</code> is the ordinary discovery document for RFC 048 model bundles and checked API metadata.</li>
+<li>Preserve publishable public/exported contract-backed models and explicitly selected producer models in a lossless artifact representation.</li>
+<li>Add artifact inspection behavior that reports missing RFC 048 metadata clearly instead of attempting best-effort reconstruction from generated code.</li>
+</ul>
+<h3 id="phase-4-deterministic-model-emit">Phase 4: Deterministic model emit<a class="headerlink" href="#phase-4-deterministic-model-emit" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implement deterministic Incan model emit for validated canonical bundles, named materialized model symbols, and supported artifacts carrying RFC 048 metadata.</li>
+<li>Route emitted source through the project formatter path and preserve canonical field order, metadata syntax, logical names, aliases, and type spelling required by this RFC.</li>
+<li>Document lossy projection behavior for comments, imports, author-only formatting, and metadata that is not present in the canonical bundle.</li>
+</ul>
+<h3 id="phase-5-checked-api-metadata-extraction">Phase 5: Checked API metadata extraction<a class="headerlink" href="#phase-5-checked-api-metadata-extraction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extract checked public API structure from parsed and typechecked Incan semantics, including public declarations, signatures, models/classes/traits/enums/newtypes/type aliases, field metadata, docstrings, decorators, aliases, and stable anchors.</li>
+<li>Represent resolved decorator arguments, aliases, and relevant constants only when the compiler can expose checked safe values without executing user code.</li>
+<li>Validate mechanically checkable docstring sections against checked parameters, returns, fields, aliases, and decorator metadata, with strict and non-strict extraction behavior documented.</li>
+</ul>
+<h3 id="phase-6-cli-and-editor-tooling">Phase 6: CLI and editor tooling<a class="headerlink" href="#phase-6-cli-and-editor-tooling" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add CLI commands or documented tooling paths for model emit from compiler-visible symbols, model emit from supported artifacts, and checked API metadata JSON extraction from a package or source root.</li>
+<li>Add editor-accessible commands that invoke the same emit and inspection paths for resolved materialized model symbols and, where practical, selected public declarations.</li>
+<li>Surface diagnostics for unsupported contexts, ambiguous symbols, missing bundles, non-introspectable artifacts, and unsafe external bytes.</li>
+</ul>
+<h3 id="phase-7-tests-docs-and-release-integration">Phase 7: Tests, docs, and release integration<a class="headerlink" href="#phase-7-tests-docs-and-release-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add focused tests for schema validation, materialization, collision diagnostics, reflection parity, artifact persistence, deterministic emit, checked API JSON shape, decorator/constant/alias resolution, docstring diagnostics, CLI behavior, and at least one multi-module package.</li>
+<li>Update user-facing reference and tooling documentation for the new inspection and emit commands; do not treat the RFC alone as documentation.</li>
+<li>Bump the active development version and add release notes when implementation work lands on the dev line.</li>
+</ul>
+<h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
+<h3 id="spec-lifecycle">Spec / lifecycle<a class="headerlink" href="#spec-lifecycle" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Review RFC 048 after the checked API metadata scope was merged in and RFC 082 was split out as the documentation-generation layer.</li>
+<li>[x] Establish the active implementation boundary: RFC 048 owns checked metadata extraction, model emit, artifact inspection, CLI/editor tooling, and docstring diagnostics; RFC 082 owns generated documentation output contracts.</li>
+<li>[x] Keep issue #205 as the implementation tracker for RFC 048 and issue #438 as the adjacent checked API metadata extraction context.</li>
+</ul>
+<h3 id="metadata-contract">Metadata contract<a class="headerlink" href="#metadata-contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Define serializable schema types for canonical model bundles.</li>
+<li>[x] Define serializable schema types for checked API metadata JSON.</li>
+<li>[x] Define schema versioning and stable anchor rules.</li>
+<li>[x] Define safe value representation for decorator arguments, constants, and metadata values.</li>
+<li>[x] Add diagnostics for incomplete, unknown, opaque, or unsafe metadata values.</li>
+</ul>
+<h3 id="canonical-model-materialization">Canonical model materialization<a class="headerlink" href="#canonical-model-materialization" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Validate bundle logical type names, stable model ids, format versions, ordered fields, field types, nullability, and RFC 021-compatible metadata.</li>
+<li>[x] Register accepted bundles as nominal model types in checked program state.</li>
+<li>[x] Reject name collisions with user-declared or already materialized visible types.</li>
+<li>[x] Preserve model interrogation and reflection parity for represented fields.</li>
+<li>[x] Reuse existing model lowering and Rust interop behavior for represented fields.</li>
+</ul>
+<h3 id="artifact-introspection">Artifact introspection<a class="headerlink" href="#artifact-introspection" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Extend package/library artifact metadata so <code>.incnlib</code> discovers RFC 048 metadata without ordinary sidecar discovery.</li>
+<li>[x] Persist publishable model bundles and checked API metadata losslessly in supported artifacts.</li>
+<li>[x] Add artifact inspection behavior for supported artifacts carrying RFC 048 metadata.</li>
+<li>[x] Report non-introspectable artifacts with clear diagnostics.</li>
+</ul>
+<h3 id="emit-and-formatter">Emit and formatter<a class="headerlink" href="#emit-and-formatter" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Emit syntactically valid Incan <code>model</code> source from canonical bundles.</li>
+<li>[x] Preserve canonical field order, type spelling, aliases, and field metadata in emitted source.</li>
+<li>[x] Route emitted source through the project formatter path and prove idempotence.</li>
+<li>[x] Add deterministic output tests for repeated emit.</li>
+<li>[x] Document lossy projection behavior.</li>
+</ul>
+<h3 id="checked-api-metadata-extraction">Checked API metadata extraction<a class="headerlink" href="#checked-api-metadata-extraction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Extract public declarations, signatures, type parameters, bounds, and model field metadata from checked program state.</li>
+<li>[x] Extract decorators with resolved paths and checked safe argument structures.</li>
+<li>[x] Extract aliases with resolved targets.</li>
+<li>[x] Extract relevant safe constants and metadata values without executing user code.</li>
+<li>[x] Parse Incan-standard docstrings into structured sections.</li>
+<li>[x] Validate documented parameters, returns, fields, aliases, and decorator metadata against checked source structure.</li>
+<li>[x] Emit stable JSON suitable for RFC 082 and downstream renderers.</li>
+</ul>
+<h3 id="cli-lsp">CLI / LSP<a class="headerlink" href="#cli-lsp" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Add a CLI path for model emit from a compiler-visible contract-backed model.</li>
+<li>[x] Add a CLI or documented tooling path for model emit from a supported artifact.</li>
+<li>[x] Add a CLI path for checked public API metadata JSON extraction.</li>
+<li>[x] Add editor-accessible emit for selected or resolved materialized model symbols.</li>
+<li>[x] Expose checked metadata previews for selected public declarations where practical.</li>
+<li>[x] Document trust boundaries for external bytes and unsupported contexts.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Add schema validation tests for valid and invalid bundles.</li>
+<li>[x] Add typechecker/materialization tests for nominal behavior and collisions.</li>
+<li>[x] Add reflection/interrogation parity tests against handwritten models.</li>
+<li>[x] Add artifact persistence and inspection tests.</li>
+<li>[x] Add CLI tests for checked API JSON extraction.</li>
+<li>[x] Add CLI tests for model emit.</li>
+<li>[x] Add tests for checked API JSON shape, decorator argument resolution, safe constant extraction, and model field metadata.</li>
+<li>[x] Add tests for alias target extraction and multi-module package metadata.</li>
+<li>[x] Add tests for docstring parsing and docstring drift diagnostics.</li>
+<li>[x] Run targeted tests plus the repository pre-commit gate before closeout.</li>
+</ul>
+<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update user-facing CLI/tooling documentation for checked API metadata extraction.</li>
+<li>[x] Update user-facing CLI/tooling documentation for artifact inspection and model emit.</li>
+<li>[x] Update reference documentation for checked API metadata structure and parsed docstring handling.</li>
+<li>[x] Update reference documentation for docstring validation once validation lands.</li>
+<li>[x] Add release notes for checked API metadata extraction.</li>
+<li>[x] Bump the active <code>0.3.0-dev.N</code> version for the full RFC 048 implementation.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Artifact classes</strong>: this RFC guarantees RFC 048 introspection for Incan library and package artifacts that claim support for it. Arbitrary standalone compiled binaries are explicitly deferred unless a later RFC defines how they embed the same checked metadata contract.</li>
+<li><strong>Model selection for embedding</strong>: artifact metadata includes public or exported contract-backed models plus models explicitly selected for publication by a producer or build integration. Private compiler-temporary materializations are not published by default.</li>
+<li><strong>Artifact discovery contract</strong>: package-style artifacts use the <code>.incnlib</code> manifest as the discovery document. The manifest must either carry RFC 048 bundles directly or reference an embedded payload losslessly from a documented manifest entry, so CLI, registry, LSP, and third-party tooling do not need implementation-specific sidecar discovery.</li>
+<li><strong>Logical identity</strong>: logical type name alone is not sufficient for artifact-facing identity. Publishable bundles require a stable model id in addition to the Incan logical type name, so registry diffing and compatibility views can track one conceptual model across versions even when its visible type name changes or its field set evolves.</li>
+<li><strong>Companion producer boundary</strong>: a producer-derived bundle is publishable only after it supplies a complete ordered field list, maps every field type into Incan, records nullability and RFC 021-compatible metadata, provides a stable model id, declares its bundle format version, and passes the same validation required for compiler materialization. Bundles that are complete enough for editor preview but lack stable identity or publishable validation may remain transient and must not be embedded as artifact contract metadata.</li>
+<li><strong>Checked API metadata scope</strong>: RFC 048 includes checked API metadata extraction for documentation and downstream tooling. The stable contract is the extracted metadata model; RFC 082 owns generated documentation contracts built on that model.</li>
+<li><strong>Docs tooling boundary</strong>: Incan tooling must expose enough checked metadata for consumers such as RFC 082, query/catalog tools, and package browsers to render their own views, but it must not encode product-specific concepts in the compiler metadata schema.</li>
+<li><strong>Safe metadata values</strong>: decorator arguments and constants may be exposed only when the compiler can represent their checked structure without executing user code. Unsupported values must produce diagnostics or structured opaque entries rather than best-effort stringification.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>

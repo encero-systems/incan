@@ -3282,6 +3282,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -3324,6 +3328,48 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
   </span>
   
 
@@ -4478,8 +4524,16 @@
 <td>Supported</td>
 </tr>
 <tr>
+<td><code>textDocument/documentSymbol</code></td>
+<td>Supported</td>
+</tr>
+<tr>
 <td><code>textDocument/completion</code></td>
 <td>Supported (basic)</td>
+</tr>
+<tr>
+<td><code>workspace/executeCommand</code></td>
+<td>Supported for <code>incan.metadata.model.emit</code></td>
 </tr>
 <tr>
 <td><code>textDocument/references</code></td>
@@ -4495,6 +4549,7 @@
 </tr>
 </tbody>
 </table>
+<p><code>textDocument/hover</code> includes checked API metadata previews for public declarations and selected public model/class members after successful typechecking. <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> emits contract-backed model source or bundle JSON for a selected project, bundle JSON file, or <code>.incnlib</code> artifact. There is currently no LSP command that returns the full checked API metadata JSON package; call <code>incan tools metadata api</code> for that.</p>
 <p>To learn more about LSP, see the <a href="https://microsoft.github.io/language-server-protocol/">Language Server Protocol</a>
 specification. See also: <a href="../../explanation/lsp_architecture/">LSP architecture</a>.</p>
 

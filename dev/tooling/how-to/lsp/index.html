@@ -3235,6 +3235,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#contract-model-emit-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contract model emit command
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#go-to-definition" class="md-nav__link">
     <span class="md-ellipsis">
       Go-to-Definition
@@ -3499,6 +3508,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -3541,6 +3554,48 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
   </span>
   
 
@@ -4667,6 +4722,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#contract-model-emit-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contract model emit command
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#go-to-definition" class="md-nav__link">
     <span class="md-ellipsis">
       Go-to-Definition
@@ -4862,6 +4926,22 @@ hint:<span class="w"> </span>Wrap<span class="w"> </span>the<span class="w"> </s
 <p>Hover over any symbol to see its type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]</span>
 </code></pre></div>
+<p>When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public model/class fields, and checked public methods. These previews use the same checked metadata extractor as <code>incan tools metadata api</code>, so they can include raw docstrings, checked signatures, field aliases/descriptions, derives, trait adoption, and safe const values.</p>
+<p>If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use <code>incan tools metadata api</code> for that.</p>
+<h3 id="contract-model-emit-command">Contract model emit command<a class="headerlink" href="#contract-model-emit-command" title="Permanent link">&para;</a></h3>
+<p>Editor integrations can call <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> to emit a contract-backed model from the same checked metadata used by the CLI:</p>
+<div class="language-json highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;incan.metadata.model.emit&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;arguments&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;uri&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;file:///path/to/project/src/main.incn&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;OrderSummary&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;format&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The command accepts a source URI inside a project, a project path, a bundle JSON file, or a <code>.incnlib</code> artifact path. <code>model</code> may be the logical type name or stable model id. <code>format</code> is <code>incan</code> or <code>json</code>.</p>
 <h3 id="go-to-definition">Go-to-Definition<a class="headerlink" href="#go-to-definition" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>VS Code/Cursor</strong>: Cmd+Click (macOS) or Ctrl+Click (Windows/Linux)</li>
@@ -4975,6 +5055,7 @@ ls<span class="w"> </span>-l<span class="w"> </span><span class="s2">&quot;</spa
 <li>LSP must successfully parse the file first</li>
 <li>Check for diagnostics/errors in the file</li>
 <li>Ensure cursor is on a symbol (function name, type name, etc.)</li>
+<li>Checked API metadata hover requires a successful typecheck and only applies to public API declarations or selected public model/class members</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
