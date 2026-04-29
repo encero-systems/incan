@@ -72,6 +72,14 @@ fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), Li
             )?;
         }
     }
+    for enum_export in &exports.enums {
+        for method in &enum_export.methods {
+            validate_callable_params(
+                &format!("enum `{}` method `{}`", enum_export.name, method.name),
+                &method.params,
+            )?;
+        }
+    }
     for newtype in &exports.newtypes {
         for method in &newtype.methods {
             validate_callable_params(

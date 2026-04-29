@@ -513,6 +513,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a named user type explicitly satisfies a generic trait bound.
     fn named_type_satisfies_bound(&self, type_name: &str, bound: &str) -> bool {
         match self.lookup_type_info(type_name) {
             Some(TypeInfo::Builtin) => matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug)),
@@ -523,10 +524,7 @@ impl TypeChecker {
                 info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
             Some(TypeInfo::Enum(info)) => {
-                // Enums do not carry explicit trait adoption; best-effort via derive names in symbol metadata is
-                // absent. Keep conservative and require explicit evidence where available.
-                let _ = info;
-                false
+                info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
             Some(TypeInfo::Newtype(_)) => false,
             Some(TypeInfo::TypeAlias) => false,

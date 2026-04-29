@@ -206,7 +206,7 @@ Covered below in [Traits (authoring)](#requires-adopter-contract).
 
 ## Generic instance methods
 
-Instance methods on `class`, `model`, `trait`, and `newtype` may declare method-level type parameters using the same syntax as top-level generic functions:
+Instance methods on `class`, `model`, `trait`, `enum`, and `newtype` may declare method-level type parameters using the same syntax as top-level generic functions:
 
 ```incan
 class Box:
@@ -243,6 +243,15 @@ model Shelf[U]:
 ```incan
 trait Echo:
     def echo[T with Clone](self, value: T) -> T:
+        return value
+```
+
+```incan
+enum Slot[U]:
+    Filled(U)
+    Empty
+
+    def echo[T](self, value: T) -> T:
         return value
 ```
 
@@ -312,7 +321,7 @@ Explicit brackets are supported only for direct calls resolved as Incan function
 
 Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Methods can be required (`...`) or have defaults.
 
-Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
+Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
 ```incan
 trait Describable:
@@ -325,6 +334,20 @@ class Product with Describable:
 def main() -> None:
     p = Product(name="Laptop")
     println(p.describe())
+```
+
+```incan
+trait Renderable:
+    def render(self) -> str: ...
+
+enum Token with Renderable:
+    Text(str)
+    Break
+
+    def render(self) -> str:
+        match self:
+            Token.Text(value) => return value
+            Token.Break => return "\n"
 ```
 
 ```incan
@@ -342,6 +365,9 @@ Rules to keep in mind:
 
 - Traits are abstract and must not be constructed directly with `TraitName(...)`.
 - A value annotated as `Collection[int]` may be any concrete adopter of that trait instantiation.
+- Enum trait adoption uses the same `with TraitName` clause as model and class adoption.
+- For enum adopters, required trait methods must be declared in the enum body.
+- Enum adopters should satisfy behavior through methods; `@requires(...)` field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.
 - Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
 
 When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:

@@ -191,6 +191,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
     manifest.exports.enums.push(EnumExport {
         name: "Status".to_string(),
         type_params: Vec::new(),
+        traits: Vec::new(),
         value_type: Some(EnumValueTypeExport::Str),
         variants: vec![
             EnumVariantExport {
@@ -204,11 +205,13 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
                 value: Some(EnumValueExport::Str("disabled".to_string())),
             },
         ],
+        methods: Vec::new(),
         derives: Vec::new(),
     });
     manifest.exports.enums.push(EnumExport {
         name: "HttpStatus".to_string(),
         type_params: Vec::new(),
+        traits: Vec::new(),
         value_type: Some(EnumValueTypeExport::Int),
         variants: vec![
             EnumVariantExport {
@@ -222,11 +225,48 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
                 value: Some(EnumValueExport::Int(404)),
             },
         ],
+        methods: Vec::new(),
         derives: Vec::new(),
     });
 
     let tmp = tempfile::tempdir()?;
     let path = tmp.path().join("value_enum.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.enums.push(EnumExport {
+        name: "Status".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Labelled".to_string()],
+        value_type: None,
+        variants: vec![EnumVariantExport {
+            name: "Active".to_string(),
+            fields: Vec::new(),
+            value: None,
+        }],
+        methods: vec![MethodExport {
+            name: "label".to_string(),
+            type_params: Vec::new(),
+            receiver: Some(ReceiverExport::Immutable),
+            params: Vec::new(),
+            return_type: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            is_async: false,
+            has_body: true,
+        }],
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("enum_methods.incnlib");
     manifest.write_to_path(&path)?;
     let loaded = LibraryManifest::read_from_path(&path)?;
 

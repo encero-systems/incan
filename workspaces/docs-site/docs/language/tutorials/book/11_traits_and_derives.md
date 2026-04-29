@@ -88,6 +88,28 @@ def main() -> None:
     println(u.greet())  # outputs: Hello, alice!
 ```
 
+Enums can adopt traits too. Put the required method in the enum body:
+
+```incan
+trait Describable:
+    def describe(self) -> str: ...
+
+enum Outcome with Describable:
+    Success
+    Failure(str)
+
+    def describe(self) -> str:
+        match self:
+            Outcome.Success => return "success"
+            Outcome.Failure(message) => return message
+
+def print_description[T with Describable](value: T) -> None:
+    println(value.describe())
+
+def main() -> None:
+    print_description(Outcome.Failure("not found"))
+```
+
 Mutation uses `mut self` (and the field must be declared via `@requires(...)`):
 
 ```incan
@@ -108,7 +130,7 @@ def main() -> None:
 
 1. Add a second derived type and print it with `:?`.
 2. Create a small trait (for example `Describable`) and implement it for a model.
-3. Call the trait method.
+3. Implement the same trait for an enum and call the trait method.
 
 ??? example "One possible solution"
 
@@ -127,9 +149,19 @@ def main() -> None:
         def describe(self) -> str:
             return f"user={self.username}"
 
+    enum JobState with Describable:
+        Queued
+        Failed(str)
+
+        def describe(self) -> str:
+            match self:
+                JobState.Queued => return "queued"
+                JobState.Failed(message) => return message
+
     def main() -> None:
         println(f"{Point(x=1, y=2):?}")
         println(User(username="alice").describe())
+        println(JobState.Failed("timeout").describe())
     ```
 
 ## Where to learn more

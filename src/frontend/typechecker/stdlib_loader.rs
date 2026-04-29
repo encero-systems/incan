@@ -543,9 +543,15 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                     en.name.clone(),
                     TypeInfo::Enum(EnumInfo {
                         type_params: type_param_names(&en.type_params),
+                        traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         variants: en.variants.iter().map(|variant| variant.node.name.clone()).collect(),
                         value_enum: None,
                         derives: Vec::new(),
+                        methods: extract_method_signatures_with_rust_imports(
+                            &en.methods,
+                            &type_param_names(&en.type_params),
+                            &rust_imports,
+                        ),
                     }),
                 ));
             }

@@ -11,6 +11,11 @@ impl<'a> Parser<'a> {
         let type_params = self.type_params()?;
         let value_type = self.value_enum_type_specifier()?;
         let value_enum_type = value_type.as_ref().map(|ty| ty.node);
+        let traits = if self.match_keyword(KeywordId::With) {
+            self.trait_supertrait_list_spanned()?
+        } else {
+            Vec::new()
+        };
         self.expect_punct(PunctuationId::Colon, "Expected ':' after enum name")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
         self.expect_suite_indent("Expected indented block")?;
@@ -18,8 +23,32 @@ impl<'a> Parser<'a> {
         let docstring = self.optional_leading_block_docstring();
 
         let mut variants = Vec::new();
+        let mut methods = Vec::new();
+        let mut parsing_methods = false;
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-            variants.push(self.variant_decl(value_enum_type)?);
+            let method_decorators = self.decorators()?;
+            if let Some(err) = self.inactive_soft_keyword_error() {
+                return Err(err);
+            }
+
+            if self.starts_surface_function_decl() {
+                parsing_methods = true;
+                methods.push(self.method_decl(method_decorators)?);
+            } else {
+                if !method_decorators.is_empty() {
+                    return Err(CompileError::syntax(
+                        "Decorators in enum bodies must target methods".to_string(),
+                        method_decorators[0].span,
+                    ));
+                }
+                if parsing_methods {
+                    return Err(CompileError::syntax(
+                        "Enum variants must be declared before enum methods".to_string(),
+                        self.current_span(),
+                    ));
+                }
+                variants.push(self.variant_decl(value_enum_type)?);
+            }
             self.skip_newlines();
         }
 
@@ -31,8 +60,10 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             value_type,
+            traits,
             docstring,
             variants,
+            methods,
         })
     }
 

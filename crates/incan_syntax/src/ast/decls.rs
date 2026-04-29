@@ -164,7 +164,7 @@ pub struct InteropEdgeDecl {
 // Enums (algebraic data types)
 // ============================================================================
 
-/// An enum declaration: an algebraic data type with variants.
+/// An enum declaration: an algebraic data type with variants, optional methods, and trait adoption.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub visibility: Visibility,
@@ -173,9 +173,14 @@ pub struct EnumDecl {
     pub type_params: Vec<TypeParam>,
     /// Backing value type for RFC 032 value enums (`enum Name(str):` / `enum Name(int):`).
     pub value_type: Option<Spanned<ValueEnumType>>,
+    /// Traits adopted by this enum via `with TraitA, TraitB[T]`.
+    pub traits: Vec<Spanned<TraitBound>>,
     /// Docstring at the start of the enum body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
+    /// Variants declared before any enum methods.
     pub variants: Vec<Spanned<VariantDecl>>,
+    /// Methods and associated functions declared after the variant list.
+    pub methods: Vec<Spanned<MethodDecl>>,
 }
 
 /// The allowed backing literal types for a value enum.

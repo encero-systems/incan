@@ -2026,6 +2026,53 @@ def main() -> None:
     }
 
     #[test]
+    fn test_enum_methods_and_trait_adoption_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+trait Labelled:
+    def label(self) -> str: ...
+
+enum Signal with Labelled:
+    Start
+    Stop
+
+    def label(self) -> str:
+        match self:
+            Signal.Start => return "start"
+            Signal.Stop => return "stop"
+
+    def default() -> Self:
+        return Signal.Start
+
+def keep_labelled[T with Labelled](value: T) -> T:
+    return value
+
+def main() -> None:
+    signal = keep_labelled(Signal.default())
+    println(signal.label())
+    println(Signal.Stop.label())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "enum methods and trait adoption run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["start", "stop"], "unexpected enum method output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_union_types_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

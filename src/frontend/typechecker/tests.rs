@@ -231,10 +231,27 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 },
                 is_async: false,
             }],
-            traits: Vec::new(),
+            traits: vec![TraitExport {
+                name: "Labelled".to_string(),
+                type_params: Vec::new(),
+                supertraits: Vec::new(),
+                requires: Vec::new(),
+                methods: vec![MethodExport {
+                    name: "label".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    is_async: false,
+                    has_body: false,
+                }],
+            }],
             enums: vec![EnumExport {
                 name: "Status".to_string(),
                 type_params: Vec::new(),
+                traits: vec!["Labelled".to_string()],
                 value_type: Some(EnumValueTypeExport::Str),
                 variants: vec![
                     EnumVariantExport {
@@ -248,6 +265,17 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                         value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
                 ],
+                methods: vec![MethodExport {
+                    name: "label".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    is_async: false,
+                    has_body: true,
+                }],
                 derives: Vec::new(),
             }],
             type_aliases: Vec::new(),
@@ -4869,6 +4897,117 @@ enum Color:
 }
 
 #[test]
+fn test_enum_instance_method_typechecks() {
+    let source = r#"
+enum Color:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def label_red() -> str:
+  return Red.label()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_associated_method_typechecks() {
+    let source = r#"
+enum Status:
+  Ok
+  Failed
+
+  def fallback() -> Status:
+    return Failed
+
+def choose() -> Status:
+  return Status.fallback()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_explicit_trait_adoption_typechecks() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def render(color: Color) -> str:
+  return color.label()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_missing_trait_method_is_rejected() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+"#;
+    let errs = check_str_err(source, "enum should satisfy abstract trait methods");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("requires method") && e.message.contains("label")),
+        "expected missing enum trait method diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_generic_trait_adoption_arity_is_checked() {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+enum Token with Boxed[int, str]:
+  Number
+
+  def get(self) -> int:
+    return 1
+"#;
+    let errs = check_str_err(source, "enum generic trait adoption should validate arity");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expects 1") || e.message.contains("arity")),
+        "expected enum trait adoption arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_satisfies_explicit_trait_bound() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def keep_labelled[T with Labelled](value: T) -> T:
+  return value
+
+def keep_red() -> Color:
+  return keep_labelled(Red)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_value_enum_str_generated_surface_typechecks() {
     let source = r#"
 enum Env(str):
@@ -6666,6 +6805,27 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_imported_enum_methods_and_trait_adoption_typecheck() {
+    let source = r#"
+from pub::mylib import Status, Labelled
+
+def label_status(status: Status) -> str:
+  return status.label()
+
+def keep_labelled[T with Labelled](value: T) -> T:
+  return value
+
+def keep_status(status: Status) -> Status:
+  return keep_labelled(status)
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected imported enum methods and traits to typecheck, got: {result:?}"
+    );
 }
 
 #[test]

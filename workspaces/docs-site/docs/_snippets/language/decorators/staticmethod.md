@@ -13,7 +13,7 @@ def main() -> None:
     println(t.celsius)
 ```
 
-**Applies to**: methods on `class`, `model`, and `newtype` declarations.
+**Applies to**: methods on `class`, `model`, `enum`, and `newtype` declarations.
 
 Rules:
 

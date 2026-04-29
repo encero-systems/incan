@@ -69,7 +69,24 @@ def handle_state(state: ConnectionState) -> ConnectionState:
 Tips:
 
 - Prefer representing transitions as `state -> state` functions (like above).
+- Move small state queries into enum methods when callers ask the enum the same question repeatedly.
 - Avoid “boolean soup” (`is_connected`, `is_connecting`, `last_error`, …) when the states are mutually exclusive.
+
+For example, terminal-state checks belong well on the enum itself:
+
+```incan
+enum ConnectionState:
+    Disconnected
+    Connecting(str)
+    Connected(Connection)
+    Error(str)
+
+    def is_terminal(self) -> bool:
+        match self:
+            ConnectionState.Disconnected => return true
+            ConnectionState.Error(_) => return true
+            _ => return false
+```
 
 ## Pattern 2: Commands / actions
 
@@ -163,6 +180,66 @@ Tips:
 
 - Prefer small, composable constructors.
 - Use helper functions to build trees if you want a cleaner “builder” API.
+
+## Pattern 5: Behavior on the enum itself
+
+Use enum methods when the operation is part of the closed set's meaning. This keeps callers from reaching for detached helper functions that can drift away from the enum definition.
+
+```incan
+trait Describable:
+    def describe(self) -> str: ...
+
+enum JobState with Describable:
+    Queued
+    Running(str)      # worker id
+    Failed(str, int)  # message, retry count
+    Finished
+
+    def describe(self) -> str:
+        match self:
+            JobState.Queued => return "queued"
+            JobState.Running(worker) => return f"running on {worker}"
+            JobState.Failed(message, retry_count) => return f"failed after {retry_count} retries: {message}"
+            JobState.Finished => return "finished"
+
+    def is_terminal(self) -> bool:
+        match self:
+            JobState.Failed(_, _) => return true
+            JobState.Finished => return true
+            _ => return false
+
+    def initial() -> Self:
+        return JobState.Queued
+```
+
+Callers get the behavior from the type that owns the cases:
+
+```incan
+def log_job[T with Describable](value: T) -> None:
+    println(value.describe())
+
+state = JobState.initial()
+log_job(state)
+
+if state.is_terminal():
+    println("done")
+```
+
+Tips:
+
+- Put behavior in the enum body when every variant participates in the operation.
+- Use an associated function for a canonical starting value, fallback value, or parser entry point.
+- Use `with TraitName` when the enum should be accepted by APIs that depend on a reusable capability.
+- Keep free functions for behavior that combines several independent types rather than belonging to the enum itself.
+
+Avoid this shape when the operation really belongs to another layer:
+
+```incan
+def render_status_for_admin_dashboard(state: JobState) -> str:
+    ...
+```
+
+That kind of rendering combines enum state with UI policy, so a free function or view-layer helper is clearer than a method on `JobState`.
 
 ## See also
 

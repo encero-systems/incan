@@ -1531,8 +1531,43 @@ impl TypeChecker {
 
     /// Validate enum decorators, value-enum rules, and variant payload field types.
     fn check_enum(&mut self, en: &EnumDecl) {
+        self.symbols.enter_scope(ScopeKind::Block);
+
         self.validate_decorators(&en.decorators);
         self.validate_derives(&en.decorators);
+
+        for param in &en.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
+        for trait_ref in &en.traits {
+            let trait_name = trait_ref.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                self.check_trait_conformance_enum(
+                    en,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
+            }
+        }
+
         self.check_value_enum_decl(en);
         // Check variant field types exist
         for variant in &en.variants {
@@ -1541,6 +1576,57 @@ impl TypeChecker {
                 if matches!(resolved, ResolvedType::Unknown) {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
+                }
+            }
+        }
+
+        for method in &en.methods {
+            self.check_method(&method.node, &en.name);
+        }
+
+        self.symbols.exit_scope();
+    }
+
+    /// Validate explicit enum trait adoption using the same abstract-method contract as models/classes.
+    ///
+    /// Enums currently do not expose fields, so `@requires(...)` obligations are reported as missing fields at the
+    /// adoption site. Method obligations are checked against the collected enum method map.
+    fn check_trait_conformance_enum(
+        &mut self,
+        en: &EnumDecl,
+        trait_info: TraitInfo,
+        trait_name: &str,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+    ) {
+        for (field_name, _) in &trait_info.requires {
+            self.errors
+                .push(errors::missing_field(&en.name, field_name, adoption_span));
+        }
+
+        let enum_info = self
+            .symbols
+            .lookup(&en.name)
+            .and_then(|id| self.symbols.get(id))
+            .and_then(|sym| match &sym.kind {
+                SymbolKind::Type(TypeInfo::Enum(info)) => Some(info.clone()),
+                _ => None,
+            });
+
+        if let Some(info) = enum_info {
+            self.enforce_trait_abstract_methods(
+                &en.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &info.methods,
+            );
+        } else {
+            for (method_name, method_info) in &trait_info.methods {
+                if !method_info.has_body {
+                    self.errors
+                        .push(errors::missing_trait_method(trait_name, method_name, adoption_span));
                 }
             }
         }

@@ -351,6 +351,34 @@ impl AstLowering {
         })
     }
 
+    /// Lower enum methods into an inherent impl block while preserving owner and method generic parameters.
+    ///
+    /// Enum method bodies share the same lowering rules as model/class methods, but this dedicated entry point keeps
+    /// RFC 050 declaration assembly explicit at the enum boundary.
+    pub(in crate::backend::ir::lower) fn lower_enum_methods(
+        &mut self,
+        type_name: &str,
+        type_params: &[ast::TypeParam],
+        methods: &[Spanned<ast::MethodDecl>],
+    ) -> Result<IrImpl, LoweringError> {
+        let prev = self.current_impl_type.replace(type_name.to_string());
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let lowered = methods
+            .iter()
+            .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
+            .collect::<Result<Vec<_>, LoweringError>>();
+        self.current_impl_type = prev;
+        let lowered_methods = lowered?;
+
+        Ok(IrImpl {
+            target_type: type_name.to_string(),
+            type_params: Self::lower_type_params(type_params),
+            trait_name: None,
+            trait_type_args: Vec::new(),
+            methods: lowered_methods,
+        })
+    }
+
     /// Lower an inherent method while preserving owner and method generic parameters in signatures and bodies.
     ///
     /// During `@classmethod` bodies this also exposes the current impl target as the lowering target for source
