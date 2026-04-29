@@ -4545,6 +4545,30 @@
 
 <span class="n">user_id</span> <span class="o">=</span> <span class="nc">UserId</span><span class="o">.</span><span class="k">from</span><span class="p">(</span><span class="s2">&quot;42&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>A model, class, or enum may adopt multiple <code>Into[T]</code> instantiations when the target types differ. A call to <code>into()</code> must then have an expected result type so the compiler can select the same-family trait instantiation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Into</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Into</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">into</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">into</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+<span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">as_float</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>
+<span class="n">as_int</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>
+</code></pre></div>
+<p>An untyped call is ambiguous because both <code>Into[int]</code> and <code>Into[float]</code> have the same method name and no value argument that distinguishes them:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">()</span>  <span class="c1"># error: add an expected result type</span>
+</code></pre></div>
+<p>Expected type context does not have to be a local binding. Passing the call into a function that expects a concrete target type works too:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">takes_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="n">takes_float</span><span class="p">(</span><span class="n">reading</span><span class="o">.</span><span class="n">into</span><span class="p">())</span>  <span class="c1"># selects Into[float]</span>
+</code></pre></div>
+<p>Use multiple <code>Into[T]</code> adoptions when the target type is the real static distinction. If the conversions need different input parameters or different names in user code, prefer explicit methods such as <code>to_json()</code> and <code>to_yaml()</code> instead of forcing everything through <code>into()</code>.</p>
 <h2 id="tryfrom-tryinto">TryFrom / TryInto<a class="headerlink" href="#tryfrom-tryinto" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>TryFrom[T]</code></strong><ul>

@@ -1841,6 +1841,66 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#multiple-instantiations-of-one-generic-trait" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multiple instantiations of one generic trait
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multiple instantiations of one generic trait">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dispatch-from-argument-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dispatch from argument types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dispatch-from-an-expected-return-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dispatch from an expected return type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generic-bounds-with-trait-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic bounds with trait type arguments
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-adopters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum adopters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rejected-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rejected cases
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#requires-adopter-contract" class="md-nav__link">
     <span class="md-ellipsis">
       @requires(...) (adopter contract)
@@ -4911,6 +4971,66 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#multiple-instantiations-of-one-generic-trait" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multiple instantiations of one generic trait
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multiple instantiations of one generic trait">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dispatch-from-argument-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dispatch from argument types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dispatch-from-an-expected-return-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dispatch from an expected return type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generic-bounds-with-trait-type-arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic bounds with trait type arguments
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-adopters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum adopters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rejected-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rejected cases
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#requires-adopter-contract" class="md-nav__link">
     <span class="md-ellipsis">
       @requires(...) (adopter contract)
@@ -5499,6 +5619,124 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">return</span> <span class="nb">values</span>
 </code></pre></div>
 <p>The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.</p>
+<h3 id="multiple-instantiations-of-one-generic-trait">Multiple instantiations of one generic trait<a class="headerlink" href="#multiple-instantiations-of-one-generic-trait" title="Permanent link">&para;</a></h3>
+<p>Models, classes, and enums may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by <code>str</code> and by <code>int</code>, converting into multiple result types, or serializing through a generic format trait.</p>
+<p>The repeated adoptions must be distinct:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Convert</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>  <span class="c1"># OK</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+</code></pre></div>
+<p>This is trait dispatch, not general-purpose method overloading. The same method name is allowed here because each <code>convert</code> method satisfies a different <code>Convert[T]</code> adoption on the same type. Two ordinary methods with the same name are still rejected when they are not backed by distinct trait instantiations.</p>
+<h4 id="dispatch-from-argument-types">Dispatch from argument types<a class="headerlink" href="#dispatch-from-argument-types" title="Permanent link">&para;</a></h4>
+<p>When the same trait method takes different value parameter types, the compiler selects the matching instantiation from the call arguments:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Reader</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Source</span> <span class="k">with</span> <span class="nc">Reader</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nc">Reader</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">key</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+<span class="n">source</span> <span class="o">=</span> <span class="nc">Source</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;events&quot;</span><span class="p">)</span>
+<span class="n">by_name</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">&quot;latest&quot;</span><span class="p">)</span>  <span class="c1"># Reader[str]</span>
+<span class="n">by_index</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>        <span class="c1"># Reader[int]</span>
+</code></pre></div>
+<p>Named arguments participate in the same selection. <code>source.read(key=0)</code> selects the <code>Reader[int]</code> method because the named <code>key</code> argument has type <code>int</code>.</p>
+<h4 id="dispatch-from-an-expected-return-type">Dispatch from an expected return type<a class="headerlink" href="#dispatch-from-an-expected-return-type" title="Permanent link">&para;</a></h4>
+<p>When the value arguments do not distinguish the candidates, the compiler may use an explicit expected return type. A typed binding is the most direct way to provide that context:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Convert</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+<span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">as_float</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>
+<span class="n">as_int</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>
+</code></pre></div>
+<p>Expected return type context can also come from a function argument, an annotated return position, or equivalent explicit type context. If no rule selects exactly one candidate, the call is ambiguous:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">reading</span> <span class="o">=</span> <span class="nc">Reading</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">value</span> <span class="o">=</span> <span class="n">reading</span><span class="o">.</span><span class="n">convert</span><span class="p">()</span>  <span class="c1"># error: the expected result type is not known</span>
+</code></pre></div>
+<h4 id="generic-bounds-with-trait-type-arguments">Generic bounds with trait type arguments<a class="headerlink" href="#generic-bounds-with-trait-type-arguments" title="Permanent link">&para;</a></h4>
+<p>Generic bounds may carry trait type arguments. This lets a generic function say that a receiver type <code>T</code> must support a trait instantiation chosen by another type parameter:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">serialize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">JsonFormat</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="k">model</span> <span class="nc">Event</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">JsonFormat</span><span class="p">]:</span>
+    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">serialize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="nc">JsonFormat</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">F</span><span class="p">,</span> <span class="nc">T</span> <span class="k">with</span> <span class="nc">Serializable</span><span class="p">[</span><span class="nc">F</span><span class="p">]](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="nb">format</span><span class="p">)</span>
+
+<span class="nb">bytes</span> <span class="o">=</span> <span class="n">encode</span><span class="p">[</span><span class="nc">JsonFormat</span><span class="p">,</span> <span class="nc">Event</span><span class="p">](</span><span class="nc">Event</span><span class="p">(</span><span class="n">message</span><span class="o">=</span><span class="s2">&quot;created&quot;</span><span class="p">),</span> <span class="nc">JsonFormat</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>The bound <code>T with Serializable[F]</code> is not just a trait-name check. If <code>F</code> is <code>JsonFormat</code>, then <code>T</code> must adopt <code>Serializable[JsonFormat]</code>; adopting <code>Serializable[YamlFormat]</code> alone would not satisfy the bound.</p>
+<h4 id="enum-adopters">Enum adopters<a class="headerlink" href="#enum-adopters" title="Permanent link">&para;</a></h4>
+<p>Enum declarations use the same rules as models and classes. Each repeated generic-trait adoption must use distinct type arguments, and each same-name method must satisfy a distinct adopted trait instantiation:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Label</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">Token</span> <span class="k">with</span> <span class="nc">Label</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nc">Label</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+    <span class="nc">Identifier</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Number</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;token&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">1</span>
+
+<span class="n">token</span><span class="p">:</span> <span class="nc">Token</span> <span class="o">=</span> <span class="nc">Token</span><span class="o">.</span><span class="nc">Number</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
+<span class="n">code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
+</code></pre></div>
+<h4 id="rejected-cases">Rejected cases<a class="headerlink" href="#rejected-cases" title="Permanent link">&para;</a></h4>
+<p>The compiler rejects repeated identical trait instantiations:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">BadReading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>  <span class="c1"># error</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+</code></pre></div>
+<p>The compiler also rejects same-name methods that are not backed by distinct trait instantiations:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Parser</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error</span>
+</code></pre></div>
+<p>Same-name methods from unrelated trait families are rejected even if their value parameter types differ. Return-type and argument-type disambiguation only applies within one generic trait family:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ReadsInt</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">trait</span> <span class="nc">ReadsStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">model</span> <span class="nc">Source</span> <span class="k">with</span> <span class="nc">ReadsInt</span><span class="p">,</span> <span class="nc">ReadsStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error: unrelated trait families use the same method name</span>
+</code></pre></div>
+<p>Use distinct method names or distinct trait families with non-conflicting method names when you need two unrelated capabilities today. Explicit qualification and aliasing are future language design work.</p>
 <h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
 <p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types
 they must have).</p>
