@@ -155,6 +155,7 @@ impl SymbolTable {
                     is_async: false,
                     type_params: vec![],
                     type_param_bounds: HashMap::new(),
+                    type_param_bound_details: HashMap::new(),
                 }),
                 span: Span::default(),
                 scope: 0,
@@ -172,6 +173,7 @@ impl SymbolTable {
                 is_async: false,
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
+                type_param_bound_details: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -185,6 +187,7 @@ impl SymbolTable {
                 is_async: false,
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
+                type_param_bound_details: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -415,6 +418,8 @@ pub struct FunctionInfo {
     pub type_params: Vec<String>,
     /// Explicit source-declared bounds per type parameter (RFC 023), keyed by type parameter name.
     pub type_param_bounds: HashMap<String, Vec<String>>,
+    /// Resolved source-declared bounds, preserving generic type arguments such as `T with Serialize[F]`.
+    pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
 }
 
 /// Callable parameter metadata preserved after type resolution.
@@ -484,9 +489,11 @@ pub struct ClassInfo {
     pub type_params: Vec<String>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
 }
 
 /// Model information
@@ -494,9 +501,11 @@ pub struct ClassInfo {
 pub struct ModelInfo {
     pub type_params: Vec<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
 }
 
 /// Newtype information
@@ -520,12 +529,16 @@ pub struct EnumInfo {
     pub type_params: Vec<String>,
     /// Explicit traits adopted by this enum via `with`, using source-level trait names.
     pub traits: Vec<String>,
+    /// Explicit traits adopted by this enum, preserving generic trait arguments when present.
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub variants: Vec<String>,
     pub value_enum: Option<ValueEnumInfo>,
     /// Names from `@derive(...)` (same vocabulary as models/classes).
     pub derives: Vec<String>,
     /// Inherent methods and associated functions declared in the enum body.
     pub methods: HashMap<String, MethodInfo>,
+    /// All enum method declarations grouped by name for trait-backed overload resolution.
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
 }
 
 /// RFC 032 value enum metadata.

@@ -11,7 +11,7 @@ use crate::frontend::ast::{
 };
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
+    TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -68,6 +68,7 @@ pub struct CheckedModelExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     /// `@derive(...)` names that must remain available to `pub::` consumers.
     pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
@@ -80,6 +81,7 @@ pub struct CheckedClassExport {
     pub type_params: Vec<CheckedTypeParam>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     /// `@derive(...)` names that must remain available to `pub::` consumers.
     pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
@@ -108,6 +110,7 @@ pub struct CheckedEnumExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     pub value_type: Option<ValueEnumBacking>,
     pub variants: Vec<CheckedEnumVariant>,
     pub methods: Vec<CheckedMethod>,
@@ -267,13 +270,15 @@ fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> Ch
     }
 }
 
+/// Extract a checked public model export from collected model symbol metadata.
 fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<CheckedModelExport> {
     let symbol = checker.lookup_symbol(model.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Model(ModelInfo {
         traits,
+        trait_adoptions,
         derives,
         fields,
-        methods,
+        method_overloads,
         ..
     })) = &symbol.kind
     else {
@@ -284,20 +289,23 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
-        methods: map_methods(methods),
+        methods: map_method_overloads(method_overloads),
     })
 }
 
+/// Extract a checked public class export from collected class symbol metadata.
 fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<CheckedClassExport> {
     let symbol = checker.lookup_symbol(class.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Class(ClassInfo {
         extends,
         traits,
+        trait_adoptions,
         derives,
         fields,
-        methods,
+        method_overloads,
         ..
     })) = &symbol.kind
     else {
@@ -309,9 +317,10 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         type_params: checked_type_params(&class.type_params, checker),
         extends: extends.clone(),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
-        methods: map_methods(methods),
+        methods: map_method_overloads(method_overloads),
     })
 }
 
@@ -380,9 +389,10 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
         traits: sorted_vec(enum_info.traits.clone()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(&enum_info.trait_adoptions)),
         value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
-        methods: map_methods(&enum_info.methods),
+        methods: map_method_overloads(&enum_info.method_overloads),
         derives: sorted_vec(enum_info.derives.clone()),
     })
 }
@@ -455,6 +465,32 @@ fn checked_trait_bounds(bounds: &[TraitBound], checker: &TypeChecker) -> Vec<Che
         .collect()
 }
 
+/// Convert collected trait adoption metadata into the manifest-ready checked bound shape.
+fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
+    bounds
+        .iter()
+        .map(|bound| CheckedTypeBound {
+            name: bound.name.clone(),
+            type_args: bound.type_args.clone(),
+        })
+        .collect()
+}
+
+/// Sort generic trait adoptions deterministically for stable library manifests.
+fn sorted_type_bounds(mut bounds: Vec<CheckedTypeBound>) -> Vec<CheckedTypeBound> {
+    bounds.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| type_args_sort_key(&left.type_args).cmp(&type_args_sort_key(&right.type_args)))
+    });
+    bounds
+}
+
+/// Render type arguments into a deterministic key for sorting trait adoptions.
+fn type_args_sort_key(args: &[ResolvedType]) -> String {
+    args.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
+}
+
 fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
     let mut entries: Vec<_> = fields
         .iter()
@@ -470,38 +506,72 @@ fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
     entries
 }
 
+/// Convert legacy one-method-per-name metadata into checked export methods.
 fn map_methods(methods: &HashMap<String, MethodInfo>) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = methods
         .iter()
-        .map(|(name, info)| CheckedMethod {
-            name: name.clone(),
-            type_params: info
-                .type_params
-                .iter()
-                .map(|type_param| CheckedTypeParam {
-                    name: type_param.clone(),
-                    bounds: info
-                        .type_param_bound_details
-                        .get(type_param)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|bound| CheckedTypeBound {
-                            name: bound.name,
-                            type_args: bound.type_args,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            receiver: info.receiver,
-            params: info.params.clone(),
-            return_type: info.return_type.clone(),
-            is_async: info.is_async,
-            has_body: info.has_body,
-        })
+        .map(|(name, info)| checked_method_from_info(name, info))
         .collect();
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     entries
+}
+
+/// Flatten same-name overload groups into manifest-ready checked methods without losing RFC 025 trait implementations.
+fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> Vec<CheckedMethod> {
+    let mut entries: Vec<_> = method_overloads
+        .iter()
+        .flat_map(|(name, overloads)| overloads.iter().map(|info| checked_method_from_info(name, info)))
+        .collect();
+    entries.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| method_signature_sort_key(left).cmp(&method_signature_sort_key(right)))
+    });
+    entries
+}
+
+/// Convert one semantic method entry into the checked export shape.
+fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
+    CheckedMethod {
+        name: name.to_string(),
+        type_params: info
+            .type_params
+            .iter()
+            .map(|type_param| CheckedTypeParam {
+                name: type_param.clone(),
+                bounds: info
+                    .type_param_bound_details
+                    .get(type_param)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|bound| CheckedTypeBound {
+                        name: bound.name,
+                        type_args: bound.type_args,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        receiver: info.receiver,
+        params: info.params.clone(),
+        return_type: info.return_type.clone(),
+        is_async: info.is_async,
+        has_body: info.has_body,
+    }
+}
+
+/// Render a deterministic method-signature sort key for overload groups.
+fn method_signature_sort_key(method: &CheckedMethod) -> String {
+    let params = method
+        .params
+        .iter()
+        .map(|param| {
+            let name = param.name().unwrap_or("_");
+            format!("{name}:{}", param.ty)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("({params})->{}", method.return_type)
 }
 
 fn sorted_vec(mut values: Vec<String>) -> Vec<String> {

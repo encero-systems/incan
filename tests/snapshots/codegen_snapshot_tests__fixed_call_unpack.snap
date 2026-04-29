@@ -44,7 +44,7 @@ fn main() {
             }
         }),
     );
-    let xy = (1, "Ada".to_string(), 7);
+    let xy: (i64, String, i64) = (1, "Ada".to_string(), 7);
     let counter = Counter {};
     combine(
         1,

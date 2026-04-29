@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub fn columns(input_columns: Vec<String>) -> Vec<String> {
-    let mut columns = vec![];
+    let mut columns: Vec<String> = vec![];
     columns
         .push(incan_stdlib::collections::list_get(&input_columns, (0) as i64).clone());
     columns.push("count".to_string());

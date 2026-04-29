@@ -20,7 +20,7 @@ fn field_ref(index: i64) -> i64 {
     return index;
 }
 pub fn bind(xs: Vec<String>) -> Vec<Binding> {
-    let mut out = vec![];
+    let mut out: Vec<Binding> = vec![];
     for (idx, name) in xs.iter().enumerate().map(|(idx, value)| (idx as i64, value)) {
         out.push(Binding {
             name: name.to_string(),

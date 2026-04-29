@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_while_loop() {
-    let mut count = 0;
+    let mut count: i64 = 0;
     while count < 5 {
         println!("{}", count);
         count = count + 1;
@@ -30,7 +30,7 @@ fn test_for_range_three_args() {
     }
 }
 fn test_for_list() {
-    let numbers = vec![1, 2, 3, 4, 5];
+    let numbers: Vec<i64> = vec![1, 2, 3, 4, 5];
     for n in numbers.iter().copied() {
         println!("{}", n);
     }

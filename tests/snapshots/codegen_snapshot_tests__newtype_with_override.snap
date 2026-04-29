@@ -29,7 +29,7 @@ fn main() {
             }
         }),
     );
-    let response = CustomResponse::ok("Status".to_string());
-    let result = response.__into_response__();
+    let response: CustomResponse = CustomResponse::ok("Status".to_string());
+    let result: String = response.__into_response__();
     println!("{}", result);
 }

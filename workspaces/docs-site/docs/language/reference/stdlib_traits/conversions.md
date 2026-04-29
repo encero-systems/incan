@@ -33,6 +33,40 @@ model UserId with From[str]:
 user_id = UserId.from("42")
 ```
 
+A model, class, or enum may adopt multiple `Into[T]` instantiations when the target types differ. A call to `into()` must then have an expected result type so the compiler can select the same-family trait instantiation:
+
+```incan
+model Reading with Into[int], Into[float]:
+    value: int
+
+    def into(self) -> int:
+        return self.value
+
+    def into(self) -> float:
+        return 1.0
+
+reading = Reading(value=1)
+as_float: float = reading.into()
+as_int: int = reading.into()
+```
+
+An untyped call is ambiguous because both `Into[int]` and `Into[float]` have the same method name and no value argument that distinguishes them:
+
+```incan
+value = reading.into()  # error: add an expected result type
+```
+
+Expected type context does not have to be a local binding. Passing the call into a function that expects a concrete target type works too:
+
+```incan
+def takes_float(value: float) -> None:
+    pass
+
+takes_float(reading.into())  # selects Into[float]
+```
+
+Use multiple `Into[T]` adoptions when the target type is the real static distinction. If the conversions need different input parameters or different names in user code, prefer explicit methods such as `to_json()` and `to_yaml()` instead of forcing everything through `into()`.
+
 ## TryFrom / TryInto
 
 - **`TryFrom[T]`**

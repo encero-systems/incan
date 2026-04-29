@@ -511,14 +511,28 @@ impl TypeChecker {
     fn resolve_named_method(
         &mut self,
         methods: &std::collections::HashMap<String, MethodInfo>,
-        traits: Option<&[String]>,
+        method_overloads: Option<&std::collections::HashMap<String, Vec<MethodInfo>>>,
+        trait_adoptions: Option<&[TypeBoundInfo]>,
         method: &str,
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
         call_site_span: Span,
         receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
+        if let Some(overloads) = method_overloads.and_then(|overloads| overloads.get(method)) {
+            return self.resolve_method_overload(
+                method,
+                overloads,
+                explicit_type_args,
+                args,
+                arg_types,
+                call_site_span,
+                receiver_ty,
+                expected_return_ty,
+            );
+        }
         if let Some(method_info) = methods.get(method) {
             return Some(self.check_generic_method_call(
                 method,
@@ -530,22 +544,200 @@ impl TypeChecker {
                 receiver_ty,
             ));
         }
-        if let Some(traits) = traits {
-            for trait_name in traits {
-                if let Some(method_info) = self.trait_method_info_resolved(trait_name, method, call_site_span) {
-                    return Some(self.check_generic_method_call(
-                        method,
-                        method_info,
-                        explicit_type_args,
-                        args,
-                        arg_types,
-                        call_site_span,
-                        receiver_ty,
-                    ));
+        if let Some(trait_adoptions) = trait_adoptions {
+            let mut candidates = Vec::new();
+            for adoption in trait_adoptions {
+                if let Some(method_info) =
+                    self.trait_method_info_resolved_for_adoption(adoption, method, call_site_span)
+                {
+                    candidates.push(method_info);
                 }
+            }
+            if !candidates.is_empty() {
+                return self.resolve_method_overload(
+                    method,
+                    &candidates,
+                    explicit_type_args,
+                    args,
+                    arg_types,
+                    call_site_span,
+                    receiver_ty,
+                    expected_return_ty,
+                );
             }
         }
         None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// Select a same-name method overload using call arguments and an optional expected return type.
+    fn resolve_method_overload(
+        &mut self,
+        method: &str,
+        candidates: &[MethodInfo],
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let mut viable: Vec<MethodInfo> = candidates
+            .iter()
+            .filter(|candidate| {
+                self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, expected_return_ty)
+            })
+            .cloned()
+            .collect();
+
+        if viable.is_empty() && expected_return_ty.is_some() {
+            viable = candidates
+                .iter()
+                .filter(|candidate| self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, None))
+                .cloned()
+                .collect();
+        }
+
+        match viable.as_slice() {
+            [method_info] => Some(self.check_generic_method_call(
+                method,
+                method_info.clone(),
+                explicit_type_args,
+                args,
+                arg_types,
+                call_site_span,
+                receiver_ty,
+            )),
+            [] => candidates.first().map(|method_info| {
+                self.check_generic_method_call(
+                    method,
+                    method_info.clone(),
+                    explicit_type_args,
+                    args,
+                    arg_types,
+                    call_site_span,
+                    receiver_ty,
+                )
+            }),
+            _ => {
+                self.errors
+                    .push(errors::ambiguous_trait_method_call(method, call_site_span));
+                Some(ResolvedType::Unknown)
+            }
+        }
+    }
+
+    /// Return whether one method candidate is compatible with the supplied arguments and expected result type.
+    fn method_candidate_matches_call(
+        &self,
+        candidate: &MethodInfo,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> bool {
+        let (params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        if let Some(expected) = expected_return_ty
+            && !self.types_compatible(&return_type, expected)
+        {
+            return false;
+        }
+        let normal_params: Vec<&CallableParam> =
+            params.iter().filter(|param| param.kind == ParamKind::Normal).collect();
+        let rest_positional = params.iter().find(|param| param.kind == ParamKind::RestPositional);
+        let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
+        let mut normal_bound = vec![false; normal_params.len()];
+        let mut positional_index = 0usize;
+        let mut named_seen = std::collections::HashSet::new();
+        for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
+            match arg {
+                CallArg::Positional(_) => {
+                    if let Some(param) = normal_params.get(positional_index) {
+                        if !self.types_compatible(arg_ty, &param.ty) {
+                            return false;
+                        }
+                        normal_bound[positional_index] = true;
+                        positional_index += 1;
+                    } else if let Some(param) = rest_positional {
+                        if !self.types_compatible(arg_ty, &param.ty) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                CallArg::Named(name, _) => {
+                    if !named_seen.insert(name.as_str()) {
+                        return false;
+                    }
+                    if let Some((normal_idx, param)) = normal_params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param)| param.name() == Some(name.as_str()))
+                    {
+                        if normal_bound[normal_idx] {
+                            return false;
+                        }
+                        if !self.types_compatible(arg_ty, &param.ty) {
+                            return false;
+                        }
+                        normal_bound[normal_idx] = true;
+                    } else if let Some(param) = rest_keyword {
+                        if !self.types_compatible(arg_ty, &param.ty) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return true,
+            }
+        }
+        normal_params
+            .iter()
+            .zip(normal_bound.iter())
+            .all(|(param, bound)| *bound || param.has_default)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    /// Resolve a method call on a generic placeholder using the active `T with Trait[...]` bound stack.
+    fn resolve_generic_placeholder_method(
+        &mut self,
+        placeholder_name: &str,
+        method: &str,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let mut active_bounds = Vec::new();
+        for frame in self.current_type_param_bound_details.iter().rev() {
+            if let Some(bounds) = frame.get(placeholder_name) {
+                active_bounds = bounds.clone();
+                break;
+            }
+        }
+        let mut candidates = Vec::new();
+        for bound in &active_bounds {
+            if let Some(method_info) = self.trait_method_info_resolved_for_adoption(bound, method, call_site_span) {
+                candidates.push(method_info);
+            }
+        }
+        if candidates.is_empty() {
+            return None;
+        }
+        self.resolve_method_overload(
+            method,
+            &candidates,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        )
     }
 
     /// Resolve a newtype/rusttype rebound method alias to its target method name.
@@ -889,6 +1081,19 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        self.check_method_call_with_expected(base, method, type_args, args, span, None)
+    }
+
+    /// Type-check a method call with an optional expected result type for overload disambiguation.
+    pub(in crate::frontend::typechecker::check_expr) fn check_method_call_with_expected(
+        &mut self,
+        base: &Spanned<Expr>,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
         let base_ty = self.check_expr(base);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
@@ -1190,46 +1395,52 @@ impl TypeChecker {
         {
             match type_info {
                 TypeInfo::Model(model) => {
-                    let traits = self.trait_names_for_type_methods(&model.traits, &model.derives);
+                    let trait_adoptions = self.trait_adoptions_for_type_methods(&model.trait_adoptions, &model.derives);
                     if let Some(ret) = self.resolve_named_method(
                         &model.methods,
-                        Some(&traits),
+                        Some(&model.method_overloads),
+                        Some(&trait_adoptions),
                         method,
                         type_args,
                         args,
                         &arg_types,
                         span,
                         &base_ty,
+                        expected_return_ty,
                     ) {
                         return ret;
                     }
                 }
                 TypeInfo::Class(class) => {
-                    let traits = self.trait_names_for_type_methods(&class.traits, &class.derives);
+                    let trait_adoptions = self.trait_adoptions_for_type_methods(&class.trait_adoptions, &class.derives);
                     if let Some(ret) = self.resolve_named_method(
                         &class.methods,
-                        Some(&traits),
+                        Some(&class.method_overloads),
+                        Some(&trait_adoptions),
                         method,
                         type_args,
                         args,
                         &arg_types,
                         span,
                         &base_ty,
+                        expected_return_ty,
                     ) {
                         return ret;
                     }
                 }
                 TypeInfo::Enum(en) => {
-                    let traits = self.trait_names_for_type_methods(&en.traits, &en.derives);
+                    let trait_adoptions = self.trait_adoptions_for_type_methods(&en.trait_adoptions, &en.derives);
                     if let Some(ret) = self.resolve_named_method(
                         &en.methods,
-                        Some(&traits),
+                        Some(&en.method_overloads),
+                        Some(&trait_adoptions),
                         method,
                         type_args,
                         args,
                         &arg_types,
                         span,
                         &base_ty,
+                        expected_return_ty,
                     ) {
                         return ret;
                     }
@@ -1239,12 +1450,14 @@ impl TypeChecker {
                     if let Some(ret) = self.resolve_named_method(
                         &newtype.methods,
                         None,
+                        None,
                         resolved_method,
                         type_args,
                         args,
                         &arg_types,
                         span,
                         &base_ty,
+                        expected_return_ty,
                     ) {
                         if newtype.is_rusttype {
                             self.maybe_record_rusttype_return_coercion(&newtype, resolved_method, &ret, span);
@@ -1274,31 +1487,37 @@ impl TypeChecker {
                 }
                 Some(type_info) => match type_info {
                     TypeInfo::Model(model) => {
-                        let traits = self.trait_names_for_type_methods(&model.traits, &model.derives);
+                        let trait_adoptions =
+                            self.trait_adoptions_for_type_methods(&model.trait_adoptions, &model.derives);
                         if let Some(ret) = self.resolve_named_method(
                             &model.methods,
-                            Some(&traits),
+                            Some(&model.method_overloads),
+                            Some(&trait_adoptions),
                             method,
                             type_args,
                             args,
                             &arg_types,
                             span,
                             &base_ty,
+                            expected_return_ty,
                         ) {
                             return ret;
                         }
                     }
                     TypeInfo::Class(class) => {
-                        let traits = self.trait_names_for_type_methods(&class.traits, &class.derives);
+                        let trait_adoptions =
+                            self.trait_adoptions_for_type_methods(&class.trait_adoptions, &class.derives);
                         if let Some(ret) = self.resolve_named_method(
                             &class.methods,
-                            Some(&traits),
+                            Some(&class.method_overloads),
+                            Some(&trait_adoptions),
                             method,
                             type_args,
                             args,
                             &arg_types,
                             span,
                             &base_ty,
+                            expected_return_ty,
                         ) {
                             return ret;
                         }
@@ -1307,16 +1526,18 @@ impl TypeChecker {
                         if enum_helpers::from_str(method) == Some(enum_helpers::EnumHelperId::Message) {
                             return ResolvedType::Str;
                         }
-                        let traits = self.trait_names_for_type_methods(&en.traits, &en.derives);
+                        let trait_adoptions = self.trait_adoptions_for_type_methods(&en.trait_adoptions, &en.derives);
                         if let Some(ret) = self.resolve_named_method(
                             &en.methods,
-                            Some(&traits),
+                            Some(&en.method_overloads),
+                            Some(&trait_adoptions),
                             method,
                             type_args,
                             args,
                             &arg_types,
                             span,
                             &base_ty,
+                            expected_return_ty,
                         ) {
                             return ret;
                         }
@@ -1326,12 +1547,14 @@ impl TypeChecker {
                         if let Some(ret) = self.resolve_named_method(
                             &nt.methods,
                             None,
+                            None,
                             resolved_method,
                             type_args,
                             args,
                             &arg_types,
                             span,
                             &base_ty,
+                            expected_return_ty,
                         ) {
                             // When the method body is abstract and the underlying Rust type is known,
                             // check whether the actual Rust return type needs a coercion (e.g. &str → String).
@@ -1383,6 +1606,20 @@ impl TypeChecker {
         // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
         // At the Incan typechecker level we allow the call and return the same type variable.
         if self.is_generic_placeholder_type(&base_ty) {
+            if let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
+                && let Some(ret) = self.resolve_generic_placeholder_method(
+                    &placeholder_name,
+                    method,
+                    type_args,
+                    args,
+                    &arg_types,
+                    span,
+                    &base_ty,
+                    expected_return_ty,
+                )
+            {
+                return ret;
+            }
             return base_ty.clone();
         }
 

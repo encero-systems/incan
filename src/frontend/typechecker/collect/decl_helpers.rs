@@ -106,6 +106,115 @@ fn resolve_owner_self_reference(
     }
 }
 
+/// Build method symbol metadata from one declared method while resolving owner `Self` references.
+fn method_info_from_decl(
+    method: &Spanned<MethodDecl>,
+    checker: &mut TypeChecker,
+    owner_name: Option<&str>,
+    owner_self_ty: Option<&ResolvedType>,
+) -> MethodInfo {
+    let type_params: Vec<String> = method.node.type_params.iter().map(|tp| tp.name.clone()).collect();
+    let type_param_bounds: HashMap<String, Vec<String>> = method
+        .node
+        .type_params
+        .iter()
+        .map(|tp| {
+            (
+                tp.name.clone(),
+                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+            )
+        })
+        .collect();
+    let type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>> = method
+        .node
+        .type_params
+        .iter()
+        .map(|tp| {
+            (
+                tp.name.clone(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| TypeBoundInfo {
+                        name: bound.name.clone(),
+                        type_args: bound
+                            .type_args
+                            .iter()
+                            .map(|type_arg| {
+                                resolve_owner_self_reference(
+                                    checker.resolve_type_checked(type_arg),
+                                    owner_name,
+                                    owner_self_ty,
+                                )
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let params = method
+        .node
+        .params
+        .iter()
+        .map(|p| {
+            CallableParam::named_with_default(
+                p.node.name.clone(),
+                resolve_owner_self_reference(checker.resolve_type_checked(&p.node.ty), owner_name, owner_self_ty),
+                p.node.kind,
+                p.node.default.is_some(),
+            )
+        })
+        .collect();
+    let return_type = resolve_owner_self_reference(
+        checker.resolve_type_checked(&method.node.return_type),
+        owner_name,
+        owner_self_ty,
+    );
+    MethodInfo {
+        type_params,
+        type_param_bounds,
+        type_param_bound_details,
+        receiver: method.node.receiver,
+        params,
+        return_type,
+        is_async: method.node.is_async(),
+        has_body: method.node.body.is_some(),
+    }
+}
+
+/// Collect methods from method declarations into grouped overloads, preserving same-name declarations.
+pub(super) fn collect_method_overloads(
+    methods: &[Spanned<MethodDecl>],
+    checker: &mut TypeChecker,
+    owner_name: Option<&str>,
+    owner_type_params: &[TypeParam],
+) -> HashMap<String, Vec<MethodInfo>> {
+    let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
+    let mut overloads: HashMap<String, Vec<MethodInfo>> = HashMap::new();
+    for method in methods {
+        overloads
+            .entry(method.node.name.clone())
+            .or_default()
+            .push(method_info_from_decl(
+                method,
+                checker,
+                owner_name,
+                owner_self_ty.as_ref(),
+            ));
+    }
+    overloads
+}
+
+/// Collapse grouped methods to the legacy single-method map, keeping the last declaration as before.
+pub(super) fn collect_methods_from_overloads(
+    overloads: &HashMap<String, Vec<MethodInfo>>,
+) -> HashMap<String, MethodInfo> {
+    overloads
+        .iter()
+        .filter_map(|(name, methods)| methods.last().cloned().map(|method| (name.clone(), method)))
+        .collect()
+}
+
 /// Collect methods from method declarations into a `HashMap`.
 pub(super) fn collect_methods(
     methods: &[Spanned<MethodDecl>],
@@ -113,86 +222,20 @@ pub(super) fn collect_methods(
     owner_name: Option<&str>,
     owner_type_params: &[TypeParam],
 ) -> HashMap<String, MethodInfo> {
-    let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
-    methods
-        .iter()
-        .map(|m| {
-            let type_params: Vec<String> = m.node.type_params.iter().map(|tp| tp.name.clone()).collect();
-            let type_param_bounds: HashMap<String, Vec<String>> = m
-                .node
-                .type_params
-                .iter()
-                .map(|tp| {
-                    (
-                        tp.name.clone(),
-                        tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
-                    )
-                })
-                .collect();
-            let type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>> = m
-                .node
-                .type_params
-                .iter()
-                .map(|tp| {
-                    (
-                        tp.name.clone(),
-                        tp.bounds
-                            .iter()
-                            .map(|bound| TypeBoundInfo {
-                                name: bound.name.clone(),
-                                type_args: bound
-                                    .type_args
-                                    .iter()
-                                    .map(|type_arg| {
-                                        resolve_owner_self_reference(
-                                            checker.resolve_type_checked(type_arg),
-                                            owner_name,
-                                            owner_self_ty.as_ref(),
-                                        )
-                                    })
-                                    .collect(),
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
-            let params = m
-                .node
-                .params
-                .iter()
-                .map(|p| {
-                    CallableParam::named_with_default(
-                        p.node.name.clone(),
-                        resolve_owner_self_reference(
-                            checker.resolve_type_checked(&p.node.ty),
-                            owner_name,
-                            owner_self_ty.as_ref(),
-                        ),
-                        p.node.kind,
-                        p.node.default.is_some(),
-                    )
-                })
-                .collect();
-            let return_type = resolve_owner_self_reference(
-                checker.resolve_type_checked(&m.node.return_type),
-                owner_name,
-                owner_self_ty.as_ref(),
-            );
-            (
-                m.node.name.clone(),
-                MethodInfo {
-                    type_params,
-                    type_param_bounds,
-                    type_param_bound_details,
-                    receiver: m.node.receiver,
-                    params,
-                    return_type,
-                    is_async: m.node.is_async(),
-                    has_body: m.node.body.is_some(),
-                },
-            )
-        })
-        .collect()
+    let overloads = collect_method_overloads(methods, checker, owner_name, owner_type_params);
+    collect_methods_from_overloads(&overloads)
+}
+
+/// Insert a compiler-injected method into both the legacy method map and overload groups.
+fn insert_injected_method(
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+    name: impl Into<String>,
+    info: MethodInfo,
+) {
+    let name = name.into();
+    methods.insert(name.clone(), info.clone());
+    overloads.insert(name, vec![info]);
 }
 
 /// Collect fields from field declarations into a `HashMap`.
@@ -220,13 +263,20 @@ pub(super) fn collect_fields(
 }
 
 /// Inject to_json/from_json methods based on Serialize/Deserialize derives.
-pub(super) fn inject_json_methods(methods: &mut HashMap<String, MethodInfo>, type_name: &str, derives: &[String]) {
+pub(super) fn inject_json_methods(
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+    type_name: &str,
+    derives: &[String],
+) {
     if derives
         .iter()
         .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Serialize))
     {
-        methods.insert(
-            "to_json".to_string(),
+        insert_injected_method(
+            methods,
+            overloads,
+            "to_json",
             MethodInfo {
                 type_params: Vec::new(),
                 type_param_bounds: HashMap::new(),
@@ -243,8 +293,10 @@ pub(super) fn inject_json_methods(methods: &mut HashMap<String, MethodInfo>, typ
         .iter()
         .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize))
     {
-        methods.insert(
-            "from_json".to_string(),
+        insert_injected_method(
+            methods,
+            overloads,
+            "from_json",
             MethodInfo {
                 type_params: Vec::new(),
                 type_param_bounds: HashMap::new(),
@@ -268,6 +320,7 @@ pub(super) fn inject_json_methods(methods: &mut HashMap<String, MethodInfo>, typ
 /// generates the actual Rust implementation.
 pub(super) fn inject_validate_methods(
     methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
     _type_name: &str,
     fields: &HashMap<String, FieldInfo>,
     field_order: &[Ident],
@@ -305,8 +358,10 @@ pub(super) fn inject_validate_methods(
         }
     }
 
-    methods.insert(
-        "new".to_string(),
+    insert_injected_method(
+        methods,
+        overloads,
+        "new",
         MethodInfo {
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),

@@ -64,13 +64,13 @@ fn main() {
         }),
     );
     let r#box = Box {};
-    let _value = r#box.get(1);
-    let shelf = Shelf { item: 1 };
-    let _shelf_value = shelf.swap("shelf".to_string());
+    let _value: i64 = r#box.get(1);
+    let shelf: Shelf<i64> = Shelf { item: 1 };
+    let _shelf_value: String = shelf.swap("shelf".to_string());
     let pair = Pair {};
-    let _swapped = pair.swap("a".to_string(), "b".to_string());
-    let echo_box = EchoBox { marker: 1 };
-    let _echoed_bool = echo_box.echo(true);
-    let wrapper = Wrapper(1);
-    let _echoed_float = wrapper.echo(1.5f64);
+    let _swapped: String = pair.swap("a".to_string(), "b".to_string());
+    let echo_box: EchoBox = EchoBox { marker: 1 };
+    let _echoed_bool: bool = echo_box.echo(true);
+    let wrapper: Wrapper<i64> = Wrapper(1);
+    let _echoed_float: f64 = wrapper.echo(1.5f64);
 }

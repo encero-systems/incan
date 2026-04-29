@@ -22,7 +22,7 @@ fn test_function_references() -> (i64, i64) {
     return (doubled, squared);
 }
 fn map_list(items: Vec<i64>, transformer: fn(i64) -> i64) -> Vec<i64> {
-    let mut result = vec![];
+    let mut result: Vec<i64> = vec![];
     for item in items.iter().copied() {
         result.push(transformer(item));
     }

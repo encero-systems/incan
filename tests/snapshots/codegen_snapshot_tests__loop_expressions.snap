@@ -36,6 +36,6 @@ fn main() {
             }
         }),
     );
-    let answer = find_value(true);
+    let answer: i64 = find_value(true);
     spin(answer);
 }

@@ -12,9 +12,11 @@ struct PopRegressItem {
     id: i64,
 }
 fn drain_items() {
-    let mut xs = vec![PopRegressItem { id : 1 }];
+    let mut xs: Vec<PopRegressItem> = vec![PopRegressItem { id : 1 }];
     while ::std::convert::identity(xs.len() as i64) > 0 {
-        let item = incan_stdlib::collections::__private::list_pop(&mut xs);
+        let item: PopRegressItem = incan_stdlib::collections::__private::list_pop(
+            &mut xs,
+        );
         println!("{}", item.id);
     }
 }

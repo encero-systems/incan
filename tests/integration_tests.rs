@@ -3773,11 +3773,11 @@ def main() -> None:
             panic!("codegen failed");
         };
         assert!(
-            rust_code.contains("let _maybe = Some(1);"),
+            rust_code.contains("let _maybe: Option<i64> = Some(1);"),
             "expected Option[int] smoke value to lower to a Rust Option expression; got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("let _names = vec![\"a\".to_string(), \"b\".to_string()];"),
+            rust_code.contains("let _names: Vec<String> = vec![\"a\".to_string(), \"b\".to_string()];"),
             "expected List[str] smoke value to lower to an owned Rust string vec; got:\n{rust_code}"
         );
         assert!(
@@ -7876,6 +7876,7 @@ pub def display[T](data: DataSet[T]) -> None:
             name: "Widget".to_string(),
             type_params: Vec::new(),
             traits: Vec::new(),
+            trait_adoptions: Vec::new(),
             derives: Vec::new(),
             fields: Vec::new(),
             methods: Vec::new(),
@@ -8052,6 +8053,7 @@ pub def display[T](data: DataSet[T]) -> None:
             name: "Widget".to_string(),
             type_params: Vec::new(),
             traits: Vec::new(),
+            trait_adoptions: Vec::new(),
             derives: Vec::new(),
             fields: Vec::new(),
             methods: Vec::new(),

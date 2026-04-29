@@ -32,7 +32,7 @@ fn quadruple(x: i64) -> i64 {
     return double(double(x));
 }
 fn double_values(numbers: &mut Vec<i64>) {
-    let mut idx = 0;
+    let mut idx: i64 = 0;
     *incan_stdlib::collections::list_get_mut(numbers, (idx) as i64) = *incan_stdlib::collections::list_get(
         &numbers,
         (idx) as i64,
@@ -44,7 +44,7 @@ fn double_values(numbers: &mut Vec<i64>) {
     ) * 2;
 }
 fn find_max(numbers: Vec<i64>) -> i64 {
-    let mut max_val = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
+    let mut max_val: i64 = *incan_stdlib::collections::list_get(&numbers, (0) as i64);
     for num in numbers.iter().copied() {
         if num > max_val {
             max_val = num;
@@ -86,46 +86,46 @@ fn main() {
             }
         }),
     );
-    let greeting = greet();
+    let greeting: String = greet();
     println!("{}", greeting);
-    let sum = add(5, 3);
+    let sum: i64 = add(5, 3);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["5 + 3 = ", ""]; let __args : Vec <
         String > = vec![format!("{}", sum)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
     );
-    let result = quadruple(5);
+    let result: i64 = quadruple(5);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["quadruple(5) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", result)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let fact = factorial(5);
+    let fact: i64 = factorial(5);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["factorial(5) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", fact)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
     );
-    let fib = fibonacci(7);
+    let fib: i64 = fibonacci(7);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["fibonacci(7) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", fib)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
     );
-    let test_nums = vec![1, 5, 3, 9, 2];
-    let max_num = find_max(test_nums);
+    let test_nums: Vec<i64> = vec![1, 5, 3, 9, 2];
+    let max_num: i64 = find_max(test_nums);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["max = ", ""]; let __args : Vec < String
         > = vec![format!("{}", max_num)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
     );
-    let mut nums = vec![5, 10, 15];
+    let mut nums: Vec<i64> = vec![5, 10, 15];
     double_values(&mut nums);
     println!("{}", "List incremented");
-    let category = classify_number(-5);
+    let category: String = classify_number(-5);
     println!("{}", category);
-    let mut alice_name = "Alice".to_string();
+    let mut alice_name: String = "Alice".to_string();
     print_greeting(alice_name.to_string());
-    let _coords = get_coordinates();
+    let _coords: (i64, i64) = get_coordinates();
     println!("{}", "Coordinates retrieved");
 }

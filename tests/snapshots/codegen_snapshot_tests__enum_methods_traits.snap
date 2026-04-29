@@ -62,5 +62,5 @@ fn main() {
             }
         }),
     );
-    let _signal = Signal::Start;
+    let _signal: Signal = Signal::Start;
 }

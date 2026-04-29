@@ -75,8 +75,8 @@ fn create_coordinate(lat: f64, lon: f64) -> Coordinate {
     };
 }
 fn distance_from_origin(coord: Coordinate) -> f64 {
-    let lat_sq = coord.latitude * coord.latitude;
-    let lon_sq = coord.longitude * coord.longitude;
+    let lat_sq: f64 = coord.latitude * coord.latitude;
+    let lon_sq: f64 = coord.longitude * coord.longitude;
     return lat_sq + lon_sq.powf(0.5f64);
 }
 fn main() {
@@ -91,7 +91,7 @@ fn main() {
             }
         }),
     );
-    let user = User {
+    let user: User = User {
         name: "Alice".to_string(),
         age: 30,
         email: "alice@example.com".to_string(),
@@ -101,7 +101,7 @@ fn main() {
         Vec < String > = vec![format!("{}", user.name), format!("{}", user.age)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let product = Product {
+    let product: Product = Product {
         id: 123,
         name: "Laptop".to_string(),
         price: 999.99f64,
@@ -111,7 +111,7 @@ fn main() {
         String > = vec![format!("{}", product.id)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let config = Config {
+    let config: Config = Config {
         host: "localhost".to_string(),
         port: 8080,
         timeout: 30,
@@ -121,17 +121,17 @@ fn main() {
         String > = vec![format!("{}", config.port)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let _data1 = OptionalData {
+    let _data1: OptionalData = OptionalData {
         required: "must have".to_string(),
         optional: Some("optional value".to_string()),
         maybe_number: Some(42),
     };
-    let _data2 = OptionalData {
+    let _data2: OptionalData = OptionalData {
         required: "also must have".to_string(),
         optional: None::<_>,
         maybe_number: None::<_>,
     };
-    let student = StudentData {
+    let student: StudentData = StudentData {
         name: "Bob".to_string(),
         grades: vec![85, 90, 88, 92],
         metadata: [
@@ -146,19 +146,19 @@ fn main() {
         String > = vec![format!("{}", student.name)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let coord = create_coordinate(3f64, 4f64);
-    let dist = distance_from_origin(coord);
+    let coord: Coordinate = create_coordinate(3f64, 4f64);
+    let dist: f64 = distance_from_origin(coord);
     println!(
         "{}", { let __parts : [& str; 2usize] = ["Distance: ", ""]; let __args : Vec <
         String > = vec![format!("{}", dist)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
     );
-    let address = Address {
+    let address: Address = Address {
         street: "123 Main St".to_string(),
         city: "Boston".to_string(),
         zipcode: "02101".to_string(),
     };
-    let contact = Contact {
+    let contact: Contact = Contact {
         name: "Charlie".to_string(),
         address: address,
         phone: "555-1234".to_string(),

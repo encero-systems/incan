@@ -132,7 +132,8 @@ impl AstLowering {
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let lowered = methods
+        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
@@ -146,6 +147,113 @@ impl AstLowering {
             trait_type_args: Vec::new(),
             methods: lowered_methods,
         })
+    }
+
+    /// Keep only method names that can safely be emitted as inherent Rust methods.
+    fn inherent_methods_without_duplicate_names(
+        methods: &[Spanned<ast::MethodDecl>],
+    ) -> Vec<&Spanned<ast::MethodDecl>> {
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for method in methods {
+            *counts.entry(method.node.name.as_str()).or_default() += 1;
+        }
+        methods
+            .iter()
+            .filter(|method| counts.get(method.node.name.as_str()).copied().unwrap_or(0) == 1)
+            .collect()
+    }
+
+    /// Substitute generic IR type placeholders with instantiated trait arguments.
+    fn substitute_ir_type_params(ty: IrType, subst: &std::collections::HashMap<String, IrType>) -> IrType {
+        match ty {
+            IrType::Generic(name) => subst.get(&name).cloned().unwrap_or(IrType::Generic(name)),
+            IrType::List(inner) => IrType::List(Box::new(Self::substitute_ir_type_params(*inner, subst))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::substitute_ir_type_params(*key, subst)),
+                Box::new(Self::substitute_ir_type_params(*value, subst)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::substitute_ir_type_params(*inner, subst))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| Self::substitute_ir_type_params(item, subst))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(Self::substitute_ir_type_params(*inner, subst))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::substitute_ir_type_params(*ok, subst)),
+                Box::new(Self::substitute_ir_type_params(*err, subst)),
+            ),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| Self::substitute_ir_type_params(arg, subst))
+                    .collect(),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| Self::substitute_ir_type_params(param, subst))
+                    .collect(),
+                ret: Box::new(Self::substitute_ir_type_params(*ret, subst)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_ir_type_params(*inner, subst))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::substitute_ir_type_params(*inner, subst))),
+            other => other,
+        }
+    }
+
+    /// Lower a method signature into the comparable shape used to pair trait obligations with overrides.
+    fn lowered_method_signature_for_match(
+        &mut self,
+        method: &ast::MethodDecl,
+        type_param_names: &std::collections::HashSet<&str>,
+        subst: &std::collections::HashMap<String, IrType>,
+    ) -> (Option<ast::Receiver>, Vec<(ast::ParamKind, IrType)>, IrType) {
+        let mut hidden_type_params = Vec::new();
+        let mut hidden_counter = 0usize;
+        let params = method
+            .params
+            .iter()
+            .map(|param| {
+                let base_ty = self.lower_callable_param_type(
+                    &param.node.ty.node,
+                    Some(type_param_names),
+                    &mut hidden_type_params,
+                    &mut hidden_counter,
+                );
+                let param_ty = Self::lower_param_container_type(param.node.kind, base_ty);
+                (param.node.kind, Self::substitute_ir_type_params(param_ty, subst))
+            })
+            .collect();
+        let return_type = self.lower_callable_return_type(&method.return_type.node, Some(type_param_names));
+        (
+            method.receiver,
+            params,
+            Self::substitute_ir_type_params(return_type, subst),
+        )
+    }
+
+    /// Return whether a concrete method has the instantiated signature required by one trait impl.
+    fn trait_impl_override_matches(
+        &mut self,
+        trait_method: &ast::MethodDecl,
+        candidate: &ast::MethodDecl,
+        trait_type_params: &[ast::TypeParam],
+        trait_type_args: &[IrType],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+    ) -> bool {
+        let trait_param_names: std::collections::HashSet<&str> =
+            trait_type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let subst: std::collections::HashMap<String, IrType> = trait_type_params
+            .iter()
+            .map(|tp| tp.name.clone())
+            .zip(trait_type_args.iter().cloned())
+            .collect();
+        let trait_sig = self.lowered_method_signature_for_match(trait_method, &trait_param_names, &subst);
+        let empty_subst = std::collections::HashMap::new();
+        let candidate_sig = self.lowered_method_signature_for_match(candidate, owner_type_param_names, &empty_subst);
+        trait_sig == candidate_sig
     }
 
     /// Lower trait implementation for a class.
@@ -181,6 +289,7 @@ impl AstLowering {
                     methods,
                 });
             };
+            let trait_type_params = trait_decl.type_params;
             let trait_methods = trait_decl.methods;
 
             let mut methods: Vec<IrFunction> = Vec::new();
@@ -190,7 +299,15 @@ impl AstLowering {
                 // Prefer the implementing type's override, if present.
                 let mut found_override: Option<&ast::MethodDecl> = None;
                 for m in impl_methods {
-                    if m.node.name == method_name {
+                    if m.node.name == method_name
+                        && self.trait_impl_override_matches(
+                            &trait_method.node,
+                            &m.node,
+                            &trait_type_params,
+                            &trait_type_args,
+                            &type_param_names,
+                        )
+                    {
                         found_override = Some(&m.node);
                         break;
                     }
@@ -335,7 +452,8 @@ impl AstLowering {
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let lowered = methods
+        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
@@ -363,7 +481,8 @@ impl AstLowering {
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let lowered = methods
+        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();

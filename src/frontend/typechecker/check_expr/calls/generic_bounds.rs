@@ -12,6 +12,7 @@ use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 impl TypeChecker {
+    /// Validate generic function call type arguments, value arguments, and explicit type-parameter bounds.
     pub(in crate::frontend::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -58,7 +59,13 @@ impl TypeChecker {
             &mut type_bindings,
             call_span,
         );
-        self.emit_explicit_bound_errors(func_name, &info.type_param_bounds, &type_bindings, call_span);
+        self.emit_explicit_bound_errors(
+            func_name,
+            &info.type_param_bounds,
+            &info.type_param_bound_details,
+            &type_bindings,
+            call_span,
+        );
 
         let explicit_arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
         if !explicit_type_args.is_empty() && explicit_arity_ok {
@@ -186,7 +193,13 @@ impl TypeChecker {
         self.validate_callable_arg_bindings(method, &params, args, arg_types, &mut type_bindings, call_site_span);
         self.type_info.record_call_site_callable_params(call_site_span, &params);
 
-        self.emit_explicit_bound_errors(method, &method_info.type_param_bounds, &type_bindings, call_site_span);
+        self.emit_explicit_bound_errors(
+            method,
+            &method_info.type_param_bounds,
+            &method_info.type_param_bound_details,
+            &type_bindings,
+            call_site_span,
+        );
 
         // ---- Require concrete bindings; snapshot monomorphs for lowering when brackets were used ----
         if !explicit_type_args.is_empty() && explicit_arity_ok {
@@ -284,6 +297,7 @@ impl TypeChecker {
         &mut self,
         func_name: &str,
         bounds_by_param: &std::collections::HashMap<String, Vec<String>>,
+        bound_details_by_param: &std::collections::HashMap<String, Vec<crate::frontend::symbols::TypeBoundInfo>>,
         bindings: &std::collections::HashMap<String, ResolvedType>,
         call_span: Span,
     ) {
@@ -291,6 +305,22 @@ impl TypeChecker {
             let Some(actual_ty) = bindings.get(type_param) else {
                 continue;
             };
+            if let Some(details) = bound_details_by_param.get(type_param)
+                && !details.is_empty()
+            {
+                for bound in details {
+                    if !self.type_satisfies_explicit_bound_info(actual_ty, bound, bindings) {
+                        self.errors.push(errors::generic_bound_not_satisfied(
+                            func_name,
+                            type_param,
+                            &self.type_bound_display(bound, bindings),
+                            &actual_ty.to_string(),
+                            call_span,
+                        ));
+                    }
+                }
+                continue;
+            }
             for bound in bounds {
                 if !self.type_satisfies_explicit_bound(actual_ty, bound) {
                     self.errors.push(errors::generic_bound_not_satisfied(
@@ -303,6 +333,48 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// Render a type-parameter bound with call-site substitutions applied.
+    fn type_bound_display(
+        &self,
+        bound: &crate::frontend::symbols::TypeBoundInfo,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> String {
+        if bound.type_args.is_empty() {
+            return bound.name.clone();
+        }
+        let args = bound
+            .type_args
+            .iter()
+            .map(|arg| substitute_resolved_type(arg, bindings).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{}[{}]", bound.name, args)
+    }
+
+    /// Return whether a type satisfies one explicit bound, including generic trait arguments.
+    pub(crate) fn type_satisfies_explicit_bound_info(
+        &self,
+        ty: &ResolvedType,
+        bound: &crate::frontend::symbols::TypeBoundInfo,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> bool {
+        if bound.type_args.is_empty() {
+            return self.type_satisfies_explicit_bound(ty, &bound.name);
+        }
+        if is_rust_capability_bound(&bound.name) {
+            return true;
+        }
+        if builtin_traits::from_str(&bound.name).is_some() || self.lookup_semantic_trait_info(&bound.name).is_none() {
+            return self.type_satisfies_explicit_bound(ty, &bound.name);
+        }
+        let expected_args = bound
+            .type_args
+            .iter()
+            .map(|arg| substitute_resolved_type(arg, bindings))
+            .collect::<Vec<_>>();
+        self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
     }
 
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
@@ -405,6 +477,134 @@ impl TypeChecker {
             | ResolvedType::Function(_, _)
             | ResolvedType::SelfType => false,
         }
+    }
+
+    /// Return whether a nominal type satisfies a trait bound with exact expected trait arguments.
+    fn type_satisfies_nominal_trait_bound_with_args(
+        &self,
+        ty: &ResolvedType,
+        bound_trait: &str,
+        expected_args: &[ResolvedType],
+    ) -> bool {
+        match ty {
+            ResolvedType::Unknown
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer => true,
+            ResolvedType::Named(type_name) => {
+                self.type_implements_trait_with_args(type_name, &[], bound_trait, expected_args)
+            }
+            ResolvedType::Generic(type_name, type_args) => {
+                self.type_implements_trait_with_args(type_name, type_args, bound_trait, expected_args)
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                self.type_satisfies_nominal_trait_bound_with_args(inner, bound_trait, expected_args)
+            }
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Tuple(_)
+            | ResolvedType::FrozenList(_)
+            | ResolvedType::FrozenSet(_)
+            | ResolvedType::FrozenDict(_, _)
+            | ResolvedType::Function(_, _)
+            | ResolvedType::SelfType => false,
+        }
+    }
+
+    /// Check a concrete model/class adoption list for a matching generic trait instantiation.
+    fn type_implements_trait_with_args(
+        &self,
+        type_name: &str,
+        concrete_type_args: &[ResolvedType],
+        bound_trait: &str,
+        expected_args: &[ResolvedType],
+    ) -> bool {
+        let Some(info) = self.lookup_semantic_type_info(type_name) else {
+            return false;
+        };
+        let (owner_type_params, adoptions, derives) = match info {
+            TypeInfo::Model(model) => (
+                model.type_params.as_slice(),
+                model.trait_adoptions.as_slice(),
+                Some(model.derives.as_slice()),
+            ),
+            TypeInfo::Class(class) => (
+                class.type_params.as_slice(),
+                class.trait_adoptions.as_slice(),
+                Some(class.derives.as_slice()),
+            ),
+            TypeInfo::Enum(en) => (
+                en.type_params.as_slice(),
+                en.trait_adoptions.as_slice(),
+                Some(en.derives.as_slice()),
+            ),
+            TypeInfo::Builtin | TypeInfo::Newtype(_) | TypeInfo::TypeAlias => return false,
+        };
+
+        if expected_args.is_empty()
+            && derives.is_some_and(|items| items.iter().any(|derive| derive == bound_trait))
+            && self.lookup_semantic_trait_info(bound_trait).is_some()
+        {
+            return true;
+        }
+
+        let owner_subst =
+            crate::frontend::resolved_type_subst::type_param_subst_map(owner_type_params, concrete_type_args);
+        for adoption in adoptions {
+            let Some(adopted_info) = self.lookup_semantic_trait_info(&adoption.name) else {
+                continue;
+            };
+            let direct_args = if adoption.type_args.is_empty() {
+                concrete_type_args
+                    .iter()
+                    .take(adopted_info.type_params.len())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                adoption
+                    .type_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, &owner_subst))
+                    .collect::<Vec<_>>()
+            };
+            if direct_args.len() != adopted_info.type_params.len() {
+                continue;
+            }
+            if adoption.name == bound_trait && self.trait_args_match(&direct_args, expected_args) {
+                return true;
+            }
+
+            let subst =
+                crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
+            for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(&adoption.name) {
+                if supertrait_name != bound_trait {
+                    continue;
+                }
+                let instantiated = supertrait_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, &subst))
+                    .collect::<Vec<_>>();
+                if self.trait_args_match(&instantiated, expected_args) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Compare instantiated trait arguments using the typechecker's compatibility relation.
+    fn trait_args_match(&self, actual_args: &[ResolvedType], expected_args: &[ResolvedType]) -> bool {
+        actual_args.len() == expected_args.len()
+            && actual_args
+                .iter()
+                .zip(expected_args.iter())
+                .all(|(actual, expected)| self.types_compatible(actual, expected))
     }
 
     fn primitive_type_satisfies_bound(&self, ty: &ResolvedType, bound: &str) -> bool {

@@ -9,27 +9,27 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashSet;
 fn test_operators() {
-    let _add = 1 + 2;
-    let _sub = 5 - 3;
-    let _mul = 4 * 6;
-    let _float_div = incan_stdlib::num::py_div((10) as f64, (3) as f64);
-    let _mod_result = incan_stdlib::num::py_mod_i64(10, 3);
-    let _eq = 5 == 5;
-    let _ne = 3 != 4;
-    let _lt = 2 < 5;
-    let _le = 2 <= 2;
-    let _gt = 10 > 5;
-    let _ge = 10 >= 9;
-    let _and_result = true && false;
-    let _or_result = true || false;
-    let _not_result = !true;
-    let _lowercase_bool = true && false;
-    let _using_is = true == false;
-    let _neg_int = -42;
-    let _neg_float = -3.14f64;
-    let _complex = 1 + 2 * 3 - 4;
-    let words = vec!["alpha".to_string(), "beta".to_string()];
-    let _has_alpha = {
+    let _add: i64 = 1 + 2;
+    let _sub: i64 = 5 - 3;
+    let _mul: i64 = 4 * 6;
+    let _float_div: f64 = incan_stdlib::num::py_div((10) as f64, (3) as f64);
+    let _mod_result: i64 = incan_stdlib::num::py_mod_i64(10, 3);
+    let _eq: bool = 5 == 5;
+    let _ne: bool = 3 != 4;
+    let _lt: bool = 2 < 5;
+    let _le: bool = 2 <= 2;
+    let _gt: bool = 10 > 5;
+    let _ge: bool = 10 >= 9;
+    let _and_result: bool = true && false;
+    let _or_result: bool = true || false;
+    let _not_result: bool = !true;
+    let _lowercase_bool: bool = true && false;
+    let _using_is: book = true == false;
+    let _neg_int: i64 = -42;
+    let _neg_float: f64 = -3.14f64;
+    let _complex: i64 = 1 + 2 * 3 - 4;
+    let words: Vec<String> = vec!["alpha".to_string(), "beta".to_string()];
+    let _has_alpha: bool = {
         let __incan_probe = "alpha";
         let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);
         words
@@ -39,12 +39,12 @@ fn test_operators() {
     let vowels = ["a".to_string(), "e".to_string(), "i".to_string()]
         .into_iter()
         .collect::<HashSet<_>>();
-    let _has_a = {
+    let _has_a: bool = {
         let __incan_probe = "a";
         let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);
         vowels.contains(__incan_probe)
     };
-    let _lacks_z = !{
+    let _lacks_z: bool = !{
         let __incan_probe = "z";
         let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);
         vowels.contains(__incan_probe)

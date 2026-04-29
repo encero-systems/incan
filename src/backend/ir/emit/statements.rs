@@ -879,6 +879,17 @@ impl<'a> IrEmitter<'a> {
         Ok(Some(quote! { #union_ident :: #variant_ident(#emitted) }))
     }
 
+    /// Return a Rust local type annotation for explicit Incan bindings that can be named in local position.
+    fn emit_local_let_annotation(&self, ty: &IrType) -> Option<TokenStream> {
+        match ty {
+            IrType::Unknown | IrType::Trait(_) | IrType::ImplTrait(_) => None,
+            _ => {
+                let ty_tokens = self.emit_type(ty);
+                Some(quote! { : #ty_tokens })
+            }
+        }
+    }
+
     /// Emit assignment through a storage-rooted field or index path.
     ///
     /// This rewrites the target to use the `with_mut` temporary binding and evaluates the RHS once before entering the
@@ -958,6 +969,7 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Let {
                 name,
                 ty,
+                type_annotation,
                 mutability,
                 value,
             } => {
@@ -970,15 +982,18 @@ impl<'a> IrEmitter<'a> {
                 let n = Self::rust_ident(&emitted_name);
                 let v = self.emit_assignment_value(value, Some(ty))?;
                 let converted_v = plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(v);
+                let annotation = type_annotation
+                    .as_ref()
+                    .and_then(|annotated_ty| self.emit_local_let_annotation(annotated_ty));
 
                 let needs_mut = binding_is_used
                     && (matches!(mutability, Mutability::Mutable)
                         || matches!(value.kind, IrExprKind::StaticBinding { .. })
                             && self.current_storage_binding_needs_mut(name));
                 if needs_mut {
-                    Ok(quote! { let mut #n = #converted_v; })
+                    Ok(quote! { let mut #n #annotation = #converted_v; })
                 } else {
-                    Ok(quote! { let #n = #converted_v; })
+                    Ok(quote! { let #n #annotation = #converted_v; })
                 }
             }
             IrStmtKind::Assign { target, value } => {
@@ -1233,6 +1248,7 @@ mod tests {
         let stmt = IrStmt::new(IrStmtKind::Let {
             name: "flags".to_string(),
             ty: IrType::List(Box::new(IrType::Bool)),
+            type_annotation: None,
             mutability: Mutability::Immutable,
             value: TypedExpr::new(
                 IrExprKind::StaticBinding {
@@ -1264,6 +1280,7 @@ mod tests {
         let stmt = IrStmt::new(IrStmtKind::Let {
             name: "flags".to_string(),
             ty: IrType::List(Box::new(IrType::Bool)),
+            type_annotation: None,
             mutability: Mutability::Mutable,
             value: TypedExpr::new(
                 IrExprKind::Var {
@@ -1294,6 +1311,7 @@ mod tests {
             IrStmt::new(IrStmtKind::Let {
                 name: "live".to_string(),
                 ty: IrType::List(Box::new(IrType::Int)),
+                type_annotation: None,
                 mutability: Mutability::Immutable,
                 value: TypedExpr::new(
                     IrExprKind::StaticBinding {
