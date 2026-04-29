@@ -1492,6 +1492,7 @@ def main() -> None:
                 IrStmt::new(IrStmtKind::Let {
                     name: String::from("rng"),
                     ty: rng_ty.clone(),
+                    type_annotation: None,
                     mutability: Mutability::Mutable,
                     value: TypedExpr::new(
                         IrExprKind::Call {
@@ -1599,6 +1600,7 @@ def main() -> None:
                 IrStmt::new(IrStmtKind::Let {
                     name: String::from("rng"),
                     ty: rng_ty.clone(),
+                    type_annotation: None,
                     mutability: Mutability::Mutable,
                     value: TypedExpr::new(
                         IrExprKind::Call {
@@ -1898,6 +1900,7 @@ def main() -> None:
             name: "Widget".to_string(),
             type_params: Vec::new(),
             traits: Vec::new(),
+            trait_adoptions: Vec::new(),
             derives: Vec::new(),
             fields: Vec::new(),
             methods: Vec::new(),
@@ -2426,7 +2429,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let _w = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w: Widget = make_widget(DEFAULT_NAME);"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }

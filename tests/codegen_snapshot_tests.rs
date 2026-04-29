@@ -52,6 +52,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         name: "Widget".to_string(),
         type_params: Vec::new(),
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         derives: Vec::new(),
         fields: Vec::new(),
         methods: Vec::new(),
@@ -1862,6 +1863,84 @@ fn test_std_serde_with_serialize_trait_codegen() {
     let source = load_test_file("std_serde_with_serialize_trait");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
+}
+
+#[test]
+fn test_multi_instantiation_trait_methods_codegen_trait_impls_only() {
+    let source = r#"
+trait Convert[T]:
+  def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:
+  value: int
+
+  def convert(self) -> int:
+    return self.value
+
+  def convert(self) -> float:
+    return 1.0
+
+def main() -> None:
+  reading = Reading(value=1)
+  precise: float = reading.convert()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implConvert<i64>forReading"),
+        "expected Convert[int] trait impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implConvert<f64>forReading"),
+        "expected Convert[float] trait impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("let_precise:f64=reading.convert();"),
+        "typed local binding must preserve the Rust return hint for same-family trait impl dispatch; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("implReading{fnconvert"),
+        "same-name trait methods must not also lower as duplicate inherent methods; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_enum_multi_instantiation_trait_methods_codegen_trait_impls_only() {
+    let source = r#"
+trait Convert[T]:
+  def convert(self) -> T: ...
+
+enum Token with Convert[int], Convert[float]:
+  Number
+
+  def convert(self) -> int:
+    return 1
+
+  def convert(self) -> float:
+    return 1.0
+
+def main() -> None:
+  token: Token = Token.Number
+  precise: float = token.convert()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implConvert<i64>forToken"),
+        "expected Convert[int] enum trait impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implConvert<f64>forToken"),
+        "expected Convert[float] enum trait impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("let_precise:f64=token.convert();"),
+        "typed enum local binding must preserve the Rust return hint for same-family trait impl dispatch; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("implToken{pubfnconvert") && !compact.contains("implToken{fnconvert"),
+        "same-name enum trait methods must not also lower as duplicate inherent methods; generated:\n{rust_code}"
+    );
 }
 
 // ============================================================================

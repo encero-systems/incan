@@ -83,6 +83,21 @@ struct InteropAdapterSig {
     return_type: ResolvedType,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedTraitAdoption {
+    name: String,
+    info: TraitInfo,
+    args: Vec<ResolvedType>,
+    span: Span,
+}
+
+#[derive(Debug, Clone)]
+struct TraitMethodEntry {
+    method_name: String,
+    origin_trait: String,
+    info: MethodInfo,
+}
+
 impl TypeChecker {
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.
     fn validate_callable_rest_params(&mut self, params: &[Spanned<Param>]) {
@@ -724,6 +739,58 @@ impl TypeChecker {
         }
     }
 
+    /// Collect all methods from an instantiated trait and its supertraits with type arguments applied.
+    fn collect_instantiated_trait_method_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<TraitMethodEntry>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (method_name, method_info) in &trait_info.methods {
+            out.push(TraitMethodEntry {
+                method_name: method_name.clone(),
+                origin_trait: trait_name.to_string(),
+                info: method_info.clone(),
+            });
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_method_entries(supertrait_name, &instantiated, supertrait_args, seen, out);
+        }
+    }
+
+    /// Return all trait-backed method entries required by one resolved adoption.
+    fn trait_method_entries_for_adoption(&self, adoption: &ResolvedTraitAdoption) -> Vec<TraitMethodEntry> {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_instantiated_trait_method_entries(
+            &adoption.name,
+            &adoption.info,
+            &adoption.args,
+            &mut seen,
+            &mut entries,
+        );
+        entries
+    }
+
     /// Collect abstract (`...`) methods from a trait and its transitive supertraits with supertrait type args applied.
     fn raw_trait_abstract_method_entries(
         &self,
@@ -817,6 +884,49 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve one method through a concrete trait adoption that may include generic trait arguments.
+    pub(in crate::frontend::typechecker) fn trait_method_info_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        method: &str,
+        ambiguity_span: Span,
+    ) -> Option<MethodInfo> {
+        if adoption.type_args.is_empty() {
+            return self.trait_method_info_resolved(&adoption.name, method, ambiguity_span);
+        }
+        let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
+        let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);
+        let resolved = ResolvedTraitAdoption {
+            name: adoption.name.clone(),
+            info: instantiated,
+            args: adoption.type_args.clone(),
+            span: ambiguity_span,
+        };
+        let entries = self.trait_method_entries_for_adoption(&resolved);
+        let matching: Vec<(String, MethodInfo)> = entries
+            .into_iter()
+            .filter(|entry| entry.method_name == method)
+            .map(|entry| (entry.origin_trait, entry.info))
+            .collect();
+        let filtered = self.filter_supertrait_dominated_entries(matching);
+        match filtered.as_slice() {
+            [] => None,
+            [(_, info)] => Some(info.clone()),
+            rest => {
+                let exp0 = &rest[0].1;
+                let all_mutually_compat = rest
+                    .iter()
+                    .all(|(_, e)| self.method_sigs_compatible(exp0, e) && self.method_sigs_compatible(e, exp0));
+                if !all_mutually_compat {
+                    self.errors
+                        .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
+                    return None;
+                }
+                Some(exp0.clone())
+            }
+        }
+    }
+
     /// Group abstract (`...`) methods required by `trait_name` and its transitive supertraits by method name.
     ///
     /// Each group lists `(declaring_trait, signature)` after supertrait shadowing so diamonds can be merged or rejected
@@ -851,20 +961,26 @@ impl TypeChecker {
         via_trait: &str,
         method_name: &str,
         method_info: &MethodInfo,
-        methods: &HashMap<String, MethodInfo>,
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
         adoption_span: Span,
     ) {
         if method_info.has_body {
             return;
         }
-        match methods.get(method_name) {
+        match method_overloads.get(method_name) {
             None => self
                 .errors
                 .push(errors::missing_trait_method(via_trait, method_name, adoption_span)),
-            Some(found) => {
-                if !self.method_sigs_compatible(method_info, found) {
+            Some(found_group) => {
+                if !found_group
+                    .iter()
+                    .any(|found| self.method_sigs_compatible(method_info, found))
+                {
                     let expected_sig = self.method_sig_string_named(method_name, method_info);
-                    let found_sig = self.method_sig_string_named(method_name, found);
+                    let found_sig = found_group
+                        .first()
+                        .map(|found| self.method_sig_string_named(method_name, found))
+                        .unwrap_or_else(|| "<missing>".to_string());
                     self.errors.push(errors::trait_method_signature_mismatch(
                         via_trait,
                         type_name,
@@ -886,7 +1002,7 @@ impl TypeChecker {
         trait_info: &TraitInfo,
         trait_args: Option<&[ResolvedType]>,
         adoption_span: Span,
-        methods: &HashMap<String, MethodInfo>,
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
     ) {
         let grouped =
             self.grouped_trait_abstract_method_obligations(trait_name, trait_args.map(|args| (trait_info, args)));
@@ -906,7 +1022,7 @@ impl TypeChecker {
                     &group[0].0,
                     method_name.as_str(),
                     exp0,
-                    methods,
+                    method_overloads,
                     adoption_span,
                 );
                 continue;
@@ -930,14 +1046,16 @@ impl TypeChecker {
                     &group[0].0,
                     method_name.as_str(),
                     exp0,
-                    methods,
+                    method_overloads,
                     adoption_span,
                 );
                 continue;
             }
-            let satisfies_all = methods
-                .get(method_name.as_str())
-                .is_some_and(|found| group.iter().all(|(_, e)| self.method_sigs_compatible(e, found)));
+            let satisfies_all = method_overloads.get(method_name.as_str()).is_some_and(|found_group| {
+                found_group
+                    .iter()
+                    .any(|found| group.iter().all(|(_, e)| self.method_sigs_compatible(e, found)))
+            });
             if satisfies_all {
                 continue;
             }
@@ -954,6 +1072,138 @@ impl TypeChecker {
                 adoption_span,
             ));
         }
+    }
+
+    /// Render trait type arguments into a stable diagnostic and duplicate-detection key.
+    fn trait_args_key(args: &[ResolvedType]) -> String {
+        args.iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Reject identical generic trait instantiations adopted more than once by one type.
+    fn validate_duplicate_trait_instantiations(&mut self, adoptions: &[ResolvedTraitAdoption]) {
+        let mut seen: HashMap<(String, String), Span> = HashMap::new();
+        for adoption in adoptions {
+            let args_key = Self::trait_args_key(&adoption.args);
+            let key = (adoption.name.clone(), args_key.clone());
+            if seen.insert(key, adoption.span).is_some() {
+                self.errors.push(errors::duplicate_trait_instantiation(
+                    &adoption.name,
+                    &args_key,
+                    adoption.span,
+                ));
+            }
+        }
+    }
+
+    /// Reject same-name method obligations that come from unrelated adopted trait families.
+    fn validate_cross_trait_method_collisions(&mut self, adoptions: &[ResolvedTraitAdoption]) {
+        let mut by_method: HashMap<String, Vec<(String, MethodInfo, Span)>> = HashMap::new();
+        for adoption in adoptions {
+            for entry in self.trait_method_entries_for_adoption(adoption) {
+                by_method
+                    .entry(entry.method_name)
+                    .or_default()
+                    .push((entry.origin_trait, entry.info, adoption.span));
+            }
+        }
+        for (method, entries) in by_method {
+            let filtered_entries = self.filter_supertrait_dominated_entries(
+                entries
+                    .iter()
+                    .map(|(origin, info, _)| (origin.clone(), info.clone()))
+                    .collect(),
+            );
+            let mut origins: Vec<(String, Span)> = Vec::new();
+            for (origin, _) in filtered_entries {
+                if origins.iter().any(|(existing, _)| existing == &origin) {
+                    continue;
+                }
+                let span = entries
+                    .iter()
+                    .find(|(entry_origin, _, _)| entry_origin == &origin)
+                    .map(|(_, _, span)| *span)
+                    .unwrap_or_default();
+                origins.push((origin, span));
+            }
+            if origins.len() > 1 {
+                let (left, span) = &origins[0];
+                let (right, _) = &origins[1];
+                self.errors
+                    .push(errors::cross_trait_method_collision(left, right, &method, *span));
+            }
+        }
+    }
+
+    /// Group source spans by method name so overload diagnostics can point at the matching declaration.
+    fn method_decl_spans_by_name(methods: &[Spanned<MethodDecl>]) -> HashMap<String, Vec<Span>> {
+        let mut spans: HashMap<String, Vec<Span>> = HashMap::new();
+        for method in methods {
+            spans.entry(method.node.name.clone()).or_default().push(method.span);
+        }
+        spans
+    }
+
+    /// Ensure every duplicate concrete method maps to a distinct same-family trait obligation.
+    fn validate_overloaded_methods_are_trait_backed(
+        &mut self,
+        type_name: &str,
+        adoptions: &[ResolvedTraitAdoption],
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+        method_spans: &HashMap<String, Vec<Span>>,
+    ) {
+        let mut obligations_by_method: HashMap<String, Vec<(String, MethodInfo)>> = HashMap::new();
+        for adoption in adoptions {
+            for entry in self.trait_method_entries_for_adoption(adoption) {
+                obligations_by_method
+                    .entry(entry.method_name)
+                    .or_default()
+                    .push((entry.origin_trait, entry.info));
+            }
+        }
+
+        for (method_name, overloads) in method_overloads {
+            if overloads.len() <= 1 {
+                continue;
+            }
+            let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
+            let mut matched_obligations = vec![false; obligations.len()];
+            for (idx, overload) in overloads.iter().enumerate() {
+                let matched_index = obligations
+                    .iter()
+                    .enumerate()
+                    .find(|(obligation_idx, (_, expected))| {
+                        !matched_obligations[*obligation_idx] && self.method_sigs_compatible(expected, overload)
+                    })
+                    .map(|(obligation_idx, _)| obligation_idx);
+                if let Some(obligation_idx) = matched_index {
+                    matched_obligations[obligation_idx] = true;
+                    continue;
+                }
+                let span = method_spans
+                    .get(method_name)
+                    .and_then(|spans| spans.get(idx).copied())
+                    .or_else(|| method_spans.get(method_name).and_then(|spans| spans.first().copied()))
+                    .unwrap_or_default();
+                self.errors
+                    .push(errors::duplicate_method_not_trait_backed(type_name, method_name, span));
+            }
+        }
+    }
+
+    /// Run RFC 025 validation for generic trait adoptions and same-name concrete methods.
+    fn validate_multi_instantiation_trait_surface(
+        &mut self,
+        type_name: &str,
+        adoptions: &[ResolvedTraitAdoption],
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+        method_spans: &HashMap<String, Vec<Span>>,
+    ) {
+        self.validate_duplicate_trait_instantiations(adoptions);
+        self.validate_cross_trait_method_collisions(adoptions);
+        self.validate_overloaded_methods_are_trait_backed(type_name, adoptions, method_overloads, method_spans);
     }
 
     // ========================================================================
@@ -1051,6 +1301,7 @@ impl TypeChecker {
 
         // Check traits exist and are satisfied (models can adopt storage-free traits, RFC 000).
         // Note: do this after defining type params so `@requires(field: T)` can resolve `T`.
+        let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &model.traits {
             let trait_name = trait_ref.node.name.as_str();
             if self.lookup_trait_info(trait_name).is_some() {
@@ -1058,6 +1309,12 @@ impl TypeChecker {
                 else {
                     continue;
                 };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    span: trait_ref.span,
+                });
                 self.check_trait_conformance_model(
                     model,
                     trait_info,
@@ -1080,6 +1337,15 @@ impl TypeChecker {
         }
         method_names.extend(self.collect_trait_method_names(&model.traits));
         self.validate_field_metadata(&model.name, &model.fields, &method_names);
+        if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name).cloned() {
+            let method_spans = Self::method_decl_spans_by_name(&model.methods);
+            self.validate_multi_instantiation_trait_surface(
+                &model.name,
+                &resolved_trait_adoptions,
+                &info.method_overloads,
+                &method_spans,
+            );
+        }
 
         // Define fields in scope
         for field in &model.fields {
@@ -1182,6 +1448,7 @@ impl TypeChecker {
             ));
         }
     }
+    /// Validate that a model satisfies required fields and methods for one instantiated trait adoption.
     fn check_trait_conformance_model(
         &mut self,
         model: &ModelDecl,
@@ -1228,7 +1495,7 @@ impl TypeChecker {
                 &trait_info,
                 trait_args,
                 adoption_span,
-                &mi.methods,
+                &mi.method_overloads,
             );
         } else {
             for (method_name, method_info) in &trait_info.methods {
@@ -1259,6 +1526,7 @@ impl TypeChecker {
         }
 
         // Check traits exist and are satisfied
+        let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &class.traits {
             let trait_name = trait_ref.node.name.as_str();
             if self.lookup_trait_info(trait_name).is_some() {
@@ -1266,6 +1534,12 @@ impl TypeChecker {
                 else {
                     continue;
                 };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    span: trait_ref.span,
+                });
                 self.check_trait_conformance(
                     class,
                     trait_info,
@@ -1335,10 +1609,20 @@ impl TypeChecker {
         for method in &class.methods {
             self.check_method(&method.node, &class.name);
         }
+        if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
+            let method_spans = Self::method_decl_spans_by_name(&class.methods);
+            self.validate_multi_instantiation_trait_surface(
+                &class.name,
+                &resolved_trait_adoptions,
+                &info.method_overloads,
+                &method_spans,
+            );
+        }
 
         self.symbols.exit_scope();
     }
 
+    /// Validate that a class satisfies required fields and methods for one instantiated trait adoption.
     fn check_trait_conformance(
         &mut self,
         class: &ClassDecl,
@@ -1386,7 +1670,7 @@ impl TypeChecker {
                 &trait_info,
                 trait_args,
                 adoption_span,
-                &ci.methods,
+                &ci.method_overloads,
             );
         } else {
             for (method_name, method_info) in &trait_info.methods {
@@ -1545,6 +1829,7 @@ impl TypeChecker {
             });
         }
 
+        let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &en.traits {
             let trait_name = trait_ref.node.name.as_str();
             if self.lookup_trait_info(trait_name).is_some() {
@@ -1552,6 +1837,12 @@ impl TypeChecker {
                 else {
                     continue;
                 };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    span: trait_ref.span,
+                });
                 self.check_trait_conformance_enum(
                     en,
                     trait_info,
@@ -1582,6 +1873,15 @@ impl TypeChecker {
 
         for method in &en.methods {
             self.check_method(&method.node, &en.name);
+        }
+        if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
+            let method_spans = Self::method_decl_spans_by_name(&en.methods);
+            self.validate_multi_instantiation_trait_surface(
+                &en.name,
+                &resolved_trait_adoptions,
+                &info.method_overloads,
+                &method_spans,
+            );
         }
 
         self.symbols.exit_scope();
@@ -1620,7 +1920,7 @@ impl TypeChecker {
                 &trait_info,
                 trait_args,
                 adoption_span,
-                &info.methods,
+                &info.method_overloads,
             );
         } else {
             for (method_name, method_info) in &trait_info.methods {
@@ -1721,6 +2021,7 @@ impl TypeChecker {
         }
     }
 
+    /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl) {
         self.symbols.enter_scope(ScopeKind::Function);
 
@@ -1738,6 +2039,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
+        let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
+        self.current_type_param_bound_details.push(active_bounds);
 
         // Define parameters
         for param in &func.params {
@@ -1770,7 +2073,34 @@ impl TypeChecker {
 
         self.in_async_body = prev_in_async_body;
         self.current_return_error_type = None;
+        self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
+    }
+
+    /// Resolve generic type-parameter bounds while preserving trait type arguments for call-site checks.
+    fn type_param_bound_details_from_type_params(
+        &mut self,
+        type_params: &[TypeParam],
+    ) -> HashMap<String, Vec<TypeBoundInfo>> {
+        type_params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: bound.name.clone(),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|type_arg| self.resolve_type_checked(type_arg))
+                                .collect(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
@@ -1833,6 +2163,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
+        let active_bounds = self.type_param_bound_details_from_type_params(&method.type_params);
+        self.current_type_param_bound_details.push(active_bounds);
 
         // Define self if present
         if let Some(receiver) = method.receiver {
@@ -1891,6 +2223,7 @@ impl TypeChecker {
 
         self.current_return_error_type = None;
         self.current_classmethod_self_ty = previous_classmethod_self_ty;
+        self.current_type_param_bound_details.pop();
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

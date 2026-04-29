@@ -15,7 +15,7 @@ use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport, FunctionExport,
     LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport, ReceiverExport,
-    StaticExport, TraitExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -855,6 +855,7 @@ impl TypeChecker {
         }
     }
 
+    /// Convert one manifest function export into semantic function metadata.
     fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
@@ -862,27 +863,38 @@ impl TypeChecker {
             is_async: export.is_async,
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
+            type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
         }
     }
 
+    /// Convert one manifest model export into semantic model metadata.
     fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
+        let methods = self.methods_from_manifest(&export.methods);
+        let method_overloads = self.method_overloads_from_manifest(&export.methods);
         ModelInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             traits: export.traits.clone(),
+            trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
-            methods: self.methods_from_manifest(&export.methods),
+            method_overloads,
+            methods,
         }
     }
 
+    /// Convert one manifest class export into semantic class metadata.
     fn class_info_from_manifest(&self, export: &ClassExport) -> ClassInfo {
+        let methods = self.methods_from_manifest(&export.methods);
+        let method_overloads = self.method_overloads_from_manifest(&export.methods);
         ClassInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             extends: export.extends.clone(),
             traits: export.traits.clone(),
+            trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
-            methods: self.methods_from_manifest(&export.methods),
+            method_overloads,
+            methods,
         }
     }
 
@@ -917,6 +929,34 @@ impl TypeChecker {
         }
     }
 
+    /// Convert manifest trait adoption metadata, falling back to legacy trait-name-only manifests.
+    fn trait_adoptions_from_manifest(
+        trait_names: &[String],
+        trait_adoptions: &[TypeBoundExport],
+    ) -> Vec<TypeBoundInfo> {
+        if trait_adoptions.is_empty() {
+            return trait_names
+                .iter()
+                .map(|name| TypeBoundInfo {
+                    name: name.clone(),
+                    type_args: Vec::new(),
+                })
+                .collect();
+        }
+
+        trait_adoptions
+            .iter()
+            .map(|bound| TypeBoundInfo {
+                name: bound.name.clone(),
+                type_args: bound
+                    .type_args
+                    .iter()
+                    .map(resolved_type_from_manifest_type_ref)
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// Convert a manifest enum export into local enum symbol metadata.
     fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
         let value_enum = export.value_type.map(|value_type| ValueEnumInfo {
@@ -940,9 +980,11 @@ impl TypeChecker {
         EnumInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             traits: export.traits.clone(),
+            trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
             value_enum,
             derives: export.derives.clone(),
+            method_overloads: self.method_overloads_from_manifest(&export.methods),
             methods: self.methods_from_manifest(&export.methods),
         }
     }
@@ -974,6 +1016,33 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Convert manifest type-parameter bounds while preserving generic trait arguments.
+    fn type_param_bound_details_from_manifest(
+        &self,
+        type_params: &[TypeParamExport],
+    ) -> std::collections::HashMap<String, Vec<TypeBoundInfo>> {
+        type_params
+            .iter()
+            .map(|param| {
+                (
+                    param.name.clone(),
+                    param
+                        .bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: bound.name.clone(),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(resolved_type_from_manifest_type_ref)
+                                .collect(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     /// Convert exported manifest fields into semantic field metadata for imported-library typechecking.
     fn fields_from_manifest(&self, fields: &[FieldExport]) -> std::collections::HashMap<String, FieldInfo> {
         fields
@@ -994,53 +1063,69 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Convert manifest methods into the legacy single-method-per-name lookup map.
     fn methods_from_manifest(&self, methods: &[MethodExport]) -> std::collections::HashMap<String, MethodInfo> {
         methods
             .iter()
-            .map(|method| {
-                (
-                    method.name.clone(),
-                    MethodInfo {
-                        type_params: method.type_params.iter().map(|tp| tp.name.clone()).collect(),
-                        type_param_bounds: method
-                            .type_params
-                            .iter()
-                            .map(|tp| {
-                                (
-                                    tp.name.clone(),
-                                    tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
-                                )
-                            })
-                            .collect(),
-                        type_param_bound_details: method
-                            .type_params
-                            .iter()
-                            .map(|tp| {
-                                (
-                                    tp.name.clone(),
-                                    tp.bounds
-                                        .iter()
-                                        .map(|bound| TypeBoundInfo {
-                                            name: bound.name.clone(),
-                                            type_args: bound
-                                                .type_args
-                                                .iter()
-                                                .map(resolved_type_from_manifest_type_ref)
-                                                .collect(),
-                                        })
-                                        .collect(),
-                                )
-                            })
-                            .collect(),
-                        receiver: self.receiver_from_manifest(method.receiver.as_ref()),
-                        params: self.params_from_manifest(&method.params),
-                        return_type: resolved_type_from_manifest_type_ref(&method.return_type),
-                        is_async: method.is_async,
-                        has_body: method.has_body,
-                    },
-                )
-            })
+            .map(|method| (method.name.clone(), self.method_info_from_manifest(method)))
             .collect()
+    }
+
+    /// Group manifest methods by name without dropping same-name trait-backed overloads.
+    fn method_overloads_from_manifest(
+        &self,
+        methods: &[MethodExport],
+    ) -> std::collections::HashMap<String, Vec<MethodInfo>> {
+        let mut groups: std::collections::HashMap<String, Vec<MethodInfo>> = std::collections::HashMap::new();
+        for method in methods {
+            groups
+                .entry(method.name.clone())
+                .or_default()
+                .push(self.method_info_from_manifest(method));
+        }
+        groups
+    }
+
+    /// Convert one manifest method export into semantic method metadata.
+    fn method_info_from_manifest(&self, method: &MethodExport) -> MethodInfo {
+        MethodInfo {
+            type_params: method.type_params.iter().map(|tp| tp.name.clone()).collect(),
+            type_param_bounds: method
+                .type_params
+                .iter()
+                .map(|tp| {
+                    (
+                        tp.name.clone(),
+                        tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                    )
+                })
+                .collect(),
+            type_param_bound_details: method
+                .type_params
+                .iter()
+                .map(|tp| {
+                    (
+                        tp.name.clone(),
+                        tp.bounds
+                            .iter()
+                            .map(|bound| TypeBoundInfo {
+                                name: bound.name.clone(),
+                                type_args: bound
+                                    .type_args
+                                    .iter()
+                                    .map(resolved_type_from_manifest_type_ref)
+                                    .collect(),
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+            receiver: self.receiver_from_manifest(method.receiver.as_ref()),
+            params: self.params_from_manifest(&method.params),
+            return_type: resolved_type_from_manifest_type_ref(&method.return_type),
+            is_async: method.is_async,
+            has_body: method.has_body,
+        }
     }
 
     fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {

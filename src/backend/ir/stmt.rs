@@ -35,6 +35,7 @@ pub enum IrStmtKind {
     Let {
         name: String,
         ty: IrType,
+        type_annotation: Option<IrType>,
         mutability: Mutability,
         value: IrExpr,
     },

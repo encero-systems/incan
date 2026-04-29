@@ -13,7 +13,7 @@ fn collect(
     items: Vec<i64>,
     _: std::collections::HashMap<String, String>,
 ) -> i64 {
-    let mut total = 0;
+    let mut total: i64 = 0;
     for item in items.iter().copied() {
         total = total + item;
     }
@@ -48,7 +48,7 @@ impl Collector {
         items: Vec<i64>,
         _: std::collections::HashMap<String, String>,
     ) -> i64 {
-        let mut total = 0;
+        let mut total: i64 = 0;
         for item in items.iter().copied() {
             total = total + item;
         }

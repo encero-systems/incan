@@ -9,25 +9,30 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use std::collections::HashMap;
 fn test_explicit_types() {
-    let _x = 42;
-    let _y = 3.14f64;
-    let _z = "hello".to_string();
-    let _flag = true;
+    let _x: i64 = 42;
+    let _y: f64 = 3.14f64;
+    let _z: String = "hello".to_string();
+    let _flag: bool = true;
 }
 fn test_collection_types() {
-    let _numbers = vec![1, 2, 3];
-    let _words = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    let _mapping = [("a".to_string(), 1), ("b".to_string(), 2)]
+    let _numbers: Vec<i64> = vec![1, 2, 3];
+    let _words: Vec<String> = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let _mapping: std::collections::HashMap<String, i64> = [
+        ("a".to_string(), 1),
+        ("b".to_string(), 2),
+    ]
         .into_iter()
         .collect::<HashMap<_, _>>();
 }
 fn test_option_types() {
-    let _maybe_num = Some(42);
-    let _nothing = None::<i64>;
+    let _maybe_num: Option<i64> = Some(42);
+    let _nothing: Option<i64> = None::<i64>;
 }
 fn test_nested_collections() {
-    let _matrix = vec![vec![1, 2], vec![3, 4]];
-    let _dict_of_lists = [("nums".to_string(), vec![1, 2, 3])]
+    let _matrix: Vec<Vec<i64>> = vec![vec![1, 2], vec![3, 4]];
+    let _dict_of_lists: std::collections::HashMap<String, Vec<i64>> = [
+        ("nums".to_string(), vec![1, 2, 3]),
+    ]
         .into_iter()
         .collect::<HashMap<_, _>>();
 }
@@ -55,6 +60,6 @@ fn main() {
     test_collection_types();
     test_option_types();
     test_nested_collections();
-    let _result = test_function_with_return_type();
+    let _result: i64 = test_function_with_return_type();
     test_function_parameters(10, "test".to_string(), true);
 }

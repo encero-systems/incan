@@ -62,18 +62,38 @@ model Grid:
 
 Rust analogy: `xs[i]` is powered by `std::ops::Index`, but the idea is the same: syntax → a trait-defined hook.
 
-## How this is Rust-like (not Python-magic)
+For model, class, and enum types, the same generic trait may be adopted more than once with different type arguments. That lets one type support multiple statically checked capability shapes without runtime overloading.
 
-In Python, “protocols” are often structural and dynamic (“if it quacks, it’s a duck”), and operator behavior is resolved
-at runtime via dunder lookup.
+For example, a type can expose one conversion hook for more than one target type:
 
-In Incan, the intent is closer to Rust:
+```incan
+trait Snapshot[T]:
+    def snapshot(self) -> T: ...
 
-- **Static typing**: whether a type supports a hook is part of the type system.
-- **Deterministic dispatch**: behavior is resolved at compile time (no dynamic MRO).
-- **No runtime patching**: you can’t add behavior to types at runtime.
+model Reading with Snapshot[str], Snapshot[bytes]:
+    value: int
 
-This is what keeps hook-based ergonomics predictable in large codebases.
+    def snapshot(self) -> str:
+        return str(self.value)
+
+    def snapshot(self) -> bytes:
+        return b"reading"
+
+reading = Reading(value=1)
+text: str = reading.snapshot()
+payload: bytes = reading.snapshot()
+```
+
+The important constraint is that the repeated methods still belong to one generic trait family. Incan can choose between `Snapshot[str]` and `Snapshot[bytes]` from the expected result type. It does not treat unrelated traits with the same method name as an overload set.
+
+!!! note "Coming from Python?"
+    Python protocol and dunder behavior is often structural and dynamic: if an object has the right method at runtime, the operation can work. Incan keeps the familiar hook names, but the contract is static.
+
+    - **Static typing**: whether a type supports a hook is part of the type system.
+    - **Deterministic dispatch**: behavior is resolved at compile time, with no dynamic MRO.
+    - **No runtime patching**: behavior cannot be added to types at runtime.
+
+    That is what keeps hook-based ergonomics predictable in larger codebases.
 
 ## Overloading: what we mean (and what we don’t)
 

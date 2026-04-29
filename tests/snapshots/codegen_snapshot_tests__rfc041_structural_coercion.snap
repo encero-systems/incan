@@ -31,9 +31,11 @@ fn main() {
             }
         }),
     );
-    let maybe_count = Some(42);
-    let names = vec!["alice".to_string(), "bob".to_string()];
-    let scores = [("latency".to_string(), 1.5f64)]
+    let maybe_count: Option<i64> = Some(42);
+    let names: Vec<String> = vec!["alice".to_string(), "bob".to_string()];
+    let scores: std::collections::HashMap<String, f64> = [
+        ("latency".to_string(), 1.5f64),
+    ]
         .into_iter()
         .collect::<HashMap<_, _>>();
     accept_option(maybe_count);

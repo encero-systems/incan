@@ -11,8 +11,8 @@ fn simple_return() -> i64 {
     return 42;
 }
 fn return_expression() -> i64 {
-    let x = 10;
-    let y = 20;
+    let x: i64 = 10;
+    let y: i64 = 20;
     return x + y;
 }
 fn early_return(x: i64) -> String {
@@ -45,7 +45,7 @@ fn void_return() {
     return;
 }
 fn implicit_void_return() {
-    let x = 5;
+    let x: i64 = 5;
     if x > 0 {
         println!("{}", "positive");
         return;
@@ -64,11 +64,11 @@ fn main() {
             }
         }),
     );
-    let _result1 = simple_return();
-    let _result2 = return_expression();
-    let _result3 = early_return(5);
-    let _result4 = multiple_returns(15);
-    let _result5 = return_from_loop(vec![1, 5, 15, 20]);
+    let _result1: i64 = simple_return();
+    let _result2: i64 = return_expression();
+    let _result3: String = early_return(5);
+    let _result4: i64 = multiple_returns(15);
+    let _result5: i64 = return_from_loop(vec![1, 5, 15, 20]);
     void_return();
     implicit_void_return();
 }

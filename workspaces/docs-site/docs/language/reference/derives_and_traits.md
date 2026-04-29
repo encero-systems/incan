@@ -379,6 +379,162 @@ def require_ordering[T with OrderedCollection[int]](values: T) -> T:
 
 The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.
 
+### Multiple instantiations of one generic trait
+
+Models, classes, and enums may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into multiple result types, or serializing through a generic format trait.
+
+The repeated adoptions must be distinct:
+
+```incan
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:  # OK
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.0
+```
+
+This is trait dispatch, not general-purpose method overloading. The same method name is allowed here because each `convert` method satisfies a different `Convert[T]` adoption on the same type. Two ordinary methods with the same name are still rejected when they are not backed by distinct trait instantiations.
+
+#### Dispatch from argument types
+
+When the same trait method takes different value parameter types, the compiler selects the matching instantiation from the call arguments:
+
+```incan
+trait Reader[T]:
+    def read(self, key: T) -> str: ...
+
+model Source with Reader[str], Reader[int]:
+    name: str
+
+    def read(self, key: str) -> str:
+        return key
+
+    def read(self, key: int) -> str:
+        return str(key)
+
+source = Source(name="events")
+by_name = source.read("latest")  # Reader[str]
+by_index = source.read(0)        # Reader[int]
+```
+
+Named arguments participate in the same selection. `source.read(key=0)` selects the `Reader[int]` method because the named `key` argument has type `int`.
+
+#### Dispatch from an expected return type
+
+When the value arguments do not distinguish the candidates, the compiler may use an explicit expected return type. A typed binding is the most direct way to provide that context:
+
+```incan
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.0
+
+reading = Reading(value=1)
+as_float: float = reading.convert()
+as_int: int = reading.convert()
+```
+
+Expected return type context can also come from a function argument, an annotated return position, or equivalent explicit type context. If no rule selects exactly one candidate, the call is ambiguous:
+
+```incan
+reading = Reading(value=1)
+value = reading.convert()  # error: the expected result type is not known
+```
+
+#### Generic bounds with trait type arguments
+
+Generic bounds may carry trait type arguments. This lets a generic function say that a receiver type `T` must support a trait instantiation chosen by another type parameter:
+
+```incan
+trait Serializable[F]:
+    def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+    name: str
+
+model Event with Serializable[JsonFormat]:
+    message: str
+
+    def serialize(self, format: JsonFormat) -> bytes:
+        return b"{}"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+    return value.serialize(format)
+
+bytes = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))
+```
+
+The bound `T with Serializable[F]` is not just a trait-name check. If `F` is `JsonFormat`, then `T` must adopt `Serializable[JsonFormat]`; adopting `Serializable[YamlFormat]` alone would not satisfy the bound.
+
+#### Enum adopters
+
+Enum declarations use the same rules as models and classes. Each repeated generic-trait adoption must use distinct type arguments, and each same-name method must satisfy a distinct adopted trait instantiation:
+
+```incan
+trait Label[T]:
+    def label(self) -> T: ...
+
+enum Token with Label[str], Label[int]:
+    Identifier(str)
+    Number(int)
+
+    def label(self) -> str:
+        return "token"
+
+    def label(self) -> int:
+        return 1
+
+token: Token = Token.Number(1)
+text: str = token.label()
+code: int = token.label()
+```
+
+#### Rejected cases
+
+The compiler rejects repeated identical trait instantiations:
+
+```incan
+model BadReading with Convert[int], Convert[int]:  # error
+    value: int
+```
+
+The compiler also rejects same-name methods that are not backed by distinct trait instantiations:
+
+```incan
+model Parser:
+    def parse(self, value: str) -> str: ...
+    def parse(self, value: int) -> str: ...  # error
+```
+
+Same-name methods from unrelated trait families are rejected even if their value parameter types differ. Return-type and argument-type disambiguation only applies within one generic trait family:
+
+```incan
+trait ReadsInt:
+    def read(self, value: int) -> int: ...
+
+trait ReadsStr:
+    def read(self, value: str) -> str: ...
+
+model Source with ReadsInt, ReadsStr:
+    def read(self, value: int) -> int: ...
+    def read(self, value: str) -> str: ...  # error: unrelated trait families use the same method name
+```
+
+Use distinct method names or distinct trait families with non-conflicting method names when you need two unrelated capabilities today. Explicit qualification and aliasing are future language design work.
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types

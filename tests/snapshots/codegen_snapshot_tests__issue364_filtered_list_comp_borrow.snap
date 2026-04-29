@@ -33,7 +33,7 @@ fn main() {
             }
         }),
     );
-    let nodes = vec![
+    let nodes: Vec<StoredNode> = vec![
         StoredNode { store_id_raw : 1, node : "a".to_string() }, StoredNode {
         store_id_raw : 2, node : "b".to_string() }
     ];

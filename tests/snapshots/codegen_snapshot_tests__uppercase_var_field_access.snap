@@ -23,6 +23,6 @@ fn main() {
             }
         }),
     );
-    let mut User = Person { name: "Ada".to_string() };
+    let mut User: Person = Person { name: "Ada".to_string() };
     println!("{}", User.name);
 }

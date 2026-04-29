@@ -88,6 +88,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
         type_params: Vec::new(),
         extends: None,
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         derives: Vec::new(),
         fields: Vec::new(),
         methods: vec![MethodExport {
@@ -192,6 +193,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
         name: "Status".to_string(),
         type_params: Vec::new(),
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         value_type: Some(EnumValueTypeExport::Str),
         variants: vec![
             EnumVariantExport {
@@ -212,6 +214,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
         name: "HttpStatus".to_string(),
         type_params: Vec::new(),
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         value_type: Some(EnumValueTypeExport::Int),
         variants: vec![
             EnumVariantExport {
@@ -245,6 +248,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
         name: "Status".to_string(),
         type_params: Vec::new(),
         traits: vec!["Labelled".to_string()],
+        trait_adoptions: Vec::new(),
         value_type: None,
         variants: vec![EnumVariantExport {
             name: "Active".to_string(),
@@ -380,6 +384,7 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
         type_params: Vec::new(),
         extends: None,
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         derives: Vec::new(),
         fields: Vec::new(),
         methods: vec![MethodExport {
@@ -420,6 +425,7 @@ fn manifest_io_round_trip_preserves_model_and_class_derives() -> Result<(), Box<
         name: "Record".to_string(),
         type_params: Vec::new(),
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         derives: vec!["Clone".to_string()],
         fields: Vec::new(),
         methods: Vec::new(),
@@ -429,6 +435,7 @@ fn manifest_io_round_trip_preserves_model_and_class_derives() -> Result<(), Box<
         type_params: Vec::new(),
         extends: None,
         traits: Vec::new(),
+        trait_adoptions: Vec::new(),
         derives: vec!["Clone".to_string(), "Debug".to_string()],
         fields: Vec::new(),
         methods: Vec::new(),
@@ -436,6 +443,69 @@ fn manifest_io_round_trip_preserves_model_and_class_derives() -> Result<(), Box<
 
     let tmp = tempfile::tempdir()?;
     let path = tmp.path().join("derives.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let convert_int = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "int".to_string(),
+        }],
+    };
+    let convert_float = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "float".to_string(),
+        }],
+    };
+    manifest.exports.models.push(ModelExport {
+        name: "Record".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Convert".to_string(), "Convert".to_string()],
+        trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.classes.push(ClassExport {
+        name: "Carrier".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: vec!["Decode".to_string()],
+        trait_adoptions: vec![TypeBoundExport {
+            name: "Decode".to_string(),
+            type_args: vec![TypeRef::Named {
+                name: "str".to_string(),
+            }],
+        }],
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.enums.push(EnumExport {
+        name: "Token".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Convert".to_string(), "Convert".to_string()],
+        trait_adoptions: vec![convert_int, convert_float],
+        value_type: None,
+        variants: vec![EnumVariantExport {
+            name: "Number".to_string(),
+            fields: Vec::new(),
+            value: None,
+        }],
+        methods: Vec::new(),
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("trait_adoptions.incnlib");
     manifest.write_to_path(&path)?;
     let loaded = LibraryManifest::read_from_path(&path)?;
 

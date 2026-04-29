@@ -265,6 +265,9 @@ pub struct ModelExport {
     pub type_params: Vec<TypeParamExport>,
     /// Traits implemented by the model.
     pub traits: Vec<String>,
+    /// Traits implemented by the model, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     /// `@derive(...)` names (empty for manifests predating this field).
     #[serde(default)]
     pub derives: Vec<String>,
@@ -281,6 +284,9 @@ pub struct ClassExport {
     pub extends: Option<String>,
     /// Traits implemented by the class.
     pub traits: Vec<String>,
+    /// Traits implemented by the class, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     /// `@derive(...)` names (empty for manifests predating this field).
     #[serde(default)]
     pub derives: Vec<String>,
@@ -316,6 +322,9 @@ pub struct EnumExport {
     /// Traits implemented by the enum.
     #[serde(default)]
     pub traits: Vec<String>,
+    /// Traits implemented by the enum, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     /// Primitive backing type for RFC 032 value enums.
     #[serde(default)]
     pub value_type: Option<EnumValueTypeExport>,
@@ -583,23 +592,27 @@ fn type_alias_export_from_checked(export: &CheckedTypeAliasExport) -> TypeAliasE
     }
 }
 
+/// Convert a checked model export into the serialized manifest model shape.
 fn model_export_from_checked(export: &CheckedModelExport) -> ModelExport {
     ModelExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         derives: export.derives.clone(),
         fields: export.fields.iter().map(field_from_checked).collect(),
         methods: export.methods.iter().map(method_from_checked).collect(),
     }
 }
 
+/// Convert a checked class export into the serialized manifest class shape.
 fn class_export_from_checked(export: &CheckedClassExport) -> ClassExport {
     ClassExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         extends: export.extends.clone(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         derives: export.derives.clone(),
         fields: export.fields.iter().map(field_from_checked).collect(),
         methods: export.methods.iter().map(method_from_checked).collect(),
@@ -636,6 +649,7 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         value_type: export.value_type.map(value_enum_type_from_checked),
         variants: export
             .variants

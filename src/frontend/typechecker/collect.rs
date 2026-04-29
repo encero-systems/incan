@@ -14,7 +14,16 @@ mod decl_helpers;
 pub(super) mod decorators;
 mod stdlib_imports;
 
-use self::decl_helpers::{collect_fields, collect_methods, inject_json_methods, inject_validate_methods};
+use self::decl_helpers::{
+    collect_fields, collect_method_overloads, collect_methods, collect_methods_from_overloads, inject_json_methods,
+    inject_validate_methods,
+};
+
+type InheritedMembers = (
+    HashMap<String, FieldInfo>,
+    HashMap<String, MethodInfo>,
+    HashMap<String, Vec<MethodInfo>>,
+);
 
 /// Convert parsed value enum backing syntax into symbol-table metadata.
 fn value_enum_backing(value_type: ValueEnumType) -> ValueEnumBacking {
@@ -150,22 +159,34 @@ impl TypeChecker {
     /// Register a model declaration with its fields, methods, and derived traits.
     fn collect_model(&mut self, model: &ModelDecl, span: Span) {
         let fields = collect_fields(&model.fields, self, &model.name);
-        let mut methods = collect_methods(&model.methods, self, Some(&model.name), &model.type_params);
+        let mut method_overloads =
+            collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
+        let mut methods = collect_methods_from_overloads(&method_overloads);
 
         // Inject JSON methods based on derives
         let derives = self.extract_derive_names(&model.decorators);
-        inject_json_methods(&mut methods, &model.name, &derives);
+        inject_json_methods(&mut methods, &mut method_overloads, &model.name, &derives);
         let field_order: Vec<Ident> = model.fields.iter().map(|f| f.node.name.clone()).collect();
-        inject_validate_methods(&mut methods, &model.name, &fields, &field_order, &derives);
+        inject_validate_methods(
+            &mut methods,
+            &mut method_overloads,
+            &model.name,
+            &fields,
+            &field_order,
+            &derives,
+        );
+        let trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
 
         self.symbols.define(Symbol {
             name: model.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
                 type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 traits: model.traits.iter().map(|t| t.node.name.clone()).collect(),
+                trait_adoptions,
                 derives,
                 fields,
                 methods,
+                method_overloads,
             })),
             span,
             scope: 0,
@@ -174,22 +195,21 @@ impl TypeChecker {
 
     /// Register a class declaration, inheriting from parent if present.
     fn collect_class(&mut self, class: &ClassDecl, span: Span) {
-        let (mut fields, mut methods) = self.inherit_from_parent(&class.extends);
+        let (mut fields, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
         fields.extend(collect_fields(&class.fields, self, &class.name));
 
         // Add own methods (can override inherited ones)
-        methods.extend(collect_methods(
-            &class.methods,
-            self,
-            Some(&class.name),
-            &class.type_params,
-        ));
+        let own_method_overloads =
+            collect_method_overloads(&class.methods, self, Some(&class.name), &class.type_params);
+        methods.extend(collect_methods_from_overloads(&own_method_overloads));
+        method_overloads.extend(own_method_overloads);
 
         // Inject JSON methods based on derives
         let derives = self.extract_derive_names(&class.decorators);
-        inject_json_methods(&mut methods, &class.name, &derives);
+        inject_json_methods(&mut methods, &mut method_overloads, &class.name, &derives);
+        let trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
 
         self.symbols.define(Symbol {
             name: class.name.clone(),
@@ -197,9 +217,11 @@ impl TypeChecker {
                 type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 extends: class.extends.clone(),
                 traits: class.traits.iter().map(|t| t.node.name.clone()).collect(),
+                trait_adoptions,
                 derives,
                 fields,
                 methods,
+                method_overloads,
             })),
             span,
             scope: 0,
@@ -207,17 +229,34 @@ impl TypeChecker {
     }
 
     /// Inherit fields and methods from a parent class if present.
-    fn inherit_from_parent(
-        &self,
-        extends: &Option<String>,
-    ) -> (HashMap<String, FieldInfo>, HashMap<String, MethodInfo>) {
+    fn inherit_from_parent(&self, extends: &Option<String>) -> InheritedMembers {
         let Some(parent_name) = extends else {
-            return (HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new());
         };
         let Some(TypeInfo::Class(parent_info)) = self.lookup_type_info(parent_name) else {
-            return (HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new());
         };
-        (parent_info.fields.clone(), parent_info.methods.clone())
+        (
+            parent_info.fields.clone(),
+            parent_info.methods.clone(),
+            parent_info.method_overloads.clone(),
+        )
+    }
+
+    /// Resolve direct trait adoptions, retaining generic trait arguments for later dispatch checks.
+    fn collect_trait_adoption_infos(&mut self, traits: &[Spanned<TraitBound>]) -> Vec<TypeBoundInfo> {
+        traits
+            .iter()
+            .map(|trait_ref| TypeBoundInfo {
+                name: trait_ref.node.name.clone(),
+                type_args: trait_ref
+                    .node
+                    .type_args
+                    .iter()
+                    .map(|arg| self.resolve_type_checked(arg))
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Register a trait declaration with its method signatures, supertraits, and requirements.
@@ -517,26 +556,31 @@ impl TypeChecker {
                 .collect(),
         });
 
+        let trait_adoptions = self.collect_trait_adoption_infos(&en.traits);
         self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                 type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
+                trait_adoptions,
                 variants: variants.clone(),
                 value_enum,
                 derives,
                 methods: HashMap::new(),
+                method_overloads: HashMap::new(),
             })),
             span,
             scope: 0,
         });
 
-        let methods = collect_methods(&en.methods, self, Some(&en.name), &en.type_params);
+        let method_overloads = collect_method_overloads(&en.methods, self, Some(&en.name), &en.type_params);
+        let methods = collect_methods_from_overloads(&method_overloads);
         if let Some(sym_id) = self.symbols.lookup(&en.name)
             && let Some(sym) = self.symbols.get_mut(sym_id)
             && let SymbolKind::Type(TypeInfo::Enum(info)) = &mut sym.kind
         {
             info.methods = methods;
+            info.method_overloads = method_overloads;
         }
 
         // Also define each variant as a symbol
@@ -575,6 +619,26 @@ impl TypeChecker {
                 )
             })
             .collect();
+        let type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>> = func
+            .type_params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: bound.name.clone(),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|type_arg| self.resolve_type_checked(type_arg))
+                                .collect(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
 
         let params: Vec<_> = func
             .params
@@ -598,6 +662,7 @@ impl TypeChecker {
                 is_async: func.is_async(),
                 type_params,
                 type_param_bounds,
+                type_param_bound_details,
             }),
             span,
             scope: 0,

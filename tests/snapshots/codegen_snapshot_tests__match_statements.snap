@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_match_simple() {
-    let x = 42;
+    let x: i64 = 42;
     match x {
         0 => {
             println!("{}", "zero");
@@ -22,7 +22,7 @@ fn test_match_simple() {
     };
 }
 fn test_match_with_option() {
-    let value = Some(42);
+    let value: Option<i64> = Some(42);
     match value {
         Some(n) => {
             println!("{}", n);
@@ -33,7 +33,7 @@ fn test_match_with_option() {
     };
 }
 fn test_match_multiple_patterns() {
-    let x = 5;
+    let x: i64 = 5;
     match x {
         1 => {
             println!("{}", "one");
@@ -50,7 +50,7 @@ fn test_match_multiple_patterns() {
     };
 }
 fn test_match_with_guard() {
-    let x = 15;
+    let x: i64 = 15;
     match x {
         n if n < 10 => {
             println!("{}", "small");

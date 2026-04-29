@@ -29,23 +29,28 @@ fn greet_with_title(name: String, title: String) -> String {
     };
 }
 fn test_function_calls() {
-    let _message = greet("World".to_string());
-    let _sum = add(5, 3);
-    let _greeting1 = greet_with_title("Smith".to_string(), "Mr.".to_string());
-    let _greeting2 = greet_with_title("Jones".to_string(), "Dr.".to_string());
-    let _length = ::std::convert::identity("hello".len() as i64);
-    let string_list = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    let _count = ::std::convert::identity(string_list.len() as i64);
-    let _upper = incan_stdlib::strings::str_upper(&"test");
-    let _lower = incan_stdlib::strings::str_lower(&"TEST");
-    let _stripped = incan_stdlib::strings::str_strip(&"  spaces  ");
-    let _result = incan_stdlib::strings::str_strip(
+    let _message: String = greet("World".to_string());
+    let _sum: i64 = add(5, 3);
+    let _greeting1: String = greet_with_title("Smith".to_string(), "Mr.".to_string());
+    let _greeting2: String = greet_with_title("Jones".to_string(), "Dr.".to_string());
+    let _length: i64 = ::std::convert::identity("hello".len() as i64);
+    let string_list: Vec<String> = vec![
+        "a".to_string(), "b".to_string(), "c".to_string()
+    ];
+    let _count: i64 = ::std::convert::identity(string_list.len() as i64);
+    let _upper: String = incan_stdlib::strings::str_upper(&"test");
+    let _lower: String = incan_stdlib::strings::str_lower(&"TEST");
+    let _stripped: String = incan_stdlib::strings::str_strip(&"  spaces  ");
+    let _result: String = incan_stdlib::strings::str_strip(
         &incan_stdlib::strings::str_upper(&"hello world"),
     );
-    let numbers = vec![1, 2, 3];
+    let numbers: Vec<i64> = vec![1, 2, 3];
     numbers.push(4);
-    let _popped = incan_stdlib::collections::__private::list_pop(&mut numbers);
-    let _data = [("a".to_string(), 1), ("b".to_string(), 2)]
+    let _popped: i64 = incan_stdlib::collections::__private::list_pop(&mut numbers);
+    let _data: std::collections::HashMap<String, i64> = [
+        ("a".to_string(), 1),
+        ("b".to_string(), 2),
+    ]
         .into_iter()
         .collect::<HashMap<_, _>>();
 }

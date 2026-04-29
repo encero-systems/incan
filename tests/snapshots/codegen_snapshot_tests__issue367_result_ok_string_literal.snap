@@ -32,7 +32,10 @@ fn main() {
             }
         }),
     );
-    let direct = Ok::<String, String>(("from_local").to_string());
+    let direct: Result<String, String> = Ok::<
+        String,
+        String,
+    >(("from_local").to_string());
     match direct {
         Ok(msg) => {
             println!("{}", msg);
@@ -42,7 +45,7 @@ fn main() {
         }
     };
     takes_result(Ok::<String, String>(("from_call").to_string()));
-    let result = returns_result();
+    let result: Result<String, String> = returns_result();
     match result {
         Ok(msg) => {
             println!("{}", msg);

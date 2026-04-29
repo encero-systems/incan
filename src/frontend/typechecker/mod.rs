@@ -347,6 +347,8 @@ pub struct TypeChecker {
     pub(crate) current_method_owner: Option<String>,
     /// Active `@classmethod` owner type exposed to the method body as `cls`.
     pub(crate) current_classmethod_self_ty: Option<ResolvedType>,
+    /// In-scope generic type-parameter trait bounds, preserving generic arguments for RFC 025 dispatch.
+    pub(crate) current_type_param_bound_details: Vec<HashMap<String, Vec<TypeBoundInfo>>>,
     /// Deduplicate missing-`@requires` diagnostics within a single trait default method body.
     pub(crate) current_trait_missing_requires_emitted: Option<HashSet<String>>,
     /// Collected module-level const declarations (for rich const-eval + cycle detection).
@@ -440,6 +442,7 @@ impl TypeChecker {
             current_trait_name: None,
             current_method_owner: None,
             current_classmethod_self_ty: None,
+            current_type_param_bound_details: Vec::new(),
             current_trait_missing_requires_emitted: None,
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
@@ -1234,12 +1237,19 @@ impl TypeChecker {
         false
     }
 
-    /// Explicit `with Trait` names plus `@derive` entries that name a registered trait, for instance method lookup.
-    pub(crate) fn trait_names_for_type_methods(&self, adopted: &[String], derives: &[String]) -> Vec<String> {
+    /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries for method lookup.
+    pub(crate) fn trait_adoptions_for_type_methods(
+        &self,
+        adopted: &[TypeBoundInfo],
+        derives: &[String],
+    ) -> Vec<TypeBoundInfo> {
         let mut out = adopted.to_vec();
         for d in derives {
-            if self.lookup_semantic_trait_info(d).is_some() && !out.iter().any(|t| t == d) {
-                out.push(d.clone());
+            if self.lookup_semantic_trait_info(d).is_some() && !out.iter().any(|t| t.name == *d) {
+                out.push(TypeBoundInfo {
+                    name: d.clone(),
+                    type_args: Vec::new(),
+                });
             }
         }
         out
@@ -2489,9 +2499,11 @@ impl TypeChecker {
                     kind: SymbolKind::Type(TypeInfo::Model(ModelInfo {
                         type_params: model.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         traits: Vec::new(),
+                        trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
                         methods: HashMap::new(),
+                        method_overloads: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
@@ -2504,9 +2516,11 @@ impl TypeChecker {
                         type_params: class.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         extends: class.extends.clone(),
                         traits: Vec::new(),
+                        trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
                         methods: HashMap::new(),
+                        method_overloads: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
@@ -2554,10 +2568,12 @@ impl TypeChecker {
                     kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
                         type_params: en.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
+                        trait_adoptions: Vec::new(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
                         value_enum: None,
                         derives: Vec::new(),
                         methods: HashMap::new(),
+                        method_overloads: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
