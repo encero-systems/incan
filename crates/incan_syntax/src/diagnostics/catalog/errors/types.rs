@@ -608,6 +608,50 @@ pub fn trait_conflict(trait_a: &str, trait_b: &str, method: &str, span: Span) ->
     ))
 }
 
+/// Report an identical generic trait adoption appearing more than once on one type.
+pub fn duplicate_trait_instantiation(trait_name: &str, type_args: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait '{}' is adopted more than once with type arguments [{}]",
+            trait_name, type_args
+        ),
+        span,
+    )
+    .with_hint("Remove the duplicate `with` entry or use a different trait type argument")
+}
+
+/// Report a same-name method requirement coming from unrelated adopted traits.
+pub fn cross_trait_method_collision(trait_a: &str, trait_b: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Ambiguous trait method '{}' from unrelated traits '{}' and '{}'",
+            method, trait_a, trait_b
+        ),
+        span,
+    )
+    .with_hint("Use distinct method names for now; qualified trait-method calls are future work")
+}
+
+/// Report duplicate concrete methods that cannot be assigned to distinct same-family trait obligations.
+pub fn duplicate_method_not_trait_backed(type_name: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Type '{}' declares multiple '{}' methods that do not map to adopted trait instantiations",
+            type_name, method
+        ),
+        span,
+    )
+    .with_hint(
+        "Duplicate method names are only allowed when each implementation satisfies a same-family trait instantiation",
+    )
+}
+
+/// Report a method call where arguments and expected type still leave multiple trait-backed overloads.
+pub fn ambiguous_trait_method_call(method: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Ambiguous trait method call '{}'", method), span)
+        .with_hint("Add an expected result type or make the call arguments select one trait instantiation")
+}
+
 pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Trait '{}' requires method '{}' to be implemented", trait_name, method),

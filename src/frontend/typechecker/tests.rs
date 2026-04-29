@@ -210,6 +210,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
                 traits: Vec::new(),
+                trait_adoptions: Vec::new(),
                 derives: Vec::new(),
                 fields: Vec::new(),
                 methods: Vec::new(),
@@ -324,6 +325,100 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
     )]))
 }
 
+fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
+    let convert_int = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "int".to_string(),
+        }],
+    };
+    let convert_float = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "float".to_string(),
+        }],
+    };
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            models: vec![ModelExport {
+                name: "ImportedReading".to_string(),
+                type_params: Vec::new(),
+                traits: vec!["Convert".to_string(), "Convert".to_string()],
+                trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
+                derives: Vec::new(),
+                fields: Vec::new(),
+                methods: vec![
+                    MethodExport {
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "int".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                    MethodExport {
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "float".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                ],
+            }],
+            classes: Vec::new(),
+            functions: Vec::new(),
+            traits: vec![TraitExport {
+                name: "Convert".to_string(),
+                type_params: vec![TypeParamExport {
+                    name: "T".to_string(),
+                    bounds: Vec::new(),
+                }],
+                supertraits: Vec::new(),
+                requires: Vec::new(),
+                methods: vec![MethodExport {
+                    name: "convert".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::TypeParam { name: "T".to_string() },
+                    is_async: false,
+                    has_body: false,
+                }],
+            }],
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "mylib",
+                "mylib",
+                synthetic_artifact_root("mylib_rfc025"),
+            ),
+        },
+    )]))
+}
+
 fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestIndex {
     let type_param_t = TypeParamExport {
         name: "T".to_string(),
@@ -339,6 +434,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                 name: "SessionError".to_string(),
                 type_params: Vec::new(),
                 traits: Vec::new(),
+                trait_adoptions: Vec::new(),
                 derives: Vec::new(),
                 fields: Vec::new(),
                 methods: Vec::new(),
@@ -349,6 +445,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     type_params: Vec::new(),
                     extends: None,
                     traits: Vec::new(),
+                    trait_adoptions: Vec::new(),
                     derives: Vec::new(),
                     fields: Vec::new(),
                     methods: vec![
@@ -435,6 +532,10 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     type_params: vec![type_param_t.clone()],
                     extends: None,
                     traits: vec!["BoundedDataSet".to_string()],
+                    trait_adoptions: vec![TypeBoundExport {
+                        name: "BoundedDataSet".to_string(),
+                        type_args: Vec::new(),
+                    }],
                     derives: vec![clone_trait_name()],
                     fields: Vec::new(),
                     methods: Vec::new(),
@@ -444,6 +545,10 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     type_params: vec![type_param_t.clone()],
                     extends: None,
                     traits: vec!["BoundedDataSet".to_string()],
+                    trait_adoptions: vec![TypeBoundExport {
+                        name: "BoundedDataSet".to_string(),
+                        type_args: Vec::new(),
+                    }],
                     derives: vec![clone_trait_name()],
                     fields: Vec::new(),
                     methods: vec![MethodExport {
@@ -6601,6 +6706,190 @@ model UserId with From[str]:
             .message
             .contains("Trait 'From' requires 'UserId'::from to match its signature")),
         "expected trait conformance diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_multi_instantiation_trait_method_return_hint_disambiguates() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Into[T]:
+  def into(self) -> T: ...
+
+model Reading with Into[int], Into[float]:
+  value: int
+
+  def into(self) -> int:
+    return self.value
+
+  def into(self) -> float:
+    return 1.0
+
+def main() -> None:
+  reading = Reading(value=1)
+  precise: float = reading.into()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_multi_instantiation_trait_method_without_hint_is_ambiguous() {
+    let source = r#"
+trait Into[T]:
+  def into(self) -> T: ...
+
+model Reading with Into[int], Into[float]:
+  value: int
+
+  def into(self) -> int:
+    return self.value
+
+  def into(self) -> float:
+    return 1.0
+
+def main() -> None:
+  reading = Reading(value=1)
+  precise = reading.into()
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected ambiguous trait method call");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method call 'into'")),
+        "expected ambiguity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_cross_trait_same_method_name_collision_rejected() {
+    let source = r#"
+trait JsonSerializable:
+  def serialize(self) -> str: ...
+
+trait YamlSerializable:
+  def serialize(self) -> str: ...
+
+model Event with JsonSerializable, YamlSerializable:
+  value: str
+
+  def serialize(self) -> str:
+    return self.value
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected cross-trait method collision");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Ambiguous trait method 'serialize' from unrelated traits")),
+        "expected cross-trait collision diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_parameter_bound_dispatches_through_instantiated_trait() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+model Event with Serializable[JsonFormat]:
+  value: str
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_generic_type_parameter_bound_checks_trait_type_arguments() {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+model YamlFormat:
+  name: str
+
+model Event with Serializable[JsonFormat]:
+  value: str
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+
+def main() -> bytes:
+  return encode[YamlFormat, Event](Event(value="x"), YamlFormat(name="yaml"))
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected generic bound type-argument diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("type parameter 'T' requires 'Serializable[YamlFormat]' but got 'Event'")
+        }),
+        "expected generic bound type-argument diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_pub_import_multi_instantiation_trait_adoptions_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from pub::mylib import Convert, ImportedReading
+
+def read_float[T with Convert[float]](value: T) -> float:
+  precise: float = value.convert()
+  return precise
+
+def direct(reading: ImportedReading) -> float:
+  precise: float = reading.convert()
+  return precise
+
+def main(reading: ImportedReading) -> float:
+  return read_float[ImportedReading](reading)
+"#;
+
+    check_str_with_library_index(source, library_index_with_rfc025_trait_adoptions())
+}
+
+#[test]
+fn test_pub_import_multi_instantiation_trait_adoptions_check_type_args() {
+    let source = r#"
+from pub::mylib import Convert, ImportedReading
+
+def read_str[T with Convert[str]](value: T) -> str:
+  precise: str = value.convert()
+  return precise
+
+def main(reading: ImportedReading) -> str:
+  return read_str[ImportedReading](reading)
+"#;
+
+    let Err(errs) = check_str_with_library_index(source, library_index_with_rfc025_trait_adoptions()) else {
+        panic!("expected imported generic bound type-argument diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("type parameter 'T' requires 'Convert[str]' but got 'ImportedReading'")
+        }),
+        "expected imported generic bound type-argument diagnostic, got: {errs:?}"
     );
 }
 

@@ -1,6 +1,6 @@
 # RFC 025: multi-instantiation trait dispatch
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-02-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -99,13 +99,12 @@ model Measurement with Into[float], Into[int]:
     def into(self) -> int:
         return round(self.raw)
 
-# Context always disambiguates:
 reading = Measurement(raw=1.23)
-let precise: float = reading.into()   # Into[float]
-let rounded: int = reading.into()     # Into[int]
+precise: float = reading.into()   # Into[float]
+rounded: int = reading.into()     # Into[int]
 ```
 
-The compiler resolves `reading.into()` based on the expected return type from context (the binding's type annotation). If the context doesn't disambiguate, the compiler reports an ambiguity error.
+The compiler resolves `reading.into()` from the expected return type when the candidates are instantiations of the same generic trait family. The expected type may come from a typed binding, a function argument, an annotated return position, or equivalent explicit context. `let` is optional in Incan; what matters is the presence of a concrete expected type.
 
 ### Multi-format serialization (the foundational use case)
 
@@ -121,18 +120,18 @@ model CustomerEvent with Serializable[Json], Serializable[Yaml]:
     email: str
 ```
 
-A generic function can then operate over any format and any model without knowing which one:
+A generic function can operate over any format and any model without knowing which one:
 
 ```incan
 def publish[F, T with Serializable[F]](event: T) -> bytes:
     return event.serialize()
 
-# Call site: F and T are resolved at monomorphization
-let json_bytes = publish[Json](my_event)   # T inferred as CustomerEvent; Serializable[Json]::serialize
-let yaml_bytes = publish[Yaml](my_event)  # Serializable[Yaml]::serialize
+# Call site: F and T are resolved at monomorphization.
+json_bytes = publish[Json](my_event)   # T inferred as CustomerEvent; Serializable[Json]::serialize
+yaml_bytes = publish[Yaml](my_event)   # Serializable[Yaml]::serialize
 ```
 
-The type parameter `F` determines which `Serializable` instantiation the compiler selects. The bound `T with Serializable[F]` links the model type to the format using ordinary Incan `with` syntax in the type-parameter list. This pattern is the foundation of the `@derive(format)` protocol described in RFC 024.
+The type parameter `F` determines which `Serializable` instantiation the compiler selects. The bound `T with Serializable[F]` links the model type to the format using ordinary Incan `with` syntax in the type-parameter list. This pattern is the foundation of the `@derive(format)` protocol described in RFC 024 and is in scope for this RFC.
 
 ## Reference-level explanation (precise rules)
 
@@ -150,8 +149,9 @@ model Bar with Trait[A], Trait[A]:  # ERROR — duplicate instantiation
 When multiple trait instantiations produce methods with the same name, the compiler resolves which to call using:
 
 1. **Argument types** — the most common case. `value["key"]` vs `value[0]` is unambiguous because `str` and `int` are distinct types.
-2. **Expected return type** (provisional) — when argument types are identical but return types differ (for example `Into[float]` vs `Into[int]`), the compiler may use the expected type from surrounding context such as a binding annotation or function argument. See the unresolved questions section for the remaining design work here.
-3. **Explicit qualification** — if neither argument nor return type disambiguates, the call is an error. The user must qualify which trait they mean. The exact qualification syntax is still open, but this should be the fallback rather than the common path.
+2. **Expected return type within one generic trait family** — when argument types are identical but return types differ across instantiations of the same generic trait (for example `Into[float]` vs `Into[int]`), the compiler may use an explicit expected type from surrounding context such as a typed binding, function argument, or annotated return position.
+3. **Resolved generic trait parameters** — when a generic bound links a receiver type parameter to a trait instantiation parameter, as in `T with Serializable[F]`, a resolved `F` selects the corresponding trait method during generic checking and monomorphization.
+4. **Ambiguity error** — if the preceding rules do not choose exactly one candidate, the call is an error. This RFC does not introduce explicit qualification or aliasing syntax for cross-trait same-name collisions.
 
 ### Symbol table representation
 
@@ -177,6 +177,8 @@ The rule is simple: **same-name methods are permitted if and only if they satisf
 
 Multi-instantiation works on all three declaration types that support `with`.
 
+Initial implementation covers the existing model/class trait-adoption surface. Enum coverage depends on RFC 050 adding enum methods and trait adoption to the language surface; RFC 025 must not be marked complete until that path is integrated.
+
 #### Built-in types (`List`, `Dict`)
 
 Built-in collection types currently have compiler-level indexing support. This RFC does not change that, but it provides the mechanism for user-defined types to achieve the same capability through traits.
@@ -196,6 +198,15 @@ def lookup[T with Index[str, V], Index[int, V]](data: T, key: str, idx: int) -> 
 
 This falls out naturally from the trait system. Each `with` bound is an independent constraint, and the function body can call `data[key]` and `data[idx]` with each use resolving to the matching `Index` instantiation.
 
+Generic bounds may also bind a trait instantiation to another type parameter:
+
+```incan
+def publish[F, T with Serializable[F]](event: T) -> bytes:
+    return event.serialize()
+```
+
+At a call such as `publish[Json](event)`, the explicit call-site type argument resolves `F` to `Json`, the event argument resolves `T`, and the body call `event.serialize()` selects the `Serializable[Json]` method. If `F` cannot be resolved from explicit type arguments, value arguments, or other ordinary inference, the compiler reports an unresolved generic dispatch error rather than guessing.
+
 #### Cross-trait method name collisions
 
 Multi-instantiation of the *same* generic trait is the primary use case, but the same-name rule applies to *any* combination of adopted traits. Consider:
@@ -212,7 +223,7 @@ model Source with Readable, Parseable:
     def read(self, s: str) -> SomeResult: ... # satisfies Parseable
 ```
 
-This is permitted — the two `read` methods come from different trait adoptions and have different parameter types, so the compiler can disambiguate at the call site. However, if two different traits produce methods with **identical signatures**, no disambiguation is possible and the type declaration is an error (see [Diagnostics](#diagnostics) below).
+This is permitted — the two `read` methods come from different trait adoptions and have different parameter types, so the compiler can disambiguate at the call site. However, if two different trait families produce methods with the same name and the same value-parameter types, this RFC treats the declaration as a conflict even when the return types differ. Return-type disambiguation is reserved for different instantiations of the same generic trait family. Future explicit qualification or trait-aliasing syntax may relax this, but that design is intentionally outside this RFC.
 
 > Note: permitted does not mean that this is encouraged. Avoid ambiguous method signatures whenever possible.
 
@@ -244,37 +255,36 @@ model Bar with Index[str, int], Index[str, int]:
     #           must have different type arguments
 ```
 
-#### 3. Ambiguous call (argument types match multiple candidates)
+#### 3. Ambiguous call (no expected return type)
 
-When the argument type doesn't uniquely select a trait instantiation:
+When a same-family generic trait method can only be resolved by return type, but no expected type is available:
 
 ```incan
-value.some_method(x)
-#     ^^^^^^^^^^^ error: ambiguous call to `some_method` — multiple
-#     trait instantiations match:
-#       - TraitA.some_method(self, x: int) -> str
-#       - TraitB.some_method(self, x: int) -> bool
-#     help: annotate the expected return type, or use explicit trait
-#     qualification (see deferred question #1)
+value = measurement.into()
+#                   ^^^^ error: ambiguous call to `into` — multiple
+#                        `Into[T]` instantiations match
+#     help: add an expected type, for example:
+#           value: float = measurement.into()
 ```
 
 #### 4. Irreconcilable cross-trait collision
 
-Two different traits produce methods with identical signatures on the same type:
+Two different trait families produce methods with the same name and the same value-parameter types on the same type:
 
 ```incan
 trait Logger:
     def write(self, msg: str) -> None: ...
 
 trait Serializer:
-    def write(self, msg: str) -> None: ...
+    def write(self, msg: str) -> bytes: ...
 
 model Sink with Logger, Serializer:
     #              ^^^^ error: method `write` from `Serializer` conflicts
-    #   with `write` from `Logger` — both have signature
-    #   `(self, msg: str) -> None` and cannot be disambiguated
-    #   help: rename one of the trait methods, or adopt only one of
-    #   these traits
+    #   with `write` from `Logger` — both accept `(self, msg: str)`;
+    #   return-type disambiguation only applies within one generic
+    #   trait family
+    #   help: rename or alias one of the trait methods, or adopt only
+    #   one of these traits
 ```
 
 ### Compatibility / migration
@@ -293,8 +303,7 @@ Declare multiple signatures, implement once with runtime dispatch. Rejected beca
 
 ### 3. Separate method names
 
-`get_by_key(str)` and `get_by_index(int)` instead of two `__getitem__`. Works but breaks the `[]` subscript syntax
-and feels un-Pythonic.
+`get_by_key(str)` and `get_by_index(int)` instead of two `__getitem__`. Works but breaks the `[]` subscript syntax and feels un-Pythonic.
 
 ### 4. Compiler special-casing per type
 
@@ -302,29 +311,14 @@ Give `JsonValue` special compiler support for multi-key indexing without a gener
 
 ## Drawbacks
 
-- **Ambiguity errors**: when the compiler can't determine which instantiation to use from context, it must report an
-error. The error messages need to be clear about *why* the call is ambiguous and *how* to resolve it.
-- **Symbol table complexity**: the method table representation needs to support multiple entries per method name. This
-is an internal complexity increase, though the user-facing model is simple.
-- **Compile-time cost**: resolving multi-instantiation dispatch requires checking argument types against all candidates.
-For typical usage (2-3 instantiations), this is negligible.
-- **Teachability**: "two methods with the same name" is a new concept for Python-background users, who are accustomed to
-one-name-one-definition. The key teaching point is that these are *trait implementations*, not overloads — the trait system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface which trait instantiation a call resolves to (e.g., hover info showing `Index[str, JsonValue].__getitem__`), and diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.
+- **Ambiguity errors**: when the compiler can't determine which instantiation to use from context, it must report an error. The error messages need to be clear about *why* the call is ambiguous and *how* to resolve it.
+- **Symbol table complexity**: the method table representation needs to support multiple entries per method name. This is an internal complexity increase, though the user-facing model is simple.
+- **Compile-time cost**: resolving multi-instantiation dispatch requires checking argument types against all candidates. For typical usage (2-3 instantiations), this is negligible.
+- **Teachability**: "two methods with the same name" is a new concept for Python-background users, who are accustomed to one-name-one-definition. The key teaching point is that these are *trait implementations*, not overloads — the trait system makes the distinction principled rather than ad-hoc. This puts a high bar on tooling: the LSP must surface which trait instantiation a call resolves to (e.g., hover info showing `Index[str, JsonValue].__getitem__`), and diagnostics for ambiguous calls must clearly explain the competing candidates and how to disambiguate.
 
 ## Implementation architecture
 
-- [ ] Verify parser allows duplicate trait names in `with` clauses; lift restriction if needed
-- [ ] Update the symbol table to support multiple method entries per name (grouped by trait origin)
-- [ ] Update the typechecker to allow same-name methods when they correspond to different trait instantiations
-- [ ] Update call resolution to disambiguate based on argument types (and optionally return type context, see
-[unresolved question #2](#unresolved-questions))
-- [ ] Update lowering to emit separate `impl Trait<T> for Type` blocks per instantiation
-- [ ] Add diagnostics:
-    - Duplicate trait instantiation (`with Trait[A], Trait[A]`)
-    - Ambiguous call (argument types match multiple candidates)
-    - Return-type ambiguity (if return-type dispatch is supported: explain how to annotate the expected type)
-- [ ] Add codegen snapshot tests for multi-instantiation dispatch
-- [ ] Add integration tests for `Index` with multiple key types
+Implementation must preserve trait-instantiation identity from adoption collection through method lookup, call resolution, lowering, and Rust emission. The parser and declaration collector may accept multiple adoptions with the same trait name only when their type arguments differ; duplicate identical instantiations must be rejected with a targeted diagnostic. The typechecker must allow same-name methods only when each candidate can be matched to a distinct adopted trait method signature, and call resolution must choose a single candidate from argument types, same-family expected return type, or resolved generic trait parameters. Lowering and emission must carry the resolved trait instantiation to generated Rust so each adopted instantiation emits as its own trait implementation rather than a runtime branch. Test coverage must include duplicate-instantiation diagnostics, duplicate unbacked methods, unresolved return-type dispatch, cross-trait collisions, generic-bound dispatch, codegen snapshots, and an `Index`-style integration case.
 
 ## Layers affected
 
@@ -333,32 +327,99 @@ one-name-one-definition. The key teaching point is that these are *trait impleme
 - **Lowering / emission**: must preserve the resolved instantiation choice into generated backend code without introducing runtime dispatch.
 - **Docs / tooling**: must explain ambiguity diagnostics and qualification escape hatches clearly when the compiler cannot pick one instantiation unambiguously.
 
+## Implementation Plan
+
+### Phase 1: Trait Adoption Identity
+
+- Preserve each adopted trait instantiation as a distinct semantic entry instead of collapsing adoptions by trait name.
+- Reject duplicate identical trait instantiations such as `Trait[A], Trait[A]` with a targeted diagnostic.
+- Keep compatibility with existing single-adoption code and existing trait-supertrait rules from RFC 042.
+
+### Phase 2: Same-Name Method Conformance
+
+- Allow same-name methods on a type only when each method satisfies a distinct adopted trait method signature.
+- Reject duplicate unbacked same-name methods.
+- Reject cross-trait same-name collisions when the value-parameter types are identical and this RFC has no aliasing or qualification syntax to disambiguate them.
+
+### Phase 3: Call Resolution
+
+- Resolve same-name trait methods by argument types first.
+- Resolve same-family generic trait methods by explicit expected return type when argument types alone are insufficient.
+- Resolve calls through generic bounds such as `T with Serializable[F]` when the trait-instantiation parameter is known.
+- Emit clear diagnostics for ambiguous calls, unresolved generic dispatch, and missing expected return types.
+
+### Phase 4: Lowering and Emission
+
+- Preserve the selected trait instantiation in lowering so later stages do not rediscover or guess the dispatch target.
+- Emit separate Rust trait implementations for each adopted instantiation.
+- Ensure generated Rust uses the selected trait implementation without runtime branching.
+
+### Phase 5: Tests and Documentation
+
+- Add parser/typechecker tests for duplicate instantiations, valid multi-instantiation adoption, duplicate unbacked methods, cross-trait conflicts, argument-based dispatch, expected-return dispatch, and generic-bound dispatch.
+- Add codegen snapshot coverage for multi-instantiation trait implementations and selected calls.
+- Add an integration test for an `Index[str, V]` plus `Index[int, V]` style type.
+- Update user-facing trait docs and release notes.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Resolve explicit qualification / aliasing scope: cross-trait same-name collisions are errors for RFC 025; aliasing remains future work.
+- [x] Resolve return-type disambiguation scope: expected return type may disambiguate within one generic trait family.
+- [x] Resolve generic type-parameter dispatch scope: `T with Serializable[F]` style dispatch is in scope.
+
+### Trait adoption identity
+
+- [x] Preserve duplicate trait-name adoptions as distinct instantiations when type arguments differ for model/class declarations.
+- [x] Reject duplicate identical trait instantiations for model/class declarations.
+- [ ] Extend trait-adoption identity to enum declarations after RFC 050 lands on `main`.
+- [ ] Add remaining focused tests for enum adoption identity and duplicate-instantiation diagnostics.
+
+### Same-name method conformance
+
+- [x] Allow same-name methods backed by distinct trait instantiations for model/class declarations.
+- [x] Reject duplicate unbacked same-name methods for model/class declarations.
+- [x] Reject cross-trait same-name collisions with identical value-parameter types for model/class declarations.
+- [ ] Extend same-name method conformance to enum methods after RFC 050 lands on `main`.
+- [ ] Add remaining focused tests for enum-backed valid and invalid same-name method declarations.
+
+### Call resolution
+
+- [x] Resolve method calls by argument type across model/class multi-instantiated traits.
+- [x] Resolve same-family methods by explicit expected return type.
+- [x] Resolve generic-bound dispatch for `T with Trait[F]` when `F` is known.
+- [x] Emit diagnostics for ambiguous same-family calls and cross-trait collisions.
+- [ ] Extend call resolution to enum methods after RFC 050 lands on `main`.
+- [ ] Add remaining typechecker tests for enum call-resolution paths.
+
+### Lowering / emission
+
+- [x] Preserve selected trait instantiation through model/class lowering.
+- [x] Emit separate Rust impls for each model/class trait instantiation.
+- [x] Ensure generated model/class call sites target the selected implementation without runtime dispatch.
+- [ ] Extend lowering/emission to enum methods after RFC 050 lands on `main`.
+- [x] Add codegen coverage for same-family model/class trait implementations.
+
+### Docs / release notes
+
+- [x] Update authored trait/stdlib docs for model/class multi-instantiation dispatch.
+- [x] Add a v0.3 release notes entry for the model/class slice.
+- [ ] Keep RFC 025 progress checklist current as implementation lands.
+
 ## Design Decisions
 
-1. **Trait-driven, not general overloading**: same-name methods are only allowed when they arise from different trait
-instantiations. This keeps the language simple and the dispatch rule principled.
+1. **Trait-driven, not general overloading**: same-name methods are only allowed when they arise from different trait instantiations. This keeps the language simple and the dispatch rule principled.
 
-2. **Compile-time resolution**: no runtime dispatch. The compiler knows which implementation to call from the argument
-types at the call site.
+2. **Compile-time resolution**: no runtime dispatch. The compiler knows which implementation to call from the argument types at the call site.
 
-## Unresolved questions
+3. **Expected return type may disambiguate within one generic trait family**: when multiple instantiations of the same generic trait differ only by return type, an explicit expected type may select the matching instantiation. If no expected type is available, the call is ambiguous.
 
-1. **Explicit qualification syntax**: when disambiguation fails, how does the user specify which trait instantiation
-they mean? Options include `value.Index[str].__getitem__("key")`, turbofish-style `value.__getitem__::<str>("key")`, or something else. This is expected to be rare in practice.
+4. **Generic trait-parameter dispatch is in scope**: a bound such as `T with Serializable[F]` links the receiver type to a trait instantiation selected by `F`. Once `F` is resolved, calls through that bound select the corresponding trait method.
 
-2. **Return-type-only disambiguation**: is it sufficient to resolve based on expected return type alone (e.g.,
-   `let precise: float = reading.into()`)? Or should this always be an error requiring explicit qualification?
+5. **Cross-trait same-name collisions remain errors for now**: this RFC does not define explicit qualification or aliasing syntax for two different trait families that expose the same method name with the same value-parameter types. Future work may add trait-level aliasing or qualification syntax, but this RFC reports those cases as conflicts instead of guessing.
 
-3. **Type-parameter-level dispatch**: in the multi-format serialization pattern, disambiguation comes from a generic
-type parameter resolved at monomorphization, not from argument or return types at the call site:
-
-   ```incan
-   def publish[F, T with Serializable[F]](event: T) -> bytes:
-       return event.serialize()
-   ```
-
-When the caller writes `publish[Json](my_event)`, `F = Json` and `T` is inferred from the argument. The compiler picks `Serializable[Json]::serialize`. This uses standard Incan `with` syntax in the type parameter list — no
-   `where` clause. Incan will need this mechanism once generic functions with trait bounds are implemented.
+6. **Union returns are not the dispatch mechanism**: if argument types choose a single candidate, the call keeps that candidate's precise return type. Union return types remain useful for APIs that intentionally return a union, but they are not a substitute for trait-instantiation dispatch.
 
 ## References
 
@@ -367,5 +428,3 @@ When the caller writes `publish[Json](my_event)`, `F = Json` and `T` is inferred
 - RFC 023 — Compilable Stdlib & Rust Module Binding
 - RFC 024 — Extensible Derive Protocol
 - Rust trait system — multiple `impl Trait<T> for Type` blocks
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

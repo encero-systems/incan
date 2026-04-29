@@ -33,6 +33,23 @@ model UserId with From[str]:
 user_id = UserId.from("42")
 ```
 
+A model or class may adopt multiple `Into[T]` instantiations when the target types differ. A call to `into()` must then have an expected result type so the compiler can select the same-family trait instantiation:
+
+```incan
+model Reading with Into[int], Into[float]:
+    value: int
+
+    def into(self) -> int:
+        return self.value
+
+    def into(self) -> float:
+        return 1.0
+
+reading = Reading(value=1)
+as_float: float = reading.into()
+as_int: int = reading.into()
+```
+
 ## TryFrom / TryInto
 
 - **`TryFrom[T]`**

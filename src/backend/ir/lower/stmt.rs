@@ -206,10 +206,8 @@ impl AstLowering {
             ast::Statement::Assignment(a) => {
                 let rhs_direct_static = self.is_direct_static_ident(&a.value);
                 let lowered_value = self.lower_expr_spanned(&a.value)?;
-                let ty =
-                    a.ty.as_ref()
-                        .map(|t| self.lower_type(&t.node))
-                        .unwrap_or_else(|| lowered_value.ty.clone());
+                let type_annotation = a.ty.as_ref().map(|t| self.lower_type(&t.node));
+                let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
 
                 match a.binding {
                     ast::BindingKind::Reassign => {
@@ -265,6 +263,7 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
+                            type_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }
@@ -281,6 +280,7 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
+                            type_annotation,
                             mutability: Mutability::Mutable,
                             value,
                         }
@@ -296,6 +296,7 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
+                            type_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }
@@ -557,6 +558,7 @@ impl AstLowering {
                 let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
                     name: temp_name.clone(),
                     ty: value_ty.clone(),
+                    type_annotation: None,
                     mutability: Mutability::Immutable,
                     value,
                 })];
@@ -590,6 +592,7 @@ impl AstLowering {
                     stmts.push(IrStmt::new(IrStmtKind::Let {
                         name: name.clone(),
                         ty: field_ty,
+                        type_annotation: None,
                         mutability,
                         value: field_expr,
                     }));
@@ -637,6 +640,7 @@ impl AstLowering {
                 let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
                     name: last_target.clone(),
                     ty: ty.clone(),
+                    type_annotation: None,
                     mutability,
                     value,
                 })];
@@ -660,6 +664,7 @@ impl AstLowering {
                     stmts.push(IrStmt::new(IrStmtKind::Let {
                         name: target.clone(),
                         ty: ty.clone(),
+                        type_annotation: None,
                         mutability,
                         value: source_expr,
                     }));
@@ -881,6 +886,7 @@ impl AstLowering {
             return Ok(IrStmtKind::Let {
                 name: binding,
                 ty: return_ty,
+                type_annotation: None,
                 mutability: Mutability::Immutable,
                 value: call,
             });

@@ -1492,6 +1492,7 @@ def main() -> None:
                 IrStmt::new(IrStmtKind::Let {
                     name: String::from("rng"),
                     ty: rng_ty.clone(),
+                    type_annotation: None,
                     mutability: Mutability::Mutable,
                     value: TypedExpr::new(
                         IrExprKind::Call {
@@ -1791,6 +1792,7 @@ def main() -> None:
             name: "Widget".to_string(),
             type_params: Vec::new(),
             traits: Vec::new(),
+            trait_adoptions: Vec::new(),
             derives: Vec::new(),
             fields: Vec::new(),
             methods: Vec::new(),

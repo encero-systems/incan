@@ -62,6 +62,8 @@ model Grid:
 
 Rust analogy: `xs[i]` is powered by `std::ops::Index`, but the idea is the same: syntax → a trait-defined hook.
 
+For model and class types, the same generic hook trait may be adopted more than once with different type arguments. That lets one type support multiple statically checked hook shapes, such as `Index[str, V]` and `Index[int, V]`, without runtime overloading.
+
 ## How this is Rust-like (not Python-magic)
 
 In Python, “protocols” are often structural and dynamic (“if it quacks, it’s a duck”), and operator behavior is resolved

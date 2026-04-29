@@ -33,7 +33,8 @@ use std::path::PathBuf;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, VariableInfo};
 use crate::frontend::symbols::{
-    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, TraitInfo, TypeInfo,
+    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, TraitInfo,
+    TypeBoundInfo, TypeInfo,
 };
 use crate::frontend::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_core::lang::conventions;
@@ -487,28 +488,34 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
         match &decl.node {
             ast::Declaration::Model(model) if model.visibility == ast::Visibility::Public => {
                 let tp_names = type_param_names(&model.type_params);
+                let methods = extract_method_signatures_with_rust_imports(&model.methods, &tp_names, &rust_imports);
                 types.push((
                     model.name.clone(),
                     TypeInfo::Model(ModelInfo {
                         type_params: tp_names.clone(),
                         traits: model.traits.iter().map(|bound| bound.node.name.clone()).collect(),
+                        trait_adoptions: trait_adoption_infos_from_bounds(&model.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
-                        methods: extract_method_signatures_with_rust_imports(&model.methods, &tp_names, &rust_imports),
+                        method_overloads: method_overloads_from_methods(&methods),
+                        methods,
                     }),
                 ));
             }
             ast::Declaration::Class(class) if class.visibility == ast::Visibility::Public => {
                 let tp_names = type_param_names(&class.type_params);
+                let methods = extract_method_signatures_with_rust_imports(&class.methods, &tp_names, &rust_imports);
                 types.push((
                     class.name.clone(),
                     TypeInfo::Class(ClassInfo {
                         type_params: tp_names.clone(),
                         extends: class.extends.clone(),
                         traits: class.traits.iter().map(|bound| bound.node.name.clone()).collect(),
+                        trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
-                        methods: extract_method_signatures_with_rust_imports(&class.methods, &tp_names, &rust_imports),
+                        method_overloads: method_overloads_from_methods(&methods),
+                        methods,
                     }),
                 ));
             }
@@ -602,6 +609,33 @@ fn extract_method_signatures(
     type_params: &[String],
 ) -> HashMap<String, MethodInfo> {
     extract_method_signatures_with_rust_imports(methods, type_params, &HashMap::new())
+}
+
+/// Build overload groups for stdlib model/class methods from the extracted method map.
+fn method_overloads_from_methods(methods: &HashMap<String, MethodInfo>) -> HashMap<String, Vec<MethodInfo>> {
+    methods
+        .iter()
+        .map(|(name, info)| (name.clone(), vec![info.clone()]))
+        .collect()
+}
+
+/// Convert stdlib `with` bounds into trait adoption metadata with resolved generic arguments.
+fn trait_adoption_infos_from_bounds(
+    bounds: &[ast::Spanned<ast::TraitBound>],
+    type_params: &[String],
+) -> Vec<TypeBoundInfo> {
+    bounds
+        .iter()
+        .map(|bound| TypeBoundInfo {
+            name: bound.node.name.clone(),
+            type_args: bound
+                .node
+                .type_args
+                .iter()
+                .map(|arg| ast_type_to_resolved(&arg.node, type_params))
+                .collect(),
+        })
+        .collect()
 }
 
 /// Extract method metadata while resolving Rust import aliases in type positions.
@@ -700,6 +734,26 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
             )
         })
         .collect();
+    let tp_bound_details: HashMap<String, Vec<TypeBoundInfo>> = func
+        .type_params
+        .iter()
+        .map(|tp| {
+            (
+                tp.name.clone(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| TypeBoundInfo {
+                        name: bound.name.clone(),
+                        type_args: bound
+                            .type_args
+                            .iter()
+                            .map(|arg| ast_type_to_resolved(&arg.node, &tp_names))
+                            .collect(),
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
 
     let params: Vec<CallableParam> = func
         .params
@@ -722,6 +776,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         is_async: func.is_async(),
         type_params: tp_names,
         type_param_bounds: tp_bounds,
+        type_param_bound_details: tp_bound_details,
     }
 }
 
@@ -783,6 +838,7 @@ fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
         is_async,
         type_params: Vec::new(),
         type_param_bounds: HashMap::new(),
+        type_param_bound_details: HashMap::new(),
     })
 }
 

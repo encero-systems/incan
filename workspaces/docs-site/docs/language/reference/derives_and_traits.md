@@ -353,6 +353,42 @@ def require_ordering[T with OrderedCollection[int]](values: T) -> T:
 
 The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.
 
+### Multiple instantiations of one generic trait
+
+Models and classes may adopt the same generic trait more than once when each adoption uses different type arguments. Same-name methods are allowed only when each method satisfies a distinct adopted trait instantiation; this is trait dispatch, not general-purpose method overloading.
+
+```incan
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.0
+
+reading = Reading(value=1)
+as_float: float = reading.convert()
+as_int: int = reading.convert()
+```
+
+The compiler resolves same-family candidates from value argument types first, then from an explicit expected return type such as a typed binding, function argument, or annotated return position. If no rule selects exactly one candidate, the call is ambiguous. Same-name methods from unrelated trait families are rejected for now; explicit qualification and aliasing are future language design work.
+
+Generic bounds may also carry trait type arguments:
+
+```incan
+trait Serializable[F]:
+    def serialize(self, format: F) -> bytes: ...
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+    return value.serialize(format)
+```
+
+Enum support depends on enum methods and enum trait adoption; until that lands, this surface applies to models and classes.
+
 ### `@requires(...)` (adopter contract)
 
 `@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types

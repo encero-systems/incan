@@ -11,7 +11,7 @@ use crate::frontend::ast::{
 };
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
+    TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -68,6 +68,7 @@ pub struct CheckedModelExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     /// `@derive(...)` names that must remain available to `pub::` consumers.
     pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
@@ -80,6 +81,7 @@ pub struct CheckedClassExport {
     pub type_params: Vec<CheckedTypeParam>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     /// `@derive(...)` names that must remain available to `pub::` consumers.
     pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
@@ -265,10 +267,12 @@ fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> Ch
     }
 }
 
+/// Extract a checked public model export from collected model symbol metadata.
 fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<CheckedModelExport> {
     let symbol = checker.lookup_symbol(model.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Model(ModelInfo {
         traits,
+        trait_adoptions,
         derives,
         fields,
         methods,
@@ -282,17 +286,20 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
         methods: map_methods(methods),
     })
 }
 
+/// Extract a checked public class export from collected class symbol metadata.
 fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<CheckedClassExport> {
     let symbol = checker.lookup_symbol(class.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Class(ClassInfo {
         extends,
         traits,
+        trait_adoptions,
         derives,
         fields,
         methods,
@@ -307,6 +314,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         type_params: checked_type_params(&class.type_params, checker),
         extends: extends.clone(),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
         methods: map_methods(methods),
@@ -449,6 +457,32 @@ fn checked_trait_bounds(bounds: &[TraitBound], checker: &TypeChecker) -> Vec<Che
                 .collect(),
         })
         .collect()
+}
+
+/// Convert collected trait adoption metadata into the manifest-ready checked bound shape.
+fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
+    bounds
+        .iter()
+        .map(|bound| CheckedTypeBound {
+            name: bound.name.clone(),
+            type_args: bound.type_args.clone(),
+        })
+        .collect()
+}
+
+/// Sort generic trait adoptions deterministically for stable library manifests.
+fn sorted_type_bounds(mut bounds: Vec<CheckedTypeBound>) -> Vec<CheckedTypeBound> {
+    bounds.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| type_args_sort_key(&left.type_args).cmp(&type_args_sort_key(&right.type_args)))
+    });
+    bounds
+}
+
+/// Render type arguments into a deterministic key for sorting trait adoptions.
+fn type_args_sort_key(args: &[ResolvedType]) -> String {
+    args.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
 }
 
 fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
