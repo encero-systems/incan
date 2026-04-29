@@ -4684,7 +4684,7 @@ simple: “either it’s the default behavior, or it’s my behavior.”</p>
 <p>Use traits for reusable, domain-specific capabilities:</p>
 <ul>
 <li>You define a contract once</li>
-<li>Multiple types can opt into it via <code>with TraitName</code></li>
+<li>Models, classes, enums, and other concrete type declarations can opt into it via <code>with TraitName</code></li>
 <li>Traits can include default method bodies</li>
 <li>Traits are always abstract, so the trait name itself can be used directly in annotations</li>
 <li>Traits can build capability hierarchies with <code>trait Sub with Base:</code></li>
@@ -4693,13 +4693,41 @@ simple: “either it’s the default behavior, or it’s my behavior.”</p>
 general language feature for authoring reusable behavior.</p>
 <p>That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts <code>Collection[Order]</code>, that means “any concrete adopter of <code>Collection[Order]</code>”, not “rewrite this API as a hidden generic bound first”.</p>
 <p>Read more about <a href="../../tutorials/book/11_traits_and_derives/">traits: domain capabilities</a>.</p>
+<p>Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">Outcome</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nc">Success</span>
+    <span class="nc">Failure</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Outcome</span><span class="o">.</span><span class="nc">Success</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;success&quot;</span>
+            <span class="nc">Outcome</span><span class="o">.</span><span class="nc">Failure</span><span class="p">(</span><span class="n">message</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">message</span>
+</code></pre></div>
+<p>That makes enum adoption useful at API boundaries:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">describe</span><span class="p">()</span>
+
+<span class="n">message</span> <span class="o">=</span> <span class="n">render</span><span class="p">(</span><span class="nc">Outcome</span><span class="o">.</span><span class="nc">Failure</span><span class="p">(</span><span class="s2">&quot;timed out&quot;</span><span class="p">))</span>
+</code></pre></div>
+<p>Use this when the enum itself owns the behavior. Keep a free function when the behavior combines several independent types or belongs to a higher-level service, view, or adapter layer.</p>
 <h3 id="generic-methods-on-types">Generic methods on types<a class="headerlink" href="#generic-methods-on-types" title="Permanent link">&para;</a></h3>
-<p>Methods can also introduce their own type parameters. This now works on <code>class</code>, <code>model</code>, <code>trait</code>, and <code>newtype</code> declarations, using the same syntax as generic top-level functions:</p>
+<p>Methods can also introduce their own type parameters. This works on <code>class</code>, <code>model</code>, <code>trait</code>, <code>enum</code>, and <code>newtype</code> declarations, using the same syntax as generic top-level functions:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
 <p>The important distinction is that these are method-scoped type parameters, not hidden type parameters on the enclosing type. A generic <code>model Shelf[U]</code> may still define a method like <code>def swap[T](...)</code>, where <code>U</code> belongs to the type and <code>T</code> belongs only to that method.</p>
+<p>For enums, owner type parameters and method type parameters are separate in the same way:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Maybe</span><span class="p">[</span><span class="nc">U</span><span class="p">]:</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="nc">U</span><span class="p">)</span>
+    <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
 <p>For the rationale behind explicit call-site generics (<code>f[T](...)</code> / <code>obj.m[T](...)</code>), see:</p>
 <ul>
 <li><a href="../call_site_type_arguments/">Why call-site type arguments exist</a></li>

@@ -1263,6 +1263,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-5-behavior-on-the-enum-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern 5: Behavior on the enum itself
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -4538,6 +4547,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#pattern-5-behavior-on-the-enum-itself" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern 5: Behavior on the enum itself
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -4626,8 +4644,22 @@ def handle(e: Event) -&gt; str:
 <p>Tips:</p>
 <ul>
 <li>Prefer representing transitions as <code>state -&gt; state</code> functions (like above).</li>
+<li>Move small state queries into enum methods when callers ask the enum the same question repeatedly.</li>
 <li>Avoid “boolean soup” (<code>is_connected</code>, <code>is_connecting</code>, <code>last_error</code>, …) when the states are mutually exclusive.</li>
 </ul>
+<p>For example, terminal-state checks belong well on the enum itself:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">ConnectionState</span><span class="p">:</span>
+    <span class="nc">Disconnected</span>
+    <span class="nc">Connecting</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Connected</span><span class="p">(</span><span class="nc">Connection</span><span class="p">)</span>
+    <span class="nc">Error</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_terminal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">ConnectionState</span><span class="o">.</span><span class="nc">Disconnected</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="nc">ConnectionState</span><span class="o">.</span><span class="nc">Error</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">false</span>
+</code></pre></div>
 <h2 id="pattern-2-commands-actions">Pattern 2: Commands / actions<a class="headerlink" href="#pattern-2-commands-actions" title="Permanent link">&para;</a></h2>
 <p>Use this when your program receives a <strong>finite set</strong> of commands and each command has its own payload.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Command</span><span class="p">:</span>
@@ -4709,6 +4741,55 @@ def handle(e: Event) -&gt; str:
 <li>Prefer small, composable constructors.</li>
 <li>Use helper functions to build trees if you want a cleaner “builder” API.</li>
 </ul>
+<h2 id="pattern-5-behavior-on-the-enum-itself">Pattern 5: Behavior on the enum itself<a class="headerlink" href="#pattern-5-behavior-on-the-enum-itself" title="Permanent link">&para;</a></h2>
+<p>Use enum methods when the operation is part of the closed set's meaning. This keeps callers from reaching for detached helper functions that can drift away from the enum definition.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">JobState</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nc">Queued</span>
+    <span class="nc">Running</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>      <span class="c1"># worker id</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span>  <span class="c1"># message, retry count</span>
+    <span class="nc">Finished</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Queued</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;queued&quot;</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Running</span><span class="p">(</span><span class="n">worker</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;running on </span><span class="si">{</span><span class="n">worker</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Failed</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">retry_count</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;failed after </span><span class="si">{</span><span class="n">retry_count</span><span class="si">}</span><span class="s2"> retries: </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Finished</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;finished&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_terminal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Failed</span><span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="nc">JobState</span><span class="o">.</span><span class="nc">Finished</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">false</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">initial</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">JobState</span><span class="o">.</span><span class="nc">Queued</span>
+</code></pre></div>
+<p>Callers get the behavior from the type that owns the cases:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_job</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
+
+<span class="n">state</span> <span class="o">=</span> <span class="nc">JobState</span><span class="o">.</span><span class="n">initial</span><span class="p">()</span>
+<span class="n">log_job</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">state</span><span class="o">.</span><span class="n">is_terminal</span><span class="p">():</span>
+    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;done&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Tips:</p>
+<ul>
+<li>Put behavior in the enum body when every variant participates in the operation.</li>
+<li>Use an associated function for a canonical starting value, fallback value, or parser entry point.</li>
+<li>Use <code>with TraitName</code> when the enum should be accepted by APIs that depend on a reusable capability.</li>
+<li>Keep free functions for behavior that combines several independent types rather than belonging to the enum itself.</li>
+</ul>
+<p>Avoid this shape when the operation really belongs to another layer:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">render_status_for_admin_dashboard</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="nc">JobState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>That kind of rendering combines enum state with UI policy, so a free function or view-layer helper is clearer than a method on <code>JobState</code>.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../explanation/enums/">Enums (concepts)</a></li>

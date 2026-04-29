@@ -870,6 +870,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#put-enum-owned-behavior-on-the-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      Put enum-owned behavior on the enum
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-this-matters" class="md-nav__link">
     <span class="md-ellipsis">
       Why this matters
@@ -4531,6 +4540,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#put-enum-owned-behavior-on-the-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      Put enum-owned behavior on the enum
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-this-matters" class="md-nav__link">
     <span class="md-ellipsis">
       Why this matters
@@ -4611,6 +4629,27 @@ to handle every case.</p>
     <span class="n">run</span><span class="p">(</span><span class="nc">Command</span><span class="o">.</span><span class="nc">Remove</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>  <span class="c1"># outputs: remove 1</span>
     <span class="n">run</span><span class="p">(</span><span class="nc">Command</span><span class="o">.</span><span class="kt">List</span><span class="p">)</span>       <span class="c1"># outputs: list</span>
 </code></pre></div>
+<h2 id="put-enum-owned-behavior-on-the-enum">Put enum-owned behavior on the enum<a class="headerlink" href="#put-enum-owned-behavior-on-the-enum" title="Permanent link">&para;</a></h2>
+<p>If a helper describes the enum itself, put it inside the enum body after the variants:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Command</span><span class="p">:</span>
+    <span class="nc">Add</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Remove</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="kt">List</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Add</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;add&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Remove</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;remove&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="kt">List</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;list&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">default</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">Command</span><span class="o">.</span><span class="kt">List</span>
+</code></pre></div>
+<p>Call instance methods on values and associated functions on the enum type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">cmd</span> <span class="o">=</span> <span class="nc">Command</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">cmd</span><span class="o">.</span><span class="n">label</span><span class="p">())</span>  <span class="c1"># outputs: list</span>
+</code></pre></div>
 <h2 id="why-this-matters">Why this matters<a class="headerlink" href="#why-this-matters" title="Permanent link">&para;</a></h2>
 <p>Unlike a stringly-typed “command name”, enums:</p>
 <ul>
@@ -4622,6 +4661,7 @@ to handle every case.</p>
 <ol>
 <li>Add a <code>Clear</code> variant and update the <code>match</code> accordingly.</li>
 <li>Add a <code>Rename(str)</code> variant and print the new name.</li>
+<li>Add a <code>label(self) -&gt; str</code> method so callers do not need a separate helper.</li>
 </ol>
 <details class="example">
 <summary>One possible solution</summary>
@@ -4632,13 +4672,21 @@ to handle every case.</p>
     <span class="nc">Clear</span>
     <span class="kt">List</span>
 
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Add</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;add&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Remove</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;remove&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Rename</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;rename&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="nc">Clear</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;clear&quot;</span>
+            <span class="nc">Command</span><span class="o">.</span><span class="kt">List</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;list&quot;</span>
+
 <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">:</span> <span class="nc">Command</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">match</span> <span class="n">cmd</span><span class="p">:</span>
-        <span class="nc">Add</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;add </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Remove</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Rename</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rename </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="nc">Clear</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;clear&quot;</span><span class="p">)</span>
-        <span class="kt">List</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;list&quot;</span><span class="p">)</span>
+        <span class="nc">Command</span><span class="o">.</span><span class="nc">Add</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;add </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nc">Command</span><span class="o">.</span><span class="nc">Remove</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nc">Command</span><span class="o">.</span><span class="nc">Rename</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rename </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nc">Command</span><span class="o">.</span><span class="nc">Clear</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;clear&quot;</span><span class="p">)</span>
+        <span class="nc">Command</span><span class="o">.</span><span class="kt">List</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;list&quot;</span><span class="p">)</span>
 </code></pre></div>
 </details>
 <h2 id="where-to-learn-more">Where to learn more<a class="headerlink" href="#where-to-learn-more" title="Permanent link">&para;</a></h2>

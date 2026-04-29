@@ -5320,7 +5320,7 @@ So we can change the destination in one place if we move/rename sections.
     <span class="n">t</span> <span class="o">=</span> <span class="nc">Temperature</span><span class="o">.</span><span class="n">from_fahrenheit</span><span class="p">(</span><span class="mf">98.6</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">celsius</span><span class="p">)</span>
 </code></pre></div>
-<p><strong>Applies to</strong>: methods on <code>class</code>, <code>model</code>, and <code>newtype</code> declarations.</p>
+<p><strong>Applies to</strong>: methods on <code>class</code>, <code>model</code>, <code>enum</code>, and <code>newtype</code> declarations.</p>
 <p>Rules:</p>
 <ul>
 <li>A <code>@staticmethod</code> method <strong>must not</strong> have a <code>self</code> or <code>mut self</code> parameter. The compiler rejects this.</li>
@@ -5374,7 +5374,7 @@ So we can change the destination in one place if we move/rename sections.
 <p>Covered below in <a href="#requires-adopter-contract">Traits (authoring)</a>.</p>
 <hr />
 <h2 id="generic-instance-methods">Generic instance methods<a class="headerlink" href="#generic-instance-methods" title="Permanent link">&para;</a></h2>
-<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, and <code>newtype</code> may declare method-level type parameters using the same syntax as top-level generic functions:</p>
+<p>Instance methods on <code>class</code>, <code>model</code>, <code>trait</code>, <code>enum</code>, and <code>newtype</code> may declare method-level type parameters using the same syntax as top-level generic functions:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Box</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
@@ -5400,6 +5400,13 @@ So we can change the destination in one place if we move/rename sections.
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Echo</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="kt">Clone</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Slot</span><span class="p">[</span><span class="nc">U</span><span class="p">]:</span>
+    <span class="nc">Filled</span><span class="p">(</span><span class="nc">U</span><span class="p">)</span>
+    <span class="nc">Empty</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">echo</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">value</span>
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Wrapper</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">U</span><span class="p">:</span>
@@ -5445,7 +5452,7 @@ So we can change the destination in one place if we move/rename sections.
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
 <p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Methods can be required (<code>...</code>) or have defaults.</p>
-<p>Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
+<p>Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;An object&quot;</span>
@@ -5456,6 +5463,18 @@ So we can change the destination in one place if we move/rename sections.
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">p</span> <span class="o">=</span> <span class="nc">Product</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Laptop&quot;</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Renderable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">Token</span> <span class="k">with</span> <span class="nc">Renderable</span><span class="p">:</span>
+    <span class="nc">Text</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Break</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Token</span><span class="o">.</span><span class="nc">Text</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">value</span>
+            <span class="nc">Token</span><span class="o">.</span><span class="nc">Break</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
@@ -5470,6 +5489,9 @@ So we can change the destination in one place if we move/rename sections.
 <ul>
 <li>Traits are abstract and must not be constructed directly with <code>TraitName(...)</code>.</li>
 <li>A value annotated as <code>Collection[int]</code> may be any concrete adopter of that trait instantiation.</li>
+<li>Enum trait adoption uses the same <code>with TraitName</code> clause as model and class adoption.</li>
+<li>For enum adopters, required trait methods must be declared in the enum body.</li>
+<li>Enum adopters should satisfy behavior through methods; <code>@requires(...)</code> field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.</li>
 <li>Supertrait relationships are transitive: if <code>OrderedCollection[T]</code> adopts <code>Collection[T]</code>, adopters of <code>OrderedCollection[T]</code> also satisfy <code>Collection[T]</code>.</li>
 </ul>
 <p>When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:</p>

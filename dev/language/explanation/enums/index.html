@@ -2631,6 +2631,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#declaration-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      Declaration shape
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#value-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Value enums
@@ -2660,6 +2669,24 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#methods-and-associated-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Methods and associated functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trait-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trait adoption
+    </span>
+  </a>
   
 </li>
       
@@ -4721,6 +4748,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#declaration-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      Declaration shape
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#value-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Value enums
@@ -4750,6 +4786,24 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#methods-and-associated-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Methods and associated functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trait-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trait adoption
+    </span>
+  </a>
   
 </li>
       
@@ -4922,6 +4976,7 @@
 <p>Enums in Incan are <strong>algebraic data types</strong> (ADTs): a type with a <strong>closed set</strong> of variants, where each variant can carry
 different data.</p>
 <p>You use enums when a value can be <strong>one of a few well-defined shapes</strong> and you want the compiler to enforce that you handle every case.</p>
+<p>Enums can also own behavior. Put methods and associated functions in the enum body when the behavior belongs to the closed set itself, and use <code>with TraitName</code> when the enum should participate in the same trait-based protocols as models and classes.</p>
 <details class="info">
 <summary>Coming from Python?</summary>
 <p>Python’s <code>Enum</code> is mainly “named constants”. When Python code needs variants <em>with data</em> it often ends up using class hierarchies and <code>isinstance(...)</code> checks, which are not exhaustive and are easy to break during refactors.</p>
@@ -5016,6 +5071,24 @@ different data.</p>
     <span class="nc">ChangeColor</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;RGB(</span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">g</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">b</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
 </code></pre></div>
 <hr />
+<h2 id="declaration-shape">Declaration shape<a class="headerlink" href="#declaration-shape" title="Permanent link">&para;</a></h2>
+<p>The optional <code>with</code> clause belongs on the enum header:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">ResultState</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nc">Success</span>
+    <span class="nc">Failure</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+</code></pre></div>
+<p>For generic enums, put <code>with</code> after the type parameters:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Maybe</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
+    <span class="kc">None</span>
+</code></pre></div>
+<p>For value enums, put <code>with</code> after the backing type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
+    <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+</code></pre></div>
+<p>Inside the enum body, declare variants first and then methods. After the first method declaration, the rest of the body is method territory; do not add more variants below methods. That keeps the visual shape predictable: data cases first, behavior second.</p>
+<hr />
 <h2 id="value-enums">Value enums<a class="headerlink" href="#value-enums" title="Permanent link">&para;</a></h2>
 <p>Use a value enum when each variant needs one canonical external <code>str</code> or <code>int</code> representation:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
@@ -5072,6 +5145,125 @@ different data.</p>
     <span class="nc">Node</span><span class="p">(</span><span class="nc">Leaf</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span> <span class="nc">Leaf</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
 <span class="p">)</span>
 </code></pre></div>
+<hr />
+<h2 id="methods-and-associated-functions">Methods and associated functions<a class="headerlink" href="#methods-and-associated-functions" title="Permanent link">&para;</a></h2>
+<p>Enum bodies may declare methods after their variants. Use instance methods when the operation depends on the selected variant:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Direction</span><span class="p">:</span>
+    <span class="nc">North</span>
+    <span class="nc">South</span>
+    <span class="nc">East</span>
+    <span class="nc">West</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_horizontal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">true</span>
+            <span class="n">_</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="k">false</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">opposite</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Direction</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">South</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">South</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span>
+            <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span>
+</code></pre></div>
+<p>Call enum methods on enum values:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">dir</span> <span class="o">=</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span>
+
+<span class="k">if</span> <span class="nb">dir</span><span class="o">.</span><span class="n">is_horizontal</span><span class="p">():</span>
+    <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;moving sideways&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Methods may use the enum's type parameters. This is useful for small helpers on <code>Option</code>-like enums:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Maybe</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
+    <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">unwrap_or</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fallback</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">Maybe</span><span class="o">.</span><span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">value</span>
+            <span class="nc">Maybe</span><span class="o">.</span><span class="kc">None</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">fallback</span>
+</code></pre></div>
+<p>Use associated functions for constructors or helpers that belong to the enum type rather than a particular instance. An associated enum function has no <code>self</code> receiver and is called through the enum type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Direction</span><span class="p">:</span>
+    <span class="nc">North</span>
+    <span class="nc">South</span>
+    <span class="nc">East</span>
+    <span class="nc">West</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">default</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span>
+</code></pre></div>
+<p>Call it with type-name method syntax:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">dir</span> <span class="o">=</span> <span class="nc">Direction</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>
+</code></pre></div>
+<p>You can also mark no-receiver helpers with <code>@staticmethod</code> when that makes the intent clearer:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Direction</span><span class="p">:</span>
+    <span class="nc">North</span>
+    <span class="nc">South</span>
+    <span class="nc">East</span>
+    <span class="nc">West</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">all</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Direction</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="nc">Direction</span><span class="o">.</span><span class="nc">North</span><span class="p">,</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">South</span><span class="p">,</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">East</span><span class="p">,</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">West</span><span class="p">]</span>
+</code></pre></div>
+<p>Enum methods follow the same receiver model as methods on models and classes. They do not change matching or construction semantics; variants are still the closed set of cases, and <code>match</code> remains exhaustive.</p>
+<p>Rules to keep in mind:</p>
+<ul>
+<li>Instance methods take <code>self</code> or <code>mut self</code>.</li>
+<li>Associated functions take no <code>self</code> receiver and are called as <code>EnumName.method(...)</code>.</li>
+<li><code>Self</code> means the declaring enum type, including active generic type arguments.</li>
+<li>Variants remain constructors or values; adding methods does not make an enum open-ended.</li>
+</ul>
+<hr />
+<h2 id="trait-adoption">Trait adoption<a class="headerlink" href="#trait-adoption" title="Permanent link">&para;</a></h2>
+<p>Enums can adopt traits with <code>with</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">BuildState</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
+    <span class="nc">Queued</span>
+    <span class="nc">Running</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">match</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="nc">BuildState</span><span class="o">.</span><span class="nc">Queued</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;queued&quot;</span>
+            <span class="nc">BuildState</span><span class="o">.</span><span class="nc">Running</span><span class="p">(</span><span class="n">worker</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;running on </span><span class="si">{</span><span class="n">worker</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="nc">BuildState</span><span class="o">.</span><span class="nc">Failed</span><span class="p">(</span><span class="n">message</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;failed: </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>This uses the same trait-adoption surface as models and classes. The enum must provide the required trait behavior, and values of the enum are accepted where the adopted trait is expected:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_state</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="nc">Describable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
+
+<span class="n">log_state</span><span class="p">(</span><span class="nc">BuildState</span><span class="o">.</span><span class="nc">Queued</span><span class="p">)</span>
+</code></pre></div>
+<p>Explicit enum adoption also satisfies generic trait bounds:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">keep_describable</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span>
+
+<span class="n">state</span> <span class="o">=</span> <span class="n">keep_describable</span><span class="p">(</span><span class="nc">BuildState</span><span class="o">.</span><span class="nc">Queued</span><span class="p">)</span>
+</code></pre></div>
+<p>This matters when a library API is written against a reusable capability instead of one concrete enum type.</p>
+<p>Value enums can adopt traits too:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ExternalValue</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">external</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="k">with</span> <span class="nc">ExternalValue</span><span class="p">:</span>
+    <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
+    <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">external</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">()</span>
+</code></pre></div>
+<p>Trait adoption is additive. An enum without a <code>with</code> clause behaves exactly like before, and adopting a trait does not make the enum open-ended; its variants remain closed.</p>
+<p>Rules to keep in mind:</p>
+<ul>
+<li>Required trait methods must be implemented in the enum body.</li>
+<li>Trait methods with default bodies can be inherited when their requirements are satisfied.</li>
+<li>Generic traits use the same syntax as other adopters: <code>enum Lookup with Index[str, int]:</code>.</li>
+<li>Traits that require adopter fields with <code>@requires(...)</code> are usually a model/class fit; enum variant payloads are not shared fields on the enum itself.</li>
+</ul>
 <hr />
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <p>The <code>match</code> expression is how you work with enums. It's exhaustive — the compiler ensures you handle all variants.</p>
@@ -5207,6 +5399,18 @@ different data.</p>
 <td></td>
 </tr>
 <tr>
+<td>Behavior tied to a closed set</td>
+<td>✓</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Trait adoption with <code>with</code></td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
 <td>Simple data container (DTO, config)</td>
 <td></td>
 <td>✓</td>
@@ -5311,6 +5515,14 @@ different data.</p>
 <tr>
 <td>Generic enum</td>
 <td>Enum parameterized over types: <code>Option[T]</code></td>
+</tr>
+<tr>
+<td>Methods</td>
+<td>Behavior declared inside the enum body</td>
+</tr>
+<tr>
+<td><code>with Trait</code></td>
+<td>Trait adoption for enum values</td>
 </tr>
 <tr>
 <td><code>match</code></td>

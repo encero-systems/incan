@@ -4482,6 +4482,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-050-enum-methods-and-trait-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 050 enum methods and trait adoption
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#duckborrowing-and-ownership-aware-codegen" class="md-nav__link">
     <span class="md-ellipsis">
       Duckborrowing and ownership-aware codegen
@@ -4620,7 +4629,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes both a new control-flow surface and tighter tooling contracts. RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly, while RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
+<p><code>0.3</code> now includes a new control-flow surface, richer enum behavior, and tighter tooling contracts. RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly, RFC 050 lets enums declare methods and adopt traits, and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a> and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -4631,6 +4640,7 @@
 <li>formatter output should be governed by explicit contracts, not scattered newline decisions</li>
 <li>common <code>Option</code> / <code>Result</code> destructuring should have a concise control-flow form when the non-match case is intentionally a no-op</li>
 <li>enums that cross string or integer boundaries should keep enum type safety while exposing one canonical raw representation</li>
+<li>enum-owned behavior should live on the enum itself, and enums should be able to adopt the same trait protocols as models and classes</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>testing should feel like a first-class workflow, with inline unit tests, fixtures, parametrization, selection, scheduling, and machine-readable reports owned by Incan rather than delegated to ad hoc scripts</li>
 <li>ownership and generated-runtime ergonomics should improve structurally, not through one-off <code>.clone()</code> or <code>.as_ref()</code> patches</li>
@@ -4681,6 +4691,9 @@
 primitive values. The generated <code>value()</code> helper returns the canonical raw value, while <code>from_value(...)</code> returns
 <code>Option[Enum]</code> for explicit handling of unknown external values. Generated display, string parsing, and serde hooks use
 the raw representation for value enums.</p>
+<h3 id="rfc-050-enum-methods-and-trait-adoption">RFC 050 enum methods and trait adoption<a class="headerlink" href="#rfc-050-enum-methods-and-trait-adoption" title="Permanent link">&para;</a></h3>
+<p>Enums can now declare methods and associated functions inside the enum body, after their variants. Use this when behavior belongs to the closed set itself, such as <code>Direction.opposite()</code> or <code>BuildState.describe()</code>, instead of pushing enum-owned logic into detached helper functions.</p>
+<p>Enums can also adopt traits with <code>with TraitName</code>, using the same trait adoption surface as models and classes. This makes enum-backed protocols reusable without special-case compiler support while keeping existing enum semantics additive and variant sets closed.</p>
 <h3 id="duckborrowing-and-ownership-aware-codegen">Duckborrowing and ownership-aware codegen<a class="headerlink" href="#duckborrowing-and-ownership-aware-codegen" title="Permanent link">&para;</a></h3>
 <p>The backend now routes more generated-Rust ownership decisions through a centralized "duckborrowing" planner. This strengthens the compiler's ability to choose moves, borrows, mutable borrows, owned string materialization, <code>.into()</code>, and necessary <code>.clone()</code> calls at typed use sites instead of relying on scattered emitter-local fixes.</p>
 <p>Practically, this reduces the need for users and library authors to add ownership-shaping workarounds such as <code>.clone()</code>, <code>.as_ref()</code>, <code>str(...)</code>, or <code>.into()</code> in ordinary Incan code just to satisfy generated Rust. The planner now covers more call arguments, collection and tuple literals, assignments, returns, match scrutinees, string lookup probes, tuple unpacking, and Rust interop boundaries.</p>
@@ -4722,6 +4735,7 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Codegen</strong>: <code>std.testing.assert_eq</code> and <code>assert_ne</code> now isolate their generated Rust operands before comparing them, so checks such as <code>assert_eq(plan_encoded_len(plan) &gt; 0, true)</code> emit valid Rust instead of a chained-comparison parse error.</li>
 <li><strong>Compiler/Codegen</strong>: Cross-module trait-bound propagation no longer lets a same-named external generic helper rewrite a local non-generic function signature. This keeps <code>std.testing.timeout(...)</code> independent from <code>std.async.time.timeout(...)</code> even though both helpers share the same leaf name.</li>
 <li><strong>Compiler/Codegen</strong>: RFC 032 value enums now lower their raw-value metadata into IR and generate <code>value()</code>, <code>from_value(...)</code>, display, string parsing, and serde implementations that use the canonical raw representation while keeping <code>message()</code> variant-name based (#317, RFC 032).</li>
+<li><strong>Language/Compiler</strong>: Enums can now declare methods and associated functions after their variants and adopt traits with <code>with</code>, bringing enum-owned behavior and trait protocol participation into parity with models and classes (#334, RFC 050).</li>
 <li><strong>Compiler/Runtime</strong>: Generated Rust now routes the in-scope panic-backed collection and JSON extraction paths, plus proc-macro decorator misuse stubs, through named stdlib helpers instead of open-coded fallback or <code>panic!</code> shims. The narrow checked-newtype construction panic remains tracked separately (#351).</li>
 <li><strong>Compiler/Codegen</strong>: <code>@rust.allow(...)</code> now emits targeted Rust <code>#[allow(...)]</code> metadata for specific generated Rust items when an Incan declaration intentionally accepts a narrow rustc or Clippy lint. The decorator supports functions, methods, models, classes, enums, and newtypes, rejects module-level directives, and blocks broad lint groups such as <code>warnings</code>, <code>unused</code>, and the common Clippy group lints (#337, RFC 057).</li>
 <li><strong>Compiler/Codegen</strong>: Normal generated Rust no longer emits compiler-generated <code>dead_code</code> or <code>unused_imports</code> allowances. The backend now prunes unused private declarations and imports, keeps Rust extension-trait imports when method lookup needs them, keeps public reexports warning-clean without suppression, and uses narrow <code>#[expect(dead_code)]</code> markers only where retained private fields are required for Incan semantics but Rust cannot observe a read (#214).</li>
@@ -4776,6 +4790,7 @@ the raw representation for value enums.</p>
 <li>Variadic positional arguments and keyword capture: <a href="/dev/RFCs/closed/implemented/038_variadic_positional_args_and_keyword_capture">RFC 038</a></li>
 <li>Checked contract metadata and interrogation tooling: <a href="/dev/RFCs/closed/implemented/048_contract_backed_models_emit_and_tooling">RFC 048</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
+<li>Enum methods and enum trait adoption: <a href="/dev/RFCs/050_enum_methods_and_trait_adoption">RFC 050</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
 </ul>

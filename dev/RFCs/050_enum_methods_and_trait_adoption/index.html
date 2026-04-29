@@ -4613,6 +4613,126 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-parser-ast-and-syntax-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Parser, AST, and syntax tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-typechecker-and-semantic-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Typechecker and semantic lookup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-lowering-ir-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Lowering, IR, and emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-documentation-release-notes-and-integration-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Documentation, release notes, and integration gates
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / process
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-ast" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parser / AST
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verification
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       Design Decisions
@@ -4641,7 +4761,7 @@
 
 <h1 id="rfc-050-enum-methods-and-enum-trait-adoption">RFC 050: Enum methods and enum trait adoption<a class="headerlink" href="#rfc-050-enum-methods-and-enum-trait-adoption" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-04-06</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -4776,6 +4896,77 @@
 <li><strong>Type system</strong>: enum methods and enum trait adoption must follow the same broad validation rules used for models and classes.</li>
 <li><strong>Interop / code generation</strong>: emitted artifacts must preserve enum methods and adopted traits in the same spirit as model/class methods and traits.</li>
 <li><strong>Docs / tooling</strong>: completion, hover text, and diagnostics should surface enum methods and enum-adopted traits ergonomically.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-parser-ast-and-syntax-tests">Phase 1: Parser, AST, and syntax tests<a class="headerlink" href="#phase-1-parser-ast-and-syntax-tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extend enum declarations so the syntax layer preserves optional <code>with</code> clauses and method declarations without regressing regular enums or value enums.</li>
+<li>Add parser coverage for enum methods, associated functions, generic trait adoption, and interactions with existing enum backing-value syntax.</li>
+</ul>
+<h3 id="phase-2-typechecker-and-semantic-lookup">Phase 2: Typechecker and semantic lookup<a class="headerlink" href="#phase-2-typechecker-and-semantic-lookup" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Store enum methods and adopted traits in semantic enum information.</li>
+<li>Validate enum methods with the same receiver, parameter, generic, and body rules used for other nominal types.</li>
+<li>Validate enum trait adoption with the existing trait-arity, bound, coherence, abstract-method, and default-method machinery where applicable.</li>
+<li>Make enum method lookup work for instance receivers and type-name receivers in the same broad shape as model/class/newtype method lookup.</li>
+</ul>
+<h3 id="phase-3-lowering-ir-and-emission">Phase 3: Lowering, IR, and emission<a class="headerlink" href="#phase-3-lowering-ir-and-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Lower enum methods into generated Rust <code>impl</code> blocks for the enum type.</li>
+<li>Lower enum trait adoption into generated trait implementations, reusing existing trait/default-method lowering policy where possible.</li>
+<li>Add codegen snapshot coverage that proves enum methods and enum trait impls are emitted and compile through the snapshot harness.</li>
+</ul>
+<h3 id="phase-4-documentation-release-notes-and-integration-gates">Phase 4: Documentation, release notes, and integration gates<a class="headerlink" href="#phase-4-documentation-release-notes-and-integration-gates" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Update authored enum and trait documentation so users learn enum methods and enum trait adoption outside the RFC.</li>
+<li>Add release notes for the active <code>0.3</code> development line and bump the development version.</li>
+<li>Run focused parser/typechecker/codegen checks during implementation, then the repository gate on the integrated result.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="spec-process">Spec / process<a class="headerlink" href="#spec-process" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Review RFC 050 and begin active implementation for issue #334.</li>
+<li>[x] Relabel issue #334 from RFC tracking to feature implementation.</li>
+<li>[x] Keep this checklist updated as implementation phases land.</li>
+</ul>
+<h3 id="parser-ast">Parser / AST<a class="headerlink" href="#parser-ast" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] AST: represent enum adopted traits.</li>
+<li>[x] AST: represent enum methods and associated functions.</li>
+<li>[x] Parser: parse enum <code>with</code> clauses.</li>
+<li>[x] Parser: parse methods after enum variants without regressing value enums.</li>
+<li>[x] Parser tests: enum methods and enum trait adoption.</li>
+</ul>
+<h3 id="typechecker">Typechecker<a class="headerlink" href="#typechecker" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Symbols: store enum methods and adopted traits.</li>
+<li>[x] Validate enum methods with normal method receiver/signature/body rules.</li>
+<li>[x] Validate enum trait adoption with existing trait conformance rules.</li>
+<li>[x] Resolve enum instance method calls.</li>
+<li>[x] Resolve enum associated function or type-name method calls where supported by existing method rules.</li>
+<li>[x] Typechecker tests: valid and invalid enum method/trait adoption cases.</li>
+</ul>
+<h3 id="lowering-emission">Lowering / emission<a class="headerlink" href="#lowering-emission" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Lower enum methods into Rust impl blocks.</li>
+<li>[x] Lower enum trait adoption into Rust trait impls.</li>
+<li>[x] Preserve existing enum variant construction and pattern matching behavior.</li>
+<li>[x] Codegen snapshots: enum method call and enum trait adoption.</li>
+</ul>
+<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Update enum explanation/how-to docs.</li>
+<li>[x] Update trait/derive reference docs where enum adoption is described.</li>
+<li>[x] Add active-release notes entry for RFC 050 / issue #334.</li>
+<li>[x] Bump the active development version.</li>
+</ul>
+<h3 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[x] Focused parser verification passes.</li>
+<li>[x] Focused typechecker verification passes.</li>
+<li>[x] Focused codegen snapshot verification passes.</li>
+<li>[x] Integrated review/fix loop is clean.</li>
+<li>[x] Repository gate passes.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
