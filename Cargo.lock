@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "clap",
  "hex",
@@ -1427,14 +1427,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1443,14 +1443,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "axum",
  "incan_core",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.3.0-dev.21"
+version = "0.3.0-dev.22"
 dependencies = [
  "hex",
  "incan_core",

@@ -25,11 +25,10 @@ const MEMORY_EXPORT: &str = incan_vocab::WASM_DESUGAR_MEMORY_EXPORT;
 const SUCCESS_STATUS: i32 = incan_vocab::WASM_DESUGAR_SUCCESS_STATUS;
 /// Default fuel budget for one desugarer invocation.
 ///
-/// 250 000 units is intentionally conservative: desugarers should be lightweight compile-time transforms, not
-/// long-running compute workloads. The value was chosen to give a typical identifier-rewriting desugarer several
-/// orders of magnitude of headroom while still rejecting infinite loops or accidental heavy computation.
-/// If a legitimate companion desugarer hits this limit, raise it with a code comment explaining the measured cost.
-const DEFAULT_WASM_FUEL: u64 = 250_000;
+/// The clean #455 nested companion repro traps at 250 000 units while the guest drops or serializes nested public AST
+/// output. 5 000 000 admits that production-shaped path while still bounding accidental long-running desugarers.
+/// If another legitimate companion desugarer hits this limit, raise it with a comment explaining the measured repro.
+const DEFAULT_WASM_FUEL: u64 = 5_000_000;
 
 /// Concrete Wasmtime store type used for one desugarer instantiation.
 ///

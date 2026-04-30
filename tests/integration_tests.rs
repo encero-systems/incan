@@ -7405,6 +7405,526 @@ pub def display[T](data: DataSet[T]) -> None:
         Ok(())
     }
 
+    fn write_nested_wasm_vocab_companion_crate(
+        project_root: &Path,
+        relative_path: &str,
+        package_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let crate_root = project_root.join(relative_path);
+        std::fs::create_dir_all(crate_root.join("src"))?;
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"rlib\", \"cdylib\"]\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[workspace]\n",
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("crates")
+                    .join("incan_vocab")
+                    .display()
+            ),
+        )?;
+        std::fs::write(
+            crate_root.join("src/lib.rs"),
+            r#"use incan_vocab::{
+    DesugarError, DesugarOutput, HelperBinding, IncanExpr, IncanStatement, KeywordActivation,
+    KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, LibraryManifest,
+    VocabBodyItem, VocabClause, VocabClauseBody, VocabDeclaration, VocabDesugarer,
+    VocabFieldSpec, VocabRegistration, VocabSyntaxNode,
+};
+
+#[derive(Default)]
+pub struct NestedOutputDesugarer;
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new()
+        .with_keyword_registration(KeywordRegistration {
+            activation: KeywordActivation::OnImport {
+                namespace: "nested.dsl".to_string(),
+            },
+            keywords: vec![
+                KeywordSpec::new("compose", KeywordSurfaceKind::BlockDeclaration),
+                context_keyword("action", &["compose"]),
+                context_keyword("layout", &["compose"]),
+                context_keyword("page", &["compose"]),
+                context_keyword("projection", &["compose"]),
+                context_keyword("region", &["layout", "page"]),
+                context_keyword("heading", &["region"]),
+                context_keyword("text", &["region"]),
+                context_keyword("interaction", &["page"]),
+                context_keyword("require", &["interaction"]),
+            ],
+            valid_decorators: Vec::new(),
+        })
+        .with_library_manifest(LibraryManifest {
+            helper_bindings: vec![
+                helper_binding("action"),
+                helper_binding("layout"),
+                helper_binding("page_with_interactions"),
+                helper_binding("projection"),
+                helper_binding("region"),
+                helper_binding("heading"),
+                helper_binding("text"),
+                helper_binding("interaction"),
+                helper_binding("required_input"),
+                helper_binding("surface_with_governance"),
+            ],
+            ..LibraryManifest::default()
+        })
+        .with_desugarer(NestedOutputDesugarer)
+}
+
+impl VocabDesugarer for NestedOutputDesugarer {
+    fn desugar(&self, node: &VocabSyntaxNode) -> Result<DesugarOutput, DesugarError> {
+        match node {
+            VocabSyntaxNode::Declaration(declaration) if declaration.keyword == "compose" => Ok(
+                DesugarOutput::Statements(vec![complex_artifact_let_statement(declaration)?]),
+            ),
+            VocabSyntaxNode::Declaration(_) => Err(DesugarError::new(
+                "nested output desugarer expected a compose declaration",
+            )),
+            _ => Err(DesugarError::new(
+                "nested output desugarer expected a declaration node",
+            )),
+        }
+    }
+}
+
+fn helper_binding(name: &str) -> HelperBinding {
+    HelperBinding {
+        key: name.to_string(),
+        exported_name: name.to_string(),
+    }
+}
+
+fn context_keyword(name: &str, parents: &[&str]) -> KeywordSpec {
+    KeywordSpec::new(name, KeywordSurfaceKind::BlockContextKeyword)
+        .with_placement(KeywordPlacement::in_block(parents.iter().copied()))
+}
+
+fn complex_artifact_let_statement(declaration: &VocabDeclaration) -> Result<IncanStatement, DesugarError> {
+    Ok(IncanStatement::Let {
+        name: "nested_artifact".to_string(),
+        mutable: false,
+        value: complex_artifact_call(declaration)?,
+    })
+}
+
+fn complex_artifact_call(declaration: &VocabDeclaration) -> Result<IncanExpr, DesugarError> {
+    let name = declaration
+        .head
+        .name
+        .clone()
+        .ok_or_else(|| DesugarError::new("compose declarations require a name"))?;
+    let mut title = name.clone();
+    let mut base = "/".to_string();
+    let mut actions = Vec::new();
+    let mut layouts = Vec::new();
+    let mut pages = Vec::new();
+    let mut projections = Vec::new();
+
+    for item in &declaration.body {
+        match item {
+            VocabBodyItem::Statement(statement) => apply_surface_statement(&mut title, &mut base, statement)?,
+            VocabBodyItem::Clause(clause) => match clause.keyword.as_str() {
+                "action" => actions.push(desugar_action(clause)?),
+                "layout" => layouts.push(desugar_layout(clause)?),
+                "page" => pages.push(desugar_page(clause)?),
+                "projection" => projections.push(desugar_projection(clause)?),
+                other => return Err(DesugarError::new(format!("unsupported compose clause `{other}`"))),
+            },
+            VocabBodyItem::Declaration(declaration) => {
+                return Err(DesugarError::new(format!(
+                    "unsupported nested declaration `{}`",
+                    declaration.keyword
+                )));
+            }
+            _ => return Err(DesugarError::new("unsupported compose body item")),
+        }
+    }
+
+    Ok(call(
+        "surface_with_governance",
+        vec![
+            string(&name),
+            string(&title),
+            string(&base),
+            list(actions),
+            list(layouts),
+            list(pages),
+            list(projections),
+        ],
+    ))
+}
+
+fn apply_surface_statement(title: &mut String, base: &mut String, statement: &IncanStatement) -> Result<(), DesugarError> {
+    match statement {
+        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
+            "title" => *title = string_value(value, "compose title")?,
+            "base" => *base = string_value(value, "compose base")?,
+            other => return Err(DesugarError::new(format!("unsupported compose assignment `{other}`"))),
+        },
+        IncanStatement::Pass => {}
+        _ => return Err(DesugarError::new("compose body only supports assignments and nested clauses")),
+    }
+    Ok(())
+}
+
+fn desugar_action(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "action")?;
+    let mut capability = name.clone();
+    let mut required_evidence = String::new();
+    match &clause.body {
+        VocabClauseBody::FieldSet(fields) => {
+            for field in fields {
+                apply_action_assignment(
+                    &mut capability,
+                    &mut required_evidence,
+                    &field.name,
+                    field_value(field, "action assignment")?,
+                )?;
+            }
+        }
+        _ => {
+            for item in clause_items(clause)? {
+                match item {
+                    VocabBodyItem::Statement(statement) => match statement {
+                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => {
+                            apply_action_assignment(&mut capability, &mut required_evidence, name, value)?;
+                        }
+                        IncanStatement::Pass => {}
+                        _ => return Err(DesugarError::new("action body only supports assignments")),
+                    },
+                    VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside action", other.keyword))),
+                    VocabBodyItem::Declaration(_) => return Err(DesugarError::new("action body only supports assignments")),
+                    _ => return Err(DesugarError::new("action body only supports assignments")),
+                }
+            }
+        }
+    }
+    Ok(call("action", vec![string(&name), string(&capability), string(&required_evidence)]))
+}
+
+fn apply_action_assignment(
+    capability: &mut String,
+    required_evidence: &mut String,
+    name: &str,
+    value: &IncanExpr,
+) -> Result<(), DesugarError> {
+    match name {
+        "capability" => *capability = string_value(value, "action capability")?,
+        "requires" | "required_evidence" => *required_evidence = string_value(value, "action required evidence")?,
+        other => return Err(DesugarError::new(format!("unsupported action assignment `{other}`"))),
+    }
+    Ok(())
+}
+
+fn desugar_layout(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "layout")?;
+    let mut regions = Vec::new();
+    for item in clause_items(clause)? {
+        match item {
+            VocabBodyItem::Clause(region_clause) if region_clause.keyword == "region" => {
+                regions.push(string(&required_head_name(region_clause, "layout region")?));
+            }
+            VocabBodyItem::Statement(IncanStatement::Pass) => {}
+            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside layout", other.keyword))),
+            _ => return Err(DesugarError::new("layout body only supports region blocks")),
+        }
+    }
+    Ok(call("layout", vec![string(&name), list(regions)]))
+}
+
+fn desugar_page(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "page")?;
+    let mut route = "/".to_string();
+    let mut title = name.clone();
+    let mut layout_name = "SimplePage".to_string();
+    let mut regions = Vec::new();
+    let mut interactions = Vec::new();
+    for item in clause_items(clause)? {
+        match item {
+            VocabBodyItem::Statement(statement) => match statement {
+                IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
+                    "route" => route = string_value(value, "page route")?,
+                    "title" => title = string_value(value, "page title")?,
+                    "layout" => layout_name = string_or_name_value(value, "page layout")?,
+                    other => return Err(DesugarError::new(format!("unsupported page assignment `{other}`"))),
+                },
+                IncanStatement::Pass => {}
+                _ => return Err(DesugarError::new("page body only supports assignments, regions, and interactions")),
+            },
+            VocabBodyItem::Clause(region_clause) if region_clause.keyword == "region" => {
+                regions.push(desugar_region(region_clause)?);
+            }
+            VocabBodyItem::Clause(interaction_clause) if interaction_clause.keyword == "interaction" => {
+                interactions.push(desugar_interaction(interaction_clause)?);
+            }
+            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside page", other.keyword))),
+            VocabBodyItem::Declaration(_) => return Err(DesugarError::new("page body does not support nested declarations")),
+            _ => return Err(DesugarError::new("page body only supports assignments, regions, and interactions")),
+        }
+    }
+    Ok(call(
+        "page_with_interactions",
+        vec![
+            string(&name),
+            string(&route),
+            string(&title),
+            string(&layout_name),
+            list(regions),
+            list(interactions),
+        ],
+    ))
+}
+
+fn desugar_region(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "region")?;
+    let mut nodes = Vec::new();
+    for item in clause_items(clause)? {
+        match item {
+            VocabBodyItem::Clause(node_clause) if node_clause.keyword == "heading" => {
+                nodes.push(call("heading", vec![string(&required_head_string(node_clause, "heading")?)]));
+            }
+            VocabBodyItem::Clause(node_clause) if node_clause.keyword == "text" => {
+                nodes.push(call("text", vec![string(&required_head_string(node_clause, "text")?)]));
+            }
+            VocabBodyItem::Statement(IncanStatement::Pass) => {}
+            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside region", other.keyword))),
+            _ => return Err(DesugarError::new("region body only supports heading and text blocks")),
+        }
+    }
+    Ok(call("region", vec![string(&name), list(nodes)]))
+}
+
+fn desugar_interaction(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "interaction")?;
+    let mut action = name.clone();
+    let mut constraints = Vec::new();
+    match &clause.body {
+        VocabClauseBody::FieldSet(fields) => {
+            for field in fields {
+                if field.name == "action" {
+                    action = string_or_name_value(field_value(field, "interaction action")?, "interaction action")?;
+                } else {
+                    return Err(DesugarError::new(format!("unsupported interaction assignment `{}`", field.name)));
+                }
+            }
+        }
+        _ => {
+            for item in clause_items(clause)? {
+                match item {
+                    VocabBodyItem::Statement(statement) => match statement {
+                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
+                            "action" => action = string_or_name_value(value, "interaction action")?,
+                            other => return Err(DesugarError::new(format!("unsupported interaction assignment `{other}`"))),
+                        },
+                        IncanStatement::Pass => {}
+                        _ => return Err(DesugarError::new("interaction body only supports assignments and require blocks")),
+                    },
+                    VocabBodyItem::Clause(require_clause) if require_clause.keyword == "require" => {
+                        constraints.push(desugar_required_input(&name, require_clause)?);
+                    }
+                    VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside interaction", other.keyword))),
+                    VocabBodyItem::Declaration(_) => return Err(DesugarError::new("interaction body does not support nested declarations")),
+                    _ => return Err(DesugarError::new("interaction body only supports assignments and require blocks")),
+                }
+            }
+        }
+    }
+    Ok(call("interaction", vec![string(&name), string(&action), list(constraints)]))
+}
+
+fn desugar_required_input(interaction_name: &str, clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let mut field = required_input_field(clause)?;
+    let mut label = field.clone();
+    let mut min_length = "1".to_string();
+    let mut evidence_key = String::new();
+    match &clause.body {
+        VocabClauseBody::FieldSet(fields) => {
+            for field_spec in fields {
+                apply_required_input_assignment(
+                    &mut field,
+                    &mut label,
+                    &mut min_length,
+                    &mut evidence_key,
+                    &field_spec.name,
+                    field_value(field_spec, "require input assignment")?,
+                )?;
+            }
+        }
+        _ => {
+            for item in clause_items(clause)? {
+                match item {
+                    VocabBodyItem::Statement(statement) => match statement {
+                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => {
+                            apply_required_input_assignment(
+                                &mut field,
+                                &mut label,
+                                &mut min_length,
+                                &mut evidence_key,
+                                name,
+                                value,
+                            )?;
+                        }
+                        IncanStatement::Pass => {}
+                        _ => return Err(DesugarError::new("require input body only supports assignments")),
+                    },
+                    _ => return Err(DesugarError::new("require input body only supports assignments")),
+                }
+            }
+        }
+    }
+    Ok(call(
+        "required_input",
+        vec![
+            string(interaction_name),
+            string(&field),
+            string(&label),
+            string(&min_length),
+            string(&evidence_key),
+        ],
+    ))
+}
+
+fn apply_required_input_assignment(
+    field: &mut String,
+    label: &mut String,
+    min_length: &mut String,
+    evidence_key: &mut String,
+    name: &str,
+    value: &IncanExpr,
+) -> Result<(), DesugarError> {
+    match name {
+        "field" => *field = string_or_name_value(value, "required input field")?,
+        "label" => *label = string_value(value, "required input label")?,
+        "min_length" => *min_length = int_or_string_value(value, "required input min_length")?,
+        "evidence" | "evidence_key" => *evidence_key = string_value(value, "required input evidence")?,
+        other => return Err(DesugarError::new(format!("unsupported require input assignment `{other}`"))),
+    }
+    Ok(())
+}
+
+fn desugar_projection(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
+    let name = required_head_name(clause, "projection")?;
+    let mut target = "static-web".to_string();
+    match &clause.body {
+        VocabClauseBody::FieldSet(fields) => {
+            for field in fields {
+                if field.name == "target" {
+                    target = string_value(field_value(field, "projection target")?, "projection target")?;
+                } else {
+                    return Err(DesugarError::new(format!("unsupported projection assignment `{}`", field.name)));
+                }
+            }
+        }
+        _ => {
+            for item in clause_items(clause)? {
+                match item {
+                    VocabBodyItem::Statement(statement) => match statement {
+                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } if name == "target" => {
+                            target = string_value(value, "projection target")?;
+                        }
+                        IncanStatement::Pass => {}
+                        _ => return Err(DesugarError::new("projection body only supports target assignment")),
+                    },
+                    _ => return Err(DesugarError::new("projection body only supports target assignment")),
+                }
+            }
+        }
+    }
+    Ok(call("projection", vec![string(&name), string(&target)]))
+}
+
+fn clause_items(clause: &VocabClause) -> Result<&[VocabBodyItem], DesugarError> {
+    match &clause.body {
+        VocabClauseBody::Empty => Ok(&[]),
+        VocabClauseBody::Items(items) => Ok(items.as_slice()),
+        _ => Err(DesugarError::new(format!("unsupported `{}` body shape", clause.keyword))),
+    }
+}
+
+fn required_head_name(clause: &VocabClause, label: &str) -> Result<String, DesugarError> {
+    let Some(value) = clause.head.first() else {
+        return Err(DesugarError::new(format!("{label} requires a name")));
+    };
+    string_or_name_value(value, label)
+}
+
+fn required_head_string(clause: &VocabClause, label: &str) -> Result<String, DesugarError> {
+    let Some(value) = clause.head.first() else {
+        return Err(DesugarError::new(format!("{label} requires text")));
+    };
+    string_value(value, label)
+}
+
+fn required_input_field(clause: &VocabClause) -> Result<String, DesugarError> {
+    if !clause.compound_tokens.is_empty() && clause.compound_tokens[0] == "input" {
+        if let Some(value) = clause.head.first() {
+            return string_or_name_value(value, "require input field");
+        }
+        return Ok(String::new());
+    }
+    if !clause.head.is_empty() {
+        let first = string_or_name_value(&clause.head[0], "require input marker")?;
+        if first == "input" {
+            if clause.head.len() >= 2 {
+                return string_or_name_value(&clause.head[1], "require input field");
+            }
+            return Ok(String::new());
+        }
+    }
+    Err(DesugarError::new("required-input constraints must use `require input`"))
+}
+
+fn string_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
+    match expr {
+        IncanExpr::Str(value) => Ok(value.clone()),
+        _ => Err(DesugarError::new(format!("{label} must be a string literal"))),
+    }
+}
+
+fn string_or_name_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
+    match expr {
+        IncanExpr::Str(value) | IncanExpr::Name(value) => Ok(value.clone()),
+        _ => Err(DesugarError::new(format!("{label} must be a name or string literal"))),
+    }
+}
+
+fn int_or_string_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
+    match expr {
+        IncanExpr::Int(value) => Ok(value.to_string()),
+        IncanExpr::Str(value) => Ok(value.clone()),
+        _ => Err(DesugarError::new(format!("{label} must be an integer or string literal"))),
+    }
+}
+
+fn field_value<'a>(field: &'a VocabFieldSpec, label: &str) -> Result<&'a IncanExpr, DesugarError> {
+    field
+        .default_value
+        .as_ref()
+        .ok_or_else(|| DesugarError::new(format!("{label} `{}` requires a value", field.name)))
+}
+
+fn call(helper: &str, args: Vec<IncanExpr>) -> IncanExpr {
+    IncanExpr::Call {
+        callee: Box::new(IncanExpr::Helper(helper.to_string())),
+        args,
+    }
+}
+
+fn list(items: Vec<IncanExpr>) -> IncanExpr {
+    IncanExpr::List(items)
+}
+
+fn string(value: &str) -> IncanExpr {
+    IncanExpr::Str(value.to_string())
+}
+
+incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
+"#,
+        )?;
+        Ok(())
+    }
+
     fn wat_bytes_string(bytes: &[u8]) -> String {
         let mut escaped = String::new();
         for byte in bytes {
@@ -8916,6 +9436,163 @@ def main() -> Result[None, SessionError]:
         assert!(
             stderr.contains("boom from wasm desugarer"),
             "expected wasm runtime error message, got:\n{stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_run_accepts_nested_real_wasm_desugar_output() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("nested_vocab_project");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"nested_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/helpers.incn"),
+            r#"pub def surface_with_governance(
+  name: str,
+  title: str,
+  base: str,
+  actions: list[str],
+  layouts: list[str],
+  pages: list[str],
+  projections: list[str],
+) -> str:
+  return name
+
+pub def action(name: str, capability: str, required_evidence: str) -> str:
+  return name
+
+pub def layout(name: str, regions: list[str]) -> str:
+  return name
+
+pub def page_with_interactions(
+  name: str,
+  route: str,
+  title: str,
+  layout_name: str,
+  regions: list[str],
+  interactions: list[str],
+) -> str:
+  return name
+
+pub def region(name: str, nodes: list[str]) -> str:
+  return name
+
+pub def heading(text: str) -> str:
+  return text
+
+pub def text(text: str) -> str:
+  return text
+
+pub def interaction(name: str, action_name: str, constraints: list[str]) -> str:
+  return name
+
+pub def required_input(
+  interaction_name: str,
+  field: str,
+  label: str,
+  min_length: str,
+  evidence_key: str,
+) -> str:
+  return field
+
+pub def projection(name: str, target: str) -> str:
+  return name
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from helpers import action, heading, interaction, layout, page_with_interactions, projection, region, required_input, surface_with_governance, text\n",
+        )?;
+        write_nested_wasm_vocab_companion_crate(&producer_root, "vocab_companion", "nested_vocab_companion")?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected `build --lib` with real wasm vocab companion to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("nested_consumer");
+        let consumer_main = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nnested = { path = \"../nested_vocab_project\" }\n",
+            r#"import pub::nested
+
+def main() -> None:
+  compose FullNestedCase:
+    title = "Full Nested Case"
+    base = "/"
+
+    action EscalateCase:
+      capability = "case.escalate"
+      requires = "escalation.explanation"
+
+    layout SimplePage:
+      region body:
+        pass
+
+    page Review:
+      route = "/cases/123"
+      title = "Case Review"
+      layout = "SimplePage"
+
+      region body:
+        heading "Case Review":
+          pass
+        text "High risk case requires escalation review.":
+          pass
+
+      interaction Escalate:
+        action = "EscalateCase"
+
+        require input:
+          field = "explanation"
+          label = "Explanation"
+          min_length = 20
+          evidence = "escalation.explanation"
+
+    projection web:
+      target = "static-web"
+	"#,
+        )?;
+
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&consumer_main, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected consumer build to accept nested real wasm desugar output.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated_main_rs.contains("__incan_vocab_helper_nested_surface_with_governance"),
+            "expected hidden helper alias for nested surface output, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("__incan_vocab_helper_nested_required_input"),
+            "expected hidden helper alias for nested required-input output, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("let _nested_artifact ="),
+            "expected wasm desugar output to splice a let binding, got:\n{generated_main_rs}"
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", consumer_main.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected consumer run to accept nested real wasm desugar output.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
         );
         Ok(())
     }
