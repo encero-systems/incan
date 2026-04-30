@@ -56,6 +56,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
@@ -73,6 +75,8 @@ jobs:
         with:
           toolchain: 1.91.0
           components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - name: Cargo build (locked)
