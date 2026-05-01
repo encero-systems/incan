@@ -3,8 +3,7 @@
 
 [incan]
 format = 1
-incan-version = "0.3.0-dev.22"
-generated = "2026-04-27T15:34:04.047461Z"
+incan-version = "0.3.0-dev.24"
 deps-fingerprint = "sha256:17f122844d2fa1c9756f9a1976d222f15255557e74d975b8d8ff46536ea82b87"
 cargo-features = []
 cargo-no-default-features = false
@@ -18,14 +17,14 @@ version = 4
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.22"
+version = "0.3.0-dev.24"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.22"
+version = "0.3.0-dev.24"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -34,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.22"
+version = "0.3.0-dev.24"
 dependencies = [
  "incan_core",
  "incan_derive",
@@ -90,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "studiokit_core"
-version = "0.3.0-dev.22"
+version = "0.3.0-dev.24"
 dependencies = [
  "incan_derive",
  "incan_stdlib",

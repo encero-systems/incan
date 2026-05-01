@@ -3,6 +3,7 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and Cargo build/run.
 
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,12 +24,12 @@ use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
-use std::collections::{HashMap, HashSet};
 
 use super::common::{
-    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
-    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
-    module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
+    CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
+    collect_project_requirements, format_dependency_error, imported_module_deps_for_with_index,
+    merge_project_requirement_dependencies, module_key_index, resolve_project_root,
+    typecheck_modules_with_import_graph, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -356,8 +357,7 @@ impl<'a> LibraryReexportResolver<'a> {
 fn prepare_project(
     file_path: &str,
     output_dir: Option<&str>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: &CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -474,8 +474,7 @@ fn prepare_project(
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        locked,
-        frozen,
+        cargo_policy,
     })?;
     #[cfg(feature = "rust_inspect")]
     {
@@ -495,7 +494,7 @@ fn prepare_project(
     }
     generator.set_cargo_lock_payload(lock_payload);
 
-    let cargo_flags = cargo_command_flags(locked, frozen, &cargo_features);
+    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
 
     generator.set_dependencies(resolved.dependencies);
@@ -534,8 +533,7 @@ fn prepare_project(
 pub fn build_file(
     file_path: &str,
     output_dir: Option<&String>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -543,8 +541,7 @@ pub fn build_file(
     let prepared = prepare_project(
         file_path,
         output_dir.map(|s| s.as_str()),
-        locked,
-        frozen,
+        &cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -579,8 +576,7 @@ pub fn build_file(
 pub fn build_library(
     file_path: Option<&str>,
     _output_dir: Option<&String>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -659,8 +655,7 @@ pub fn build_library(
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        locked,
-        frozen,
+        cargo_policy: &cargo_policy,
     })?;
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
@@ -818,8 +813,7 @@ pub fn build_library(
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        locked,
-        frozen,
+        cargo_policy: &cargo_policy,
     })?;
     #[cfg(feature = "rust_inspect")]
     {
@@ -836,7 +830,7 @@ pub fn build_library(
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
     }
     generator.set_cargo_lock_payload(lock_payload);
-    generator.set_cargo_policy_flags(cargo_command_flags(locked, frozen, &cargo_features));
+    generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -919,8 +913,7 @@ fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesugarer
 /// Build and run an Incan file.
 pub fn run_file(
     file_path: &str,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -929,8 +922,7 @@ pub fn run_file(
     let mut prepared = prepare_project(
         file_path,
         None,
-        locked,
-        frozen,
+        &cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1261,7 +1253,14 @@ mod tests {
         let lib_path_str = lib_path
             .to_str()
             .ok_or("lib path should be valid utf-8 for build_library test")?;
-        let exit = build_library(Some(lib_path_str), None, false, false, Vec::new(), false, false)?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
         assert_eq!(exit, ExitCode::SUCCESS);
 
         let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");
@@ -1325,7 +1324,14 @@ mod tests {
         let lib_path_str = lib_path
             .to_str()
             .ok_or("lib path should be valid utf-8 for build_library test")?;
-        let exit = build_library(Some(lib_path_str), None, false, false, Vec::new(), false, false)?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
         assert_eq!(exit, ExitCode::SUCCESS);
 
         let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");

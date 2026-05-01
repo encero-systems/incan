@@ -44,6 +44,7 @@ use std::process;
 
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 
@@ -178,9 +179,24 @@ pub enum Command {
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
+        /// Disable INCAN_LOCKED for this invocation
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        no_locked: bool,
+        /// Pass --offline to Cargo subprocesses
+        #[arg(long)]
+        offline: bool,
+        /// Disable INCAN_OFFLINE for this invocation
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        no_offline: bool,
         /// Require up-to-date incan.lock and pass --frozen to Cargo
         #[arg(long)]
         frozen: bool,
+        /// Disable INCAN_FROZEN for this invocation
+        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        no_frozen: bool,
+        /// Extra arguments forwarded to Cargo after policy and feature flags
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
         /// Cargo features to enable (comma-separated)
         #[arg(long = "cargo-features", value_delimiter = ',')]
         cargo_features: Vec<String>,
@@ -190,6 +206,9 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Extra arguments forwarded to Cargo after `--`
+        #[arg(last = true)]
+        cargo_passthrough: Vec<String>,
     },
 
     /// Compile and run the program (debug profile by default; opt into release with `--release`)
@@ -203,9 +222,24 @@ pub enum Command {
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
+        /// Disable INCAN_LOCKED for this invocation
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        no_locked: bool,
+        /// Pass --offline to Cargo subprocesses
+        #[arg(long)]
+        offline: bool,
+        /// Disable INCAN_OFFLINE for this invocation
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        no_offline: bool,
         /// Require up-to-date incan.lock and pass --frozen to Cargo
         #[arg(long)]
         frozen: bool,
+        /// Disable INCAN_FROZEN for this invocation
+        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        no_frozen: bool,
+        /// Extra arguments forwarded to Cargo after policy and feature flags
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
         /// Cargo features to enable (comma-separated)
         #[arg(long = "cargo-features", value_delimiter = ',')]
         cargo_features: Vec<String>,
@@ -218,6 +252,9 @@ pub enum Command {
         /// Build and run with Cargo release profile (optimized, slower cold-start builds)
         #[arg(long)]
         release: bool,
+        /// Extra arguments forwarded to Cargo after `--`
+        #[arg(last = true)]
+        cargo_passthrough: Vec<String>,
     },
 
     /// Format Incan source files
@@ -326,9 +363,24 @@ pub enum Command {
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
+        /// Disable INCAN_LOCKED for this invocation
+        #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"])]
+        no_locked: bool,
+        /// Pass --offline to Cargo subprocesses
+        #[arg(long)]
+        offline: bool,
+        /// Disable INCAN_OFFLINE for this invocation
+        #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"])]
+        no_offline: bool,
         /// Require up-to-date incan.lock and pass --frozen to Cargo
         #[arg(long)]
         frozen: bool,
+        /// Disable INCAN_FROZEN for this invocation
+        #[arg(long = "no-frozen", conflicts_with = "frozen")]
+        no_frozen: bool,
+        /// Extra arguments forwarded to Cargo after policy and feature flags
+        #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
         /// Cargo features to enable (comma-separated)
         #[arg(long = "cargo-features", value_delimiter = ',')]
         cargo_features: Vec<String>,
@@ -338,6 +390,9 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Extra arguments forwarded to Cargo after `--`
+        #[arg(last = true)]
+        cargo_passthrough: Vec<String>,
     },
 
     /// Create a new Incan project directory
@@ -559,19 +614,36 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             lib_mode,
             output_dir,
             locked,
+            offline,
+            no_offline,
             frozen,
+            no_frozen,
+            no_locked,
+            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            cargo_passthrough,
         }) => {
             let out = output_dir.map(|p| p.to_string_lossy().to_string());
+            let cargo_policy = CargoPolicy::from_cli_and_env(
+                CargoPolicyCliFlags {
+                    offline,
+                    no_offline,
+                    locked,
+                    no_locked,
+                    frozen,
+                    no_frozen,
+                },
+                cargo_args,
+                cargo_passthrough,
+            );
             if lib_mode {
                 let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
                 commands::build_library(
                     file_arg.as_deref(),
                     out.as_ref(),
-                    locked,
-                    frozen,
+                    cargo_policy,
                     cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
@@ -581,8 +653,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 commands::build_file(
                     &file.to_string_lossy(),
                     out.as_ref(),
-                    locked,
-                    frozen,
+                    cargo_policy,
                     cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
@@ -593,16 +664,32 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             file,
             command,
             locked,
+            offline,
+            no_offline,
             frozen,
+            no_frozen,
+            no_locked,
+            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
             release,
+            cargo_passthrough,
         }) => execute_run(
             RunInput { file, code: command },
             RunOptions {
-                locked,
-                frozen,
+                cargo_policy: CargoPolicy::from_cli_and_env(
+                    CargoPolicyCliFlags {
+                        offline,
+                        no_offline,
+                        locked,
+                        no_locked,
+                        frozen,
+                        no_frozen,
+                    },
+                    cargo_args,
+                    cargo_passthrough,
+                ),
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -631,10 +718,16 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             seed,
             run_xfail,
             locked,
+            offline,
+            no_offline,
             frozen,
+            no_frozen,
+            no_locked,
+            cargo_args,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            cargo_passthrough,
         }) => test_runner::run_tests(test_runner::TestRunConfig {
             path: &path.to_string_lossy(),
             verbose,
@@ -656,8 +749,18 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             shuffle,
             seed,
             run_xfail,
-            locked,
-            frozen,
+            cargo_policy: CargoPolicy::from_cli_and_env(
+                CargoPolicyCliFlags {
+                    offline,
+                    no_offline,
+                    locked,
+                    no_locked,
+                    frozen,
+                    no_frozen,
+                },
+                cargo_args,
+                cargo_passthrough,
+            ),
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
@@ -775,8 +878,7 @@ struct RunInput {
 }
 
 struct RunOptions {
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -834,8 +936,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
 
         let result = commands::run_file(
             &tmp_path.to_string_lossy(),
-            opts.locked,
-            opts.frozen,
+            opts.cargo_policy.clone(),
             opts.cargo_features.clone(),
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -848,8 +949,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         let file = resolve_run_entry_file(input.file)?;
         commands::run_file(
             &file.to_string_lossy(),
-            opts.locked,
-            opts.frozen,
+            opts.cargo_policy,
             opts.cargo_features,
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -979,6 +1079,66 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_build_cargo_policy_and_args() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "test.incn",
+            "--offline",
+            "--locked",
+            "--cargo-args",
+            "--timings",
+            "--color=always",
+        ])?;
+        let Some(Command::Build {
+            offline,
+            locked,
+            frozen,
+            no_offline,
+            no_locked,
+            no_frozen,
+            cargo_args,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert!(offline);
+        assert!(locked);
+        assert!(!frozen);
+        assert!(!no_offline);
+        assert!(!no_locked);
+        assert!(!no_frozen);
+        assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_policy_negative_flags() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "test.incn",
+            "--no-offline",
+            "--no-locked",
+            "--no-frozen",
+        ])?;
+        let Some(Command::Build {
+            no_offline,
+            no_locked,
+            no_frozen,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert!(no_offline);
+        assert!(no_locked);
+        assert!(no_frozen);
+        Ok(())
+    }
+
+    #[test]
     fn test_cli_parse_run() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "run", "test.incn"])?;
         let Some(Command::Run { release, .. }) = cli.command else {
@@ -1053,6 +1213,16 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_run_cargo_passthrough_args() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "run", "test.incn", "--", "--timings", "--color=always"])?;
+        let Some(Command::Run { cargo_passthrough, .. }) = cli.command else {
+            return Err(expected_command("run"));
+        };
+        assert_eq!(cargo_passthrough, vec!["--timings", "--color=always"]);
+        Ok(())
+    }
+
+    #[test]
     fn test_cli_parse_run_with_code() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "run", "-c", "print(1)"])?;
         let Some(Command::Run { command, .. }) = cli.command else {
@@ -1087,6 +1257,17 @@ mod tests {
         assert!(verbose);
         assert!(stop_on_fail);
         assert_eq!(filter.as_deref(), Some("unit"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_test_cargo_policy() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "test", "tests/", "--frozen", "--cargo-args", "--timings"])?;
+        let Some(Command::Test { frozen, cargo_args, .. }) = cli.command else {
+            return Err(expected_command("test"));
+        };
+        assert!(frozen);
+        assert_eq!(cargo_args, vec!["--timings"]);
         Ok(())
     }
 

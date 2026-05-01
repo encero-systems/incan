@@ -101,7 +101,6 @@ toml_edit = { version = "0.25", features = ["parse", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10.9"
 hex = "0.4.3"
-time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging

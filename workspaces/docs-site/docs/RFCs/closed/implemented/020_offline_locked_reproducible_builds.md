@@ -1,13 +1,13 @@
 # RFC 020: offline / locked / reproducible builds (Cargo policy + generated project contract)
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-01-21
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 013 (dependency + lockfile direction), RFC 015 (project lifecycle CLI), RFC 019 (test runner + CLI)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/38
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -16,7 +16,7 @@ Define a first-class, user-facing **Cargo policy contract** for Incan that suppo
 - **Cargo policy flags** on `incan build`, `incan run`, and `incan test`:
     - `--offline` (no network)
     - `--locked` (must use an existing lockfile)
-    - (optional) `--frozen` (implies offline + locked; mirrors Cargo)
+    - `--frozen` (implies offline + locked; mirrors Cargo)
 - A **precedence model** for policy (CLI flags + CI-friendly env vars; project config is explicitly out of scope here).
 - A **generated-project persistence contract** for `target/incan/**` and `target/incan_tests/**`:
     what is regenerated vs preserved, and where artifacts live.
@@ -46,7 +46,7 @@ Users can work around this by `cd`-ing into generated Cargo projects and running
 
 ## Goals
 
-- Provide an official way to run builds/tests with Cargo policies (`--offline`, `--locked`, optionally `--frozen`).
+- Provide an official way to run builds/tests with Cargo policies (`--offline`, `--locked`, and `--frozen`).
 - Make CI reproducibility easy via explicit, composable flags and CI-friendly env vars.
 - Specify the generated-project contract (default locations; what is overwritten vs preserved; where artifacts land).
 - Keep this change **non-breaking by default** (policy is opt-in).
@@ -195,7 +195,7 @@ For arguments containing spaces, use the CLI flag instead of the environment var
 Notes:
 
 - If `INCAN_FROZEN` is set, it implies offline + locked, regardless of the other two env vars.
-- CLI flags override env vars (CI can still enforce by not letting users override flags; that is outside this RFC).
+- CLI flags override env vars. Use `--no-offline`, `--no-locked`, or `--no-frozen` to disable matching environment defaults for one invocation. CI can still enforce policy by not letting users override flags; that is outside this RFC.
 
 Out of scope (to avoid overlap with RFC 015):
 
@@ -354,6 +354,70 @@ and overwrite behavior for generated Cargo projects under `target/incan/**` and 
 - **Docs / examples**: must explain offline, locked, and frozen behavior
 clearly enough that CI and restricted-environment users can reason about failure modes.
 
+## Implementation Plan
+
+### Phase 1: RFC lifecycle and policy contract
+
+- Record the settled design decisions for frozen mode, test harness persistence, and offline-readiness doctor diagnostics.
+- Keep follow-up work linked without broadening this RFC's implementation scope.
+
+### Phase 2: CLI and environment policy surface
+
+- Add `--offline`, `--locked`, `--frozen`, and Cargo-args forwarding to `incan build`, `incan run`, and `incan test`.
+- Add CI-friendly environment inputs for offline, locked, frozen, and Cargo args.
+- Resolve CLI/env precedence so command-line policy wins over environment defaults.
+
+### Phase 3: Cargo subprocess propagation
+
+- Thread the combined policy through generated-project build and run paths.
+- Thread the same policy through `incan test` preparation and execution paths.
+- Preserve existing generated-project lockfile behavior while making policy forwarding consistent.
+
+### Phase 4: Tests and user documentation
+
+- Add focused tests for policy flag construction, env parsing, Cargo args, and test-runner cache keys.
+- Update the CLI reference and practical tooling docs for offline, locked, frozen, and Cargo args.
+- Add release notes and bump the active development version.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Decide that `--frozen` is implemented now as offline plus locked.
+- [x] Decide that RFC 020 keeps the existing `incan test` harness persistence strategy; broader harness redesign is tracked separately.
+- [x] Park offline-readiness `incan tools doctor` diagnostics in #460.
+- [x] Keep issue #38 updated with the implementation plan.
+
+### CLI / policy surface
+
+- [x] Add initial `--locked` and `--frozen` flags to `incan build`, `incan run`, and `incan test`.
+- [x] Add `--offline` to `incan build`, `incan run`, and `incan test`.
+- [x] Add Cargo-args forwarding for `incan build`, `incan run`, and `incan test`.
+- [x] Add `INCAN_OFFLINE`, `INCAN_LOCKED`, `INCAN_FROZEN`, and `INCAN_CARGO_ARGS` support.
+- [x] Apply CLI-over-env precedence consistently.
+- [x] Add explicit `--no-offline`, `--no-locked`, and `--no-frozen` CLI overrides for env defaults.
+
+### Cargo subprocess propagation
+
+- [x] Preserve/materialize generated Cargo lock payloads through existing lockfile support.
+- [x] Forward offline/locked/frozen policy to all generated-project Cargo subprocesses.
+- [x] Forward Cargo args after policy flags.
+- [x] Include policy inputs in relevant test-runner cache keys.
+
+### Tests
+
+- [x] Add policy flag construction tests.
+- [x] Add env policy parsing tests.
+- [x] Add Cargo args forwarding tests.
+- [x] Add or update test-runner policy/cache tests.
+
+### Docs / release
+
+- [x] Update CLI reference docs.
+- [x] Update practical tooling/troubleshooting docs.
+- [x] Add release notes entry for RFC 020.
+- [x] Bump active dev version from `0.3.0-dev.22` to `0.3.0-dev.23`.
+
 ## Implementation architecture
 
 - Tooling changes:
@@ -370,12 +434,10 @@ clearly enough that CI and restricted-environment users can reason about failure
 - Project-level defaults in `incan.toml` (RFC 015)
 - Incan-level lockfile workflows (`incan.lock`, `incan lock`, `incan update`) (RFC 013)
 - Vendoring/mirroring strategy to make offline-from-clean-machine reliable (likely a follow-up RFC)
+- Offline-readiness diagnostics in `incan tools doctor` (#460)
 
-## Unresolved questions
+## Design Decisions
 
-1. Should `--frozen` be implemented immediately, or deferred until `incan.lock` exists (RFC 013)?
-2. For `incan test`, what is the preferred harness caching strategy under `target/incan_tests/**` (per-test vs per-run)?
-3. Do we want an `incan doctor` check that validates offline readiness
-(Cargo cache present, vendor dir present, etc.) as part of RFC 015, or as a follow-up RFC?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+1. `--frozen` is implemented immediately. It is the strict CI shorthand for offline plus locked policy, matching Cargo's semantics and keeping the public policy surface complete.
+2. RFC 020 keeps the existing `incan test` generated-harness persistence strategy. Broader harness redesign remains outside this RFC and is tracked by dedicated test-runner issues.
+3. Offline-readiness diagnostics belong in a follow-up extension to `incan tools doctor`, tracked by #460. RFC 020 only defines policy inputs and Cargo subprocess forwarding.

@@ -76,18 +76,31 @@ Behavior:
 
 Dependency flags:
 
+- `--offline`: Pass `--offline` to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.
 - `--locked`: Require `incan.lock` to exist and be up to date. Also passes `--locked` to Cargo.
 - `--frozen`: Like `--locked`, plus passes `--frozen` to Cargo (offline + locked).
+- `--no-offline`, `--no-locked`, `--no-frozen`: Disable matching environment defaults for this invocation.
+- `--cargo-args <ARG>...`: Forward additional arguments to Cargo after policy and feature flags. Arguments after `--` are also treated as Cargo arguments.
 - `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
+
+Environment defaults:
+
+- `INCAN_OFFLINE=1`, `INCAN_LOCKED=1`, and `INCAN_FROZEN=1` behave like their matching flags.
+- `INCAN_FROZEN=1` implies offline and locked mode.
+- CLI flags take precedence over these defaults. Use the `--no-*` forms to disable a policy default set by the environment.
+- `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
 
 Examples:
 
 ```bash
 incan build examples/simple/hello.incn
+incan build src/main.incn --offline
 incan build src/main.incn --locked
+incan build src/main.incn --frozen
 incan build src/main.incn --cargo-features fancy_logging
+incan build src/main.incn -- --timings
 incan build --lib
 ```
 
@@ -121,7 +134,7 @@ If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest
 
 Dependency flags (same as `build`):
 
-- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 ### `incan fmt`
 
@@ -177,7 +190,7 @@ Test runner flags:
 
 Dependency flags (same as `build`):
 
-- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 Examples:
 
@@ -225,7 +238,7 @@ incan test --format json --junit reports/junit.xml tests/
 incan test --shuffle --seed 12345 tests/
 
 # Strict mode for CI
-incan test --locked
+incan test --frozen
 ```
 
 ### `incan new`
