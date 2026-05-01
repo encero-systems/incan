@@ -762,6 +762,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#exporting-an-alternate-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exporting an alternate name
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1468,6 +1477,8 @@
       
         
       
+        
+      
     
     
       
@@ -1562,6 +1573,27 @@
   
   <span class="md-ellipsis">
     Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
   </span>
   
 
@@ -1794,7 +1826,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -1810,14 +1842,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1993,7 +2025,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
           
@@ -2009,14 +2041,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2188,10 +2220,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2202,8 +2234,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_16">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4554,6 +4586,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#exporting-an-alternate-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exporting an alternate name
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4661,6 +4702,21 @@ Prefix a declaration with <code>pub</code> to <strong>export</strong> it so othe
 In Incan, you typically make the intended “public API” of a module explicit with <code>pub</code>.</p>
 </div>
 <p>For more detail on <code>pub</code> (including how it affects <code>model</code>/<code>class</code> fields), see: <a href="../../../explanation/models_and_classes/">Models &amp; Classes</a>.</p>
+<h3 id="exporting-an-alternate-name">Exporting an alternate name<a class="headerlink" href="#exporting-an-alternate-name" title="Permanent link">&para;</a></h3>
+<p>Use a symbol alias when a module should expose another name for the same callable or type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># strings.incn</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">shout</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">s</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">upper</span><span class="p">()</span>
+
+<span class="k">pub</span> <span class="n">yell</span> <span class="o">=</span> <span class="n">shout</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># main.incn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">strings</span><span class="w"> </span><span class="kn">import</span> <span class="n">yell</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">yell</span><span class="p">(</span><span class="s2">&quot;  hello  &quot;</span><span class="p">))</span>
+</code></pre></div>
+<p><code>yell</code> is an alias of <code>shout</code>, not a copied function body. The target must already be a supported declaration, and a public alias must target a public symbol. For the full contract, see <a href="../../../reference/symbol_aliases/">Symbol aliases</a>.</p>
 <h2 id="import-styles">Import styles<a class="headerlink" href="#import-styles" title="Permanent link">&para;</a></h2>
 <p>Incan supports two styles you can mix:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Python-style</span>

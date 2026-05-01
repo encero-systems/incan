@@ -1346,6 +1346,8 @@
       
         
       
+        
+      
     
     
       
@@ -1440,6 +1442,27 @@
   
   <span class="md-ellipsis">
     Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
   </span>
   
 
@@ -1672,7 +1695,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -1688,14 +1711,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1871,7 +1894,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
           
@@ -1887,14 +1910,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2066,10 +2089,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2080,8 +2103,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_16">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4751,6 +4774,7 @@ the current scope).</p>
 <ul>
 <li><code>import</code> / <code>from ... import ...</code> bindings</li>
 <li><code>const</code> bindings</li>
+<li>top-level aliases such as <code>mean = avg</code></li>
 <li>top-level function definitions, models/classes/enums, etc.</li>
 </ul>
 <p>For example:</p>
@@ -4760,14 +4784,26 @@ the current scope).</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">area</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>     <span class="c1"># module-scope binding (function)</span>
     <span class="k">return</span> <span class="nc">PI</span> <span class="o">*</span> <span class="n">r</span> <span class="o">*</span> <span class="n">r</span>            <span class="c1"># uses module-scope name</span>
 
+<span class="n">circle_area</span> <span class="o">=</span> <span class="n">area</span>               <span class="c1"># module-scope alias</span>
+
 <span class="k">model</span> <span class="nc">Circle</span><span class="p">:</span>                    <span class="c1"># module-scope binding (type)</span>
     <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
     <span class="n">c</span> <span class="o">=</span> <span class="nc">Circle</span><span class="p">(</span><span class="n">radius</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="nb">sqrt</span><span class="p">(</span><span class="n">area</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">radius</span><span class="p">))</span>  <span class="c1"># `Circle`, `math`, `area` resolved from module scope</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="nb">sqrt</span><span class="p">(</span><span class="n">circle_area</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">radius</span><span class="p">))</span>  <span class="c1"># `Circle`, `math`, `circle_area` resolved from module scope</span>
 </code></pre></div>
-<p>In this example, the names <code>sqrt</code>, <code>PI</code>, <code>area</code>, and <code>Circle</code> are all resolved from the module scope.</p>
+<p>In this example, the names <code>sqrt</code>, <code>PI</code>, <code>circle_area</code>, and <code>Circle</code> are all resolved from the module scope.</p>
+<p>Top-level aliases point at existing module symbols. They are declarations, not general assignment, so values like <code>x = 1</code> still belong in <code>const</code>, <code>static</code>, or function-local code.</p>
+<p>Type bodies can also expose another name for an existing same-type method:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Reading</span><span class="p">:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="n">avg</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">avg</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+</code></pre></div>
+<p>For the exact alias syntax, supported target kinds, public export rules, and diagnostics, see <a href="../../reference/symbol_aliases/">Symbol aliases</a>.</p>
 <h3 id="function-method-scope">Function / method scope<a class="headerlink" href="#function-method-scope" title="Permanent link">&para;</a></h3>
 <p>Each <code>def ...:</code> body is a <strong>function scope</strong>.</p>
 <p>Methods also have a function-like scope and define receiver names for the method body:</p>

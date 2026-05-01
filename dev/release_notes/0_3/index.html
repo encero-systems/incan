@@ -1340,6 +1340,8 @@
       
         
       
+        
+      
     
     
       
@@ -1434,6 +1436,27 @@
   
   <span class="md-ellipsis">
     Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
   </span>
   
 
@@ -1666,7 +1689,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -1682,14 +1705,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -1865,7 +1888,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
           
@@ -1881,14 +1904,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2060,10 +2083,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2074,8 +2097,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_16">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4798,6 +4821,7 @@ the raw representation for value enums.</p>
 <li><strong>Language/Compiler</strong>: RFC 040 adds scoped DSL surface descriptors to <code>incan_vocab</code> 0.2.0 and library manifests. Imported vocab crates can now publish descriptor metadata for operator-like glyphs, binding-like glyphs, and expression-form surfaces; the parser recognizes descriptor-enabled leading-dot paths and scoped operator glyphs inside owning vocab blocks while preserving ordinary syntax outside those blocks (#174, RFC 040).</li>
 <li><strong>Language/Compiler</strong>: Incan now supports <code>if let PATTERN = VALUE:</code> and <code>while let PATTERN = VALUE:</code> for single-pattern control flow. Parsing, formatter round-trips, typechecking, scoping, lowering, and Rust emission now follow the same pattern semantics as <code>match</code>, while <code>if let</code> stays single-arm only and rejects <code>else</code> / <code>elif</code> branches in v1 (<a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a>, #333).</li>
 <li><strong>Language/Compiler</strong>: Incan now supports RFC 032 value enum declarations with <code>str</code> and <code>int</code> backing values. The parser and formatter preserve raw variant assignments, while declaration validation rejects missing values, duplicate raw values, mismatched literal types, payload-bearing variants, generated-helper name collisions, and generic value enums (#317, RFC 032).</li>
+<li><strong>Language/Compiler</strong>: RFC 083 adds declaration-level symbol aliases and same-type method aliases. Top-level forms such as <code>mean = avg</code> and <code>pub average = alias avg</code> resolve to existing callable or type-like symbols, method aliases such as <code>mean = avg</code> project the target method signature without creating wrapper methods, checked API metadata records alias identity, and library manifests now export aliases as alias metadata instead of duplicated declarations (#437, RFC 083).</li>
 <li><strong>Language/Compiler</strong>: Public classes now preserve authored field visibility. Non-<code>pub</code> class fields stay private after formatter round-trips and member access outside the owning class is rejected, while methods on the class can continue to use private backing fields (#246).</li>
 <li><strong>Compiler/Parser</strong>: Multiline function and method parameter lists now accept a trailing comma before <code>)</code>, including receiver-only method signatures such as <code>def get(self,) -&gt; int</code> when written across lines (#394).</li>
 <li><strong>Language/Testing</strong>: RFC 018's <code>assert expr[, msg]</code> language primitive is always available without importing <code>std.testing</code>. The <code>std.testing</code> helpers mirror assertion failure behavior for call-style checks, raises checks, and unwrap-style <code>Option</code> / <code>Result</code> helpers, while marker decorators remain imported <code>std.testing</code> APIs.</li>

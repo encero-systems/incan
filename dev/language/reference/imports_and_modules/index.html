@@ -1348,6 +1348,8 @@
       
         
       
+        
+      
     
     
       
@@ -1442,6 +1444,27 @@
   
   <span class="md-ellipsis">
     Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
   </span>
   
 
@@ -1623,6 +1646,21 @@
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exported-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exported aliases
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Exported aliases">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#path-summary" class="md-nav__link">
@@ -2017,7 +2055,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
         
           
           
@@ -2033,14 +2071,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_14" id="__nav_3_4_14_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_14">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
           </label>
@@ -2216,7 +2254,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
         
           
           
@@ -2232,14 +2270,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_4_15" id="__nav_3_4_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Stdlib traits
           </label>
@@ -2411,10 +2449,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
         
           
-          <label class="md-nav__link" for="__nav_3_4_16" id="__nav_3_4_16_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
             
   
   <span class="md-ellipsis">
@@ -2425,8 +2463,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_4_16">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
             <span class="md-nav__icon md-icon"></span>
             Derives
           </label>
@@ -4837,6 +4875,21 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exported-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exported aliases
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Exported aliases">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#path-summary" class="md-nav__link">
     <span class="md-ellipsis">
@@ -5158,6 +5211,24 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">crate</span><span class="p">::</span><span class="n">lib</span><span class="p">::</span><span class="n">database</span><span class="p">::</span><span class="nc">Connection</span>
 </code></pre></div>
 <p>The compiler finds the project root by looking for <code>Cargo.toml</code> or a <code>src/</code> directory.</p>
+<h2 id="exported-aliases">Exported aliases<a class="headerlink" href="#exported-aliases" title="Permanent link">&para;</a></h2>
+<p>Modules can export an alias for an existing public symbol:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="c1"># stats.incn</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">avg</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+  <span class="k">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="n">y</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+
+<span class="k">pub</span> <span class="n">mean</span> <span class="o">=</span> <span class="n">avg</span>
+</code></pre></div>
+<p>Consumers import the alias like any other public symbol:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">mean</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+  <span class="k">return</span> <span class="n">mean</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+</code></pre></div>
+<p>An import alias is local to the importing module:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">stats</span><span class="w"> </span><span class="kn">import</span> <span class="n">mean</span> <span class="k">as</span> <span class="n">average_value</span>
+</code></pre></div>
+<p>For the full alias contract, including method aliases and rejected forms, see <a href="../symbol_aliases/">Symbol aliases</a>.</p>
 <h3 id="path-summary">Path summary<a class="headerlink" href="#path-summary" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
