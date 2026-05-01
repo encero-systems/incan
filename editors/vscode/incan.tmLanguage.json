@@ -628,7 +628,7 @@
           "name": "keyword.control.async.incan"
         },
         {
-          "match": "\\b(class|def|enum|fn|model|newtype|trait|type)\\b",
+          "match": "\\b(alias|class|def|enum|fn|model|newtype|trait|type)\\b",
           "name": "keyword.declaration.incan"
         },
         {

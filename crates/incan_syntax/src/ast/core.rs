@@ -83,6 +83,7 @@ pub enum Declaration {
     Model(super::ModelDecl),
     Class(super::ClassDecl),
     Trait(super::TraitDecl),
+    Alias(super::AliasDecl),
     TypeAlias(super::TypeAliasDecl),
     Newtype(super::NewtypeDecl),
     Enum(super::EnumDecl),

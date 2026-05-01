@@ -52,6 +52,13 @@ pub enum IrDeclKind {
         interop_edges: Vec<IrInteropEdge>,
     },
 
+    /// Symbol alias (`pub use target as name`) for declaration-level callable/type aliases.
+    SymbolAlias {
+        visibility: Visibility,
+        name: String,
+        target_path: Vec<String>,
+    },
+
     /// Constant
     Const {
         visibility: Visibility, // pub or private

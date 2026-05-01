@@ -1975,6 +1975,39 @@ mod codegen_tests {
     }
 
     #[test]
+    fn test_method_alias_codegen_rewrites_to_target_method() {
+        let source = r#"
+model Stats:
+  value: int
+  mean = avg
+
+  def avg(self) -> int:
+    return self.value
+
+def main() -> None:
+  let stats = Stats(value=10)
+  println(stats.mean())
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lex failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains(".avg("),
+            "expected method alias call to lower to target method, got:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains(".mean("),
+            "method alias must not emit an independent wrapper call, got:\n{rust_code}"
+        );
+    }
+
+    #[test]
     fn test_run_c_import_this() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args(["run", "-c", "import this"])

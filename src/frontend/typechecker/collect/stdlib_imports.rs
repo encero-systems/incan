@@ -13,9 +13,9 @@ use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::load_testing_marker_semantics;
 use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
-    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport, FunctionExport,
-    LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport, ReceiverExport,
-    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+    AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
+    FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
+    ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -23,6 +23,7 @@ use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 enum ManifestExportRef<'a> {
+    Alias(&'a AliasExport),
     Model(&'a ModelExport),
     Class(&'a ClassExport),
     Function(&'a FunctionExport),
@@ -131,6 +132,7 @@ impl TypeChecker {
                             kind: SymbolKind::Trait(TraitInfo {
                                 type_params: vec![],
                                 methods: HashMap::new(),
+                                method_aliases: HashMap::new(),
                                 requires: vec![],
                                 supertraits: vec![],
                             }),
@@ -386,6 +388,7 @@ impl TypeChecker {
         }
     }
 
+    /// Collect selected public imports from one loaded library manifest.
     fn collect_pub_imports(&mut self, library: &str, items: &[ImportItem], span: Span) {
         let known_libraries = self.library_manifests.known_libraries();
         let Some(entry) = self.library_manifests.get(library).cloned() else {
@@ -437,7 +440,7 @@ impl TypeChecker {
                 continue;
             }
 
-            self.define_pub_import_symbol(local_name, export, &imported_type_aliases, span);
+            self.define_pub_import_symbol(&manifest, local_name, export, &imported_type_aliases, span);
         }
     }
 
@@ -480,6 +483,57 @@ impl TypeChecker {
             });
         }
         None
+    }
+
+    /// Resolve one exported member from an imported `pub::` library as a symbol kind.
+    ///
+    /// This is used by qualified alias collection, where the import remains a module binding (`lib.member`) instead of
+    /// a direct `from pub::lib import member` symbol. Alias exports are followed to their manifest target before the
+    /// projected kind is returned.
+    pub(in crate::frontend::typechecker) fn lookup_pub_library_symbol_member(
+        &self,
+        library: &str,
+        member: &str,
+    ) -> Option<SymbolKind> {
+        let entry = self.library_manifests.get(library)?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+            return None;
+        };
+        let export = Self::find_manifest_export(manifest, member)?;
+        Some(match export {
+            ManifestExportRef::Model(export) => {
+                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+            }
+            ManifestExportRef::Class(export) => {
+                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
+            }
+            ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+            ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
+            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
+            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::Newtype(export) => {
+                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
+            }
+            ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_mutable: false,
+                is_used: false,
+            }),
+            ManifestExportRef::Static(export) => SymbolKind::Static(StaticInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_public: true,
+                is_imported: true,
+                is_used: false,
+            }),
+            ManifestExportRef::EnumVariant { enum_name, fields } => SymbolKind::Variant(VariantInfo {
+                enum_name: enum_name.to_string(),
+                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            }),
+            ManifestExportRef::Alias(export) => {
+                let target_name = export.target_path.last()?;
+                return self.lookup_pub_library_symbol_member(library, target_name);
+            }
+        })
     }
 
     /// Seed internal semantic caches for one `pub::` library's exported types and traits.
@@ -582,9 +636,11 @@ impl TypeChecker {
         self.errors.push(error);
     }
 
+    /// Return all exported names in a manifest for diagnostics.
     fn manifest_export_names(manifest: &LibraryManifest) -> Vec<String> {
         let mut names = Vec::new();
         names.extend(manifest.exports.models.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.aliases.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.classes.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.functions.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.traits.iter().map(|item| item.name.clone()));
@@ -605,7 +661,11 @@ impl TypeChecker {
         names
     }
 
+    /// Find one manifest export by name, including alias entries.
     fn find_manifest_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+        if let Some(item) = manifest.exports.aliases.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Alias(item));
+        }
         if let Some(item) = manifest.exports.models.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Model(item));
         }
@@ -673,8 +733,10 @@ impl TypeChecker {
         Some(kind)
     }
 
+    /// Define one symbol imported from a public library manifest.
     fn define_pub_import_symbol(
         &mut self,
+        manifest: &LibraryManifest,
         local_name: String,
         export: ManifestExportRef<'_>,
         imported_type_aliases: &HashMap<String, String>,
@@ -709,6 +771,15 @@ impl TypeChecker {
                 is_imported: true,
                 is_used: false,
             }),
+            ManifestExportRef::Alias(export) => {
+                let Some(target_name) = export.target_path.last() else {
+                    return;
+                };
+                let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
+                    return;
+                };
+                return self.define_pub_import_symbol(manifest, local_name, target_export, imported_type_aliases, span);
+            }
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
 
@@ -879,6 +950,7 @@ impl TypeChecker {
             fields: self.fields_from_manifest(&export.fields),
             method_overloads,
             methods,
+            method_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -895,9 +967,11 @@ impl TypeChecker {
             fields: self.fields_from_manifest(&export.fields),
             method_overloads,
             methods,
+            method_aliases: std::collections::HashMap::new(),
         }
     }
 
+    /// Convert one manifest trait export into semantic trait metadata.
     fn trait_info_from_manifest(&self, export: &TraitExport) -> TraitInfo {
         TraitInfo {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
@@ -916,6 +990,7 @@ impl TypeChecker {
                 })
                 .collect(),
             methods: self.methods_from_manifest(&export.methods),
+            method_aliases: std::collections::HashMap::new(),
             requires: export
                 .requires
                 .iter()
@@ -997,6 +1072,7 @@ impl TypeChecker {
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
             method_rebindings: std::collections::HashMap::new(),
+            method_aliases: std::collections::HashMap::new(),
             methods: self.methods_from_manifest(&export.methods),
         }
     }
@@ -1125,6 +1201,7 @@ impl TypeChecker {
             return_type: resolved_type_from_manifest_type_ref(&method.return_type),
             is_async: method.is_async,
             has_body: method.has_body,
+            alias_of: method.alias_of.clone(),
         }
     }
 

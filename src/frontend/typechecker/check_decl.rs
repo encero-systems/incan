@@ -658,6 +658,7 @@ impl TypeChecker {
                 .iter()
                 .map(|(name, info)| (name.clone(), substitute_method_info(info, &subst)))
                 .collect(),
+            method_aliases: trait_info.method_aliases.clone(),
             requires: trait_info
                 .requires
                 .iter()
@@ -1222,6 +1223,7 @@ impl TypeChecker {
             Declaration::Model(model) => self.check_model(model),
             Declaration::Class(class) => self.check_class(class),
             Declaration::Trait(tr) => self.check_trait(tr),
+            Declaration::Alias(_) => {}     // Alias targets are validated during collection.
             Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),

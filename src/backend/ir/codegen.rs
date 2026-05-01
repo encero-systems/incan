@@ -1319,6 +1319,39 @@ def main() -> None:
     }
 
     #[test]
+    fn top_level_callable_alias_lowers_calls_to_target_and_public_reexport() {
+        let code = generate(
+            r#"
+pub def avg(x: int) -> int:
+  return x
+
+mean = avg
+pub average = alias avg
+
+def main() -> int:
+  return mean(10)
+"#,
+        );
+        assert!(code.contains("pub fn avg(x: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use avg as average;"), "{code}");
+        assert!(code.contains("return avg(10);"), "{code}");
+        assert!(!code.contains("fn mean"), "{code}");
+    }
+
+    #[test]
+    fn top_level_qualified_alias_preserves_target_path() {
+        let code = generate(
+            r#"
+import std.math as math
+
+pub root = math.sqrt
+"#,
+        );
+        assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
+        assert!(code.contains("pub use math::sqrt as root;"), "{code}");
+    }
+
+    #[test]
     fn normal_codegen_keeps_used_private_helpers_without_dead_code_allows() {
         let code = generate(
             r#"

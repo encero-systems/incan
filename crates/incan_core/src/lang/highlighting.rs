@@ -43,6 +43,7 @@ const DECLARATION_KEYWORDS: &[KeywordId] = &[
     KeywordId::Enum,
     KeywordId::Newtype,
     KeywordId::Type,
+    KeywordId::Alias,
 ];
 const IMPORT_KEYWORDS: &[KeywordId] = &[
     KeywordId::Import,

@@ -236,6 +236,7 @@ impl AstLowering {
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
+            let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
             if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
                 && matches!(self.lookup_var(name), IrType::Unknown)
                 && let Some(owner_name) = self.current_classmethod_constructor.clone()
@@ -246,11 +247,15 @@ impl AstLowering {
             // Use two strategies for constructor detection:
             // 1. Known struct from current file (in struct_names map)
             // 2. Uppercase identifier heuristic (works cross-file like old codegen)
-            let is_known_struct = self.struct_names.contains_key(name);
-            let is_uppercase = name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+            let is_known_struct = self.struct_names.contains_key(&constructor_name);
+            let is_uppercase = constructor_name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
 
             if is_known_struct || is_uppercase {
-                return self.lower_constructor_call(name, args);
+                return self.lower_constructor_call(&constructor_name, args);
             }
         }
 

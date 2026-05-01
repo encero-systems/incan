@@ -67,6 +67,7 @@ pub enum KeywordId {
     With,
     Extends,
     Pub,
+    Alias,
 
     // Imports / modules / interop
     Import,
@@ -413,6 +414,15 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         &[KeywordUsage::Modifier],
         RFC::_000,
         Since(0, 1),
+    ),
+    info_contextual_binding(
+        KeywordId::Alias,
+        "alias",
+        KeywordCategory::Definition,
+        &[KeywordUsage::Modifier],
+        RFC::_083,
+        Since(0, 3),
+        Stability::Stable,
     ),
     // Imports / modules / interop
     info(
