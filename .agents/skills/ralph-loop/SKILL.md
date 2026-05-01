@@ -322,6 +322,17 @@ When code is ready:
 
 For RFC-driven work, only the parent loop drafts or owns the final PR description. Child loops must not produce PRs of their own.
 
+If the user says "greenlight for PR", "green light for PR", or otherwise approves PR publication for RFC-driven work, treat RFC finalization as part of the pre-PR gate. Before reporting the branch ready for review or opening/marking a PR ready:
+
+- run a final scope check against the governing RFC and issue
+- if the implemented branch covers the full RFC scope, use `bump-rfc` to move the RFC from `In Progress` to `Implemented`
+- ensure every `Progress Checklist` item is checked before the bump; if an item is incomplete, do not claim full RFC scope
+- ensure the PR body includes a closing keyword for the RFC issue, such as `Closes #NNN`
+- rebuild docs after moving the RFC into `closed/implemented/`
+- report any reason the RFC cannot be bumped before asking for human review
+
+Do not leave a fully implemented RFC in `In Progress` while presenting the PR as review-ready. If the branch implements only part of the RFC, say that directly and leave the RFC active.
+
 Only run the actual commit / push / PR creation flow if the user explicitly asked for those actions.
 
 ## Quality bar
@@ -341,7 +352,7 @@ If the task teaches a durable lesson about orchestration, testing, or worktree h
 
 - `start-work`: use once to resolve context and branch strategy before decomposition
 - `review-rfc`: use first in RFC intake mode
-- `bump-rfc`: use to move a settled RFC into `Planned` and then `In Progress` before phase execution, but stop and ask the user if open questions or blockers remain
+- `bump-rfc`: use to move a settled RFC into `Planned` and then `In Progress` before phase execution, and to move fully implemented RFC-driven work to `Implemented` before PR review/publication; stop and ask the user if open questions or blockers remain
 - `create-plan`: each worker uses it for its own slice; the orchestrator may also use it if the whole task still needs a settled plan
 - `orchestrate-parallel-work`: use it for decomposition, worker ownership, and isolation
 - `review`: report-only detector for smaller worker slices and local integration checks
@@ -389,5 +400,6 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Active dev version was re-checked and bumped by one dev increment at minimum for implementation work
 - [ ] Child loops did not draft PRs or final commit artifacts of their own
 - [ ] Final gate passed or remaining failures were reported concretely
+- [ ] If the implementation satisfies the full RFC, `bump-rfc` moved it to `Implemented` before the PR was presented as review-ready
 - [ ] Commit/PR artifacts were drafted
 - [ ] No commit/push/PR action was taken without explicit user permission
