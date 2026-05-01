@@ -1,13 +1,13 @@
 # RFC 028: trait-based operator overloading
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 025 (multi-instantiation trait dispatch), RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 029 (union types), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
 - **Issue:** [#162](https://github.com/dannys-code-corner/incan/issues/162)
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/454
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -460,7 +460,7 @@ def add_vectors(a: Vector, b: Vector) -> Vector: ...
 - Add a release notes entry for the active development version.
 - Run targeted verification for each slice and the repository-level gate before closeout.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / lifecycle
 

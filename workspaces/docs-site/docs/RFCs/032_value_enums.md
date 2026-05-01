@@ -1,13 +1,16 @@
 # RFC 032: value enums — `StrEnum` and `IntEnum`
 
-- **Status:** In Progress
+- **Status:** Blocked (by RFC 033)
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
 - **Issue:** [#166](https://github.com/dannys-code-corner/incan/issues/166)
-- **RFC PR:** —
+- **RFC PR:**  
+    - [#411](https://github.com/dannys-code-corner/incan/pull/411)
+    - <!-- follow-up PR: LSP metadata and blocked-by-RFC-033 status -->
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:**  
+    - v0.3 (core value-enum compiler, backend, serialization, manifest, docs, and LSP metadata surface; environment/config resolution remains blocked by RFC 033)
 
 ## Summary
 
@@ -359,6 +362,10 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - **Serialization / runtime interop**: serialization, parsing, configuration, and environment integrations must use the associated value rather than the variant name whenever a value enum crosses a data boundary.
 - **Formatter / LSP / docs tooling**: tooling should preserve and surface value enum declarations distinctly from regular enums and ADTs, including completions, hover text, formatting, and diagnostics.
 
+## Related PRs
+
+- [#411](https://github.com/dannys-code-corner/incan/pull/411) — implemented the core RFC 032 value-enum compiler, backend, serialization, manifest, docs, release-note, and verification surface.
+
 ## Implementation Plan
 
 ### Phase 1: Parser, AST, and formatter
@@ -420,14 +427,14 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - [x] Emit `from_value()` helpers for string and integer value enums.
 - [x] Preserve `message()` as variant-name behavior.
 - [x] Preserve canonical external representation hooks for display, parsing, serialization, and deserialization surfaces that exist in the backend.
-- [ ] Wire value-enum metadata into future environment/config resolution surfaces once those hooks exist.
+- [ ] Wire value-enum metadata into future environment/config resolution surfaces once those hooks exist. Current `incan env` lifecycle resolution only merges manifest overlays and has no typed program-config resolver hook yet; this remains blocked on RFC 033 / [#167](https://github.com/dannys-code-corner/incan/issues/167).
 
 ### Tooling / docs / release
 
-- [ ] Surface value-enum backing metadata in LSP/completion/hover details.
+- [x] Surface value-enum backing metadata in LSP/completion/hover details.
 - [x] Update authored user-facing docs for value enum syntax and behavior.
 - [x] Add release notes for RFC 032 implementation.
-- [x] Bump active dev version to `0.3.0-dev.7`.
+- [x] Bump active dev version to `0.3.0-dev.23`.
 
 ### Verification
 

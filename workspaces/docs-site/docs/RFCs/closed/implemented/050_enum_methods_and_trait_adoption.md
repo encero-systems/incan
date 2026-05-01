@@ -1,6 +1,6 @@
 # RFC 050: Enum methods and enum trait adoption
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -8,9 +8,9 @@
     - RFC 032 (value enums)
     - RFC 051 (`JsonValue`)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/334
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/450
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -181,7 +181,7 @@ The feature is additive. Existing enums without methods or traits keep working u
 - Add release notes for the active `0.3` development line and bump the development version.
 - Run focused parser/typechecker/codegen checks during implementation, then the repository gate on the integrated result.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / process
 
