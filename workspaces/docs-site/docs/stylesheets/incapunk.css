@@ -1,5 +1,15 @@
 @import url("https://fonts.googleapis.com/css2?family=Brawler:wght@400;700&family=Exo+2:wght@300;400;500;600;700;800&display=swap");
 
+/*
+ * Incapunk docs theme.
+ *
+ * This is an adapter over MkDocs Material's generated DOM, not a standalone
+ * component library. Keep Material in charge of the main column layout, keep
+ * selectors scoped to Material classes, and edit component sections in place
+ * rather than appending end-of-file override patches.
+ */
+
+/* Design tokens: prefer these before adding new literal colors or rails. */
 :root {
   color-scheme: dark;
   --inc-bg: #030304;
@@ -46,6 +56,7 @@
   );
 }
 
+/* Bridge the Incapunk palette into Material's expected theme variables. */
 body[data-md-color-scheme="slate"] {
   --md-default-bg-color: var(--inc-bg);
   --md-default-fg-color: var(--inc-text);
@@ -72,6 +83,7 @@ html {
   font-size: 112.5%;
 }
 
+/* Page atmosphere: fixed image/noise layers sit behind Material content. */
 body {
   background:
     radial-gradient(circle at 50% -8%, rgba(255, 147, 44, 0.035), transparent 26rem),
@@ -152,6 +164,14 @@ body::after {
   100% { transform: translate3d(-1rem, 1.25rem, 0) scale(0.98); opacity: 0.52; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .md-container::before,
+  .md-container::after {
+    animation: none;
+    transform: none;
+  }
+}
+
 .md-header,
 .md-main,
 .md-footer {
@@ -163,6 +183,7 @@ body::after {
   max-width: 1500px;
 }
 
+/* Header: sticky Material bar with the generated topic replaced by DOCS. */
 .md-header {
   position: sticky;
   top: 0;
@@ -228,7 +249,7 @@ body::after {
   min-width: 2.85rem;
   margin-left: -0.62rem;
   margin-right: 0.3rem;
-  font-family: var(--inc-font-body) !important;
+  font-family: var(--inc-font-body);
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -273,6 +294,7 @@ body::after {
   padding-top: 0.45rem;
 }
 
+/* Layout safety: never replace Material's .md-main__inner column layout. */
 .md-main__inner {
   position: relative;
   isolation: isolate;
@@ -352,6 +374,7 @@ body::after {
   opacity: 0.96;
 }
 
+/* Desktop sidebars should size to their content while remaining scrollable. */
 @media screen and (min-width: 76.25em) {
   .md-sidebar--primary,
   .md-sidebar--secondary {
@@ -378,6 +401,7 @@ body::after {
   display: none;
 }
 
+/* Navigation: shared link treatment plus special cases for Material sections. */
 .md-sidebar--primary .md-nav__title,
 .md-sidebar--secondary .md-nav__title {
   padding-top: 0.75rem;
@@ -385,7 +409,7 @@ body::after {
 
 .md-sidebar--primary .md-nav__title {
   color: var(--inc-gold-1);
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -394,7 +418,7 @@ body::after {
 
 .md-sidebar--secondary .md-nav__title {
   color: var(--inc-gold-1);
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -523,7 +547,7 @@ body::after {
   margin: 0;
   padding: 0.12rem 0.65rem;
   color: rgba(255, 235, 186, 0.86);
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.015em;
@@ -540,6 +564,7 @@ body::after {
   color: var(--inc-gold-1);
 }
 
+/* Body typography and document primitives. */
 .md-typeset {
   color: var(--inc-text);
   font-family: var(--inc-font-body);
@@ -571,7 +596,7 @@ body::after {
 .md-typeset h5,
 .md-typeset h6 {
   color: #f3ede4;
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-weight: 700;
 }
 
@@ -598,7 +623,7 @@ body::after {
   border-radius: 0;
   background: none;
   color: #e4d9c7;
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.68;
@@ -741,6 +766,7 @@ body::after {
   padding-left: 0.9rem;
 }
 
+/* Admonitions/details: compact title bars over semantic accent borders. */
 .md-typeset .admonition,
 .md-typeset details {
   --inc-admonition-accent: rgba(222, 188, 132, 0.3);
@@ -830,7 +856,7 @@ body::after {
   background:
     linear-gradient(90deg, var(--inc-admonition-accent), rgba(255, 240, 183, 0.09) 24%, rgba(18, 20, 23, 0.9) 68%, rgba(10, 11, 14, 0.96)),
     linear-gradient(180deg, rgba(24, 25, 27, 0.96), rgba(12, 13, 16, 0.98));
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -885,6 +911,7 @@ body::after {
   padding: 0.78rem 1rem 0.86rem 1.72rem;
 }
 
+/* Code blocks: support both plain highlights and Pygments highlight tables. */
 .md-typeset div.highlight {
   position: relative;
   display: block;
@@ -944,7 +971,7 @@ body::after {
   border-bottom: 1px solid rgba(222, 188, 132, 0.16);
   border-radius: 0;
   background: linear-gradient(90deg, rgba(72, 240, 239, 0.12), rgba(255, 193, 90, 0.12) 44%, rgba(255, 92, 105, 0.1));
-  font-family: var(--inc-font-body) !important;
+  font-family: var(--inc-font-body);
   font-size: 0.72rem;
   font-weight: 700;
   line-height: 1.2;
@@ -997,6 +1024,7 @@ body::after {
   overflow-x: auto;
 }
 
+/* Tables use fixed layout so long docs/RFC rows cannot blow out columns. */
 .md-typeset table:not([class]),
 .md-typeset .md-typeset__table table {
   display: table;
@@ -1070,6 +1098,7 @@ body::after {
   border-radius: 0;
 }
 
+/* Calls to action: compact forged-metal buttons, not pill controls. */
 .md-typeset .md-button,
 .md-typeset .md-button--primary {
   min-height: 2.35rem;
@@ -1094,6 +1123,7 @@ body::after {
   transform: translateY(-1px);
 }
 
+/* Task lists need explicit checkbox styling because Material uses masks. */
 .md-typeset ul.task-list {
   margin: 0.72rem 0 1.45rem;
   padding: 0.55rem 0.82rem 0.55rem 0.74rem;
@@ -1180,6 +1210,7 @@ body::after {
   filter: drop-shadow(0 0 6px rgba(72, 240, 239, 0.28));
 }
 
+/* Footnotes should read as secondary apparatus, not as a normal list. */
 .md-typeset .footnote {
   margin: 2rem 0 0.4rem;
   padding: 0.58rem 0.72rem 0.64rem;
@@ -1195,7 +1226,7 @@ body::after {
   display: block;
   margin-bottom: 0.42rem;
   color: var(--inc-gold-1);
-  font-family: var(--inc-font-display) !important;
+  font-family: var(--inc-font-display);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -1234,6 +1265,7 @@ body::after {
   line-height: 1.5;
 }
 
+/* Mermaid emits SVG internals, so these overrides intentionally stay forceful. */
 .md-typeset .mermaid {
   display: flex;
   justify-content: center;
@@ -1285,6 +1317,7 @@ body::after {
   stroke: var(--inc-gold-2) !important;
 }
 
+/* Responsive tightening for Material's collapsed navigation breakpoints. */
 @media screen and (max-width: 76.1875em) {
   .md-grid {
     max-width: 100%;
