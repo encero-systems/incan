@@ -4596,7 +4596,8 @@
     parser --&gt; typecheck[Typecheck_and_resolve]
     typecheck --&gt; lower[Lower_to_Rust]
     lower --&gt; cargo[Cargo_build]
-    cargo --&gt; binary[Executable]</code></pre>
+    cargo --&gt; binary[Executable]
+</code></pre>
 <p>Keep this picture in your head while reading the code. Most contributing work is “add a feature” <strong>and</strong> ensure each stage
 continues to compose.</p>
 <h2 id="the-big-pieces">The big pieces<a class="headerlink" href="#the-big-pieces" title="Permanent link">&para;</a></h2>
