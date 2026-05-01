@@ -1,0 +1,13 @@
+"""Issue #459: Rust enum imports used only in match patterns must be retained."""
+from rust::substrait::proto import Rel
+from rust::substrait::proto::rel import RelType
+
+pub def inspect(rel: Rel) -> None:
+  match rel.rel_type:
+    Some(RelType.Read(_)) =>
+      pass
+    _ =>
+      pass
+
+def main() -> None:
+  pass

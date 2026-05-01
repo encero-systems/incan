@@ -3931,6 +3931,44 @@ model Cell[T] with Boxed:
 }
 
 #[test]
+fn test_trait_typed_local_annotation_is_rejected() {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+  def keep(self) -> Self: ...
+
+model Item:
+  value: int
+
+class ValueBox[T] with Boxed:
+  value: T
+
+  def get(self) -> T:
+    return self.value
+
+  def keep(self) -> Self:
+    return self
+
+def use_trait_typed_value() -> Item:
+  concrete: ValueBox[Item] = ValueBox[Item](value=Item(value=7))
+  boxed: Boxed[Item] = concrete
+  return boxed.get()
+"#;
+
+    let errs = check_str_err(
+        source,
+        "trait-typed local annotation should be rejected before Rust codegen",
+    );
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Trait-typed local annotation 'Boxed[Item]' is not supported")),
+        "expected unsupported trait-typed local diagnostic, got {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_types_compatible_generic_trait_annotation_extra_concrete_type_params() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Boxed[T]:

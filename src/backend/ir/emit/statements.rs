@@ -855,12 +855,8 @@ impl<'a> IrEmitter<'a> {
         let Some(member_ty) = members.get(variant_index) else {
             return Ok(None);
         };
-        let Some(union_name) = target_ty.union_type_name() else {
-            return Ok(None);
-        };
-
-        let union_ident = format_ident!("{}", union_name);
         let variant_ident = format_ident!("{}", IrType::union_variant_name(variant_index));
+        let union_path = self.emit_union_type_path(target_ty);
         let emitted = if in_return {
             self.emit_expr_for_use(
                 value,
@@ -876,7 +872,7 @@ impl<'a> IrEmitter<'a> {
                 },
             )?
         };
-        Ok(Some(quote! { #union_ident :: #variant_ident(#emitted) }))
+        Ok(Some(quote! { #union_path :: #variant_ident(#emitted) }))
     }
 
     /// Return a Rust local type annotation for explicit Incan bindings that can be named in local position.
