@@ -202,7 +202,7 @@ Docstring validation is strict for mechanically checkable drift. If an `Args:` o
 
 ## Editor Previews
 
-The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, or a public model/class field can show the checked signature, raw docstring text, field alias/description metadata, derives, trait adoption, and safe const values.
+The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, a public model/class field, or a public enum variant can show the checked signature, raw docstring text, field alias/description metadata, value-enum backing and raw-value metadata, derives, trait adoption, and safe const values.
 
 The LSP exposes these facts through `textDocument/hover`. Use `incan tools metadata api` when an integration needs the full JSON package.
 

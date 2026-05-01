@@ -41,7 +41,8 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
 use crate::library_manifest::{
-    FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
+    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
+    TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
@@ -553,7 +554,7 @@ impl IncanLanguageServer {
         None
     }
 
-    // ---- Cursor inside a top-level declaration: surface symbol info for outline/hover wiring ----
+    /// Return hover-oriented symbol information when the cursor falls inside one top-level declaration span.
     fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize) -> Option<SymbolInfo> {
         match decl {
             Declaration::Const(konst) if span.start <= offset && offset < span.end => {
@@ -612,7 +613,7 @@ impl IncanLanguageServer {
                 return Some(SymbolInfo {
                     name: en.name.clone(),
                     kind: "enum".to_string(),
-                    detail: format!("enum {}", en.name),
+                    detail: enum_completion_detail(en),
                     span,
                 });
             }
@@ -1053,8 +1054,12 @@ class Box[T with Clone]:
 
 #[cfg(test)]
 mod lsp_api_metadata_preview_tests {
-    use super::{api_metadata_preview_at_offset, api_metadata_previews};
+    use super::{
+        api_metadata_preview_at_offset, api_metadata_previews, enum_completion_detail, enum_variant_completion_detail,
+        enum_variant_completion_label,
+    };
     use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
+    use crate::frontend::ast::Declaration;
     use crate::frontend::{lexer, parser, typechecker};
 
     fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
@@ -1159,6 +1164,88 @@ pub model Public:
             api_metadata_preview_at_offset(&previews, public_offset).is_some(),
             "public declarations should expose checked API metadata previews"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_include_value_enum_backing_and_variant_values() -> Result<(), String> {
+        let source = r#"
+pub enum Environment(str):
+    Dev = "development"
+    Prod = "production"
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let enum_offset = source
+            .find("Environment")
+            .ok_or_else(|| "expected enum name in fixture".to_string())?;
+        let enum_preview = api_metadata_preview_at_offset(&previews, enum_offset)
+            .ok_or_else(|| "expected checked enum preview".to_string())?;
+        assert!(
+            enum_preview.markdown.contains("value type: `str`"),
+            "expected enum backing type in preview, got:\n{}",
+            enum_preview.markdown
+        );
+        assert!(
+            !enum_preview.markdown.contains("value type: `Str`"),
+            "enum backing type should use Incan spelling, got:\n{}",
+            enum_preview.markdown
+        );
+
+        let variant_offset = source
+            .find("Prod =")
+            .ok_or_else(|| "expected value enum variant in fixture".to_string())?;
+        let variant_preview = api_metadata_preview_at_offset(&previews, variant_offset)
+            .ok_or_else(|| "expected checked enum variant preview".to_string())?;
+        assert!(
+            variant_preview
+                .markdown
+                .contains("*checked API metadata: public enum variant*"),
+            "expected enum variant metadata preview, got:\n{}",
+            variant_preview.markdown
+        );
+        assert!(
+            variant_preview.markdown.contains("value type: `str`"),
+            "expected variant backing type in preview, got:\n{}",
+            variant_preview.markdown
+        );
+        assert!(
+            variant_preview.markdown.contains("raw value: `\"production\"`"),
+            "expected variant raw value in preview, got:\n{}",
+            variant_preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_value_enum_completion_details_include_raw_values() -> Result<(), String> {
+        let source = r#"
+enum HttpStatus(int):
+    Ok = 200
+"#;
+        let (ast, _metadata) = checked_metadata_for(source)?;
+        let enum_decl = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Enum(en) => Some(en),
+                _ => None,
+            })
+            .ok_or_else(|| "expected enum declaration in fixture".to_string())?;
+        let variant = enum_decl
+            .variants
+            .first()
+            .ok_or_else(|| "expected enum variant in fixture".to_string())?;
+
+        assert_eq!(enum_completion_detail(enum_decl), "enum HttpStatus(int)");
+        assert_eq!(
+            enum_variant_completion_detail(enum_decl, &variant.node),
+            "variant HttpStatus.Ok: int = 200"
+        );
+        assert_eq!(enum_variant_completion_label(enum_decl, &variant.node), "HttpStatus.Ok");
 
         Ok(())
     }
@@ -1367,7 +1454,16 @@ fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<Ap
                 push_method_previews(&mut previews, &trait_decl.name, &trait_decl.methods);
             }
             ApiDeclaration::Enum(enum_decl) => {
-                previews.push(preview_for_anchor(&enum_decl.anchor, api_enum_markdown(enum_decl)))
+                previews.push(preview_for_anchor(&enum_decl.anchor, api_enum_markdown(enum_decl)));
+                if let Some(Declaration::Enum(ast_enum)) = find_top_level_decl(ast, &enum_decl.name) {
+                    push_enum_variant_previews(
+                        &mut previews,
+                        &enum_decl.name,
+                        enum_decl.value_type,
+                        &enum_decl.variants,
+                        &ast_enum.variants,
+                    );
+                }
             }
             ApiDeclaration::Newtype(newtype) => {
                 previews.push(preview_for_anchor(&newtype.anchor, api_newtype_markdown(newtype)));
@@ -1429,6 +1525,28 @@ fn find_top_level_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a Declarati
         Declaration::Static(static_decl) if static_decl.name == name => Some(&decl.node),
         _ => None,
     })
+}
+
+/// Add variant-level previews for checked public enum variants using AST source spans.
+fn push_enum_variant_previews(
+    previews: &mut Vec<ApiMetadataPreview>,
+    owner: &str,
+    value_type: Option<EnumValueTypeExport>,
+    checked_variants: &[crate::frontend::api_metadata::ApiEnumVariant],
+    ast_variants: &[crate::frontend::ast::Spanned<crate::frontend::ast::VariantDecl>],
+) {
+    for variant in ast_variants {
+        let Some(checked) = checked_variants
+            .iter()
+            .find(|checked| checked.name == variant.node.name)
+        else {
+            continue;
+        };
+        previews.push(ApiMetadataPreview {
+            span: variant.span,
+            markdown: api_enum_variant_markdown(owner, value_type, checked),
+        });
+    }
 }
 
 /// Add field-level previews for checked public model/class fields using AST source spans.
@@ -1538,7 +1656,7 @@ fn api_enum_markdown(enum_decl: &ApiEnum) -> String {
     push_list_fact(&mut facts, "derives", &enum_decl.derives);
     facts.push(format!("variants: {}", enum_decl.variants.len()));
     if let Some(value_type) = enum_decl.value_type {
-        facts.push(format!("value type: `{value_type:?}`"));
+        facts.push(format!("value type: `{}`", enum_value_type_display(value_type)));
     }
     checked_api_markdown(
         format!(
@@ -1547,6 +1665,37 @@ fn api_enum_markdown(enum_decl: &ApiEnum) -> String {
             format_type_params(&enum_decl.type_params)
         ),
         "public enum",
+        facts,
+    )
+}
+
+/// Format a checked public enum variant preview as hover markdown.
+fn api_enum_variant_markdown(
+    owner: &str,
+    value_type: Option<EnumValueTypeExport>,
+    variant: &crate::frontend::api_metadata::ApiEnumVariant,
+) -> String {
+    let mut facts = Vec::new();
+    if !variant.fields.is_empty() {
+        facts.push(format!(
+            "fields: {}",
+            variant
+                .fields
+                .iter()
+                .map(format_type_ref)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(value_type) = value_type {
+        facts.push(format!("value type: `{}`", enum_value_type_display(value_type)));
+    }
+    if let Some(value) = &variant.value {
+        facts.push(format!("raw value: `{}`", enum_value_display(value)));
+    }
+    checked_api_markdown(
+        format!("variant {owner}.{}", variant.name),
+        "public enum variant",
         facts,
     )
 }
@@ -1794,6 +1943,69 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::Unknown => "_".to_string(),
     }
+}
+
+/// Format checked value-enum backing metadata using Incan surface spellings.
+fn enum_value_type_display(value_type: EnumValueTypeExport) -> &'static str {
+    match value_type {
+        EnumValueTypeExport::Str => "str",
+        EnumValueTypeExport::Int => "int",
+    }
+}
+
+/// Format a checked value-enum raw value as it appears in source-like LSP metadata.
+fn enum_value_display(value: &EnumValueExport) -> String {
+    match value {
+        EnumValueExport::Str(value) => format!("{value:?}"),
+        EnumValueExport::Int(value) => value.to_string(),
+    }
+}
+
+/// Format parsed value-enum backing metadata using Incan surface spellings.
+fn ast_value_enum_type_display(value_type: crate::frontend::ast::ValueEnumType) -> &'static str {
+    match value_type {
+        crate::frontend::ast::ValueEnumType::Str => "str",
+        crate::frontend::ast::ValueEnumType::Int => "int",
+    }
+}
+
+/// Format a parsed value-enum literal as source-like LSP metadata.
+fn ast_value_enum_literal_display(value: &crate::frontend::ast::ValueEnumLiteral) -> String {
+    match value {
+        crate::frontend::ast::ValueEnumLiteral::Str(value) => format!("{value:?}"),
+        crate::frontend::ast::ValueEnumLiteral::Int(value) => value.value.to_string(),
+    }
+}
+
+/// Format local enum completion detail, including RFC 032 backing metadata when present.
+fn enum_completion_detail(en: &crate::frontend::ast::EnumDecl) -> String {
+    match en.value_type.as_ref() {
+        Some(value_type) => format!("enum {}({})", en.name, ast_value_enum_type_display(value_type.node)),
+        None => format!("enum {}", en.name),
+    }
+}
+
+/// Format local enum variant completion labels as qualified enum constructors.
+fn enum_variant_completion_label(
+    en: &crate::frontend::ast::EnumDecl,
+    variant: &crate::frontend::ast::VariantDecl,
+) -> String {
+    format!("{}.{}", en.name, variant.name)
+}
+
+/// Format local enum variant completion detail, including RFC 032 raw value metadata when present.
+fn enum_variant_completion_detail(
+    en: &crate::frontend::ast::EnumDecl,
+    variant: &crate::frontend::ast::VariantDecl,
+) -> String {
+    let mut detail = format!("variant {}.{}", en.name, variant.name);
+    if let Some(value_type) = &en.value_type {
+        detail.push_str(&format!(": {}", ast_value_enum_type_display(value_type.node)));
+    }
+    if let Some(value) = &variant.value {
+        detail.push_str(&format!(" = {}", ast_value_enum_literal_display(&value.node)));
+    }
+    detail
 }
 
 /// Escape a short metadata value as inline markdown code.
@@ -2290,6 +2502,7 @@ fn lsp_symbol_kind_for_decl(decl: &Declaration) -> Option<SymbolKind> {
     }
 }
 
+/// Build the display name and detail string used for one LSP document symbol entry.
 fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, String)> {
     match decl {
         Declaration::Const(konst) => Some((
@@ -2308,7 +2521,7 @@ fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, St
         Declaration::Model(model) => Some((model.name.clone(), format!("model {}", model.name))),
         Declaration::Class(class) => Some((class.name.clone(), format!("class {}", class.name))),
         Declaration::Trait(tr) => Some((tr.name.clone(), format!("trait {}", tr.name))),
-        Declaration::Enum(en) => Some((en.name.clone(), format!("enum {}", en.name))),
+        Declaration::Enum(en) => Some((en.name.clone(), enum_completion_detail(en))),
         Declaration::TypeAlias(alias) => Some((
             alias.name.clone(),
             format!("type {} = {}", alias.name, format_type(&alias.target.node)),
@@ -3094,9 +3307,20 @@ impl LanguageServer for IncanLanguageServer {
                             &mut seen,
                             &en.name,
                             CompletionItemKind::ENUM,
-                            Some(format!("enum {}", en.name)),
+                            Some(enum_completion_detail(en)),
                             None,
                         );
+                        for variant in &en.variants {
+                            let label = enum_variant_completion_label(en, &variant.node);
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &label,
+                                CompletionItemKind::CONSTRUCTOR,
+                                Some(enum_variant_completion_detail(en, &variant.node)),
+                                Some(format!("1_{}", label)),
+                            );
+                        }
                     }
                     Declaration::TypeAlias(alias) => {
                         push_completion(
