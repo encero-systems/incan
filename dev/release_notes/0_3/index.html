@@ -4760,6 +4760,7 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Tooling</strong>: RFC 048 checked contract metadata is now compiler-visible through canonical model bundle validation, project materialization, deterministic <code>incan tools metadata model</code> emit from projects, bundle JSON, and <code>.incnlib</code> artifacts, artifact embedding for publishable bundles, strict checked API docstring validation, <code>incan tools metadata api</code> JSON extraction, and LSP hover/emit integration (#205, #438, RFC 048).</li>
 <li><strong>Compiler/Tooling</strong>: <code>incan tools metadata api</code> emits checked public API metadata JSON for an Incan source file or project directory, including public declarations, checked signatures, stable anchors, parsed docstring sections, public import aliases with resolved targets, resolved decorator paths, safe decorator arguments, safe public const values, and model field alias/description metadata (#205, #438).</li>
 <li><strong>Tooling/Editor</strong>: LSP hover now previews RFC 048 checked API metadata for public declarations and selected public model/class members after successful typechecking, and <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> emits contract-backed model source or bundle JSON from project, bundle, or artifact metadata (#205).</li>
+<li><strong>Tooling/Editor</strong>: LSP hover and completion details now surface RFC 032 value-enum metadata. Public value-enum hovers use Incan backing spellings (<code>str</code> / <code>int</code>), public enum variant hovers show raw values, and local enum/variant completions include backing type and raw-value details (#166, RFC 032).</li>
 <li><strong>Compiler/Tooling</strong>: CLI compilation, LSP dependency collection, and the test runner now share the frontend's canonical source-module resolver for local module paths, logical module identity, stdlib source classification, and source-root fallback behavior (#285).</li>
 <li><strong>Compiler/Tooling</strong>: RFC 053’s vertical-spacing contract is now reflected in <code>incan fmt</code>: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations keep two blank lines around them, adjacent constants/statics stay grouped unless they border one of those declarations, trait abstract methods stay tight until a following body-bearing member, docstring indentation is normalized while actual blank-line runs collapse to one blank line, single readability gaps between statement groups survive nested suites, short single-statement <code>match</code> arms stay inline, blank lines after suite headers and match-arm arrows are normalized, trailing EOF blank lines are removed, two consecutive blank lines are allowed only at root level, and stand-alone comments attach as leading/trailing bundles even when the formatter wraps the target statement (#336, RFC 053).</li>
 <li><strong>Compiler/Tooling</strong>: <code>incan fmt</code> now wraps overflowing call and constructor argument lists, plus function and method signatures, across multiple lines with trailing commas controlled by the existing formatter setting (#336, #248).</li>
@@ -4790,7 +4791,7 @@ the raw representation for value enums.</p>
 <ul>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
 <li><strong>Dependency policy</strong>: The rust-analyzer proc-macro API dependency is patched locally to request <code>postcard</code> without default features, removing the unmaintained <code>atomic-polyfill</code> crate from the workspace dependency graph and letting <code>cargo deny check</code> run without the <code>RUSTSEC-2023-0089</code> advisory ignore (#260).</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.22</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.23</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4802,12 +4803,12 @@ the raw representation for value enums.</p>
 <li>Hatch-like tooling and project lifecycle CLI: <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li>Testing language primitives: <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a></li>
-<li>Trait-based operator overloading: <a href="/dev/RFCs/028_trait_based_operator_overloading">RFC 028</a></li>
+<li>Trait-based operator overloading: <a href="/dev/RFCs/closed/implemented/028_trait_based_operator_overloading">RFC 028</a></li>
 <li>Value enums: <a href="/dev/RFCs/032_value_enums">RFC 032</a></li>
 <li>Variadic positional arguments and keyword capture: <a href="/dev/RFCs/closed/implemented/038_variadic_positional_args_and_keyword_capture">RFC 038</a></li>
 <li>Checked contract metadata and interrogation tooling: <a href="/dev/RFCs/closed/implemented/048_contract_backed_models_emit_and_tooling">RFC 048</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
-<li>Enum methods and enum trait adoption: <a href="/dev/RFCs/050_enum_methods_and_trait_adoption">RFC 050</a></li>
+<li>Enum methods and enum trait adoption: <a href="/dev/RFCs/closed/implemented/050_enum_methods_and_trait_adoption">RFC 050</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
 </ul>
