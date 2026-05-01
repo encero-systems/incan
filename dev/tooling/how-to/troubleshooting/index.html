@@ -4651,6 +4651,10 @@ incan<span class="w"> </span>tools<span class="w"> </span>doctor
 <h2 id="cargo-needs-internet-access-for-dependencies">Cargo needs internet access for dependencies<a class="headerlink" href="#cargo-needs-internet-access-for-dependencies" title="Permanent link">&para;</a></h2>
 <p>Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured
 proxy/mirror).</p>
+<p>For restricted or offline environments, run the supported preflight before the build:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
+</code></pre></div>
+<p>The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed. Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail.</p>
 <h2 id="macos-toolchainlinker-issues">macOS: toolchain/linker issues<a class="headerlink" href="#macos-toolchainlinker-issues" title="Permanent link">&para;</a></h2>
 <p>If you see errors about a missing C toolchain or linker, install Xcode Command Line Tools:</p>
 <div class="language-bash highlight"><pre><span></span><code>xcode-select<span class="w"> </span>--install

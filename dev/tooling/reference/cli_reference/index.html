@@ -5218,7 +5218,7 @@ inputs. Commit it to version control for reproducible builds.</p>
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan tools doctor [OPTIONS]
 </code></pre></div>
-<p>Inspects local CLI/LSP/editor pathing. Use this when the terminal and editor appear to be using different <code>incan</code> or <code>incan-lsp</code> binaries, or when diagnostics look stale after rebuilding.</p>
+<p>Inspects local CLI/LSP/editor pathing and offline-readiness signals. Use this when the terminal and editor appear to be using different <code>incan</code> or <code>incan-lsp</code> binaries, when diagnostics look stale after rebuilding, or before a restricted/offline build where Cargo may be unable to fetch missing dependency inputs.</p>
 <p>Options:</p>
 <ul>
 <li><code>--format text|json</code>: Output format (default: <code>text</code>).</li>
@@ -5229,6 +5229,13 @@ inputs. Commit it to version control for reproducible builds.</p>
 <li><code>incan</code> and <code>incan-lsp</code> resolution from <code>PATH</code></li>
 <li><code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> existence, executable status, and symlink targets</li>
 <li>editor setup guidance for <code>incan.lsp.path</code>, <code>incan.compiler.path</code>, and reload behavior</li>
+</ul>
+<p>Offline-readiness:</p>
+<ul>
+<li>The doctor report is the supported preflight path for restricted or offline environments.</li>
+<li>The offline-readiness section is advisory. It checks local signals that affect whether Cargo can satisfy <code>--frozen</code> policy without fetching, but it does not guarantee a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed.</li>
+<li>Offline/locked policy constrains dependency resolution and fetching. Projects may still depend on Rust crates; those crates must already be available through Cargo's local inputs for an offline build to proceed.</li>
+<li>Use <code>--format json</code> when an editor, CI preflight, or issue template needs the same information in a machine-readable form.</li>
 </ul>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor

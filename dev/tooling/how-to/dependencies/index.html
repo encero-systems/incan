@@ -4949,6 +4949,10 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 <span class="c1"># Same as --locked, plus Cargo runs in offline/frozen mode</span>
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
 </code></pre></div>
+<p>Before relying on <code>--frozen</code> in a restricted or offline environment, run:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
+</code></pre></div>
+<p><code>incan tools doctor</code> is the supported preflight path for local offline-readiness diagnostics. Its report is advisory, not a guarantee: <code>--frozen</code> still asks Cargo to use offline/locked policy, so any crate source that is missing from Cargo's local inputs can still make the build fail.</p>
 <p>If the lock file is missing or stale, the command fails with a clear message:</p>
 <div class="language-text highlight"><pre><span></span><code>error: incan.lock is out of date; run `incan lock`
 </code></pre></div>
