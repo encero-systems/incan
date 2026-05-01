@@ -183,7 +183,7 @@ body::after {
   max-width: 1500px;
 }
 
-/* Header: sticky Material bar with the generated topic replaced by DOCS. */
+/* Header: sticky Material bar with the generated topic text replaced by DOCS. */
 .md-header {
   position: sticky;
   top: 0;
@@ -246,7 +246,8 @@ body::after {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  min-width: 2.85rem;
+  gap: 0.5rem;
+  min-width: 0;
   margin-left: -0.62rem;
   margin-right: 0.3rem;
   font-family: var(--inc-font-body);
@@ -255,15 +256,47 @@ body::after {
   text-transform: uppercase;
 }
 
+.md-header__ellipsis {
+  display: contents;
+}
+
 .md-header__topic {
+  display: contents;
+}
+
+.md-header__topic > .md-ellipsis {
   display: none;
 }
 
-.md-header__title::after {
+.md-header__title::before {
   content: "DOCS";
+  flex: 0 0 auto;
   color: #ffcf72;
   font-size: 0.92rem;
   text-shadow: 0 0 12px rgba(255, 177, 72, 0.32), 0 0 18px rgba(72, 240, 239, 0.1), 0 0 18px rgba(255, 92, 105, 0.08);
+}
+
+.md-version,
+[data-md-component="version"] {
+  flex: 0 0 auto;
+  min-width: max-content;
+  color: rgba(255, 240, 183, 0.82);
+  font-family: var(--inc-font-body);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.md-version__current,
+.md-version__link {
+  color: inherit;
+}
+
+.md-version:hover,
+.md-version:focus-within {
+  color: var(--inc-gold-1);
+  text-shadow: 0 0 12px rgba(255, 193, 90, 0.24);
 }
 
 .md-search {
