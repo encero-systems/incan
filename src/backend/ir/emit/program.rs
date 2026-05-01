@@ -634,8 +634,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_pattern(pattern);
                 }
             }
-            Pattern::Enum { name, fields, .. } => {
+            Pattern::Enum { name, variant, fields } => {
                 self.mark_reachable_item(name);
+                if let Some((binding, _)) = variant.split_once("::") {
+                    self.mark_reachable_item(binding);
+                }
                 for field in fields {
                     self.scan_pattern(field);
                 }
@@ -1313,6 +1316,15 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Collect anonymous ordinary union shapes referenced anywhere in a program.
+    pub(crate) fn collect_union_types_from_program(program: &IrProgram) -> HashMap<String, IrType> {
+        let mut union_types = HashMap::new();
+        for decl in &program.declarations {
+            Self::collect_union_types_from_decl(decl, &mut union_types);
+        }
+        union_types
+    }
+
     /// Emit the generated Rust enum for one normalized anonymous union shape.
     fn emit_generated_union_type(&self, ty: &IrType) -> Option<TokenStream> {
         let name = ty.union_type_name()?;
@@ -1472,15 +1484,17 @@ impl<'a> IrEmitter<'a> {
             items.push(quote! { use crate::#std_namespace::traits::error::Error; });
         }
 
-        let mut union_types = HashMap::new();
-        for decl in &emitted_declarations {
-            Self::collect_union_types_from_decl(decl, &mut union_types);
-        }
-        let mut union_type_items: Vec<_> = union_types.into_iter().collect();
-        union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
-        for (_, union_ty) in union_type_items {
-            if let Some(item) = self.emit_generated_union_type(&union_ty) {
-                items.push(item);
+        if self.emit_generated_union_definitions {
+            let mut union_types = self.generated_union_types.clone();
+            for decl in &emitted_declarations {
+                Self::collect_union_types_from_decl(decl, &mut union_types);
+            }
+            let mut union_type_items: Vec<_> = union_types.into_iter().collect();
+            union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (_, union_ty) in union_type_items {
+                if let Some(item) = self.emit_generated_union_type(&union_ty) {
+                    items.push(item);
+                }
             }
         }
 

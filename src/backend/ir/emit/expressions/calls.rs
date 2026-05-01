@@ -96,7 +96,12 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a concrete payload argument for an `Option[T]` parameter as `Some(...)`.
-    fn emit_option_payload_arg(&self, arg: &TypedExpr, inner_ty: &IrType) -> Result<Option<TokenStream>, EmitError> {
+    fn emit_option_payload_arg(
+        &self,
+        arg: &TypedExpr,
+        inner_ty: &IrType,
+        union_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
         if let Some(variant_index) = inner_ty.union_variant_index_for_member(&arg.ty) {
             let Some(members) = inner_ty.union_members() else {
                 return Ok(None);
@@ -104,11 +109,8 @@ impl<'a> IrEmitter<'a> {
             let Some(member_ty) = members.get(variant_index) else {
                 return Ok(None);
             };
-            let Some(union_name) = inner_ty.union_type_name() else {
-                return Ok(None);
-            };
-            let union_ident = quote::format_ident!("{}", union_name);
             let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+            let union_path = self.emit_union_type_path_with_qualifier(inner_ty, union_qualifier);
             let emitted = self.emit_expr_for_use(
                 arg,
                 ValueUseSite::IncanCallArg {
@@ -117,7 +119,7 @@ impl<'a> IrEmitter<'a> {
                     in_return: false,
                 },
             )?;
-            return Ok(Some(quote! { Some(#union_ident :: #variant_ident(#emitted)) }));
+            return Ok(Some(quote! { Some(#union_path :: #variant_ident(#emitted)) }));
         }
 
         if Self::option_payload_type_matches(&arg.ty, inner_ty) {
@@ -136,7 +138,12 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a concrete payload argument for a `Union[...]` parameter as the generated enum variant.
-    fn emit_union_payload_arg(&self, arg: &TypedExpr, target_ty: &IrType) -> Result<Option<TokenStream>, EmitError> {
+    fn emit_union_payload_arg(
+        &self,
+        arg: &TypedExpr,
+        target_ty: &IrType,
+        union_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
         if arg.ty.is_union() {
             return Ok(None);
         }
@@ -149,12 +156,8 @@ impl<'a> IrEmitter<'a> {
         let Some(member_ty) = members.get(variant_index) else {
             return Ok(None);
         };
-        let Some(union_name) = target_ty.union_type_name() else {
-            return Ok(None);
-        };
-
-        let union_ident = quote::format_ident!("{}", union_name);
         let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+        let union_path = self.emit_union_type_path_with_qualifier(target_ty, union_qualifier);
         let emitted = self.emit_expr_for_use(
             arg,
             ValueUseSite::IncanCallArg {
@@ -163,7 +166,7 @@ impl<'a> IrEmitter<'a> {
                 in_return: false,
             },
         )?;
-        Ok(Some(quote! { #union_ident :: #variant_ident(#emitted) }))
+        Ok(Some(quote! { #union_path :: #variant_ident(#emitted) }))
     }
 
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
@@ -189,7 +192,21 @@ impl<'a> IrEmitter<'a> {
         arg: &TypedExpr,
         target_ty: &IrType,
     ) -> Result<Option<TokenStream>, EmitError> {
-        if let Some(wrapped) = self.emit_union_payload_arg(arg, target_ty)? {
+        self.emit_inference_seeded_literal_arg_with_union_qualifier(arg, target_ty, None)
+    }
+
+    /// Emit inference-seeded constructor or union payload arguments with an optional explicit union path qualifier.
+    ///
+    /// Source modules normally reference generated ordinary union wrappers through the current module or crate root.
+    /// Imported `pub::library` calls may need to wrap member literals with a library-qualified union wrapper instead,
+    /// so this helper keeps the target type logic shared while letting callers control only the wrapper path.
+    fn emit_inference_seeded_literal_arg_with_union_qualifier(
+        &self,
+        arg: &TypedExpr,
+        target_ty: &IrType,
+        union_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if let Some(wrapped) = self.emit_union_payload_arg(arg, target_ty, union_qualifier)? {
             return Ok(Some(wrapped));
         }
 
@@ -205,7 +222,7 @@ impl<'a> IrEmitter<'a> {
                 Ok(Some(quote! { None::<#inner_ty> }))
             }
 
-            (_, IrType::Option(inner)) => self.emit_option_payload_arg(arg, inner),
+            (_, IrType::Option(inner)) => self.emit_option_payload_arg(arg, inner, union_qualifier),
 
             // ---- Context: seed `Ok`/`Err` constructors spelled as calls ----
             (IrExprKind::Call { func, args, .. }, IrType::Result(ok_ty, err_ty)) => {
@@ -412,6 +429,13 @@ impl<'a> IrEmitter<'a> {
         } else {
             self.emit_expr(func)?
         };
+        let pub_library_union_qualifier: Option<Vec<String>> = canonical_path.and_then(|path| {
+            if path.first().map(String::as_str) == Some("pub") {
+                path.get(1).map(|library| vec![library.clone()])
+            } else {
+                None
+            }
+        });
         let turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -490,12 +514,20 @@ impl<'a> IrEmitter<'a> {
                 };
                 let emitted = (|| {
                     let emitted = if let Some(target_ty) = target_ty {
-                        if let Some(seed) = self.emit_inference_seeded_literal_arg(a, target_ty)? {
+                        if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
+                            a,
+                            target_ty,
+                            pub_library_union_qualifier.as_deref(),
+                        )? {
                             seed
                         } else if Self::is_unresolved_call_seed_type(target_ty) {
                             // Signature exists but leaves generics unresolved: fallback to the argument's own inferred
                             // IR type to seed constructor literals.
-                            if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
+                            if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
+                                a,
+                                &a.ty,
+                                pub_library_union_qualifier.as_deref(),
+                            )? {
                                 seed
                             } else {
                                 self.emit_expr(a)?
@@ -506,7 +538,11 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         // No parameter type available (e.g. heavily generic paths): use the argument's own type as a
                         // best-effort inference seed source.
-                        if let Some(seed) = self.emit_inference_seeded_literal_arg(a, &a.ty)? {
+                        if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
+                            a,
+                            &a.ty,
+                            pub_library_union_qualifier.as_deref(),
+                        )? {
                             seed
                         } else {
                             self.emit_expr(a)?
