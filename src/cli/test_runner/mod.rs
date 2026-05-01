@@ -7,6 +7,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::cli::commands::common::CargoPolicy;
 use crate::cli::{CliError, CliResult, ExitCode};
 
 mod discovery;
@@ -677,8 +678,7 @@ struct ActiveUnit {
 fn run_execution_unit(
     unit: &ExecutionUnit,
     prep_cache: &mut HashMap<String, Arc<execution::PreparedTestFile>>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -689,8 +689,7 @@ fn run_execution_unit(
         &unit.tests,
         &unit.conftest_files_by_file,
         prep_cache,
-        locked,
-        frozen,
+        cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -907,8 +906,7 @@ fn batch_has_failure(results: &[(TestInfo, TestResult)]) -> bool {
 fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
     jobs: usize,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -922,8 +920,7 @@ fn run_scheduled_execution_units(
             let results = run_execution_unit(
                 unit,
                 &mut prep_cache,
-                locked,
-                frozen,
+                &cargo_policy,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -962,6 +959,7 @@ fn run_scheduled_execution_units(
             };
             let sender = sender.clone();
             let cargo_features = cargo_features.to_vec();
+            let cargo_policy = cargo_policy.clone();
             active.push(ActiveUnit {
                 index: unit.index,
                 file_paths: unit.file_paths.clone(),
@@ -975,8 +973,7 @@ fn run_scheduled_execution_units(
                 let results = run_execution_unit(
                     &unit,
                     &mut prep_cache,
-                    locked,
-                    frozen,
+                    &cargo_policy,
                     &cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
@@ -1028,8 +1025,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         test_features,
         timeout,
         no_capture,
-        locked,
-        frozen,
+        cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1252,8 +1248,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut raw_batch_results = run_scheduled_execution_units(
         units,
         jobs,
-        locked,
-        frozen,
+        cargo_policy,
         &cargo_features,
         cargo_no_default_features,
         cargo_all_features,
