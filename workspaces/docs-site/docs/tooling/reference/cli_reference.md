@@ -396,7 +396,7 @@ Usage:
 incan tools doctor [OPTIONS]
 ```
 
-Inspects local CLI/LSP/editor pathing. Use this when the terminal and editor appear to be using different `incan` or `incan-lsp` binaries, or when diagnostics look stale after rebuilding.
+Inspects local CLI/LSP/editor pathing and offline-readiness signals. Use this when the terminal and editor appear to be using different `incan` or `incan-lsp` binaries, when diagnostics look stale after rebuilding, or before a restricted/offline build where Cargo may be unable to fetch missing dependency inputs.
 
 Options:
 
@@ -408,6 +408,13 @@ The report includes:
 - `incan` and `incan-lsp` resolution from `PATH`
 - `~/.cargo/bin/incan` and `~/.cargo/bin/incan-lsp` existence, executable status, and symlink targets
 - editor setup guidance for `incan.lsp.path`, `incan.compiler.path`, and reload behavior
+
+Offline-readiness:
+
+- The doctor report is the supported preflight path for restricted or offline environments.
+- The offline-readiness section is advisory. It checks local signals that affect whether Cargo can satisfy `--frozen` policy without fetching, but it does not guarantee a later `incan build --frozen` or `incan test --frozen` will succeed.
+- Offline/locked policy constrains dependency resolution and fetching. Projects may still depend on Rust crates; those crates must already be available through Cargo's local inputs for an offline build to proceed.
+- Use `--format json` when an editor, CI preflight, or issue template needs the same information in a machine-readable form.
 
 Examples:
 

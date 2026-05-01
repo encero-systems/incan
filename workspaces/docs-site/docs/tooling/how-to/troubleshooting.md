@@ -77,6 +77,14 @@ The first `make release` (or first `incan build`) will compile Rust dependencies
 Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured
 proxy/mirror).
 
+For restricted or offline environments, run the supported preflight before the build:
+
+```bash
+incan tools doctor
+```
+
+The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later `incan build --frozen` or `incan test --frozen` will succeed. Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail.
+
 ## macOS: toolchain/linker issues
 
 If you see errors about a missing C toolchain or linker, install Xcode Command Line Tools:

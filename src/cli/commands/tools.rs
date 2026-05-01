@@ -1,8 +1,10 @@
 //! Local toolchain inspection commands.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use clap::ValueEnum;
 use serde_json::json;
@@ -334,19 +336,22 @@ struct DoctorReport {
     path_incan_lsp: ToolPath,
     cargo_bin_incan: CargoBinEntry,
     cargo_bin_incan_lsp: CargoBinEntry,
+    offline_readiness: OfflineReadiness,
 }
 
 impl DoctorReport {
     /// Collect local process, PATH, and cargo-bin state for the doctor report.
     fn collect() -> Self {
+        let cwd = env::current_dir().ok();
         Self {
             version: crate::version::INCAN_VERSION,
             current_exe: env::current_exe().ok(),
-            cwd: env::current_dir().ok(),
+            cwd: cwd.clone(),
             path_incan: ToolPath::resolve("incan"),
             path_incan_lsp: ToolPath::resolve("incan-lsp"),
             cargo_bin_incan: CargoBinEntry::from_home("incan"),
             cargo_bin_incan_lsp: CargoBinEntry::from_home("incan-lsp"),
+            offline_readiness: OfflineReadiness::collect(cwd.as_deref()),
         }
     }
 
@@ -369,6 +374,8 @@ impl DoctorReport {
             "  if either setting is explicit, use a literal executable path; shell syntax like $HOME or ~ is not expanded"
         );
         println!("  after rebuilding or changing paths, reload VS Code/Cursor so it starts a fresh incan-lsp process");
+        println!();
+        self.offline_readiness.print_text();
     }
 
     /// Print the doctor report as pretty JSON for editor integrations and issue templates.
@@ -390,7 +397,8 @@ impl DoctorReport {
                 "recommended_compiler_path": "",
                 "literal_path_settings": true,
                 "reload_after_rebuild": true
-            }
+            },
+            "offline_readiness": self.offline_readiness.as_json()
         });
         let output = serde_json::to_string_pretty(&value)
             .map_err(|error| CliError::failure(format!("failed to serialize doctor report: {error}")))?;
@@ -477,6 +485,514 @@ impl CargoBinEntry {
             "executable": self.executable,
         })
     }
+}
+
+#[derive(Debug)]
+struct OfflineReadiness {
+    advisory_only: bool,
+    status: OfflineReadinessStatus,
+    cargo: CargoCommandInfo,
+    cargo_home: CargoHomeInfo,
+    registry_cache: CachePathHint,
+    registry_index: CachePathHint,
+    registry_src: CachePathHint,
+    git_checkouts: CachePathHint,
+    git_db: CachePathHint,
+    cargo_config: CargoConfigHints,
+    next_steps: Vec<String>,
+}
+
+impl OfflineReadiness {
+    /// Collect advisory local signals without network access, resolution, or builds.
+    fn collect(cwd: Option<&Path>) -> Self {
+        let cargo = CargoCommandInfo::collect();
+        let cargo_home = CargoHomeInfo::collect();
+        let registry_cache =
+            CachePathHint::from_optional_path(cargo_home.path.as_deref().map(|path| path.join("registry/cache")));
+        let registry_index =
+            CachePathHint::from_optional_path(cargo_home.path.as_deref().map(|path| path.join("registry/index")));
+        let registry_src =
+            CachePathHint::from_optional_path(cargo_home.path.as_deref().map(|path| path.join("registry/src")));
+        let git_checkouts =
+            CachePathHint::from_optional_path(cargo_home.path.as_deref().map(|path| path.join("git/checkouts")));
+        let git_db = CachePathHint::from_optional_path(cargo_home.path.as_deref().map(|path| path.join("git/db")));
+        let cargo_config = CargoConfigHints::collect(cwd, cargo_home.path.as_deref());
+        let status = OfflineReadinessStatus::from_signals(
+            &cargo,
+            &cargo_home,
+            [&registry_cache, &registry_index, &registry_src, &git_checkouts, &git_db],
+            &cargo_config,
+        );
+        let next_steps = build_offline_next_steps(
+            &cargo,
+            &cargo_home,
+            [&registry_cache, &registry_index, &registry_src, &git_checkouts, &git_db],
+            &cargo_config,
+        );
+
+        Self {
+            advisory_only: true,
+            status,
+            cargo,
+            cargo_home,
+            registry_cache,
+            registry_index,
+            registry_src,
+            git_checkouts,
+            git_db,
+            cargo_config,
+            next_steps,
+        }
+    }
+
+    /// Print the advisory offline-readiness section.
+    fn print_text(&self) {
+        println!("offline readiness:");
+        println!("  status: {}", self.status.as_str());
+        println!("  advisory_only: {}", self.advisory_only);
+        println!("  note: advisory local signals only; Cargo and RFC 020 policy flags remain authoritative");
+        println!("  cargo:");
+        println!("    command: {}", self.cargo.command);
+        println!("    available: {}", self.cargo.available);
+        println!("    version: {}", self.cargo.version.as_deref().unwrap_or("(unknown)"));
+        println!("    error: {}", self.cargo.error.as_deref().unwrap_or("(none)"));
+        println!("  cargo_home:");
+        println!("    source: {}", self.cargo_home.source.as_str());
+        println!("    path: {}", display_option_path(&self.cargo_home.path));
+        println!("    exists: {}", self.cargo_home.exists);
+        self.registry_cache.print_text("registry_cache");
+        self.registry_index.print_text("registry_index");
+        self.registry_src.print_text("registry_src");
+        self.git_checkouts.print_text("git_checkouts");
+        self.git_db.print_text("git_db");
+        println!("  cargo_config:");
+        println!("    files_checked: {}", self.cargo_config.files.len());
+        println!(
+            "    source_replacement_detected: {}",
+            self.cargo_config.source_replacement_detected
+        );
+        println!(
+            "    vendor_source_detected: {}",
+            self.cargo_config.vendor_source_detected
+        );
+        println!("    net_offline_detected: {}", self.cargo_config.net_offline_detected);
+        for file in &self.cargo_config.files {
+            println!("    file: {}", file.path.display());
+            println!("      readable: {}", file.readable);
+            println!("      source_replacement: {}", file.source_replacement);
+            println!("      vendor_source: {}", file.vendor_source);
+            println!("      net_offline: {}", file.net_offline);
+            println!("      parse_error: {}", file.parse_error.as_deref().unwrap_or("(none)"));
+        }
+        println!("  next_steps:");
+        for step in &self.next_steps {
+            println!("    - {step}");
+        }
+    }
+
+    /// Convert advisory offline-readiness into stable JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "advisory_only": self.advisory_only,
+            "status": self.status.as_str(),
+            "source_of_truth": "Cargo and RFC 020 policy flags",
+            "cargo": self.cargo.as_json(),
+            "cargo_home": self.cargo_home.as_json(),
+            "caches": {
+                "registry_cache": self.registry_cache.as_json(),
+                "registry_index": self.registry_index.as_json(),
+                "registry_src": self.registry_src.as_json(),
+                "git_checkouts": self.git_checkouts.as_json(),
+                "git_db": self.git_db.as_json(),
+            },
+            "cargo_config": self.cargo_config.as_json(),
+            "next_steps": self.next_steps,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OfflineReadinessStatus {
+    Present,
+    Missing,
+    Unknown,
+}
+
+impl OfflineReadinessStatus {
+    /// Classify whether local offline-readiness signals are present, missing, or unknown.
+    fn from_signals(
+        cargo: &CargoCommandInfo,
+        cargo_home: &CargoHomeInfo,
+        caches: [&CachePathHint; 5],
+        cargo_config: &CargoConfigHints,
+    ) -> Self {
+        if !cargo.available || cargo_home.path.is_none() {
+            return Self::Missing;
+        }
+        if caches.iter().any(|cache| cache.exists && cache.has_entries)
+            || cargo_config.source_replacement_detected
+            || cargo_config.vendor_source_detected
+        {
+            return Self::Present;
+        }
+        if cargo_home.exists {
+            Self::Unknown
+        } else {
+            Self::Missing
+        }
+    }
+
+    /// Return the stable JSON/text spelling for this advisory status.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Missing => "missing",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CargoCommandInfo {
+    command: &'static str,
+    available: bool,
+    version: Option<String>,
+    error: Option<String>,
+}
+
+impl CargoCommandInfo {
+    /// Run only `cargo --version`; this does not resolve packages or access the network.
+    fn collect() -> Self {
+        match Command::new("cargo").arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8(output.stdout)
+                    .ok()
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty());
+                Self {
+                    command: "cargo",
+                    available: true,
+                    version,
+                    error: None,
+                }
+            }
+            Ok(output) => {
+                let error = String::from_utf8(output.stderr)
+                    .ok()
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| format!("cargo --version exited with {}", output.status));
+                Self {
+                    command: "cargo",
+                    available: false,
+                    version: None,
+                    error: Some(error),
+                }
+            }
+            Err(error) => Self {
+                command: "cargo",
+                available: false,
+                version: None,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+
+    /// Convert Cargo command availability into JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "command": self.command,
+            "available": self.available,
+            "version": self.version,
+            "error": self.error,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CargoHomeInfo {
+    source: CargoHomeSource,
+    path: Option<PathBuf>,
+    exists: bool,
+}
+
+impl CargoHomeInfo {
+    /// Resolve the effective Cargo home from `CARGO_HOME` or the default home directory.
+    fn collect() -> Self {
+        let (source, path) = if let Some(path) = env::var_os("CARGO_HOME").map(PathBuf::from) {
+            (CargoHomeSource::CargoHomeEnv, Some(path))
+        } else if let Some(home) = home_dir() {
+            (CargoHomeSource::HomeDefault, Some(home.join(".cargo")))
+        } else {
+            (CargoHomeSource::Unknown, None)
+        };
+        let exists = path.as_deref().is_some_and(Path::exists);
+        Self { source, path, exists }
+    }
+
+    /// Convert the effective Cargo home into JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "source": self.source.as_str(),
+            "path": self.path.as_deref().map(path_to_string),
+            "exists": self.exists,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CargoHomeSource {
+    CargoHomeEnv,
+    HomeDefault,
+    Unknown,
+}
+
+impl CargoHomeSource {
+    /// Return the stable JSON/text spelling for the Cargo home source.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CargoHomeEnv => "CARGO_HOME",
+            Self::HomeDefault => "HOME/.cargo",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CachePathHint {
+    path: Option<PathBuf>,
+    exists: bool,
+    has_entries: bool,
+}
+
+impl CachePathHint {
+    /// Inspect whether one optional cache path exists and contains entries.
+    fn from_optional_path(path: Option<PathBuf>) -> Self {
+        let exists = path.as_deref().is_some_and(Path::exists);
+        let has_entries = path.as_deref().is_some_and(path_has_entries);
+        Self {
+            path,
+            exists,
+            has_entries,
+        }
+    }
+
+    /// Print one cache path hint in the doctor text report.
+    fn print_text(&self, label: &str) {
+        println!("  {label}:");
+        println!("    path: {}", display_option_path(&self.path));
+        println!("    exists: {}", self.exists);
+        println!("    has_entries: {}", self.has_entries);
+    }
+
+    /// Convert one cache path hint into JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "path": self.path.as_deref().map(path_to_string),
+            "exists": self.exists,
+            "has_entries": self.has_entries,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CargoConfigHints {
+    files: Vec<CargoConfigFileHint>,
+    source_replacement_detected: bool,
+    vendor_source_detected: bool,
+    net_offline_detected: bool,
+}
+
+impl CargoConfigHints {
+    /// Collect local Cargo config files that may affect offline or vendored builds.
+    fn collect(cwd: Option<&Path>, cargo_home: Option<&Path>) -> Self {
+        let files = cargo_config_candidates(cwd, cargo_home)
+            .into_iter()
+            .filter(|path| path.is_file())
+            .map(CargoConfigFileHint::from_path)
+            .collect::<Vec<_>>();
+        let source_replacement_detected = files.iter().any(|file| file.source_replacement);
+        let vendor_source_detected = files.iter().any(|file| file.vendor_source);
+        let net_offline_detected = files.iter().any(|file| file.net_offline);
+        Self {
+            files,
+            source_replacement_detected,
+            vendor_source_detected,
+            net_offline_detected,
+        }
+    }
+
+    /// Convert Cargo config hints into JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "files": self.files.iter().map(CargoConfigFileHint::as_json).collect::<Vec<_>>(),
+            "source_replacement_detected": self.source_replacement_detected,
+            "vendor_source_detected": self.vendor_source_detected,
+            "net_offline_detected": self.net_offline_detected,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CargoConfigFileHint {
+    path: PathBuf,
+    readable: bool,
+    source_replacement: bool,
+    vendor_source: bool,
+    net_offline: bool,
+    parse_error: Option<String>,
+}
+
+impl CargoConfigFileHint {
+    /// Parse one Cargo config file and extract offline/source replacement hints.
+    fn from_path(path: PathBuf) -> Self {
+        let Ok(content) = fs::read_to_string(&path) else {
+            return Self {
+                path,
+                readable: false,
+                source_replacement: false,
+                vendor_source: false,
+                net_offline: false,
+                parse_error: Some("failed to read Cargo config".to_string()),
+            };
+        };
+        let parsed = toml::from_str::<toml::Value>(&content);
+        match parsed {
+            Ok(value) => Self {
+                path,
+                readable: true,
+                source_replacement: cargo_config_has_source_replacement(&value),
+                vendor_source: cargo_config_has_vendor_source(&value),
+                net_offline: cargo_config_has_net_offline(&value),
+                parse_error: None,
+            },
+            Err(error) => Self {
+                path,
+                readable: true,
+                source_replacement: content.contains("replace-with"),
+                vendor_source: content.contains("directory") || content.contains("vendor"),
+                net_offline: content.contains("offline"),
+                parse_error: Some(error.to_string()),
+            },
+        }
+    }
+
+    /// Convert one Cargo config file hint into JSON.
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "path": path_to_string(&self.path),
+            "readable": self.readable,
+            "source_replacement": self.source_replacement,
+            "vendor_source": self.vendor_source,
+            "net_offline": self.net_offline,
+            "parse_error": self.parse_error,
+        })
+    }
+}
+
+/// Build the ordered list of Cargo config paths that can influence the current directory.
+fn cargo_config_candidates(cwd: Option<&Path>, cargo_home: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(cwd) = cwd {
+        for ancestor in cwd.ancestors() {
+            candidates.push(ancestor.join(".cargo").join("config.toml"));
+            candidates.push(ancestor.join(".cargo").join("config"));
+        }
+    }
+    if let Some(cargo_home) = cargo_home {
+        candidates.push(cargo_home.join("config.toml"));
+        candidates.push(cargo_home.join("config"));
+    }
+
+    let mut seen = BTreeSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+/// Return whether a parsed Cargo config defines any source replacement.
+fn cargo_config_has_source_replacement(value: &toml::Value) -> bool {
+    value
+        .get("source")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|sources| {
+            sources.values().any(|source| {
+                source
+                    .as_table()
+                    .is_some_and(|table| table.get("replace-with").and_then(toml::Value::as_str).is_some())
+            })
+        })
+}
+
+/// Return whether a parsed Cargo config points at a vendored or local registry source.
+fn cargo_config_has_vendor_source(value: &toml::Value) -> bool {
+    value
+        .get("source")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|sources| {
+            sources.iter().any(|(name, source)| {
+                name.contains("vendor")
+                    || source.as_table().is_some_and(|table| {
+                        table.get("directory").and_then(toml::Value::as_str).is_some()
+                            || table
+                                .get("local-registry")
+                                .and_then(toml::Value::as_str)
+                                .is_some_and(|path| path.contains("vendor"))
+                    })
+            })
+        })
+}
+
+/// Return whether a parsed Cargo config enables Cargo's offline mode by default.
+fn cargo_config_has_net_offline(value: &toml::Value) -> bool {
+    value
+        .get("net")
+        .and_then(toml::Value::as_table)
+        .and_then(|net| net.get("offline"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Build concrete next steps for missing or incomplete offline-readiness signals.
+fn build_offline_next_steps(
+    cargo: &CargoCommandInfo,
+    cargo_home: &CargoHomeInfo,
+    caches: [&CachePathHint; 5],
+    cargo_config: &CargoConfigHints,
+) -> Vec<String> {
+    let mut steps = Vec::new();
+    if !cargo.available {
+        steps.push("Install Cargo or put the cargo executable on PATH.".to_string());
+    }
+    if cargo_home.path.is_none() {
+        steps.push("Set CARGO_HOME or HOME so Cargo cache locations can be inspected.".to_string());
+    } else if !cargo_home.exists {
+        steps.push("Run an online Cargo command once, or restore a prepared CARGO_HOME cache.".to_string());
+    }
+    if !caches.iter().any(|cache| cache.exists && cache.has_entries) {
+        steps.push("Populate Cargo registry/git caches before relying on offline builds.".to_string());
+    }
+    if !cargo_config.source_replacement_detected && !cargo_config.vendor_source_detected {
+        steps.push(
+            "For vendor-based offline builds, add Cargo source replacement config such as a vendored source directory."
+                .to_string(),
+        );
+    }
+    if !cargo_config.net_offline_detected {
+        steps.push("Use Incan RFC 020 policy flags, or Cargo offline/frozen policy, for enforcement; this report is advisory only.".to_string());
+    }
+    if steps.is_empty() {
+        steps.push("Local offline-readiness signals are present, but run the intended Incan command with the desired RFC 020 policy flags for authoritative validation.".to_string());
+    }
+    steps
+}
+
+/// Return whether a directory can be read and contains at least one entry.
+fn path_has_entries(path: &Path) -> bool {
+    fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
 }
 
 /// Resolve the current user's home directory from platform-standard environment variables.
@@ -581,6 +1097,34 @@ pub def label() -> str:
         assert_eq!(package.modules.len(), 1);
         assert_eq!(package.modules[0].module_path, vec!["lib".to_string()]);
         assert_eq!(package.modules[0].declarations.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_config_hints_detect_vendor_source_replacement() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let cargo_dir = tmp.path().join(".cargo");
+        fs::create_dir_all(&cargo_dir)?;
+        let config = cargo_dir.join("config.toml");
+        fs::write(
+            config,
+            r#"
+[net]
+offline = true
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+"#,
+        )?;
+
+        let hints = CargoConfigHints::collect(Some(tmp.path()), None);
+        assert!(hints.source_replacement_detected);
+        assert!(hints.vendor_source_detected);
+        assert!(hints.net_offline_detected);
+        assert_eq!(hints.files.len(), 1);
         Ok(())
     }
 }

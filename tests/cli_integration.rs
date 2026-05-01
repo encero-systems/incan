@@ -250,6 +250,14 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
         text.contains("editor setup"),
         "text report should include editor recovery guidance, got:\n{text}"
     );
+    assert!(
+        text.contains("offline readiness"),
+        "text report should include offline-readiness diagnostics, got:\n{text}"
+    );
+    assert!(
+        text.contains("advisory local signals only"),
+        "offline-readiness text should avoid guaranteeing offline success, got:\n{text}"
+    );
 
     let json_output = run_incan(tmp.path(), &["tools", "doctor", "--format", "json"])?;
     assert_success(&json_output, "incan tools doctor --format json");
@@ -289,6 +297,54 @@ fn tools_doctor_reports_text_and_json() -> Result<(), Box<dyn std::error::Error>
         json.pointer("/editor_setup/reload_after_rebuild")
             .and_then(serde_json::Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        json.pointer("/offline_readiness/advisory_only")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        json.pointer("/offline_readiness/source_of_truth")
+            .and_then(serde_json::Value::as_str),
+        Some("Cargo and RFC 020 policy flags")
+    );
+    assert!(
+        matches!(
+            json.pointer("/offline_readiness/status")
+                .and_then(serde_json::Value::as_str),
+            Some("present" | "missing" | "unknown")
+        ),
+        "doctor JSON should include stable offline-readiness status: {json}"
+    );
+    assert!(
+        json.pointer("/offline_readiness/cargo/available")
+            .and_then(serde_json::Value::as_bool)
+            .is_some(),
+        "doctor JSON should include cargo availability: {json}"
+    );
+    assert!(
+        json.pointer("/offline_readiness/cargo_home/source")
+            .and_then(serde_json::Value::as_str)
+            .is_some(),
+        "doctor JSON should include effective Cargo home source: {json}"
+    );
+    assert!(
+        json.pointer("/offline_readiness/caches/registry_cache/exists")
+            .and_then(serde_json::Value::as_bool)
+            .is_some(),
+        "doctor JSON should include registry cache hints: {json}"
+    );
+    assert!(
+        json.pointer("/offline_readiness/cargo_config/source_replacement_detected")
+            .and_then(serde_json::Value::as_bool)
+            .is_some(),
+        "doctor JSON should include Cargo config source replacement hints: {json}"
+    );
+    assert!(
+        json.pointer("/offline_readiness/next_steps")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|steps| !steps.is_empty()),
+        "doctor JSON should include concrete next steps: {json}"
     );
     Ok(())
 }

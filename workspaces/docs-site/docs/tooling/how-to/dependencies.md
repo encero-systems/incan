@@ -129,6 +129,14 @@ incan build src/main.incn --locked
 incan build src/main.incn --frozen
 ```
 
+Before relying on `--frozen` in a restricted or offline environment, run:
+
+```bash
+incan tools doctor
+```
+
+`incan tools doctor` is the supported preflight path for local offline-readiness diagnostics. Its report is advisory, not a guarantee: `--frozen` still asks Cargo to use offline/locked policy, so any crate source that is missing from Cargo's local inputs can still make the build fail.
+
 If the lock file is missing or stale, the command fails with a clear message:
 
 ```text
