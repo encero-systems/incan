@@ -1,6 +1,6 @@
 # RFC 020: offline / locked / reproducible builds (Cargo policy + generated project contract)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-01-21
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 013 (dependency + lockfile direction), RFC 015 (project lifecycle CLI), RFC 019 (test runner + CLI)
@@ -379,7 +379,7 @@ clearly enough that CI and restricted-environment users can reason about failure
 - Update the CLI reference and practical tooling docs for offline, locked, frozen, and Cargo args.
 - Add release notes and bump the active development version.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
