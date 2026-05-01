@@ -2212,6 +2212,17 @@ def describe_chain(value: int | str | bool) -> str:
             return "true"
         return "false"
 
+def describe_wide_chain(value: int | float | str | bool) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    elif isinstance(value, int):
+        return "int"
+    elif isinstance(value, float):
+        return "float"
+    elif isinstance(value, str):
+        return value.upper()
+    return "unknown"
+
 def describe_optional_narrow(value: int | str | None) -> str:
     if isinstance(value, int):
         return "number"
@@ -2233,6 +2244,8 @@ def main() -> None:
     println(describe_wide(True))
     println(describe_chain("chain"))
     println(describe_chain(False))
+    println(describe_wide_chain("wide-chain"))
+    println(describe_wide_chain(1.25))
     println(describe_optional_narrow("optional"))
     println(describe_optional_narrow(None))
 "#,
@@ -2252,8 +2265,21 @@ def main() -> None:
         assert_eq!(
             lines,
             vec![
-                "FALLBACK", "number", "FALLBACK", "PRESENT", "missing", "42", "missing", "WIDE", "true", "CHAIN",
-                "false", "OPTIONAL", "missing"
+                "FALLBACK",
+                "number",
+                "FALLBACK",
+                "PRESENT",
+                "missing",
+                "42",
+                "missing",
+                "WIDE",
+                "true",
+                "CHAIN",
+                "false",
+                "WIDE-CHAIN",
+                "float",
+                "OPTIONAL",
+                "missing"
             ],
             "unexpected union output:\n{stdout}"
         );

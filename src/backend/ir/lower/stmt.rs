@@ -194,8 +194,8 @@ impl AstLowering {
         }
     }
 
-    /// Return whether an `Option[T]` payload can satisfy an `isinstance(..., T)` target.
-    fn option_isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
+    /// Return whether a known concrete value can satisfy an `isinstance(..., T)` target.
+    fn isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
         member == target_ty
             || matches!(
                 (member, target_ty),
@@ -367,7 +367,7 @@ impl AstLowering {
             });
         }
 
-        if Self::option_isinstance_member_matches(inner_ty.as_ref(), &target_ty) {
+        if Self::isinstance_member_matches(inner_ty.as_ref(), &target_ty) {
             return Some(OptionIsInstanceTest {
                 value,
                 binding: binding.clone(),
@@ -445,6 +445,61 @@ impl AstLowering {
         )
     }
 
+    /// Resolve `isinstance(binding, T)` when the current match arm already proves `binding` has one concrete type.
+    fn known_member_isinstance_matches(
+        &self,
+        condition: &Spanned<ast::Expr>,
+        binding: &str,
+        member_ty: &IrType,
+    ) -> Option<bool> {
+        let ast::Expr::Call(callee, _, args) = &condition.node else {
+            return None;
+        };
+        let ast::Expr::Ident(call_name) = &callee.node else {
+            return None;
+        };
+        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+            return None;
+        }
+        let ast::CallArg::Positional(value) = &args[0] else {
+            return None;
+        };
+        let ast::Expr::Ident(value_name) = &value.node else {
+            return None;
+        };
+        if value_name != binding {
+            return None;
+        }
+        let ast::CallArg::Positional(target) = &args[1] else {
+            return None;
+        };
+        let target_ty = self.resolve_isinstance_target_type(target)?;
+        Some(Self::isinstance_member_matches(member_ty, &target_ty))
+    }
+
+    /// Lower an `elif`/`else` tail after a union match arm has already narrowed to one concrete member.
+    fn lower_known_member_tail(
+        &mut self,
+        binding: &str,
+        member_ty: &IrType,
+        branch_tail: &BranchTail<'_>,
+    ) -> Result<Option<Vec<IrStmt>>, LoweringError> {
+        for (index, (condition, body)) in branch_tail.elif_branches.iter().enumerate() {
+            let Some(matches) = self.known_member_isinstance_matches(condition, binding, member_ty) else {
+                return self.lower_if_else_chain(&branch_tail.elif_branches[index..], branch_tail.else_body);
+            };
+            if matches {
+                self.push_scope();
+                self.define_local_binding(binding.to_string(), member_ty.clone(), false);
+                let lowered = self.lower_statements(body);
+                self.pop_scope();
+                return lowered.map(Some);
+            }
+        }
+
+        self.lower_if_else_chain(&[], branch_tail.else_body)
+    }
+
     /// Lower one false-branch arm for `isinstance` over an ordinary union.
     fn lower_union_false_arm(
         &mut self,
@@ -477,7 +532,12 @@ impl AstLowering {
                 value: Self::local_value_expr(pattern_binding.clone(), member_ty.clone()),
             }));
         }
-        if let Some(mut lowered_tail) = self.lower_if_else_chain(branch_tail.elif_branches, branch_tail.else_body)? {
+        let lowered_tail = if direct_member_binding {
+            self.lower_known_member_tail(binding, member_ty, branch_tail)?
+        } else {
+            self.lower_if_else_chain(branch_tail.elif_branches, branch_tail.else_body)?
+        };
+        if let Some(mut lowered_tail) = lowered_tail {
             stmts.append(&mut lowered_tail);
         }
         self.pop_scope();
