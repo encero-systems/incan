@@ -151,6 +151,15 @@ pub struct IrEmitter<'a> {
     /// can be expanded at a caller outside the defining module, so imported helper calls inside those defaults need a
     /// durable crate-qualified path.
     qualify_internal_canonical_paths: RefCell<bool>,
+    /// Whether anonymous ordinary union wrapper references should be emitted as crate-root paths.
+    ///
+    /// Multi-file source modules share generated ordinary union wrappers through the crate root so same-shaped unions
+    /// remain one Rust nominal type across module boundaries.
+    qualify_union_types_from_crate: bool,
+    /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
+    generated_union_types: HashMap<String, IrType>,
+    /// Whether this module should emit generated ordinary union wrapper definitions.
+    emit_generated_union_definitions: bool,
     /// Stack of statement-slice analyses describing which local `StaticBinding` names need mutable Rust bindings.
     ///
     /// An Incan alias like `let live = ITEMS` is not source-level `mut`, but if later emitted Rust uses
@@ -193,6 +202,9 @@ impl<'a> IrEmitter<'a> {
             module_has_local_statics: RefCell::new(false),
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
+            qualify_union_types_from_crate: false,
+            generated_union_types: HashMap::new(),
+            emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
         }
     }
@@ -209,6 +221,21 @@ impl<'a> IrEmitter<'a> {
     /// Set the internal module roots (top-level module names) for a multi-file compilation.
     pub fn set_internal_module_roots(&mut self, roots: HashSet<String>) {
         self.internal_module_roots = roots;
+    }
+
+    /// Configure whether anonymous union wrappers are addressed through the crate root.
+    pub fn set_qualify_union_types_from_crate(&mut self, enabled: bool) {
+        self.qualify_union_types_from_crate = enabled;
+    }
+
+    /// Add generated union wrapper definitions that should be emitted by this module.
+    pub fn set_generated_union_types(&mut self, types: HashMap<String, IrType>) {
+        self.generated_union_types = types;
+    }
+
+    /// Configure whether this module emits generated union wrapper definitions.
+    pub fn set_emit_generated_union_definitions(&mut self, enabled: bool) {
+        self.emit_generated_union_definitions = enabled;
     }
 
     /// Check if a top-level name is a known internal module root.

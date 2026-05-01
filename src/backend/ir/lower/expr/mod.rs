@@ -166,13 +166,14 @@ impl AstLowering {
         let (kind, ty) = match expr {
             // ---- Identifiers ----
             ast::Expr::Ident(name) => {
-                let ty = self.lookup_var(name);
-                let access = self.select_var_access_for_ident(name, &ty);
+                let lowered_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+                let ty = self.lookup_var(&lowered_name);
+                let access = self.select_var_access_for_ident(&lowered_name, &ty);
                 (
                     IrExprKind::Var {
-                        name: name.clone(),
+                        name: lowered_name.clone(),
                         access,
-                        ref_kind: if self.is_static_binding(name) {
+                        ref_kind: if self.is_static_binding(&lowered_name) {
                             VarRefKind::StaticBinding
                         } else {
                             VarRefKind::Value

@@ -8,36 +8,21 @@ docs_dir: docs
 site_dir: site
 use_directory_urls: true
 
-# Keep `mkdocs build --strict` useful, but don't spam logs for intentional
-# site-root absolute links like `/RFCs/013_.../` (these are safe with
-# `use_directory_urls: true` and are often used inside snippets).
+# Keep `mkdocs build --strict` useful, but don't spam logs for intentional site-root absolute links like
+# `/RFCs/013_.../` (these are safe with `use_directory_urls: true` and are often used inside snippets).
 validation:
   absolute_links: ignore
 
 theme:
   name: material
+  logo: assets/incapunk/wordmark_small_001.png
   highlightjs: false
   pygments_style: default
   pygments_style_dark: native
   palette:
-    - media: "(prefers-color-scheme)"
-      toggle:
-        icon: material/link
-        name: Switch to light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: purple
-      accent: indigo
-      toggle:
-        icon: material/toggle-switch
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: black
-      accent: indigo
-      toggle:
-        icon: material/toggle-switch-off
-        name: Switch to system preference
+      accent: amber
   features:
     - navigation.instant
     - navigation.sections
@@ -60,6 +45,7 @@ markdown_extensions:
   - admonition
   - attr_list
   - footnotes
+  - def_list
   - pymdownx.arithmatex:
       generic: true
   - md_in_html
@@ -71,6 +57,8 @@ markdown_extensions:
         - name: incan
           lang: incan
   - pymdownx.inlinehilite
+  - pymdownx.tasklist:
+      custom_checkbox: true
   - pymdownx.snippets:
       check_paths: true
       base_path:
@@ -90,6 +78,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
+  - stylesheets/incapunk.css
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -145,6 +134,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
+          - Symbol aliases: language/reference/symbol_aliases.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
@@ -247,6 +237,7 @@ nav:
           - Architecture: contributing/explanation/architecture.md
           - Duckborrowing: contributing/explanation/duckborrowing.md
           - Layering rules: contributing/explanation/layering.md
+          - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - RFCs: RFCs/index.md

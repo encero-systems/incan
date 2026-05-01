@@ -68,6 +68,20 @@ impl TypeChecker {
     // Statements
     // ========================================================================
 
+    /// Return whether a local annotation names a trait surface that does not yet have a local value representation.
+    ///
+    /// Callable parameters and returns have dedicated trait-bound lowering paths, but local bindings do not preserve a
+    /// hidden concrete adopter yet. Rejecting this shape in the typechecker prevents accepted Incan from reaching Rust
+    /// codegen as a bare trait local type.
+    fn is_trait_typed_local_annotation(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                self.lookup_semantic_trait_info(name).is_some()
+            }
+            _ => false,
+        }
+    }
+
     /// Validate a statement and its subexpressions.
     ///
     /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`),
@@ -597,6 +611,10 @@ impl TypeChecker {
         }
     }
 
+    /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
+    ///
+    /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
+    /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
         let reassignment_ty = self
@@ -664,6 +682,13 @@ impl TypeChecker {
 
         let ty = if let Some(ty_ann) = &assign.ty {
             let ann_ty = annotated_ty.unwrap_or_else(|| self.resolve_type_checked(ty_ann));
+            let trait_typed_local = self.is_trait_typed_local_annotation(&ann_ty);
+            if trait_typed_local {
+                self.errors.push(errors::trait_typed_local_annotation_unsupported(
+                    &ann_ty.to_string(),
+                    ty_ann.span,
+                ));
+            }
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty) {
                 self.errors.push(errors::type_mismatch(
@@ -672,7 +697,7 @@ impl TypeChecker {
                     assign.value.span,
                 ));
             }
-            ann_ty
+            if trait_typed_local { value_ty } else { ann_ty }
         } else {
             value_ty
         };

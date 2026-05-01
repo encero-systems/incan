@@ -4301,4 +4301,60 @@ class Tensor:
         assert!(matches!(expr.node, Expr::Binary(_, BinaryOp::MatMul, _)));
         Ok(())
     }
+
+    #[test]
+    fn test_parse_top_level_alias_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def avg(x: int) -> int:
+  return x
+
+mean = avg
+pub average = alias avg
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Alias(mean) = &program.declarations[1].node else {
+            panic!("expected bare alias, got {:?}", program.declarations[1].node);
+        };
+        assert_eq!(mean.name, "mean");
+        assert_eq!(mean.target.segments, vec!["avg"]);
+        assert!(!mean.explicit_marker);
+
+        let Declaration::Alias(average) = &program.declarations[2].node else {
+            panic!("expected explicit public alias, got {:?}", program.declarations[2].node);
+        };
+        assert_eq!(average.name, "average");
+        assert_eq!(average.target.segments, vec!["avg"]);
+        assert!(average.explicit_marker);
+        assert_eq!(average.visibility, Visibility::Public);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_alias_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model Stats:
+  value: int
+  mean = alias avg
+
+  def avg(self) -> int:
+    return self.value
+
+trait Named:
+  display = name
+  def name(self) -> str
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.method_aliases.len(), 1);
+        assert_eq!(model.method_aliases[0].node.name, "mean");
+        assert_eq!(model.method_aliases[0].node.target, "avg");
+        assert!(model.method_aliases[0].node.explicit_marker);
+
+        let tr = require_trait_decl(&program.declarations[1])?;
+        assert_eq!(tr.method_aliases.len(), 1);
+        assert_eq!(tr.method_aliases[0].node.name, "display");
+        assert_eq!(tr.method_aliases[0].node.target, "name");
+        assert!(!tr.method_aliases[0].node.explicit_marker);
+        Ok(())
+    }
 }

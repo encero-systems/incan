@@ -11,15 +11,19 @@ description: Generate a PR description following the repository's pull request t
 2. **Locate the PR template** - Find `.github/pull_request_template.md` in the repository root. If not found, use the standard template from the repository's `.github/` folder.
 3. **Gather context** - Run `git diff main...HEAD` (or the appropriate base branch) to see all changes. Also check `git log main..HEAD --oneline` for commit messages.
 4. **Check for associated issue** - Extract issue number from branch name (e.g., `bugfix/184-...` → issue #184) or check commit messages for `Fixes #NNN`, `Closes #NNN`, etc.
-5. **Analyze the changes** - Categorize the changes by:
+5. **RFC lifecycle preflight** - If the branch implements an RFC or touches `workspaces/docs-site/docs/RFCs/*`, inspect the governing RFC before drafting the PR body.
+   - If the RFC is `In Progress` and the branch implements the full RFC scope, use `bump-rfc` first so the RFC is `Implemented`, moved into `closed/implemented/`, and reflected in the PR diff before the PR is presented for review.
+   - If the branch implements only part of the RFC, keep the RFC active and state the remaining scope clearly in the PR body.
+   - Do not draft a review-ready PR description that claims full RFC completion while the RFC file still says `In Progress`.
+6. **Analyze the changes** - Categorize the changes by:
    - Type (bug fix, new feature, refactor, docs, CI/tooling, RFC)
    - Area(s) affected (Incan Language, Compiler, Tooling, Editor, Runtime, Docs)
    - User-facing behavior changes
    - Internal architectural changes
    - Risks or breaking changes
-6. **Fill in the template** - Use the analysis to populate each section of the PR template.
-7. **Add issue reference** - If an issue number was found, append `Closes #<issue number>` at the end of the PR description.
-8. **Output the PR description** - Return the complete PR description in markdown format, ready to be used in a pull request.
+7. **Fill in the template** - Use the analysis to populate each section of the PR template.
+8. **Add issue reference** - If an issue number was found, append `Closes #<issue number>` at the end of the PR description.
+9. **Output the PR description** - Return the complete PR description in markdown format, ready to be used in a pull request.
 
 ## PR Template Location
 
@@ -64,6 +68,8 @@ If the template is not found, the skill uses the standard template structure.
 ## Output Format
 
 Return the PR description in markdown format, ready to be used in a pull request. Include all sections of the template, with checkboxes for items that need user verification. If an issue number was found, append `Closes #<issue number>` at the end of the PR description.
+
+For RFC-driven PRs, include the final RFC lifecycle state in the verification or docs section. If full RFC scope is implemented, the PR description should reference the RFC under `workspaces/docs-site/docs/RFCs/closed/implemented/`; if it is not, describe the remaining RFC checklist items instead of using a closing keyword that would close the issue.
 
 ## Examples
 

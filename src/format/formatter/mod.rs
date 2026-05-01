@@ -169,10 +169,11 @@ impl Formatter {
         }
     }
 
+    /// Classify declarations for formatter blank-line spacing.
     fn decl_spacing_class(decl: &Declaration) -> DeclSpacingClass {
         match decl {
             Declaration::Import(_) => DeclSpacingClass::Import,
-            Declaration::Const(_) | Declaration::Static(_) => DeclSpacingClass::ConstLike,
+            Declaration::Const(_) | Declaration::Static(_) | Declaration::Alias(_) => DeclSpacingClass::ConstLike,
             Declaration::Docstring(_) => DeclSpacingClass::Docstring,
             Declaration::TypeAlias(_) | Declaration::Newtype(_) => DeclSpacingClass::TypeLike,
             Declaration::Model(_)

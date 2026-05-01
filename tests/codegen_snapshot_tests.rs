@@ -112,6 +112,84 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+fn generate_rust_with_substrait_probe(source: &str) -> String {
+    let tmp = match tempfile::tempdir() {
+        Ok(tmp) => tmp,
+        Err(err) => panic!("failed to create substrait probe tempdir: {err}"),
+    };
+    let root = tmp.path();
+    if let Err(err) = fs::create_dir_all(root.join("src")) {
+        panic!("failed to create probe src dir: {err}");
+    }
+    if let Err(err) = fs::create_dir_all(root.join("substrait").join("src")) {
+        panic!("failed to create substrait src dir: {err}");
+    }
+    if let Err(err) = fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "ra_substrait_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+substrait = { path = "substrait" }
+"#,
+    ) {
+        panic!("failed to write probe Cargo.toml: {err}");
+    }
+    if let Err(err) = fs::write(
+        root.join("src/lib.rs"),
+        "pub fn touch() { let _ = substrait::proto::PlanRel; }\n",
+    ) {
+        panic!("failed to write probe lib.rs: {err}");
+    }
+    if let Err(err) = fs::write(
+        root.join("substrait").join("Cargo.toml"),
+        r#"[package]
+name = "substrait"
+version = "0.63.0"
+edition = "2021"
+"#,
+    ) {
+        panic!("failed to write substrait Cargo.toml: {err}");
+    }
+    if let Err(err) = fs::write(
+        root.join("substrait").join("src/lib.rs"),
+        r#"pub mod proto {
+    pub struct PlanRel;
+
+    pub struct Rel {
+        pub rel_type: std::option::Option<rel::RelType>,
+    }
+
+    pub struct ReadRel;
+
+    pub mod rel {
+        pub enum RelType {
+            Read(Box<super::ReadRel>),
+        }
+    }
+}
+"#,
+    ) {
+        panic!("failed to write substrait lib.rs: {err}");
+    }
+
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lexer failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parser failed");
+    };
+    let mut codegen = IrCodegen::new();
+    codegen.set_rust_inspect_manifest_dir(root.to_path_buf());
+    let code = match codegen.try_generate(&ast) {
+        Ok(c) => c,
+        Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
+    };
+    normalize_codegen_output(&code)
+}
+
 /// Generate Rust from source that includes imported vocab blocks desugared via a WASM artifact.
 fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
     use incan::frontend::library_manifest_index::{
@@ -879,7 +957,99 @@ fn test_type_annotations_codegen() {
 fn test_rfc029_union_types_codegen() {
     let source = load_test_file("rfc029_union_types");
     let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("isinstance("),
+        "union isinstance chains must fully lower before Rust emission:\n{rust_code}"
+    );
     insta::assert_snapshot!("rfc029_union_types", rust_code);
+}
+
+#[test]
+fn test_issue457_461_cross_module_union_codegen_uses_crate_wrapper() {
+    let main_source = r#"
+from producers import parse_value
+from consumers import describe
+
+def main() -> None:
+  println(describe(parse_value(False)))
+  println(describe("literal"))
+"#;
+    let producers_source = r#"
+pub def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 1
+  return "fallback"
+"#;
+    let consumers_source = r#"
+pub def describe(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+"#;
+
+    let Ok(main_tokens) = lexer::lex(main_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(main_ast) = parser::parse(&main_tokens) else {
+        panic!("parser failed")
+    };
+    let Ok(producers_tokens) = lexer::lex(producers_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(producers_ast) = parser::parse(&producers_tokens) else {
+        panic!("parser failed")
+    };
+    let Ok(consumers_tokens) = lexer::lex(consumers_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(consumers_ast) = parser::parse(&consumers_tokens) else {
+        panic!("parser failed")
+    };
+
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("producers", &producers_ast, vec!["producers".to_string()]);
+    codegen.add_module_with_path_segments("consumers", &consumers_ast, vec!["consumers".to_string()]);
+    let (main_code, modules) = codegen
+        .try_generate_multi_file_nested(
+            &main_ast,
+            &[vec!["producers".to_string()], vec!["consumers".to_string()]],
+        )
+        .unwrap_or_else(|err| panic!("codegen must succeed: {err:?}"));
+    let main_code = normalize_codegen_output(&main_code);
+    let Some(producers_module) = modules.get(&vec!["producers".to_string()]) else {
+        panic!("missing producers module");
+    };
+    let producers_code = normalize_codegen_output(producers_module);
+    let Some(consumers_module) = modules.get(&vec!["consumers".to_string()]) else {
+        panic!("missing consumers module");
+    };
+    let consumers_code = normalize_codegen_output(consumers_module);
+
+    assert!(
+        main_code.contains("pub enum __IncanUnion"),
+        "root module should own generated ordinary union wrappers:\n{main_code}"
+    );
+    assert!(
+        main_code.contains("describe(parse_value(false))"),
+        "same-shaped union forwarding should not need an adapter at source level:\n{main_code}"
+    );
+    assert!(
+        main_code.contains("describe(crate ::__IncanUnion"),
+        "literal calls to imported union-typed functions should use the root wrapper:\n{main_code}"
+    );
+    assert!(
+        producers_code.contains("-> crate::__IncanUnion"),
+        "producer module signatures should refer to the crate-level wrapper:\n{producers_code}"
+    );
+    assert!(
+        consumers_code.contains("value: crate::__IncanUnion"),
+        "consumer module signatures should refer to the crate-level wrapper:\n{consumers_code}"
+    );
+    assert!(
+        !producers_code.contains("pub enum __IncanUnion") && !consumers_code.contains("pub enum __IncanUnion"),
+        "dependency modules must not emit nominally distinct local union wrappers:\nproducers:\n{producers_code}\nconsumers:\n{consumers_code}"
+    );
 }
 
 #[test]
@@ -1546,6 +1716,17 @@ fn test_issue217_rust_enum_match_bindings_codegen() {
     let source = load_test_file("issue217_rust_enum_match_bindings");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("issue217_rust_enum_match_bindings", rust_code);
+}
+
+#[test]
+fn test_issue459_rust_enum_pattern_import_codegen() {
+    let source = load_test_file("issue459_rust_enum_pattern_import");
+    let rust_code = generate_rust_with_substrait_probe(&source);
+    insta::assert_snapshot!("issue459_rust_enum_pattern_import", rust_code);
+    assert!(
+        rust_code.contains("use substrait::proto::rel::RelType;"),
+        "expected Rust enum import used only by a match pattern to be retained:\n{rust_code}"
+    );
 }
 
 #[test]

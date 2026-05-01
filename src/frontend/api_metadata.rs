@@ -304,6 +304,7 @@ pub struct ApiDocstringDiagnostic {
     pub error: CompileError,
 }
 
+/// Collect checked public API metadata for one parsed and typechecked module.
 pub fn collect_checked_api_metadata(
     program: &Program,
     checker: &TypeChecker,
@@ -413,6 +414,13 @@ pub fn collect_checked_api_metadata(
                         ty: type_ref_from_resolved(&export.ty),
                     }));
                 }
+            }
+            Declaration::Alias(alias) if public(alias.visibility) => {
+                declarations.push(ApiDeclaration::Alias(ApiAlias {
+                    name: alias.name.clone(),
+                    anchor: anchor(&module_path, &alias.name, decl.span),
+                    target_path: alias.target.segments.clone(),
+                }));
             }
             Declaration::Import(import) if public(import.visibility) => {
                 declarations.extend(

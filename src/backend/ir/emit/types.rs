@@ -14,6 +14,39 @@ use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit the generated Rust type path for an anonymous ordinary union.
+    pub(super) fn emit_union_type_path(&self, ty: &IrType) -> TokenStream {
+        self.emit_union_type_path_with_qualifier(ty, None)
+    }
+
+    /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
+    pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
+        let union_name = ty
+            .union_type_name()
+            .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
+        let n = Self::rust_ident(&union_name);
+        if let Some(qualifier) = qualifier
+            && let Some((first, rest)) = qualifier.split_first()
+        {
+            let first = if first == "crate" {
+                quote! { crate }
+            } else {
+                let ident = Self::rust_ident(first);
+                quote! { #ident }
+            };
+            let path = rest.iter().fold(first, |acc, segment| {
+                let ident = Self::rust_ident(segment);
+                quote! { #acc :: #ident }
+            });
+            return quote! { #path :: #n };
+        }
+        if self.qualify_union_types_from_crate {
+            quote! { crate :: #n }
+        } else {
+            quote! { #n }
+        }
+    }
+
     fn emit_path_ident(path: &str) -> TokenStream {
         if path.contains("::") {
             let segments: Vec<TokenStream> = path
@@ -82,11 +115,7 @@ impl<'a> IrEmitter<'a> {
                 Self::emit_path_ident(name)
             }
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
-                let union_name = ty
-                    .union_type_name()
-                    .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
-                let n = Self::rust_ident(&union_name);
-                quote! { #n }
+                self.emit_union_type_path(ty)
             }
             IrType::NamedGeneric(name, args) => {
                 let frozen_name = match collections::from_str(name) {
@@ -302,7 +331,15 @@ impl<'a> IrEmitter<'a> {
                     // Parse as a path
                     let segments: Vec<_> = variant.split("::").collect();
                     let idents: Vec<_> = segments.iter().map(|s| format_ident!("{}", s)).collect();
-                    quote! { #(#idents)::* }
+                    if self.qualify_union_types_from_crate
+                        && segments
+                            .first()
+                            .is_some_and(|segment| segment.starts_with("__IncanUnion"))
+                    {
+                        quote! { crate :: #(#idents)::* }
+                    } else {
+                        quote! { #(#idents)::* }
+                    }
                 } else {
                     let v_ident = format_ident!("{}", variant);
                     quote! { #v_ident }

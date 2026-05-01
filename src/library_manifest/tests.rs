@@ -92,6 +92,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
         derives: Vec::new(),
         fields: Vec::new(),
         methods: vec![MethodExport {
+            alias_of: None,
             name: "collect".to_string(),
             type_params: Vec::new(),
             receiver: Some(ReceiverExport::Immutable),
@@ -256,6 +257,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
             value: None,
         }],
         methods: vec![MethodExport {
+            alias_of: None,
             name: "label".to_string(),
             type_params: Vec::new(),
             receiver: Some(ReceiverExport::Immutable),
@@ -388,6 +390,7 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
         derives: Vec::new(),
         fields: Vec::new(),
         methods: vec![MethodExport {
+            alias_of: None,
             name: "get".to_string(),
             type_params: vec![TypeParamExport {
                 name: "T".to_string(),

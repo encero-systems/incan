@@ -95,6 +95,7 @@ impl SymbolTable {
                 kind: SymbolKind::Trait(TraitInfo {
                     type_params: vec![],
                     methods: HashMap::new(),
+                    method_aliases: HashMap::new(),
                     requires: vec![],
                     supertraits: vec![],
                 }),
@@ -494,6 +495,7 @@ pub struct ClassInfo {
     pub fields: HashMap<String, FieldInfo>,
     pub methods: HashMap<String, MethodInfo>,
     pub method_overloads: HashMap<String, Vec<MethodInfo>>,
+    pub method_aliases: HashMap<String, String>,
 }
 
 /// Model information
@@ -506,6 +508,7 @@ pub struct ModelInfo {
     pub fields: HashMap<String, FieldInfo>,
     pub methods: HashMap<String, MethodInfo>,
     pub method_overloads: HashMap<String, Vec<MethodInfo>>,
+    pub method_aliases: HashMap<String, String>,
 }
 
 /// Newtype information
@@ -520,6 +523,7 @@ pub struct NewtypeInfo {
     ///
     /// Example: `send_now = try_send` is stored as `"send_now" -> "try_send"`.
     pub method_rebindings: HashMap<String, String>,
+    pub method_aliases: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
 }
 
@@ -599,6 +603,7 @@ pub struct TraitInfo {
     /// Each entry is `(trait_name, type_arguments)`; use an empty `type_arguments` list for a non-generic supertrait.
     pub supertraits: Vec<(String, Vec<ResolvedType>)>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_aliases: HashMap<String, String>,
     pub requires: Vec<(String, ResolvedType)>, // Required fields
 }
 
@@ -638,6 +643,7 @@ pub struct MethodInfo {
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool, // false for abstract methods (...)
+    pub alias_of: Option<String>,
 }
 
 /// Resolved type-parameter bound metadata preserved for export/import paths.

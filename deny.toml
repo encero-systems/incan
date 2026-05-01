@@ -50,7 +50,7 @@ skip-tree = [
     # - rust-analyzer crates (ra_ap_*) pull older hashbrown/foldhash/winnow lines
     # - wasmtime/wasi stack pulls a separate native/runtime dependency graph
     { name = "ra_ap_load-cargo", version = "0.0.325" },
-    { name = "wasmtime-wasi", version = "43.0.2" },
+    { name = "wasmtime-wasi", version = "44.0.1" },
 ]
 
 [sources]

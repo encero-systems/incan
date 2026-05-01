@@ -554,6 +554,16 @@ pub fn cannot_instantiate_trait(trait_name: &str, span: Span) -> CompileError {
     .with_note("Trait names may only appear in type annotations and `with` adoption clauses")
 }
 
+/// Emitted when a local binding annotation names a trait type that has no local value representation yet.
+pub fn trait_typed_local_annotation_unsupported(annotation: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait-typed local annotation '{}' is not supported", annotation),
+        span,
+    )
+    .with_hint("Use the concrete implementing type for the local binding")
+    .with_note("Trait annotations are currently supported on callable boundaries and `with` adoption clauses")
+}
+
 /// Emitted when two supertraits require the same field with incompatible types (RFC 042).
 pub fn supertrait_requires_conflict(
     trait_name: &str,

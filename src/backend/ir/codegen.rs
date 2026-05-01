@@ -765,6 +765,17 @@ impl<'a> IrCodegen<'a> {
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
+        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false)
+    }
+
+    /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
+    fn try_generate_via_ir_with_union_config(
+        &self,
+        program: &Program,
+        internal_module_roots: &HashSet<String>,
+        generated_union_types: HashMap<String, super::types::IrType>,
+        qualify_union_types_from_crate: bool,
+    ) -> Result<String, GenerationError> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
@@ -832,6 +843,8 @@ impl<'a> IrCodegen<'a> {
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
+            inner.set_generated_union_types(generated_union_types);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -849,6 +862,8 @@ impl<'a> IrCodegen<'a> {
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
+            emitter.set_generated_union_types(generated_union_types);
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -956,9 +971,6 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_names.iter().map(|s| (*s).to_string()).collect();
 
-        // Generate main file
-        let main_code = self.try_generate_via_ir(program, &internal_roots)?;
-
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
@@ -1009,6 +1021,15 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let mut shared_union_types = HashMap::new();
+        for (_, _, ir) in &lowered_modules {
+            shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
+        }
+
+        // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
+        let main_code =
+            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+
         let mut modules = HashMap::new();
         for (name, module_path, ir) in lowered_modules {
             let reachable_items = dependency_reachable_items
@@ -1031,6 +1052,8 @@ impl<'a> IrCodegen<'a> {
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                 inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
+                inner.set_qualify_union_types_from_crate(true);
+                inner.set_emit_generated_union_definitions(false);
                 svc.emit_program(&ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
@@ -1044,6 +1067,8 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                 emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.set_qualify_union_types_from_crate(true);
+                emitter.set_emit_generated_union_definitions(false);
                 emitter.emit_program(&ir)?
             };
             modules.insert(name, module_code);
@@ -1120,9 +1145,6 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_paths.iter().filter_map(|p| p.first().cloned()).collect();
 
-        // Generate main file
-        let main_code = self.try_generate_via_ir(program, &internal_roots)?;
-
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
@@ -1178,6 +1200,15 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let mut shared_union_types = HashMap::new();
+        for (_, ir) in &lowered_modules {
+            shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
+        }
+
+        // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
+        let main_code =
+            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+
         let mut modules = HashMap::new();
         for (path, ir) in lowered_modules {
             let reachable_items = dependency_reachable_items.get(&path).cloned().unwrap_or_default();
@@ -1197,6 +1228,8 @@ impl<'a> IrCodegen<'a> {
                 inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                 inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
+                inner.set_qualify_union_types_from_crate(true);
+                inner.set_emit_generated_union_definitions(false);
                 svc.emit_program(&ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
@@ -1210,6 +1243,8 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
                 emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.set_qualify_union_types_from_crate(true);
+                emitter.set_emit_generated_union_definitions(false);
                 emitter.emit_program(&ir)?
             };
             modules.insert(path, module_code);
@@ -1281,6 +1316,39 @@ def main() -> None:
         assert!(!code.contains("use incan_stdlib::prelude::*;"));
         assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
         assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn top_level_callable_alias_lowers_calls_to_target_and_public_reexport() {
+        let code = generate(
+            r#"
+pub def avg(x: int) -> int:
+  return x
+
+mean = avg
+pub average = alias avg
+
+def main() -> int:
+  return mean(10)
+"#,
+        );
+        assert!(code.contains("pub fn avg(x: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use avg as average;"), "{code}");
+        assert!(code.contains("return avg(10);"), "{code}");
+        assert!(!code.contains("fn mean"), "{code}");
+    }
+
+    #[test]
+    fn top_level_qualified_alias_preserves_target_path() {
+        let code = generate(
+            r#"
+import std.math as math
+
+pub root = math.sqrt
+"#,
+        );
+        assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
+        assert!(code.contains("pub use math::sqrt as root;"), "{code}");
     }
 
     #[test]

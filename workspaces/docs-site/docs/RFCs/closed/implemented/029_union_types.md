@@ -1,13 +1,13 @@
 # RFC 029: union types and type narrowing
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 028 (trait-based operator overloading)
 - **Issue:** [#163](https://github.com/dannys-code-corner/incan/issues/163)
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -370,7 +370,7 @@ Require users to define their own Rust-style enums for sum types. Rejected becau
 - Add a release note entry for the active release line.
 - Bump the active development version by one `-dev.N` increment.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / lifecycle
 

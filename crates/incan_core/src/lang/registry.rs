@@ -76,6 +76,9 @@ pub const RFC_052: RfcId = "RFC 052";
 /// RFC 057 — targeted Rust lint suppression.
 pub const RFC_057: RfcId = "RFC 057";
 
+/// RFC 083 — symbol and method aliases.
+pub const RFC_083: RfcId = "RFC 083";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -119,6 +122,8 @@ impl RFC {
     pub const _052: RfcId = RFC_052;
     /// RFC 057 — targeted Rust lint suppression.
     pub const _057: RfcId = RFC_057;
+    /// RFC 083 — symbol and method aliases.
+    pub const _083: RfcId = RFC_083;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

@@ -17,9 +17,9 @@ use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    ProjectRequirements, build_inline_rust_import, build_source_map, cargo_command_flags, collect_inline_rust_imports,
-    collect_modules, collect_project_requirements, format_dependency_error, format_rust_from_import_path,
-    format_rust_import_base_path, merge_project_requirement_dependencies,
+    CargoPolicy, ProjectRequirements, build_inline_rust_import, build_source_map, cargo_lockfile_flags,
+    collect_inline_rust_imports, collect_modules, collect_project_requirements, format_dependency_error,
+    format_rust_from_import_path, format_rust_import_base_path, merge_project_requirement_dependencies,
 };
 
 /// Generate or update incan.lock for a project.
@@ -93,6 +93,7 @@ pub fn lock_project(
         .or_else(|| entry_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()))
         .unwrap_or_else(|| "incan_project".to_string());
     let rust_edition = manifest.build.as_ref().and_then(|b| b.rust_edition.clone());
+    let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
     generate_lockfile(
         manifest.project_root(),
         &project_name,
@@ -100,6 +101,7 @@ pub fn lock_project(
         &resolved,
         &project_requirements,
         &cargo_features,
+        &cargo_policy,
     )?;
 
     Ok(ExitCode::SUCCESS)
@@ -116,10 +118,10 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
     pub cargo_features: &'a CargoFeatureSelection,
-    pub locked: bool,
-    pub frozen: bool,
+    pub cargo_policy: &'a CargoPolicy,
 }
 
+/// Resolve or refresh the embedded Cargo.lock payload for build/test policy enforcement.
 pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliResult<Option<String>> {
     let LockResolutionRequest {
         project_root,
@@ -128,8 +130,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         resolved,
         project_requirements,
         cargo_features,
-        locked,
-        frozen,
+        cargo_policy,
     } = request;
 
     if manifest.is_none() {
@@ -147,7 +148,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         Some(project_root),
     );
 
-    let strict = locked || frozen;
+    let strict = cargo_policy.locked || cargo_policy.frozen;
     if strict && let Some(message) = strict_git_source_error(&resolved_with_requirements) {
         return Err(CliError::failure(message));
     }
@@ -178,6 +179,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                 &resolved_with_requirements,
                 project_requirements,
                 cargo_features,
+                cargo_policy,
             )?;
             return Ok(Some(lock.cargo_lock_payload));
         }
@@ -195,6 +197,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         &resolved_with_requirements,
         project_requirements,
         cargo_features,
+        cargo_policy,
     )?;
     Ok(Some(lock.cargo_lock_payload))
 }
@@ -207,6 +210,7 @@ pub(crate) fn generate_lockfile(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_features: &CargoFeatureSelection,
+    cargo_policy: &CargoPolicy,
 ) -> CliResult<IncanLock> {
     let lock_dir = project_root.join("target").join("incan_lock");
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
@@ -223,7 +227,7 @@ pub(crate) fn generate_lockfile(
 
     let mut command = Command::new("cargo");
     command.arg("generate-lockfile");
-    for flag in cargo_command_flags(false, false, cargo_features) {
+    for flag in cargo_lockfile_flags(cargo_policy, cargo_features) {
         command.arg(flag);
     }
     let status = command

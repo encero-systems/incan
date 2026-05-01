@@ -6,7 +6,11 @@
 /// ## Notes
 /// - This file is `include!`'d into `crate::parser` to keep all parser methods in a
 ///   single module while avoiding a single “god file”.
-type FieldsAndMethods = (Vec<Spanned<FieldDecl>>, Vec<Spanned<MethodDecl>>);
+type FieldsAndMethods = (
+    Vec<Spanned<FieldDecl>>,
+    Vec<Spanned<MethodAliasDecl>>,
+    Vec<Spanned<MethodDecl>>,
+);
 
 /// Result of parsing `[...]` postfix syntax: either a single index or a slice.
 enum IndexOrSlice {

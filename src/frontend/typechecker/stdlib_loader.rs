@@ -470,6 +470,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                     type_params: tp_names,
                     supertraits,
                     methods,
+                    method_aliases: std::collections::HashMap::new(),
                     requires: Vec::new(),
                 },
             ));
@@ -502,6 +503,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
                         method_overloads,
                         methods,
+                        method_aliases: std::collections::HashMap::new(),
                     }),
                 ));
             }
@@ -521,6 +523,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
                         method_overloads,
                         methods,
+                        method_aliases: std::collections::HashMap::new(),
                     }),
                 ));
             }
@@ -546,6 +549,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         has_interop: !nt.interop_edges.is_empty(),
                         underlying,
                         method_rebindings,
+                        method_aliases: std::collections::HashMap::new(),
                         methods: extract_method_signatures_with_rust_imports(&nt.methods, &tp_names, &rust_imports),
                     }),
                 ));
@@ -743,6 +747,7 @@ fn method_info_from_ast_method(
         return_type,
         is_async: method.is_async(),
         has_body: method.body.is_some(),
+        alias_of: None,
     }
 }
 

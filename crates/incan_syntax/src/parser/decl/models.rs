@@ -20,7 +20,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (mut fields, methods) = self.fields_and_methods()?;
+        let (mut fields, method_aliases, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after model body")?;
 
@@ -39,6 +39,7 @@ impl<'a> Parser<'a> {
             traits,
             docstring,
             fields,
+            method_aliases,
             methods,
         })
     }
@@ -71,7 +72,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (fields, methods) = self.fields_and_methods()?;
+        let (fields, method_aliases, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after class body")?;
 
@@ -84,6 +85,7 @@ impl<'a> Parser<'a> {
             traits,
             docstring,
             fields,
+            method_aliases,
             methods,
         })
     }
@@ -108,6 +110,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
+        let mut method_aliases = Vec::new();
         let mut methods = Vec::new();
         // Allow empty trait body with just 'pass'
         if self.match_keyword(KeywordId::Pass) {
@@ -118,7 +121,17 @@ impl<'a> Parser<'a> {
                 if let Some(err) = self.inactive_soft_keyword_error() {
                     return Err(err);
                 }
-                methods.push(self.method_decl(method_decorators)?);
+                if self.starts_method_alias_decl() {
+                    if !method_decorators.is_empty() {
+                        return Err(CompileError::syntax(
+                            "Method alias declarations cannot have decorators".to_string(),
+                            method_decorators[0].span,
+                        ));
+                    }
+                    method_aliases.push(self.method_alias_decl()?);
+                } else {
+                    methods.push(self.method_decl(method_decorators)?);
+                }
                 self.skip_newlines();
             }
         }
@@ -132,6 +145,7 @@ impl<'a> Parser<'a> {
             type_params,
             traits,
             docstring,
+            method_aliases,
             methods,
         })
     }
@@ -139,6 +153,7 @@ impl<'a> Parser<'a> {
     /// Parse fields and methods.
     fn fields_and_methods(&mut self) -> Result<FieldsAndMethods, CompileError> {
         let mut fields = Vec::new();
+        let mut method_aliases = Vec::new();
         let mut methods = Vec::new();
 
         self.skip_newlines();
@@ -158,6 +173,14 @@ impl<'a> Parser<'a> {
             // Check if it's a method (`def` or surface-modifier-prefixed `def`).
             if self.starts_surface_function_decl() {
                 methods.push(self.method_decl(decorators)?);
+            } else if self.starts_method_alias_decl() {
+                if !decorators.is_empty() {
+                    return Err(CompileError::syntax(
+                        "Method alias declarations cannot have decorators".to_string(),
+                        decorators[0].span,
+                    ));
+                }
+                method_aliases.push(self.method_alias_decl()?);
             } else {
                 // It's a field
                 if !decorators.is_empty() {
@@ -168,7 +191,30 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
 
-        Ok((fields, methods))
+        Ok((fields, method_aliases, methods))
+    }
+
+    /// Return whether the current token pair starts a same-type method alias declaration.
+    fn starts_method_alias_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Parse a same-type method alias declaration inside a type body.
+    fn method_alias_decl(&mut self) -> Result<Spanned<MethodAliasDecl>, CompileError> {
+        let start = self.current_span().start;
+        let name = self.identifier_or_from_keyword()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in method alias declaration")?;
+        let explicit_marker = self.match_ident_text("alias");
+        let target = self.identifier_or_from_keyword()?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            MethodAliasDecl {
+                name,
+                target,
+                explicit_marker,
+            },
+            Span::new(start, end),
+        ))
     }
 
     fn field_metadata(&mut self) -> Result<FieldMetadata, CompileError> {

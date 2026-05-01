@@ -22,6 +22,7 @@ pub struct ModelDecl {
     /// Docstring at the start of the model body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -58,6 +59,7 @@ pub struct ClassDecl {
     /// Docstring at the start of the class body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -76,7 +78,29 @@ pub struct TraitDecl {
     pub traits: Vec<Spanned<TraitBound>>,
     /// Docstring at the start of the trait body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+// ============================================================================
+// Symbol aliases (declaration-level aliases for existing module symbols)
+// ============================================================================
+
+/// A module-level symbol alias declaration: `mean = avg` or `pub average = alias avg`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AliasDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub target: ImportPath,
+    pub explicit_marker: bool,
+}
+
+/// A same-type method alias declaration inside a method-bearing type body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodAliasDecl {
+    pub name: Ident,
+    pub target: Ident,
+    pub explicit_marker: bool,
 }
 
 // ============================================================================
@@ -125,6 +149,7 @@ pub struct NewtypeDecl {
     pub docstring: Option<String>,
     /// Alias-style member rebinding entries inside a newtype/rusttype body.
     pub rebindings: Vec<Spanned<RebindingDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
     /// Optional `interop:` conversion edges (RFC 041).
     pub interop_edges: Vec<Spanned<InteropEdgeDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,

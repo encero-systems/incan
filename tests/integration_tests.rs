@@ -1975,6 +1975,39 @@ mod codegen_tests {
     }
 
     #[test]
+    fn test_method_alias_codegen_rewrites_to_target_method() {
+        let source = r#"
+model Stats:
+  value: int
+  mean = avg
+
+  def avg(self) -> int:
+    return self.value
+
+def main() -> None:
+  let stats = Stats(value=10)
+  println(stats.mean())
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lex failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains(".avg("),
+            "expected method alias call to lower to target method, got:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains(".mean("),
+            "method alias must not emit an independent wrapper call, got:\n{rust_code}"
+        );
+    }
+
+    #[test]
     fn test_run_c_import_this() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args(["run", "-c", "import this"])
@@ -2212,6 +2245,30 @@ def describe_chain(value: int | str | bool) -> str:
             return "true"
         return "false"
 
+def describe_wide_chain(value: int | float | str | bool) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    elif isinstance(value, int):
+        return "int"
+    elif isinstance(value, float):
+        return "float"
+    elif isinstance(value, str):
+        return value.upper()
+    return "unknown"
+
+def describe_wide_match(value: int | float | str | bool) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "bool:true"
+            return "bool:false"
+        int(n) =>
+            return str(n)
+        float(f) =>
+            return str(f)
+        str(s) =>
+            return s.upper()
+
 def describe_optional_narrow(value: int | str | None) -> str:
     if isinstance(value, int):
         return "number"
@@ -2233,6 +2290,12 @@ def main() -> None:
     println(describe_wide(True))
     println(describe_chain("chain"))
     println(describe_chain(False))
+    println(describe_wide_chain("wide-chain"))
+    println(describe_wide_chain(1.25))
+    println(describe_wide_match(True))
+    println(describe_wide_match(7))
+    println(describe_wide_match(2.5))
+    println(describe_wide_match("match"))
     println(describe_optional_narrow("optional"))
     println(describe_optional_narrow(None))
 "#,
@@ -2252,8 +2315,25 @@ def main() -> None:
         assert_eq!(
             lines,
             vec![
-                "FALLBACK", "number", "FALLBACK", "PRESENT", "missing", "42", "missing", "WIDE", "true", "CHAIN",
-                "false", "OPTIONAL", "missing"
+                "FALLBACK",
+                "number",
+                "FALLBACK",
+                "PRESENT",
+                "missing",
+                "42",
+                "missing",
+                "WIDE",
+                "true",
+                "CHAIN",
+                "false",
+                "WIDE-CHAIN",
+                "float",
+                "bool:true",
+                "7",
+                "2.5",
+                "MATCH",
+                "OPTIONAL",
+                "missing"
             ],
             "unexpected union output:\n{stdout}"
         );
@@ -9000,6 +9080,41 @@ def main() -> None:\n  columns([\"orders_total\"])\n",
             "expected imported sum helper to shadow builtin sum and build successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_succeeds_for_cross_module_ordinary_union_forwarding() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("cross_module_union_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"cross_module_union\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/producers.incn"),
+            "pub def parse_value(flag: bool) -> int | str:\n  if flag:\n    return 1\n  return \"fallback\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/consumers.incn"),
+            "pub def describe(value: int | str) -> str:\n  if isinstance(value, int):\n    return \"number\"\n  else:\n    return value.upper()\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "from producers import parse_value\nfrom consumers import describe\n\n\
+def main() -> None:\n  println(describe(parse_value(False)))\n  println(describe(\"literal\"))\n",
+        )?;
+
+        let build_output = run_build(&main_path, &project_root.join("out"))?;
+        assert!(
+            build_output.status.success(),
+            "expected cross-module ordinary union project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
         );
 
         Ok(())

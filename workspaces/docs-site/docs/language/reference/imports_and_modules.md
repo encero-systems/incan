@@ -94,6 +94,35 @@ import crate::lib::database::Connection
 
 The compiler finds the project root by looking for `Cargo.toml` or a `src/` directory.
 
+## Exported aliases
+
+Modules can export an alias for an existing public symbol:
+
+```incan
+# stats.incn
+pub def avg(x: int, y: int) -> int:
+  return (x + y) // 2
+
+pub mean = avg
+```
+
+Consumers import the alias like any other public symbol:
+
+```incan
+from stats import mean
+
+def main() -> int:
+  return mean(10, 20)
+```
+
+An import alias is local to the importing module:
+
+```incan
+from stats import mean as average_value
+```
+
+For the full alias contract, including method aliases and rejected forms, see [Symbol aliases](symbol_aliases.md).
+
 ### Path summary
 
 | Incan path     | Meaning                | Rust equivalent |

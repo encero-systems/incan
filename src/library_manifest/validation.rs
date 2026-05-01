@@ -744,6 +744,7 @@ fn validate_helper_bindings(
 /// without re-encoding export-shape logic in multiple places.
 fn library_export_names(exports: &RawLibraryExports) -> HashSet<&str> {
     let mut names = HashSet::new();
+    names.extend(exports.aliases.iter().map(|item| item.name.as_str()));
     names.extend(exports.models.iter().map(|item| item.name.as_str()));
     names.extend(exports.classes.iter().map(|item| item.name.as_str()));
     names.extend(exports.functions.iter().map(|item| item.name.as_str()));

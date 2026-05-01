@@ -76,18 +76,31 @@ Behavior:
 
 Dependency flags:
 
+- `--offline`: Pass `--offline` to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.
 - `--locked`: Require `incan.lock` to exist and be up to date. Also passes `--locked` to Cargo.
 - `--frozen`: Like `--locked`, plus passes `--frozen` to Cargo (offline + locked).
+- `--no-offline`, `--no-locked`, `--no-frozen`: Disable matching environment defaults for this invocation.
+- `--cargo-args <ARG>...`: Forward additional arguments to Cargo after policy and feature flags. Arguments after `--` are also treated as Cargo arguments.
 - `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
+
+Environment defaults:
+
+- `INCAN_OFFLINE=1`, `INCAN_LOCKED=1`, and `INCAN_FROZEN=1` behave like their matching flags.
+- `INCAN_FROZEN=1` implies offline and locked mode.
+- CLI flags take precedence over these defaults. Use the `--no-*` forms to disable a policy default set by the environment.
+- `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
 
 Examples:
 
 ```bash
 incan build examples/simple/hello.incn
+incan build src/main.incn --offline
 incan build src/main.incn --locked
+incan build src/main.incn --frozen
 incan build src/main.incn --cargo-features fancy_logging
+incan build src/main.incn -- --timings
 incan build --lib
 ```
 
@@ -121,7 +134,7 @@ If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest
 
 Dependency flags (same as `build`):
 
-- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 ### `incan fmt`
 
@@ -177,7 +190,7 @@ Test runner flags:
 
 Dependency flags (same as `build`):
 
-- `--locked`, `--frozen`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 Examples:
 
@@ -225,7 +238,7 @@ incan test --format json --junit reports/junit.xml tests/
 incan test --shuffle --seed 12345 tests/
 
 # Strict mode for CI
-incan test --locked
+incan test --frozen
 ```
 
 ### `incan new`
@@ -396,7 +409,7 @@ Usage:
 incan tools doctor [OPTIONS]
 ```
 
-Inspects local CLI/LSP/editor pathing. Use this when the terminal and editor appear to be using different `incan` or `incan-lsp` binaries, or when diagnostics look stale after rebuilding.
+Inspects local CLI/LSP/editor pathing and offline-readiness signals. Use this when the terminal and editor appear to be using different `incan` or `incan-lsp` binaries, when diagnostics look stale after rebuilding, or before a restricted/offline build where Cargo may be unable to fetch missing dependency inputs.
 
 Options:
 
@@ -408,6 +421,13 @@ The report includes:
 - `incan` and `incan-lsp` resolution from `PATH`
 - `~/.cargo/bin/incan` and `~/.cargo/bin/incan-lsp` existence, executable status, and symlink targets
 - editor setup guidance for `incan.lsp.path`, `incan.compiler.path`, and reload behavior
+
+Offline-readiness:
+
+- The doctor report is the supported preflight path for restricted or offline environments.
+- The offline-readiness section is advisory. It checks local signals that affect whether Cargo can satisfy `--frozen` policy without fetching, but it does not guarantee a later `incan build --frozen` or `incan test --frozen` will succeed.
+- Offline/locked policy constrains dependency resolution and fetching. Projects may still depend on Rust crates; those crates must already be available through Cargo's local inputs for an offline build to proceed.
+- Use `--format json` when an editor, CI preflight, or issue template needs the same information in a machine-readable form.
 
 Examples:
 

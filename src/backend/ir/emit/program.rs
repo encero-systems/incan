@@ -265,6 +265,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         analyzer.analysis.public_types.insert(name.clone());
                     }
                 }
+                IrDeclKind::SymbolAlias { name, visibility, .. } => {
+                    analyzer.declarations_by_name.insert(name.clone(), decl);
+                    let _ = visibility;
+                }
                 IrDeclKind::Const { name, .. } | IrDeclKind::Static { name, .. } => {
                     analyzer.declarations_by_name.insert(name.clone(), decl);
                 }
@@ -336,6 +340,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 {
                     analyzer.mark_reachable_item(name);
                 }
+                IrDeclKind::SymbolAlias { name, visibility, .. }
+                    if preserve_public_items && !matches!(visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(name);
+                }
                 IrDeclKind::Const { name, visibility, .. }
                     if preserve_public_items && !matches!(visibility, Visibility::Private) =>
                 {
@@ -349,6 +358,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 | IrDeclKind::Enum(_)
                 | IrDeclKind::Trait(_)
                 | IrDeclKind::TypeAlias { .. }
+                | IrDeclKind::SymbolAlias { .. }
                 | IrDeclKind::Const { .. } => {}
             }
         }
@@ -425,6 +435,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrDeclKind::TypeAlias { type_params, ty, .. } => {
                 self.scan_type_params(type_params);
                 self.scan_type(ty);
+            }
+            IrDeclKind::SymbolAlias { target_path, .. } => {
+                if let [target] = target_path.as_slice() {
+                    self.mark_reachable_item(target);
+                }
             }
             IrDeclKind::Const { ty, value, .. } | IrDeclKind::Static { ty, value, .. } => {
                 self.scan_type(ty);
@@ -634,8 +649,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_pattern(pattern);
                 }
             }
-            Pattern::Enum { name, fields, .. } => {
+            Pattern::Enum { name, variant, fields } => {
                 self.mark_reachable_item(name);
+                if let Some((binding, _)) = variant.split_once("::") {
+                    self.mark_reachable_item(binding);
+                }
                 for field in fields {
                     self.scan_pattern(field);
                 }
@@ -1284,7 +1302,8 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
-            IrDeclKind::Enum(_) | IrDeclKind::Trait(_) | IrDeclKind::Import { .. } => {}
+            IrDeclKind::Enum(_) | IrDeclKind::Trait(_) | IrDeclKind::Import { .. } | IrDeclKind::SymbolAlias { .. } => {
+            }
             IrDeclKind::TypeAlias { ty, interop_edges, .. } => {
                 Self::collect_union_types_from_type(ty, out);
                 for edge in interop_edges {
@@ -1311,6 +1330,15 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
+    }
+
+    /// Collect anonymous ordinary union shapes referenced anywhere in a program.
+    pub(crate) fn collect_union_types_from_program(program: &IrProgram) -> HashMap<String, IrType> {
+        let mut union_types = HashMap::new();
+        for decl in &program.declarations {
+            Self::collect_union_types_from_decl(decl, &mut union_types);
+        }
+        union_types
     }
 
     /// Emit the generated Rust enum for one normalized anonymous union shape.
@@ -1472,15 +1500,17 @@ impl<'a> IrEmitter<'a> {
             items.push(quote! { use crate::#std_namespace::traits::error::Error; });
         }
 
-        let mut union_types = HashMap::new();
-        for decl in &emitted_declarations {
-            Self::collect_union_types_from_decl(decl, &mut union_types);
-        }
-        let mut union_type_items: Vec<_> = union_types.into_iter().collect();
-        union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
-        for (_, union_ty) in union_type_items {
-            if let Some(item) = self.emit_generated_union_type(&union_ty) {
-                items.push(item);
+        if self.emit_generated_union_definitions {
+            let mut union_types = self.generated_union_types.clone();
+            for decl in &emitted_declarations {
+                Self::collect_union_types_from_decl(decl, &mut union_types);
+            }
+            let mut union_type_items: Vec<_> = union_types.into_iter().collect();
+            union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (_, union_ty) in union_type_items {
+                if let Some(item) = self.emit_generated_union_type(&union_ty) {
+                    items.push(item);
+                }
             }
         }
 
@@ -1539,6 +1569,7 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Enum(e) => self.should_emit_decl_name(&e.name, &e.visibility),
             IrDeclKind::Trait(trait_decl) => self.should_emit_decl_name(&trait_decl.name, &trait_decl.visibility),
             IrDeclKind::TypeAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
+            IrDeclKind::SymbolAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Const { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Static { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Import { .. } => true,

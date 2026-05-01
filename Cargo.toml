@@ -22,10 +22,10 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.3.0-dev.23"
+version = "0.3.0-dev.27"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/dannys-code-corner/incan-programming-language"
@@ -71,7 +71,7 @@ incan_semantics_core = { path = "crates/incan_semantics_core" }
 incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
 
 # LSP server implementation
-tower-lsp = { version = "0.17", optional = true }  # TODO: update to latest version
+tower-lsp = { version = "0.20", optional = true }
 # Async runtime (for LSP and generated async code)
 tokio = { version = "1", features = ["full"], optional = true }
 # JSON serialization (for LSP protocol)
@@ -101,12 +101,11 @@ toml_edit = { version = "0.25", features = ["parse", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10.9"
 hex = "0.4.3"
-time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-wasmtime = { version = "43.0.2", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "43.0.2", default-features = false, features = ["p1"] }
+wasmtime = { version = "44.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 # Snapshot testing for codegen

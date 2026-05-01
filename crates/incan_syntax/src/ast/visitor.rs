@@ -7,12 +7,14 @@ use super::*;
 // ============================================================================
 
 pub trait Visitor {
+    /// Visit every declaration in a program.
     fn visit_program(&mut self, program: &Program) {
         for decl in &program.declarations {
             self.visit_declaration(decl);
         }
     }
 
+    /// Dispatch one declaration to the corresponding visitor hook.
     fn visit_declaration(&mut self, decl: &Spanned<Declaration>) {
         match &decl.node {
             Declaration::Import(i) => self.visit_import(i),
@@ -21,6 +23,7 @@ pub trait Visitor {
             Declaration::Model(m) => self.visit_model(m),
             Declaration::Class(c) => self.visit_class(c),
             Declaration::Trait(t) => self.visit_trait(t),
+            Declaration::Alias(a) => self.visit_alias(a),
             Declaration::TypeAlias(a) => self.visit_type_alias(a),
             Declaration::Newtype(n) => self.visit_newtype(n),
             Declaration::Enum(e) => self.visit_enum(e),
@@ -37,6 +40,8 @@ pub trait Visitor {
     fn visit_model(&mut self, _model: &ModelDecl) {}
     fn visit_class(&mut self, _class: &ClassDecl) {}
     fn visit_trait(&mut self, _trait: &TraitDecl) {}
+    /// Visit a module-level symbol alias declaration.
+    fn visit_alias(&mut self, _alias: &AliasDecl) {}
     fn visit_type_alias(&mut self, _alias: &TypeAliasDecl) {}
     fn visit_newtype(&mut self, _newtype: &NewtypeDecl) {}
     fn visit_enum(&mut self, _enum: &EnumDecl) {}

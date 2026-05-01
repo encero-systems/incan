@@ -7,8 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
-use crate::cli::commands::common;
-use crate::cli::commands::common::ProjectRequirements;
+use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
     collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
@@ -217,6 +216,9 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
             }
             Declaration::Trait(decl) => {
                 names.types.insert(decl.name.clone());
+            }
+            Declaration::Alias(decl) => {
+                names.values.insert(decl.name.clone());
             }
             Declaration::TypeAlias(decl) => {
                 names.types.insert(decl.name.clone());
@@ -823,14 +825,14 @@ fn infer_project_root_without_manifest(test_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
+/// Compute the session-local cache key for dependency, lockfile, and rust-inspect prep.
 fn compute_test_prep_cache_key(
     test_path: &Path,
     source: &str,
     source_modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     cargo: &CargoFeatureSelection,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: &CargoPolicy,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"incan_test_prep/1\0");
@@ -872,8 +874,13 @@ fn compute_test_prep_cache_key(
     }
     hasher.update([cargo.cargo_no_default_features as u8]);
     hasher.update([cargo.cargo_all_features as u8]);
-    hasher.update([locked as u8]);
-    hasher.update([frozen as u8]);
+    hasher.update([cargo_policy.offline as u8]);
+    hasher.update([cargo_policy.locked as u8]);
+    hasher.update([cargo_policy.frozen as u8]);
+    for arg in &cargo_policy.extra_args {
+        hasher.update(arg.as_bytes());
+        hasher.update(b"\0");
+    }
 
     format!("v1:{}", hex::encode(hasher.finalize()))
 }
@@ -1708,8 +1715,7 @@ pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
     prep_cache: &mut HashMap<String, Arc<PreparedTestFile>>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1801,8 +1807,7 @@ pub(super) fn run_file_tests_batch(
                 &file_tests,
                 conftest_files_by_file,
                 prep_cache,
-                locked,
-                frozen,
+                cargo_policy,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -1916,8 +1921,7 @@ pub(super) fn run_file_tests_batch(
         &source_modules,
         manifest.as_ref(),
         &cargo_feature_selection,
-        locked,
-        frozen,
+        cargo_policy,
     );
 
     let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.get(&cache_key) {
@@ -1999,8 +2003,7 @@ pub(super) fn run_file_tests_batch(
             resolved: &resolved,
             project_requirements: &project_requirements,
             cargo_features: &cargo_feature_selection,
-            locked,
-            frozen,
+            cargo_policy,
         }) {
             Ok(payload) => payload,
             Err(err) => {
@@ -2096,7 +2099,7 @@ pub(super) fn run_file_tests_batch(
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
-    generator.set_cargo_policy_flags(common::cargo_command_flags(locked, frozen, &cargo_feature_selection));
+    generator.set_cargo_policy_flags(common::cargo_command_flags(cargo_policy, &cargo_feature_selection));
 
     let gen_err = |msg: String| {
         tests
@@ -2148,7 +2151,7 @@ pub(super) fn run_file_tests_batch(
     }
     command.arg("--manifest-path");
     command.arg(&manifest_path);
-    for flag in common::cargo_command_flags(locked, frozen, &cargo_feature_selection) {
+    for flag in common::cargo_command_flags(cargo_policy, &cargo_feature_selection) {
         command.arg(flag);
     }
     // Batched per-file execution shares one process across all generated #[test] fns.
@@ -2388,24 +2391,9 @@ mod tests {
         }
         .normalized();
         let mods: Vec<ParsedModule> = Vec::new();
-        let k1 = compute_test_prep_cache_key(
-            Path::new("tests/test_x.incn"),
-            "source a",
-            &mods,
-            None,
-            &cargo,
-            false,
-            false,
-        );
-        let k2 = compute_test_prep_cache_key(
-            Path::new("tests/test_x.incn"),
-            "source a",
-            &mods,
-            None,
-            &cargo,
-            false,
-            false,
-        );
+        let policy = CargoPolicy::default();
+        let k1 = compute_test_prep_cache_key(Path::new("tests/test_x.incn"), "source a", &mods, None, &cargo, &policy);
+        let k2 = compute_test_prep_cache_key(Path::new("tests/test_x.incn"), "source a", &mods, None, &cargo, &policy);
         assert_eq!(k1, k2);
         assert!(k1.starts_with("v1:"));
     }
@@ -2414,18 +2402,29 @@ mod tests {
     fn prep_cache_key_changes_when_test_source_changes() {
         let cargo = CargoFeatureSelection::default().normalized();
         let mods: Vec<ParsedModule> = Vec::new();
-        let k1 = compute_test_prep_cache_key(Path::new("t.incn"), "a", &mods, None, &cargo, false, false);
-        let k2 = compute_test_prep_cache_key(Path::new("t.incn"), "b", &mods, None, &cargo, false, false);
+        let policy = CargoPolicy::default();
+        let k1 = compute_test_prep_cache_key(Path::new("t.incn"), "a", &mods, None, &cargo, &policy);
+        let k2 = compute_test_prep_cache_key(Path::new("t.incn"), "b", &mods, None, &cargo, &policy);
         assert_ne!(k1, k2);
     }
 
     #[test]
-    fn prep_cache_key_includes_locked_and_frozen_flags() {
+    fn prep_cache_key_includes_cargo_policy() {
         let cargo = CargoFeatureSelection::default().normalized();
         let mods: Vec<ParsedModule> = Vec::new();
-        let k_unlocked = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, false, false);
-        let k_locked = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, true, false);
-        assert_ne!(k_unlocked, k_locked);
+        let base = CargoPolicy::default();
+        let locked = CargoPolicy::explicit(false, true, false, Vec::new());
+        let offline = CargoPolicy::explicit(true, false, false, Vec::new());
+        let extra = CargoPolicy::explicit(false, false, false, vec!["--timings".to_string()]);
+
+        let k_base = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, &base);
+        let k_locked = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, &locked);
+        let k_offline = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, &offline);
+        let k_extra = compute_test_prep_cache_key(Path::new("t.incn"), "x", &mods, None, &cargo, &extra);
+
+        assert_ne!(k_base, k_locked);
+        assert_ne!(k_base, k_offline);
+        assert_ne!(k_base, k_extra);
     }
 
     #[test]
