@@ -66,14 +66,14 @@ jobs:
         run: cargo nextest run --all --profile ci
 
   msrv:
-    name: MSRV Build/Test (1.91.0)
+    name: MSRV Build/Test (1.92.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust 1.91.0
+      - name: Install Rust 1.92.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.91.0
+          toolchain: 1.92.0
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1

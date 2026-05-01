@@ -11,7 +11,7 @@
 
 [package]
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 name = "ra_ap_proc_macro_api"
 version = "0.0.325"
 authors = ["rust-analyzer team"]

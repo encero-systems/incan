@@ -22,10 +22,10 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.3.0-dev.24"
+version = "0.3.0-dev.25"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.92"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/dannys-code-corner/incan-programming-language"
@@ -105,8 +105,8 @@ time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-wasmtime = { version = "43.0.2", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "43.0.2", default-features = false, features = ["p1"] }
+wasmtime = { version = "44.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 # Snapshot testing for codegen
