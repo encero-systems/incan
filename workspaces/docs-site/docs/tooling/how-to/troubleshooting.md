@@ -83,7 +83,16 @@ For restricted or offline environments, run the supported preflight before the b
 incan tools doctor
 ```
 
-The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later `incan build --frozen` or `incan test --frozen` will succeed. Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail.
+The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later `incan build --frozen` or `incan test --frozen` will succeed.
+
+Run once while online to populate Cargo's cache and generate `incan.lock`, then use:
+
+```bash
+incan build src/main.incn --frozen
+incan test tests/ --frozen
+```
+
+Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use `--offline` when you want Cargo to fail instead of using the network without also requiring a lockfile. Use `--locked` when the lockfile must exist and match current dependency inputs.
 
 ## macOS: toolchain/linker issues
 

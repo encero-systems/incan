@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
 
@@ -51,7 +49,6 @@ impl CargoFeatureSelection {
 pub struct IncanLock {
     pub format: u32,
     pub incan_version: String,
-    pub generated: String,
     pub deps_fingerprint: String,
     pub cargo_features: CargoFeatureSelection,
     pub cargo_lock_payload: String,
@@ -71,7 +68,6 @@ impl IncanLock {
             incan: RawIncanMeta {
                 format: self.format,
                 incan_version: self.incan_version.clone(),
-                generated: self.generated.clone(),
                 deps_fingerprint: self.deps_fingerprint.clone(),
                 cargo_features: self.cargo_features.cargo_features.clone(),
                 cargo_no_default_features: self.cargo_features.cargo_no_default_features,
@@ -93,14 +89,9 @@ impl IncanLock {
     }
 
     pub fn new(deps_fingerprint: String, cargo_features: CargoFeatureSelection, cargo_lock_payload: String) -> Self {
-        let generated = OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-
         Self {
             format: LOCKFILE_FORMAT_VERSION,
             incan_version: crate::version::INCAN_VERSION.to_string(),
-            generated,
             deps_fingerprint,
             cargo_features: cargo_features.normalized(),
             cargo_lock_payload: normalize_cargo_lock_payload(&cargo_lock_payload),
@@ -169,7 +160,6 @@ fn parse_lockfile(content: &str, path: &Path) -> Result<IncanLock, LockfileError
     Ok(IncanLock {
         format: raw.incan.format,
         incan_version: raw.incan.incan_version,
-        generated: raw.incan.generated,
         deps_fingerprint: raw.incan.deps_fingerprint,
         cargo_features: CargoFeatureSelection {
             cargo_features: raw.incan.cargo_features,
@@ -192,7 +182,6 @@ struct RawIncanMeta {
     format: u32,
     #[serde(rename = "incan-version")]
     incan_version: String,
-    generated: String,
     #[serde(rename = "deps-fingerprint")]
     deps_fingerprint: String,
     #[serde(rename = "cargo-features", default)]
@@ -336,10 +325,40 @@ mod tests {
         let path = dir.path().join("incan.lock");
         lock.write(&path)?;
 
+        let content = std::fs::read_to_string(&path)?;
+        assert!(
+            !content.contains("generated ="),
+            "lockfiles should not contain volatile generation timestamps"
+        );
         let loaded = IncanLock::load(&path)?;
         assert_eq!(loaded.deps_fingerprint, "sha256:deadbeef");
         assert_eq!(loaded.cargo_features.cargo_features, vec!["alpha".to_string()]);
         assert!(loaded.cargo_lock_payload.contains("package"));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_generated_timestamp_is_accepted_on_load() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("incan.lock");
+        let legacy_toml = r#"
+[incan]
+format = 1
+incan-version = "0.3.0-dev.23"
+generated = "2026-04-27T13:41:45.845714Z"
+deps-fingerprint = "sha256:abc"
+cargo-features = []
+cargo-no-default-features = false
+cargo-all-features = false
+
+[cargo]
+lock = "payload"
+"#;
+        std::fs::write(&path, legacy_toml)?;
+
+        let lock = IncanLock::load(&path)?;
+        assert_eq!(lock.deps_fingerprint, "sha256:abc");
+        assert_eq!(lock.cargo_lock_payload, "payload\n");
         Ok(())
     }
 
