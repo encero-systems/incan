@@ -2223,6 +2223,19 @@ def describe_wide_chain(value: int | float | str | bool) -> str:
         return value.upper()
     return "unknown"
 
+def describe_wide_match(value: int | float | str | bool) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "bool:true"
+            return "bool:false"
+        int(n) =>
+            return str(n)
+        float(f) =>
+            return str(f)
+        str(s) =>
+            return s.upper()
+
 def describe_optional_narrow(value: int | str | None) -> str:
     if isinstance(value, int):
         return "number"
@@ -2246,6 +2259,10 @@ def main() -> None:
     println(describe_chain(False))
     println(describe_wide_chain("wide-chain"))
     println(describe_wide_chain(1.25))
+    println(describe_wide_match(True))
+    println(describe_wide_match(7))
+    println(describe_wide_match(2.5))
+    println(describe_wide_match("match"))
     println(describe_optional_narrow("optional"))
     println(describe_optional_narrow(None))
 "#,
@@ -2278,6 +2295,10 @@ def main() -> None:
                 "false",
                 "WIDE-CHAIN",
                 "float",
+                "bool:true",
+                "7",
+                "2.5",
+                "MATCH",
                 "OPTIONAL",
                 "missing"
             ],
