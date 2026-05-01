@@ -4810,7 +4810,7 @@ the raw representation for value enums.</p>
 <li><strong>Project lifecycle tooling</strong>: Added lifecycle commands for interactive <code>incan new</code> / <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>, plus project lifecycle documentation and <code>incan.toml</code> environment metadata support (#73).</li>
 <li><strong>Dependency policy</strong>: The rust-analyzer proc-macro API dependency is patched locally to request <code>postcard</code> without default features, removing the unmaintained <code>atomic-polyfill</code> crate from the workspace dependency graph and letting <code>cargo deny check</code> run without the <code>RUSTSEC-2023-0089</code> advisory ignore (#260).</li>
 <li><strong>Dependency policy</strong>: The workspace now builds against Wasmtime <code>44.0.1</code> / Wasmtime WASI <code>44.0.1</code> and raises the Rust MSRV to <code>1.92</code>, matching Wasmtime 44's compiler requirement.</li>
-<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.26</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata, Cargo lock entries, stdlib version-check docs, and checked-in pro example lockfiles now identify the development line as <code>0.3.0-dev.27</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
