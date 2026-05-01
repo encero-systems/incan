@@ -105,8 +105,8 @@ time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-wasmtime = { version = "43.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "43.0.1", default-features = false, features = ["p1"] }
+wasmtime = { version = "43.0.2", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "43.0.2", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 # Snapshot testing for codegen
