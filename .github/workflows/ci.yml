@@ -39,8 +39,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          # Share registry/target across stable jobs (clippy/test/smoke) to improve cache hit rate on later runs.
+          # Share registry/target across stable jobs; the Linux test shard is the cache writer.
           shared-key: incan-stable
+          save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -66,6 +67,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -106,6 +109,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -141,6 +146,8 @@ jobs:
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Cargo build (locked)
         run: cargo build --locked
@@ -166,6 +173,9 @@ jobs:
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Cargo test shard (locked)
@@ -201,6 +211,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
@@ -213,6 +225,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - name: Run cargo deny
@@ -228,6 +242,8 @@ jobs:
           profile: minimal
       - uses: ./.github/actions/install-nightly-toolchain
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Install cargo-udeps
         run: cargo install cargo-udeps --locked
@@ -245,10 +261,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Keep release-profile artifacts separate from the dev/test cache. Do not enable sccache
-          # in this job: its GitHub-cache writes can prevent rust-cache from saving this target cache.
+          # Keep release-profile artifacts separate from the dev/test cache.
           shared-key: incan-stable-release
           cache-workspace-crates: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build release compiler once
         run: make smoke-test-release
       - name: Upload release compiler
@@ -294,6 +310,8 @@ jobs:
         with:
           shared-key: incan-stable
           cache-targets: false
+          # Smoke shards only need restore access; stable test shards own this shared cache.
+          save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - name: Install WASI target for vocab desugarers
         if: ${{ matrix.wasi }}
@@ -340,6 +358,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Build docs
         run: cargo doc --no-deps
@@ -372,6 +392,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Regenerate language reference
         run: cargo run -p incan_core --bin generate_lang_reference
