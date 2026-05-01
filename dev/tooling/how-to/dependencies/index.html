@@ -4942,11 +4942,14 @@ for reproducible builds.</p>
 <p>If <code>incan.lock</code> doesn't exist and you run <code>incan build</code> or <code>incan test</code> without strict flags, the lock file is created
 automatically on first build.</p>
 <h3 id="strict-mode-for-ci">Strict mode for CI<a class="headerlink" href="#strict-mode-for-ci" title="Permanent link">&para;</a></h3>
-<p>Use <code>--locked</code> or <code>--frozen</code> to enforce that the lock file exists and is up to date:</p>
+<p>Use <code>--locked</code> or <code>--frozen</code> to enforce that the lock file exists and is up to date. Use <code>--offline</code> when Cargo must fail instead of touching the network:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Requires incan.lock to exist and match current deps</span>
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
 
-<span class="c1"># Same as --locked, plus Cargo runs in offline/frozen mode</span>
+<span class="c1"># Disallow network access during Cargo subprocesses</span>
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--offline
+
+<span class="c1"># Same as --offline plus --locked</span>
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
 </code></pre></div>
 <p>Before relying on <code>--frozen</code> in a restricted or offline environment, run:</p>
@@ -4956,6 +4959,12 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 <p>If the lock file is missing or stale, the command fails with a clear message:</p>
 <div class="language-text highlight"><pre><span></span><code>error: incan.lock is out of date; run `incan lock`
 </code></pre></div>
+<p>CI can set the same policy with environment variables:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nv">INCAN_LOCKED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn
+<span class="nv">INCAN_FROZEN</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
+</code></pre></div>
+<p><code>INCAN_FROZEN=1</code> implies both offline and locked policy.
+Use <code>--no-offline</code>, <code>--no-locked</code>, or <code>--no-frozen</code> to disable matching environment defaults for a single command.</p>
 <h2 id="resolution-rules">Resolution rules<a class="headerlink" href="#resolution-rules" title="Permanent link">&para;</a></h2>
 <p>When the compiler resolves a dependency, it follows this precedence:</p>
 <table>
@@ -5007,6 +5016,11 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-all-features
 </code></pre></div>
 <p>These flags affect dependency resolution and are included in the lock file fingerprint.</p>
+<p>For advanced Cargo-only flags, use <code>--cargo-args</code> or put Cargo arguments after <code>--</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-args<span class="w"> </span><span class="s2">&quot;--timings&quot;</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/<span class="w"> </span>--<span class="w"> </span>--timings
+</code></pre></div>
+<p><code>INCAN_CARGO_ARGS</code> is also supported for simple whitespace-separated CI defaults. Quoting is not parsed inside the environment variable; use the CLI form for arguments containing spaces.</p>
 <h2 id="common-errors-and-fixes">Common errors and fixes<a class="headerlink" href="#common-errors-and-fixes" title="Permanent link">&para;</a></h2>
 <h3 id="unknown-crate-without-version">Unknown crate without version<a class="headerlink" href="#unknown-crate-without-version" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code>error: unknown Rust crate `my_crate`: no version specified

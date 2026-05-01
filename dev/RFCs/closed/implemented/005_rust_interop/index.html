@@ -4664,7 +4664,7 @@
 <li><strong>Target version</strong>: 0.2</li>
 <li><strong>Related</strong>:<ul>
 <li><a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a> (Rust crate dependencies)</li>
-<li><a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a> (Cargo offline/locked policy)</li>
+<li><a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a> (Cargo offline/locked policy)</li>
 </ul>
 </li>
 </ul>
@@ -4678,7 +4678,7 @@
 <li>limitations are stated up front (interop is powerful but not “everything in crates.io just works”)</li>
 </ul>
 <p>Dependency pinning and lockfiles are specified by <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>.<br />
-Cargo policy enforcement (<code>--offline/--locked/--frozen</code>) and generated-project persistence are specified by <a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a>.</p>
+Cargo policy enforcement (<code>--offline/--locked/--frozen</code>) and generated-project persistence are specified by <a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>.</p>
 <p>Prime directive: interop must not force users to learn Rust borrowing/lifetimes/traits at the surface level!</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4865,7 +4865,7 @@ contract.</p>
 <li>Even with a curated <code>@derive(...)</code> list, the implementation may emit Rust <code>#[derive(...)]</code> for those traits and thus
   execute Rust proc-macros at build time (e.g. serde derives).</li>
 <li>This is acceptable only in combination with locked/pinned dependency resolution (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>) and reproducible/offline
-  build policy controls (<a href="/dev/RFCs/020_offline_locked_reproducible_builds">RFC 020</a>).</li>
+  build policy controls (<a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>).</li>
 <li>The curated derive list is part of Incan’s compatibility contract (versioned, documented, and stable-by-default).</li>
 </ul>
 <h3 id="panicunwind-and-error-policy-normative">Panic/unwind and error policy (normative)<a class="headerlink" href="#panicunwind-and-error-policy-normative" title="Permanent link">&para;</a></h3>

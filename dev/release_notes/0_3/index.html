@@ -4518,6 +4518,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#deterministic-incanlock-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deterministic incan.lock files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-018-testing-language-primitives" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 018 testing language primitives
@@ -4713,6 +4722,9 @@ the raw representation for value enums.</p>
 <h3 id="rfc-057-targeted-generated-rust-lint-suppression">RFC 057 targeted generated-Rust lint suppression<a class="headerlink" href="#rfc-057-targeted-generated-rust-lint-suppression" title="Permanent link">&para;</a></h3>
 <p>Incan now supports <code>@rust.allow(...)</code> for narrow suppression of specific rustc or Clippy lints on the generated Rust item for one declaration. This is Rust-emission metadata for unavoidable generated-Rust warnings, not arbitrary Rust attribute injection and not project-wide lint configuration.</p>
 <p>The decorator is item-only and covers functions, methods, models, classes, enums, and newtypes. Module-level <code>rust.allow(...)</code> directives are not supported. The compiler also rejects obvious broad lint groups including <code>warnings</code>, <code>unused</code>, <code>clippy::all</code>, <code>clippy::pedantic</code>, <code>clippy::nursery</code>, <code>clippy::restriction</code>, and <code>clippy::cargo</code>.</p>
+<h3 id="deterministic-incanlock-files">Deterministic <code>incan.lock</code> files<a class="headerlink" href="#deterministic-incanlock-files" title="Permanent link">&para;</a></h3>
+<p><code>incan.lock</code> no longer records the wall-clock time when the file was generated. The lock file now contains only reproducibility-relevant inputs such as the Incan lock format version, compiler version, dependency fingerprint, Cargo feature selection, and embedded <code>Cargo.lock</code> payload. Re-running <code>incan lock</code> against unchanged inputs should leave the file byte-for-byte unchanged, reducing noisy VCS churn in projects that commit lock files.</p>
+<p>Older lock files that still contain the previous <code>generated = "..."</code> metadata continue to load, but newly written lock files omit it.</p>
 <h3 id="rfc-018-testing-language-primitives">RFC 018 testing language primitives<a class="headerlink" href="#rfc-018-testing-language-primitives" title="Permanent link">&para;</a></h3>
 <p>The language <code>assert</code> statement is now an always-on language primitive. Use <code>assert expr[, msg]</code> directly for ordinary checks; import <code>std.testing</code> when you need helper functions such as <code>assert_eq</code>, <code>assert_is_some</code>, <code>fail</code>, fixtures, parametrization, or marker decorators.</p>
 <p>Testing decorators remain <code>std.testing</code> APIs rather than magic global names. <code>@skip</code>, <code>@xfail</code>, <code>@slow</code>, <code>@fixture</code>, and <code>@parametrize</code> must resolve through <code>std.testing</code>, and runner/discovery behavior remains part of RFC 019 rather than RFC 018.</p>
@@ -4760,6 +4772,8 @@ the raw representation for value enums.</p>
 </ul>
 <h3 id="tooling-and-formatter">Tooling and formatter<a class="headerlink" href="#tooling-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Tooling</strong>: RFC 020 completes the Cargo policy contract for generated builds and tests. <code>incan build</code>, <code>incan run</code>, and <code>incan test</code> now accept <code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, explicit <code>--no-*</code> environment overrides, Cargo args forwarding, and matching CI environment defaults for restricted-network and reproducible workflows (#38, RFC 020).</li>
+<li><strong>Tooling</strong>: <code>incan.lock</code> files no longer include a volatile generation timestamp. New lock files are deterministic for unchanged dependency inputs, while older lock files with <code>generated = "..."</code> metadata remain readable.</li>
 <li><strong>Tooling</strong>: <code>incan tools doctor</code> now includes advisory offline-readiness diagnostics in text and JSON output, reporting Cargo availability, effective Cargo home, cache/config hints, and remediation steps before users rely on RFC 020 offline or frozen policy in restricted environments (#460).</li>
 <li><strong>Tooling/Editor</strong>: <code>incan tools doctor</code> and the VS Code/Cursor <strong>Incan: Doctor</strong> command now report local <code>incan</code> / <code>incan-lsp</code> path resolution, cargo-bin symlink state, and recovery guidance for stale editor diagnostics or mismatched local binaries (#426).</li>
 <li><strong>Compiler/Tooling</strong>: RFC 048 checked contract metadata is now compiler-visible through canonical model bundle validation, project materialization, deterministic <code>incan tools metadata model</code> emit from projects, bundle JSON, and <code>.incnlib</code> artifacts, artifact embedding for publishable bundles, strict checked API docstring validation, <code>incan tools metadata api</code> JSON extraction, and LSP hover/emit integration (#205, #438, RFC 048).</li>

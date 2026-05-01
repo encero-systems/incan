@@ -4919,16 +4919,29 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 </ul>
 <p>Dependency flags:</p>
 <ul>
+<li><code>--offline</code>: Pass <code>--offline</code> to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.</li>
 <li><code>--locked</code>: Require <code>incan.lock</code> to exist and be up to date. Also passes <code>--locked</code> to Cargo.</li>
 <li><code>--frozen</code>: Like <code>--locked</code>, plus passes <code>--frozen</code> to Cargo (offline + locked).</li>
+<li><code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>: Disable matching environment defaults for this invocation.</li>
+<li><code>--cargo-args &lt;ARG&gt;...</code>: Forward additional arguments to Cargo after policy and feature flags. Arguments after <code>--</code> are also treated as Cargo arguments.</li>
 <li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features (comma-separated).</li>
 <li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
 <li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
 </ul>
+<p>Environment defaults:</p>
+<ul>
+<li><code>INCAN_OFFLINE=1</code>, <code>INCAN_LOCKED=1</code>, and <code>INCAN_FROZEN=1</code> behave like their matching flags.</li>
+<li><code>INCAN_FROZEN=1</code> implies offline and locked mode.</li>
+<li>CLI flags take precedence over these defaults. Use the <code>--no-*</code> forms to disable a policy default set by the environment.</li>
+<li><code>INCAN_CARGO_ARGS="..."</code> is split on whitespace and used when no Cargo args were supplied on the CLI.</li>
+</ul>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/simple/hello.incn
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--offline
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--<span class="w"> </span>--timings
 incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
@@ -4947,7 +4960,7 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib
 <p>If <code>FILE</code> is omitted, <code>incan run</code> uses <code>[project.scripts].main</code> from the nearest <code>incan.toml</code>. Outside a project, you must pass <code>FILE</code> or <code>-c</code>.</p>
 <p>Dependency flags (same as <code>build</code>):</p>
 <ul>
-<li><code>--locked</code>, <code>--frozen</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+<li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
 </ul>
 <h3 id="incan-fmt"><code>incan fmt</code><a class="headerlink" href="#incan-fmt" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
@@ -5052,7 +5065,7 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 </table>
 <p>Dependency flags (same as <code>build</code>):</p>
 <ul>
-<li><code>--locked</code>, <code>--frozen</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+<li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
 </ul>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Run all tests in a directory</span>
@@ -5098,7 +5111,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--shuffle<span class="w"> </span>--seed<span class="w"> </span><span class="m">12345</span><span class="w"> </span>tests/
 
 <span class="c1"># Strict mode for CI</span>
-incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--frozen
 </code></pre></div>
 <h3 id="incan-new"><code>incan new</code><a class="headerlink" href="#incan-new" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>

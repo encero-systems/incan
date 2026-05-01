@@ -4654,7 +4654,12 @@ proxy/mirror).</p>
 <p>For restricted or offline environments, run the supported preflight before the build:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
 </code></pre></div>
-<p>The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed. Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail.</p>
+<p>The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed.</p>
+<p>Run once while online to populate Cargo's cache and generate <code>incan.lock</code>, then use:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/<span class="w"> </span>--frozen
+</code></pre></div>
+<p>Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use <code>--offline</code> when you want Cargo to fail instead of using the network without also requiring a lockfile. Use <code>--locked</code> when the lockfile must exist and match current dependency inputs.</p>
 <h2 id="macos-toolchainlinker-issues">macOS: toolchain/linker issues<a class="headerlink" href="#macos-toolchainlinker-issues" title="Permanent link">&para;</a></h2>
 <p>If you see errors about a missing C toolchain or linker, install Xcode Command Line Tools:</p>
 <div class="language-bash highlight"><pre><span></span><code>xcode-select<span class="w"> </span>--install
