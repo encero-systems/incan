@@ -67,7 +67,7 @@ jobs:
 
       - name: Sync PR labels (Area(s) -> labels)
         if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |
@@ -130,7 +130,7 @@ jobs:
 
       - name: Sync issue labels and Issue Type (Area -> labels, title prefix -> type)
         if: github.event_name == 'issues'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |

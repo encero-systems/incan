@@ -16,7 +16,7 @@ jobs:
     name: Format Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Comment wrapping (comment_width/wrap_comments/format_code_in_doc_comments) requires nightly rustfmt.
       # We intentionally use nightly for *formatting only*; all builds/tests remain on stable/MSRV jobs.
       # Install stable first (rustup), then nightly with retries — nightly channel sync sometimes flakes on the network.
@@ -33,7 +33,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -57,7 +57,7 @@ jobs:
         partition: [1, 2, 3, 4]
         total: [4]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -132,7 +132,7 @@ jobs:
     name: MSRV Build (1.92.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust 1.92.0
         uses: dtolnay/rust-toolchain@master
         with:
@@ -198,7 +198,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-audit
@@ -210,7 +210,7 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-deny
@@ -222,7 +222,7 @@ jobs:
     name: Unused Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           profile: minimal
@@ -241,7 +241,7 @@ jobs:
     name: Smoke Release Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -252,7 +252,7 @@ jobs:
       - name: Build release compiler once
         run: make smoke-test-release
       - name: Upload release compiler
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: incan-release-bin
           path: target/release/incan
@@ -288,7 +288,7 @@ jobs:
             wasi: true
             examples-timeout: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -299,7 +299,7 @@ jobs:
         if: ${{ matrix.wasi }}
         run: rustup target add wasm32-wasip1
       - name: Download release compiler
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: incan-release-bin
           path: target/release
@@ -337,7 +337,7 @@ jobs:
     name: Docs Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/setup-rust-sccache
@@ -354,8 +354,8 @@ jobs:
       run:
         working-directory: workspaces/docs-site
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install MkDocs dependencies
@@ -369,7 +369,7 @@ jobs:
     name: Generated Reference Up-to-date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/setup-rust-sccache
