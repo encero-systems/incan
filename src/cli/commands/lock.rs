@@ -481,6 +481,7 @@ fn run_lock_rust_inspect_prewarm(
 }
 
 /// Generate an `incan.lock` file by creating a temporary Cargo project and resolving dependencies.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_lockfile(
     project_root: &Path,
     project_name: &str,
