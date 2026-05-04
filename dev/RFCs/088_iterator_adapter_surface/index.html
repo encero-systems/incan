@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 006: Python-style generators - Incan Documentation</title>
+        <title>RFC 088: Iterator adapter surface - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-006-python-style-generators" class="md-skip">
+        <a href="#rfc-088-iterator-adapter-surface" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 006: Python-style generators
+              RFC 088: Iterator adapter surface
             
           </span>
         </div>
@@ -4449,6 +4449,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -4476,106 +4485,64 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+  <a href="#guide-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation (how users think about it)
+      Guide-level explanation
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#generator-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Generator functions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#generator-expressions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Generator expressions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#infinite-generators" class="md-nav__link">
-    <span class="md-ellipsis">
-      Infinite generators
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lazy-transformations" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lazy transformations
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#recursive-traversal" class="md-nav__link">
-    <span class="md-ellipsis">
-      Recursive traversal
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+  <a href="#reference-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation (precise rules)
+      Reference-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+    <nav class="md-nav" aria-label="Reference-level explanation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#generator-functions-reference" class="md-nav__link">
+  <a href="#adapter-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator functions reference
+      Adapter methods
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#generator-expressions-reference" class="md-nav__link">
+  <a href="#terminal-consumer-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator expressions reference
+      Terminal consumer methods
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#typing" class="md-nav__link">
+  <a href="#callback-typing" class="md-nav__link">
     <span class="md-ellipsis">
-      Typing
+      Callback typing
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#consumption" class="md-nav__link">
+  <a href="#evaluation-order" class="md-nav__link">
     <span class="md-ellipsis">
-      Consumption
+      Evaluation order
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method behavior
     </span>
   </a>
   
@@ -4597,36 +4564,54 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#one-generator-model-two-surfaces" class="md-nav__link">
+  <a href="#syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      One generator model, two surfaces
+      Syntax
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#distinction-from-fixtures" class="md-nav__link">
+  <a href="#semantics" class="md-nav__link">
     <span class="md-ellipsis">
-      Distinction from fixtures
+      Semantics
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#lowering-model" class="md-nav__link">
+  <a href="#interaction-with-generators" class="md-nav__link">
     <span class="md-ellipsis">
-      Lowering model
+      Interaction with generators
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
+  <a href="#interaction-with-collection-iteration" class="md-nav__link">
     <span class="md-ellipsis">
-      Interaction with existing features
+      Interaction with collection iteration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-callable-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with callable values
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-rust-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with Rust interop
     </span>
   </a>
   
@@ -4665,6 +4650,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#layers-affected" class="md-nav__link">
     <span class="md-ellipsis">
       Layers affected
@@ -4674,129 +4668,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation Plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-spec-parser-and-ast" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Spec, parser, and AST
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-typechecker-and-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: Typechecker and diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-lowering-emission-and-runtime-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Lowering, emission, and runtime surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-tooling-docs-and-release-readiness" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: Tooling, docs, and release readiness
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#progress-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      Progress Checklist
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Progress Checklist">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#spec-design" class="md-nav__link">
-    <span class="md-ellipsis">
-      Spec / design
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parser-ast-formatter" class="md-nav__link">
-    <span class="md-ellipsis">
-      Parser / AST / formatter
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#typechecker-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Typechecker / diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-emission-runtime" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering / emission / runtime
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tests
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docs-release" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docs / release
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design decisions
+      Unresolved questions
     </span>
   </a>
   
@@ -4820,280 +4694,204 @@
   
 
 
-<h1 id="rfc-006-python-style-generators">RFC 006: Python-style generators<a class="headerlink" href="#rfc-006-python-style-generators" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-088-iterator-adapter-surface">RFC 088: Iterator adapter surface<a class="headerlink" href="#rfc-088-iterator-adapter-surface" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> In Progress</li>
-<li><strong>Created:</strong> 2024-12-10</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-05-04</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/324</li>
-<li><strong>Follow-up:</strong> RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 006 (Python-style generators)</li>
+<li>RFC 035 (first-class named function references)</li>
+<li>RFC 068 (protocol hooks for core language syntax)</li>
+<li>RFC 070 (Result combinators)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> #127</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use <code>yield</code> inside <code>def</code>, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of <code>T</code> exposed as <code>Generator[T]</code>.</p>
+<p>This RFC standardizes a general iterator adapter surface for <code>Iterator[T]</code>, including lazy transformation methods such as <code>.map()</code>, <code>.filter()</code>, <code>.flat_map()</code>, <code>.skip()</code>, <code>.chain()</code>, <code>.enumerate()</code>, <code>.zip()</code>, <code>.take_while()</code>, <code>.skip_while()</code>, and <code>.batch()</code>, plus terminal consumers such as <code>.collect()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, and <code>.fold()</code>. RFC 006 defines the minimum helper surface needed for generator ergonomics; this RFC defines the broader API that should apply to all iterator values, including generators, collection iterators, range-like values, and user-defined iterator types.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Iterator adapters are protocol-level methods:</strong> values satisfying <code>Iterator[T]</code> should expose a common adapter surface rather than relying on ad hoc collection-specific helpers.</li>
+<li><strong>Adapters are lazy:</strong> transformation methods return new iterator values and must not allocate intermediate lists as part of their language-level semantics.</li>
+<li><strong>Consumers are terminal:</strong> consumer methods consume an iterator and return a realized value such as a list, count, boolean, optional element, or folded accumulator.</li>
+<li><strong>Generators are one iterator source:</strong> <code>Generator[T]</code> from RFC 006 participates through the same iterator protocol, but this RFC is not generator-specific.</li>
+<li><strong>Callable values are the transformation boundary:</strong> adapter callbacks use ordinary Incan callable types and named function references from RFC 035; this RFC does not introduce a second closure syntax.</li>
+<li><strong>The backend may optimize freely:</strong> the language contract is lazy, ordered iterator behavior; implementations may lower to target-native iterator chains when semantics match.</li>
+</ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan currently has eager collections and iterator-shaped loops, but it does not have a first-class way to express lazy, stateful iteration in the language surface itself. That hurts several common cases:</p>
-<ul>
-<li>large or unbounded sequences that should not be materialized eagerly;</li>
-<li>streaming transformations that would otherwise allocate intermediate lists;</li>
-<li>recursive traversals where the natural shape is "produce one value, suspend, resume";</li>
-<li>portability for authors coming from Python, where <code>yield</code> and generator expressions are familiar ways to express lazy iteration.</li>
-</ul>
-<p>The feature also fits Incan's backend well. Incan does not need a separate user-facing coroutine model just to support this control-flow shape; the compiler can lower generators to ordinary backend state-machine machinery.</p>
+<p>RFC 068 gives Incan a static iteration protocol, and RFC 006 gives users lazy producer values through generators. Without a common adapter surface, users can consume those values in <code>for</code> loops, but they cannot express ordinary lazy transformation pipelines without returning to mutable accumulators and explicit loop scaffolding.</p>
+<p>That gap is especially visible for data transformation code. Filtering rows, mapping values, taking bounded prefixes from large or unbounded streams, zipping related streams, flattening nested iterators, and folding into summaries are standard iterator operations. If each library invents local helper names or materializes intermediate lists, Incan loses the main ergonomic and performance reason to expose lazy iteration in the first place.</p>
+<p>The language already has the pieces needed to make the surface coherent: static <code>Iterator[T]</code> and <code>Iterable[T]</code> vocabulary, first-class callable values, named function references, and a generator model. This RFC connects those pieces into a standard iterator API.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add a first-class generator model based on <code>yield</code> and <code>Generator[T]</code>.</li>
-<li>Support both generator functions and generator expressions as part of that model.</li>
-<li>Make lazy iteration explicit in type signatures instead of inferring it from incidental usage.</li>
-<li>Preserve ordinary <code>for</code>-loop ergonomics over generator results.</li>
-<li>Standardize the minimum helper surface needed to transform and realize generator values ergonomically: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-<li>Distinguish generator <code>yield</code> clearly from fixture <code>yield</code>.</li>
+<li>Standardize a core set of lazy iterator adapter methods on <code>Iterator[T]</code>.</li>
+<li>Standardize a core set of terminal iterator consumer methods on <code>Iterator[T]</code>.</li>
+<li>Make the broader adapter surface apply to generators and non-generator iterator values consistently.</li>
+<li>Preserve left-to-right evaluation order and laziness for adapter chains.</li>
+<li>Keep method names aligned with Rust iterator vocabulary where that vocabulary is already common and precise.</li>
+<li>Define <code>.batch()</code> as an Incan data-processing convenience with explicit partial-batch behavior.</li>
+<li>Require useful type diagnostics when callbacks have incompatible arity or return types.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Async generators in this RFC.</li>
-<li>Bidirectional coroutine features such as Python-style <code>send()</code>.</li>
-<li>A wholesale redesign of comprehensions or iterator adapters beyond generator support itself.</li>
-<li>Standardizing the broader <code>Iterator[T]</code> adapter surface in the initial draft. Methods such as <code>.flat_map()</code>, <code>.skip()</code>, <code>.chain()</code>, <code>.enumerate()</code>, <code>.zip()</code>, <code>.take_while()</code>, <code>.skip_while()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, <code>.fold()</code>, and <code>.batch()</code> belong in RFC 088.</li>
+<li>Changing the generator model from RFC 006.</li>
+<li>Changing the iteration protocol from RFC 068.</li>
+<li>Introducing a pipeline operator such as <code>|&gt;</code> or <code>&gt;&gt;</code>.</li>
+<li>Introducing a new closure syntax or block-lambda syntax.</li>
+<li>Defining async iterator adapters or async generators.</li>
+<li>Defining parallel, concurrent, or distributed iterator execution.</li>
+<li>Guaranteeing a particular Rust implementation type in generated code.</li>
+<li>Standardizing every possible iterator helper, such as <code>peekable</code>, <code>cycle</code>, <code>scan</code>, <code>partition</code>, <code>reduce</code>, <code>min</code>, <code>max</code>, or sorting helpers.</li>
 </ul>
-<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="generator-functions">Generator functions<a class="headerlink" href="#generator-functions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">i</span> <span class="o">=</span> <span class="n">start</span>
-    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">end</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">i</span>
-        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Use iterator adapters when the code describes a value pipeline more clearly than a mutable accumulator.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">is_active</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">user</span><span class="o">.</span><span class="n">is_active</span>
 
-<span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">):</span>
-    <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">:</span>
-        <span class="k">break</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">user_name</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="nb">upper</span><span class="p">()</span>
+
+<span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_active</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">user_name</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
-<p>The function above does not build a list. Each <code>yield</code> produces one element for the surrounding iteration and then suspends the function until the next value is requested.</p>
-<h3 id="generator-expressions">Generator expressions<a class="headerlink" href="#generator-expressions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
-
-<span class="k">for</span> <span class="n">sq</span> <span class="ow">in</span> <span class="n">squares</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">sq</span><span class="p">)</span>
-</code></pre></div>
-<p>Generator expressions are the expression form of the same idea: they produce a lazy <code>Generator[T]</code> instead of an eager list.</p>
-<h3 id="infinite-generators">Infinite generators<a class="headerlink" href="#infinite-generators" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">a</span>
-        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
-
-<span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
-</code></pre></div>
-<p>This is the core value proposition: the generator can describe an unbounded stream, while the consumer decides how much to realize.</p>
-<h3 id="lazy-transformations">Lazy transformations<a class="headerlink" href="#lazy-transformations" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">square</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">is_even</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span>
-
-<span class="n">evens_squared</span> <span class="o">=</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_even</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">square</span><span class="p">)</span>
+<p>Adapters compose without realizing intermediate lists. The example above filters and maps lazily; <code>.collect()</code> is the point where the final list is produced.</p>
+<p>Iterators over unbounded sources stay bounded when the consumer asks for a bounded prefix:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">first_ten_squares</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">naturals</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>
     <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
     <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
-<p>Generator helper methods are lazy until a terminal operation consumes them. In the example above, <code>.filter()</code>, <code>.map()</code>, and <code>.take()</code> build a generator pipeline; <code>.collect()</code> realizes only the first ten transformed values as a <code>list[int]</code>.</p>
-<h3 id="recursive-traversal">Recursive traversal<a class="headerlink" href="#recursive-traversal" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">walk_tree</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="nc">Node</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nc">Node</span><span class="p">]:</span>
-    <span class="k">yield</span> <span class="n">node</span>
-    <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">descendant</span> <span class="ow">in</span> <span class="n">walk_tree</span><span class="p">(</span><span class="n">child</span><span class="p">):</span>
-            <span class="k">yield</span> <span class="n">descendant</span>
+<p>Adapters can combine multiple streams:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="n">names</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">zip</span><span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="n">iter</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
-<p>Generators are useful when the control flow is naturally incremental instead of collection-oriented.</p>
-<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="generator-functions-reference">Generator functions reference<a class="headerlink" href="#generator-functions-reference" title="Permanent link">&para;</a></h3>
-<ul>
-<li>A function is a generator function when its body contains <code>yield</code> and its declared return type is <code>Generator[T]</code>.</li>
-<li><code>yield expr</code> produces one element of type <code>T</code> for the surrounding generator.</li>
-<li><code>yield</code> must not appear in ordinary functions, except where another RFC explicitly gives <code>yield</code> special meaning for a distinct construct such as fixtures.</li>
-<li>A generator function may use <code>return</code> without a value to terminate iteration early.</li>
-<li><code>return value</code> inside a generator is a compile-time error. Generator return values are reserved for a future delegation or coroutine-oriented RFC.</li>
-</ul>
-<h3 id="generator-expressions-reference">Generator expressions reference<a class="headerlink" href="#generator-expressions-reference" title="Permanent link">&para;</a></h3>
-<ul>
-<li>A generator expression has the form <code>(expr for binding in iterable [if condition] ...)</code> and yields a <code>Generator[T]</code>, where <code>T</code> is the type of <code>expr</code>.</li>
-<li>Generator expressions support the same comprehension-clause shape as list comprehensions: one leading <code>for</code> clause followed by zero or more nested <code>for</code> clauses and zero or more trailing <code>if</code> filters.</li>
-<li>The iterable source is consumed lazily as the resulting generator is advanced.</li>
-<li>A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields <code>expr</code> for each bound element.</li>
-<li>Generator expressions are lazy; the list-comprehension surface remains the eager collection form.</li>
-</ul>
-<h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Every yielded expression must type-check against the element type <code>T</code> in <code>Generator[T]</code>.</li>
-<li>Declaring <code>Generator[T]</code> without any reachable <code>yield</code> is a compile-time error.</li>
-<li>Using <code>yield</code> without a <code>Generator[T]</code> return type is a compile-time error unless another construct has already claimed <code>yield</code> semantics for that context.</li>
-</ul>
-<h3 id="consumption">Consumption<a class="headerlink" href="#consumption" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>Generator[T]</code> is the semantic type for values produced by generator functions and generator expressions.</li>
-<li><code>Generator[T]</code> must satisfy the static iteration protocol from RFC 068: it may be consumed anywhere an <code>Iterable[T]</code>/<code>Iterator[T]</code> value is accepted, and <code>for</code> loops must accept generator values anywhere they accept iterable values.</li>
-<li>Generator values must expose the following minimum helper surface:</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<p>Nested iterator-producing callbacks can be flattened:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">documents</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">flat_map</span><span class="p">(</span><span class="n">document_words</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_searchable</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
-<ul>
-<li><code>.map()</code>, <code>.filter()</code>, and <code>.take()</code> are lazy: they return new generator values and must not materialize intermediate lists.</li>
-<li><code>.collect()</code> is terminal and eager: it consumes the generator and returns a <code>list[T]</code>.</li>
-<li>Exhausting a generator ends iteration normally.</li>
-</ul>
+<p>Terminal methods are for summaries or predicates:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">has_admin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">is_admin</span><span class="p">)</span>
+<span class="n">all_valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">validate_row</span><span class="p">)</span>
+<span class="n">first_error</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Error</span><span class="p">]</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span>
+<span class="n">total</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">numbers</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">add</span><span class="p">)</span>
+</code></pre></div>
+<p>Batching groups adjacent elements into fixed-size lists and preserves a final partial batch:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">batches</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Event</span><span class="p">]]</span> <span class="o">=</span> <span class="n">events</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">batch</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<p>If <code>events</code> contains 250 elements, the result contains two batches of 100 and one final batch of 50.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="adapter-methods">Adapter methods<a class="headerlink" href="#adapter-methods" title="Permanent link">&para;</a></h3>
+<p><code>Iterator[T]</code> must expose these lazy adapter methods:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">flat_map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">skip</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">chain</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">T</span><span class="p">]]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">zip</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">U</span><span class="p">]]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">take_while</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">skip_while</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]]</span>
+</code></pre></div>
+<p>Adapter methods must be lazy. Calling an adapter must not consume elements beyond the amount required to construct the next output element when the adapted iterator is advanced.</p>
+<p>Adapter chains must preserve source order unless the method contract says otherwise. This RFC does not define any reordering adapter.</p>
+<h3 id="terminal-consumer-methods">Terminal consumer methods<a class="headerlink" href="#terminal-consumer-methods" title="Permanent link">&para;</a></h3>
+<p><code>Iterator[T]</code> must expose these terminal methods:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">count</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">any</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">find</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">fold</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">init</span><span class="p">:</span> <span class="nc">U</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">U</span><span class="p">,</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span>
+</code></pre></div>
+<p>Terminal methods consume the receiver. After a terminal method consumes an iterator value, the program must not rely on that same iterator value yielding additional elements unless the iterator type documents reusable iteration separately.</p>
+<h3 id="callback-typing">Callback typing<a class="headerlink" href="#callback-typing" title="Permanent link">&para;</a></h3>
+<p>Callback arguments must type-check against the element type yielded by the receiver at that point in the chain.</p>
+<p><code>map</code> callbacks must return the output element type. <code>filter</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>take_while</code>, and <code>skip_while</code> callbacks must return <code>bool</code>. <code>flat_map</code> callbacks must return <code>Iterator[U]</code> or a type that is accepted as an iterator value under the iteration protocol. <code>fold</code> callbacks must accept the accumulator and current element and must return the next accumulator value.</p>
+<p>When callback arity or return type is incompatible with the method contract, the compiler must emit a type error at the adapter call site.</p>
+<h3 id="evaluation-order">Evaluation order<a class="headerlink" href="#evaluation-order" title="Permanent link">&para;</a></h3>
+<p>The receiver expression must be evaluated before method arguments. Method arguments must be evaluated left to right. Adapter callbacks must be invoked only as the resulting iterator is advanced.</p>
+<p>For <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, <code>.take_while()</code>, and <code>.skip_while()</code>, evaluation must short-circuit according to the method contract.</p>
+<h3 id="method-behavior">Method behavior<a class="headerlink" href="#method-behavior" title="Permanent link">&para;</a></h3>
+<p><code>.map(f)</code> yields <code>f(item)</code> for each input item.</p>
+<p><code>.filter(f)</code> yields each input item for which <code>f(item)</code> returns <code>true</code>.</p>
+<p><code>.flat_map(f)</code> applies <code>f</code> to each input item and yields all elements from each returned iterator before advancing to the next input item.</p>
+<p><code>.take(n)</code> yields at most the first <code>n</code> elements. If <code>n</code> is less than or equal to zero, it yields no elements.</p>
+<p><code>.skip(n)</code> discards at most the first <code>n</code> elements and yields the rest. If <code>n</code> is less than or equal to zero, it yields all elements.</p>
+<p><code>.chain(other)</code> yields all remaining elements from the receiver, then all remaining elements from <code>other</code>.</p>
+<p><code>.enumerate()</code> yields <code>(index, item)</code> pairs, starting at index <code>0</code> and increasing by one for each yielded item.</p>
+<p><code>.zip(other)</code> yields pairs from the receiver and <code>other</code> until either iterator is exhausted.</p>
+<p><code>.take_while(f)</code> yields input items until <code>f(item)</code> first returns <code>false</code>, then stops.</p>
+<p><code>.skip_while(f)</code> discards input items while <code>f(item)</code> returns <code>true</code>, then yields that first non-skipped item and all following items.</p>
+<p><code>.batch(size)</code> yields adjacent <code>list[T]</code> batches with at most <code>size</code> elements. The final batch is yielded when it is non-empty even if it contains fewer than <code>size</code> elements. A <code>size</code> less than or equal to zero must be rejected statically when known at compile time and otherwise must produce the same user-facing error category as other invalid numeric standard-library arguments.</p>
+<p><code>.collect()</code> consumes all remaining elements into a <code>list[T]</code>.</p>
+<p><code>.count()</code> consumes all remaining elements and returns the number of elements consumed.</p>
+<p><code>.any(f)</code> returns <code>true</code> after the first item for which <code>f(item)</code> returns <code>true</code>; otherwise it returns <code>false</code>.</p>
+<p><code>.all(f)</code> returns <code>false</code> after the first item for which <code>f(item)</code> returns <code>false</code>; otherwise it returns <code>true</code>.</p>
+<p><code>.find(f)</code> returns <code>Some(item)</code> for the first item for which <code>f(item)</code> returns <code>true</code>; otherwise it returns <code>None</code>.</p>
+<p><code>.fold(init, f)</code> starts with <code>init</code>, applies <code>f(acc, item)</code> for each item, and returns the final accumulator.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="one-generator-model-two-surfaces">One generator model, two surfaces<a class="headerlink" href="#one-generator-model-two-surfaces" title="Permanent link">&para;</a></h3>
-<p>Generator functions and generator expressions are not separate features stitched together for convenience. They are two surfaces over the same language model:</p>
-<ul>
-<li>generator functions are statement-oriented and better for named, reusable, stateful producers;</li>
-<li>generator expressions are expression-oriented and better for inline lazy transforms.</li>
-</ul>
-<p>This RFC treats both as first-class parts of Python-style generator support rather than as rollout stages.</p>
-<h3 id="distinction-from-fixtures">Distinction from fixtures<a class="headerlink" href="#distinction-from-fixtures" title="Permanent link">&para;</a></h3>
-<p>The language already uses <code>yield</code> in fixture-oriented testing flows. That overlap is tolerable only if the surrounding declaration makes the meaning unambiguous:</p>
-<ul>
-<li>fixture declarations keep fixture lifecycle semantics;</li>
-<li>ordinary functions returning <code>Generator[T]</code> use lazy iteration semantics.</li>
-</ul>
-<p>This RFC therefore treats the declaration context, not the token alone, as the source of truth for <code>yield</code> meaning.</p>
-<p>No separate lint or style guidance is required. Fixture <code>yield</code> and generator <code>yield</code> share the same surface mental model: produce a value, suspend, and later resume. The compiler only needs to make invalid context errors precise.</p>
-<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
-<p>The intended implementation strategy is to lower generator functions and generator expressions through a compiler-owned state-machine transformation or equivalent backend support. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of <code>T</code>.</p>
-<p>Generator helper methods should lower to backend-native lazy iterator machinery where the target supports it. For the Rust backend, <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> should preserve Rust iterator-chain behavior rather than inserting eager intermediate collections.</p>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>for</code> loops consume generators the same way they consume other iterable sources.</li>
-<li>Recursive generators are valid as long as the yielded element type remains consistent.</li>
-<li>Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.</li>
-<li>The broader <code>Iterator[T]</code> adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that design and issue #127 tracks it.</li>
-</ul>
+<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
+<p>This RFC adds no new syntax. Iterator adapters are ordinary method calls on iterator values.</p>
+<h3 id="semantics">Semantics<a class="headerlink" href="#semantics" title="Permanent link">&para;</a></h3>
+<p>The semantic center is a shared lazy iterator API. The adapter methods transform iteration; terminal methods realize or summarize it. The API must be available through the same method-resolution surface users already use for ordinary values.</p>
+<h3 id="interaction-with-generators">Interaction with generators<a class="headerlink" href="#interaction-with-generators" title="Permanent link">&para;</a></h3>
+<p>RFC 006 standardizes <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> as the minimum helper surface needed for generator ergonomics. This RFC generalizes that model to <code>Iterator[T]</code> and adds the broader adapter and terminal methods. A <code>Generator[T]</code> should therefore support the RFC 006 minimum surface directly and support the full RFC 088 surface through its iterator-protocol participation once this RFC is implemented.</p>
+<h3 id="interaction-with-collection-iteration">Interaction with collection iteration<a class="headerlink" href="#interaction-with-collection-iteration" title="Permanent link">&para;</a></h3>
+<p>Collections that expose iterator values through <code>.iter()</code> should receive the same adapter surface as any other <code>Iterator[T]</code>. This RFC does not require every collection type itself to expose adapter methods directly; the canonical entry point for collection pipelines is the collection's iterator-producing operation.</p>
+<h3 id="interaction-with-callable-values">Interaction with callable values<a class="headerlink" href="#interaction-with-callable-values" title="Permanent link">&para;</a></h3>
+<p>Callbacks use ordinary callable values. Named function references, closures, callable objects, and future callable-producing features should work when their static type satisfies the adapter contract. This RFC does not require generic function references without explicit instantiation if the existing callable rules reject them.</p>
+<h3 id="interaction-with-rust-interop">Interaction with Rust interop<a class="headerlink" href="#interaction-with-rust-interop" title="Permanent link">&para;</a></h3>
+<p>Rust-backed iterator values may use Rust iterator machinery when their Incan-facing behavior matches this RFC. The public contract remains the Incan method surface and type rules, not the exact generated Rust adapter type.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>The feature is additive. Existing functions, loops, and comprehensions keep their meaning.</p>
+<p>This feature is additive. Existing <code>for</code> loops, comprehensions, collection methods, and generator usage keep their meaning. Code that already defines methods with the same names on custom iterator types may need to align those methods with this RFC's signatures if the type adopts or is treated as <code>Iterator[T]</code>.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Explicit <code>gen</code> keyword</strong></li>
-<li>
-<p>Clear, but more backend-shaped than Incan needs. Requiring <code>Generator[T]</code> plus <code>yield</code> already communicates intent.</p>
-</li>
-<li>
-<p><strong>Dedicated <code>generator</code> declaration form</strong></p>
-</li>
-<li>
-<p>Avoids overloading ordinary <code>def</code>, but splits the function surface for a feature that is still "a function producing values over time."</p>
-</li>
-<li>
-<p><strong>Functions only, expressions later</strong></p>
-</li>
-<li>Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.</li>
-</ol>
+<ul>
+<li><strong>Keep only the RFC 006 generator helper surface</strong>: rejected because generators are not the only iterator source, and a generator-only API would fragment the language surface.</li>
+<li><strong>Free functions such as <code>map(iter, f)</code> and <code>filter(iter, f)</code></strong>: rejected because method chaining follows the value flow left to right and avoids deeply nested calls in multi-step pipelines.</li>
+<li><strong>A pipeline operator instead of iterator methods</strong>: rejected because a pipeline operator would still need standard transformation functions or methods underneath it.</li>
+<li><strong>List comprehensions only</strong>: rejected because comprehensions are eager collection builders and do not express reusable lazy chains, short-circuiting consumers, zipping, flattening, or batching as directly.</li>
+<li><strong>Backend-specific inheritance from Rust's full iterator API</strong>: rejected because Incan needs a stable language contract and portable diagnostics rather than an opportunistic mirror of one backend's entire method set.</li>
+</ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>yield</code> now carries two meanings in the language, so diagnostics must be explicit.</li>
-<li>Generators introduce suspension semantics that users must learn alongside ordinary function control flow.</li>
-<li>Generator expressions add grammar and precedence surface that the language and tooling must handle carefully.</li>
+<li>The standard iterator surface becomes larger and users must learn when a chain is clearer than a loop.</li>
+<li>Poor diagnostics around callback types could make adapter chains harder to debug than explicit loops.</li>
+<li>Lazy ownership and borrowing behavior can be subtle when callbacks capture values or when iterator items are expensive to move.</li>
+<li>Method names such as <code>map</code>, <code>filter</code>, and <code>fold</code> are common enough that custom iterator-like APIs may need migration or clearer conformance rules.</li>
+<li><code>.batch()</code> is useful for data processing but is less universal than the other adapters, so it adds policy surface around partial batches and invalid sizes.</li>
 </ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A practical implementation should model these methods as stdlib-visible iterator protocol methods with compiler support only where needed for method resolution, type substitution, laziness, and backend emission. The Rust backend should lower straightforward adapter chains to Rust iterator chains when doing so preserves Incan evaluation order, callback behavior, item typing, and error behavior.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Language surface</strong>: <code>yield</code> must be valid in generator function bodies, and generator-expression syntax must be recognized.</li>
-<li><strong>Type system</strong>: yielded expressions must match <code>Generator[T]</code>, and generator declarations must remain internally consistent.</li>
-<li><strong>Execution model</strong>: implementations must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.</li>
-<li><strong>Stdlib / surface vocabulary</strong>: the language must define the <code>Generator</code> type, its RFC 068 iteration-protocol conformance, and the minimum stable helper methods promised publicly.</li>
-<li><strong>Formatter / tooling</strong>: multi-line generators should format predictably, and diagnostics should explain generator-specific behavior clearly.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: iterator method lookup, generic substitution, callback arity checks, callback return-type checks, and terminal-consumption rules must be validated.</li>
+<li><strong>IR Lowering</strong>: adapter and terminal calls must preserve lazy semantics, evaluation order, and short-circuiting behavior.</li>
+<li><strong>Emission</strong>: generated code should preserve the Incan iterator contract and may use backend-native iterator chains when equivalent.</li>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: iterator trait declarations and any runtime bridge helpers must expose the standard method surface.</li>
+<li><strong>LSP / Tooling</strong>: completions, hovers, and diagnostics should expose the adapter signatures and explain callback mismatch errors.</li>
+<li><strong>Documentation</strong>: iterator, generator, collection, and data-transformation docs should teach lazy adapters separately from eager comprehensions.</li>
 </ul>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-spec-parser-and-ast">Phase 1: Spec, parser, and AST<a class="headerlink" href="#phase-1-spec-parser-and-ast" title="Permanent link">&para;</a></h3>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Keep RFC 006 aligned with the settled design decisions: full generator-expression clause support, no <code>return value</code> in generators, and no extra fixture/generator lint policy.</li>
-<li>Extend parser and AST support for generator expressions using the existing comprehension clause surface.</li>
-<li>Preserve existing fixture <code>yield</code> parsing while separating generator-context validation into later semantic stages.</li>
+<li>Should <code>.batch()</code> remain in the core iterator adapter RFC, or should it move to a smaller follow-up for data-processing-specific helpers?</li>
+<li>Should <code>.collect()</code> eventually support explicit target collection types, or should this RFC keep it fixed to <code>list[T]</code>?</li>
+<li>Should <code>flat_map</code> accept <code>Iterable[U]</code> in addition to <code>Iterator[U]</code>, or should callers explicitly call <code>.iter()</code> on iterable results?</li>
+<li>Should terminal methods consume the iterator linearly in the type system once ownership tracking is strong enough to express that distinction?</li>
 </ul>
-<h3 id="phase-2-typechecker-and-diagnostics">Phase 2: Typechecker and diagnostics<a class="headerlink" href="#phase-2-typechecker-and-diagnostics" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add <code>Generator[T]</code> as a checked semantic type that satisfies the RFC 068 iteration protocol.</li>
-<li>Validate generator function bodies: yielded expressions must match <code>Generator[T]</code>, ordinary functions must reject <code>yield</code>, and generator functions must reject <code>return value</code>.</li>
-<li>Type-check generator expressions lazily while preserving the same binding and filter semantics as list comprehensions.</li>
-<li>Type-check the minimum generator helper surface: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-</ul>
-<h3 id="phase-3-lowering-emission-and-runtime-surface">Phase 3: Lowering, emission, and runtime surface<a class="headerlink" href="#phase-3-lowering-emission-and-runtime-surface" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Lower generator functions and generator expressions to lazy backend state-machine or iterator-equivalent behavior.</li>
-<li>Emit Rust code that preserves suspension, ordering, and laziness for generator values.</li>
-<li>Expose the minimum generator helper surface through stdlib-visible declarations and runtime support as needed.</li>
-<li>Ensure generator values work in <code>for</code> loops anywhere the RFC 068 iteration protocol is accepted.</li>
-</ul>
-<h3 id="phase-4-tooling-docs-and-release-readiness">Phase 4: Tooling, docs, and release readiness<a class="headerlink" href="#phase-4-tooling-docs-and-release-readiness" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Format generator functions and multi-clause generator expressions predictably.</li>
-<li>Add parser, typechecker, codegen snapshot, integration, and diagnostic tests for the full RFC surface.</li>
-<li>Update authored user-facing docs, release notes, and the active development version when implementation lands.</li>
-</ul>
-<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
-<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that generator expressions support the full comprehension-clause surface.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that <code>return value</code> in generators is rejected and reserved for future delegation or coroutine work.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that fixture and generator <code>yield</code> need precise diagnostics but no extra lint/style guidance.</li>
-</ul>
-<h3 id="parser-ast-formatter">Parser / AST / formatter<a class="headerlink" href="#parser-ast-formatter" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser: parse generator expressions with the full comprehension-clause surface.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> AST: represent generator expressions without confusing them with eager list comprehensions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser: preserve existing fixture <code>yield</code> parsing behavior.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Formatter: round-trip generator functions and multi-clause generator expressions stably.</li>
-</ul>
-<h3 id="typechecker-diagnostics">Typechecker / diagnostics<a class="headerlink" href="#typechecker-diagnostics" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Type system: represent <code>Generator[T]</code> as the checked generator semantic type.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Protocols: make <code>Generator[T]</code> satisfy the RFC 068 iteration protocol.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Diagnostics: reject <code>yield</code> outside generator functions and fixture contexts.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Diagnostics: reject generator functions whose yielded values do not match <code>Generator[T]</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Diagnostics: reject <code>return value</code> inside generator functions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Typechecker: validate generator expressions with nested <code>for</code> clauses and trailing <code>if</code> filters.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Typechecker: validate <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> on generator values.</li>
-</ul>
-<h3 id="lowering-emission-runtime">Lowering / emission / runtime<a class="headerlink" href="#lowering-emission-runtime" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Lower generator functions to lazy resumable producer behavior.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Lower generator expressions to lazy generator values.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Emit Rust that preserves generator suspension, ordering, and laziness.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Runtime/stdlib: expose the <code>Generator[T]</code> surface and minimum helper methods.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Runtime/stdlib: ensure <code>.map()</code>, <code>.filter()</code>, and <code>.take()</code> stay lazy and <code>.collect()</code> is terminal.</li>
-</ul>
-<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser tests for generator function <code>yield</code> and generator-expression clauses.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Typechecker tests for valid and invalid generator function return/yield combinations.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Typechecker tests for invalid <code>return value</code> in generator functions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Typechecker tests for generator helper callback arity and return-type diagnostics.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Codegen snapshot tests for generator functions, generator expressions, and helper chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Integration tests for <code>for</code> loops over generators and <code>.map().filter().take().collect()</code> chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Regression tests that fixture <code>yield</code> behavior still works.</li>
-</ul>
-<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Update generator language reference or tutorial docs.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Update release notes for the active <code>0.3</code> development line.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Bump the active <code>0.3.0-dev.N</code> version.</li>
-</ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ol>
-<li><code>Generator[T]</code> is the user-facing semantic type for <code>yield</code>-produced values. It should satisfy the iteration protocol rather than being collapsed into a bare <code>Iterator[T]</code> return type.</li>
-<li>The first stable generator helper surface is intentionally small: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-<li>The broader iterator adapter surface belongs in RFC 088, tracked by issue #127.</li>
-<li>Generator expressions support the full comprehension-clause surface rather than only a single <code>for</code> clause.</li>
-<li><code>return</code> without a value may terminate a generator early, but <code>return value</code> is rejected in RFC 006 and reserved for future generator delegation or coroutine work.</li>
-<li>Fixture <code>yield</code> and generator <code>yield</code> do not need extra lint or style guidance beyond precise context-sensitive diagnostics.</li>
-</ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
