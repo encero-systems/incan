@@ -60,6 +60,7 @@ use super::super::expr::{
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
@@ -354,11 +355,12 @@ impl<'a> IrEmitter<'a> {
         Ok(plan.apply(emitted))
     }
 
+    /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
     fn type_is_result_like(ty: &IrType) -> bool {
         match ty {
             IrType::Result(_, _) => true,
             IrType::NamedGeneric(name, args) if args.len() == 2 => {
-                name == "Result" || name == "std::result::Result" || name.ends_with("::Result")
+                collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
             }
             _ => false,
         }

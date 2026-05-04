@@ -2161,6 +2161,8 @@ def main() -> None:
         let source = format!(
             r#"
 from std.fs import IoError, Path
+from rust::std::thread import sleep
+from rust::std::time import Duration
 
 def run() -> Result[None, IoError]:
     root = Path("{root}")
@@ -2180,15 +2182,31 @@ def run() -> Result[None, IoError]:
     println(len(root.glob("*.txt")?))
     println(len(root.rglob("*.txt")?))
     println(len(root.rglob("sub/[ab].txt")?))
-    match root.joinpath("a.txt").open("r", -1, Some("latin1"), None, None):
+    match root.joinpath("a.txt").open("r", -1, Some("definitely-not-an-encoding"), None, None):
         Ok(_) => println("bad")
         Err(err) => println(err.kind)
+    latin = root.joinpath("latin.txt")
+    latin.write_bytes(b"\xff")?
+    println(len(latin.read_text("windows-1252", "strict")?) > 0)
+    match latin.read_text("utf-8", "strict"):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(latin.read_text("utf-8", "replace")? != "")
+    text_handle = latin.open("r", -1, Some("windows-1252"), Some("strict"), None)?
+    println(len(text_handle.read(-1)?) > 0)
     handle = root.joinpath("a.txt").open("rb", 0, None, None, None)?
     chunk = handle.read_exact(2)?
     println(len(chunk))
+    source_modified = root.joinpath("a.txt").stat()?.modified_unix()?
     root.copy(copied, True, True)?
     copied_text = copied.joinpath("sub").joinpath("b.txt").read_text("utf-8", "strict")?
     println(copied_text)
+    copied_modified = copied.joinpath("a.txt").stat()?.modified_unix()?
+    println(copied_modified == source_modified)
+    sleep(Duration.from_secs(1))
+    copied.joinpath("a.txt").touch(True)?
+    touched_modified = copied.joinpath("a.txt").stat()?.modified_unix()?
+    println(touched_modified > copied_modified)
     copied.move(moved)?
     println(moved.joinpath("a.txt").exists())
     stat = moved.joinpath("a.txt").stat()?
@@ -2223,7 +2241,23 @@ def main() -> None:
         let lines = stdout.lines().collect::<Vec<_>>();
         assert_eq!(
             lines,
-            vec!["1", "2", "1", "invalid_input", "2", "bravo", "true", "true", "true"],
+            vec![
+                "1",
+                "2",
+                "1",
+                "invalid_input",
+                "true",
+                "invalid_data",
+                "true",
+                "true",
+                "2",
+                "bravo",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true"
+            ],
             "unexpected std.fs output:\n{stdout}"
         );
         Ok(())

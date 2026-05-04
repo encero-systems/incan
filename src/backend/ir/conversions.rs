@@ -174,6 +174,7 @@ use super::expr::{BinOp, VarAccess};
 use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -541,11 +542,12 @@ fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&I
     }
 }
 
+/// Return whether an IR type represents Incan's canonical `Result[Ok, Err]` shape.
 fn is_result_like_type(ty: &IrType) -> bool {
     match ty {
         IrType::Result(_, _) => true,
         IrType::NamedGeneric(name, args) if args.len() == 2 => {
-            name == "Result" || name == "std::result::Result" || name.ends_with("::Result")
+            collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
         }
         _ => false,
     }

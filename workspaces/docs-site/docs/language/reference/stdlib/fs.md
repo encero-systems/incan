@@ -53,7 +53,7 @@ Use `try_exists()` when "missing" and "could not check" lead to different behavi
 | `path.unlink()` | `Result[None, IoError]` | Remove a file or symlink. |
 | `path.rmdir()` | `Result[None, IoError]` | Remove an empty directory. |
 | `path.remove_tree()` | `Result[None, IoError]` | Remove a directory tree; files and symlinks are errors. |
-| `path.touch(exist_ok: bool)` | `Result[None, IoError]` | Create the file if needed. |
+| `path.touch(exist_ok: bool)` | `Result[None, IoError]` | Create the file if needed, or update access and modification times. |
 
 `glob()` and `rglob()` support `*`, `?`, and bracket character classes such as `[abc]`, `[!abc]`, and `[a-z]`. `remove_tree()` is deliberately not "delete anything"; use `unlink()` for files.
 
@@ -69,7 +69,7 @@ Use `try_exists()` when "missing" and "could not check" lead to different behavi
 
 Whole-file helpers are for small payloads. Use `open(...)` when memory bounds or streaming matter.
 
-`open(...)` supports `r`, `w`, `a`, `x`, their binary forms, and `+` read-write variants. Binary modes reject `encoding`, `errors`, and `newline`. Text handles currently support UTF-8 with strict error handling; unsupported encodings or error strategies return `IoError(kind="invalid_input")` rather than being silently ignored.
+`open(...)` supports `r`, `w`, `a`, `x`, their binary forms, and `+` read-write variants. Binary modes reject `encoding`, `errors`, and `newline`. Text modes use UTF-8 and strict error handling by default. Encoding labels are resolved with the WHATWG Encoding Standard labels implemented by `encoding_rs`; `errors` accepts `strict` or `replace`. Unknown encodings or unsupported error strategies return `IoError(kind="invalid_input")`.
 
 ## Copy, Move, and Links
 
@@ -88,7 +88,7 @@ Whole-file helpers are for small payloads. Use `open(...)` when memory bounds or
 | `path.resolve()` | `Result[Path, IoError]` | Canonical path. |
 | `path.expanduser()` | `Result[Path, IoError]` | Expand a leading `~`. |
 
-Metadata preservation during copy is best-effort where the host platform exposes it.
+Metadata preservation during copy preserves permissions plus modification and access times where the host platform exposes them. Ownership, ACLs, flags, and extended attributes remain host-sensitive and best-effort.
 
 ## File
 

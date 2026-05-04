@@ -1470,6 +1470,19 @@ fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
 }
 
 #[test]
+fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&str"),
+        ResolvedType::Ref(Box::new(ResolvedType::Str)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[u8]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+}
+
+#[test]
 fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     let checker = TypeChecker::new();
     let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));

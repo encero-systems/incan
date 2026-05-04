@@ -209,7 +209,9 @@ impl TypeChecker {
     fn record_rust_call_site_params(&mut self, span: Span, params: &[incan_core::interop::RustParam]) {
         let params: Vec<CallableParam> = params
             .iter()
-            .map(|param| CallableParam::positional(self.resolved_type_from_rust_display(param.type_display.as_str())))
+            .map(|param| {
+                CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
+            })
             .collect();
         self.type_info.record_call_site_callable_params(span, &params);
     }

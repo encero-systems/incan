@@ -139,7 +139,12 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether an external Rust method's first argument should be emitted as a shared borrow.
     fn method_arg_needs_fallback_borrow(method: &str, arg_ty: &IrType) -> bool {
-        method == "write_all" || (method == "write" && Self::is_byte_buffer_type(arg_ty))
+        match method {
+            "write_all" => true,
+            "for_label" | "decode" | "encode" => true,
+            "write" => Self::is_byte_buffer_type(arg_ty),
+            _ => false,
+        }
     }
 
     /// Return whether an IR type can stand in for a mutable Rust byte buffer.

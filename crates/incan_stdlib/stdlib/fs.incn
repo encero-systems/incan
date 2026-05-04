@@ -14,6 +14,7 @@ from rust::std::env import current_dir, var as env_var
 from rust::std::cell import RefCell
 from rust::std::fs import (
     File as RustFile,
+    FileTimes,
     OpenOptions as RustOpenOptions,
     copy as rust_copy,
     create_dir,
@@ -23,7 +24,6 @@ from rust::std::fs import (
     read as rust_read,
     read_dir,
     read_link,
-    read_to_string,
     remove_dir,
     remove_dir_all,
     remove_file,
@@ -35,10 +35,11 @@ from rust::std::fs import (
 from rust::std::io import Read, Seek, SeekFrom, Write
 from rust::std::os::unix::fs import MetadataExt, symlink
 from rust::std::path import Path as RustPath
-from rust::std::process import Command
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
-from rust::std::time import UNIX_EPOCH
+from rust::std::time import SystemTime, UNIX_EPOCH
+from rust::encoding_rs @ "0.8" import Encoding
+from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
 from std.traits.error import Error
 
 
@@ -153,16 +154,13 @@ pub type Path = newtype str:
         """
         Read the entire file as normalized text.
 
-        `std.fs` currently supports `encoding="utf-8"` and `errors="strict"`.
-        CRLF and CR line endings are normalized to `\n`.
+        The encoding label is resolved with the WHATWG Encoding Standard labels
+        implemented by `encoding_rs`. `errors="strict"` reports malformed input;
+        `errors="replace"` accepts replacement characters. CRLF and CR line
+        endings are normalized to `\n`.
         """
-        if encoding != "utf-8":
-            return Err(IoError(path=self, kind="invalid_input", detail="std.fs supports utf-8 text encoding"))
-        if errors != "strict":
-            return Err(IoError(path=self, kind="invalid_input", detail="std.fs supports strict text decoding"))
-        match read_to_string(RustPath.new(self.0)):
-            Ok(data) => return Ok(_normalize_newlines(data))
-            Err(err) => return Err(_io_error(self.clone(), err.to_string()))
+        data = self.read_bytes()?
+        return _decode_text(self.clone(), data, encoding, errors)
 
     def write_text(
         self,
@@ -174,21 +172,20 @@ pub type Path = newtype str:
         """
         Replace the file contents with text, creating the file if needed.
 
-        `std.fs` currently supports `encoding="utf-8"` and `errors="strict"`.
-        When `newline` is provided, each `\n` in `data` is rewritten to that
-        line ending before writing.
+        The encoding label is resolved with the WHATWG Encoding Standard labels
+        implemented by `encoding_rs`. `errors="strict"` reports unmappable text;
+        `errors="replace"` accepts replacement bytes. When `newline` is
+        provided, each `\n` in `data` is rewritten to that line ending before
+        writing.
         """
-        if encoding != "utf-8":
-            return Err(IoError(path=self, kind="invalid_input", detail="std.fs supports utf-8 text encoding"))
-        if errors != "strict":
-            return Err(IoError(path=self, kind="invalid_input", detail="std.fs supports strict text encoding"))
         mut out = data.to_string()
         match newline:
             Some(line_ending) =>
                 out = out.replace("\n", line_ending)
             None =>
                 pass
-        match write_file(self.0.to_string(), out):
+        bytes_out = _encode_text(self.clone(), out, encoding, errors)?
+        match rust_write(RustPath.new(self.0), bytes_out):
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self.clone(), err.to_string()))
 
@@ -266,8 +263,8 @@ pub type Path = newtype str:
 
         Directories are copied recursively. When `follow_symlinks` is false,
         symbolic links are recreated instead of copying their targets. When
-        `preserve_metadata` is true, permissions are copied where the host
-        supports it; richer metadata is not guaranteed.
+        `preserve_metadata` is true, permissions plus modification and access
+        times are copied where the host supports it.
         """
         dest = _as_path(target)
         if self.is_symlink() and not follow_symlinks:
@@ -282,12 +279,12 @@ pub type Path = newtype str:
             for child in self.iterdir()?:
                 child.copy(dest.joinpath(child.name()), follow_symlinks, preserve_metadata)?
             if preserve_metadata:
-                self._copy_permissions_to(dest)?
+                self._copy_metadata_to(dest)?
             return Ok(dest)
         match rust_copy(RustPath.new(self.0), RustPath.new(dest.0)):
             Ok(_) =>
                 if preserve_metadata:
-                    self._copy_permissions_to(dest.clone())?
+                    self._copy_metadata_to(dest.clone())?
                 return Ok(dest)
             Err(err) => return Err(_io_error(self.clone(), err.to_string()))
 
@@ -373,28 +370,23 @@ pub type Path = newtype str:
 
     def disk_usage(self) -> Result[DiskUsage, IoError]:
         """Return host-reported capacity information for the containing filesystem."""
-        program = "df"
-        flag = "-Pk"
-        match Command.new(program).arg(flag).arg(self.0).output():
-            Ok(output) =>
-                if not output.status.success():
-                    return Err(IoError(path=self.clone(), kind="other", detail="df failed"))
-                stdout = output.stdout
-                match RustString.from_utf8(stdout):
-                    Ok(text) =>
-                        text_value: str = text
-                        parts = _df_data_columns(text_value)?
-                        total = int(parts[1]) * 1024
-                        used = int(parts[2]) * 1024
-                        free = int(parts[3]) * 1024
-                        return Ok(DiskUsage(total=total, used=used, free=free))
-                    Err(err) => return Err(_io_error(self.clone(), err.to_string()))
+        match statvfs(RustPath.new(self.0)):
+            Ok(stats) =>
+                block_size = int(stats.f_bsize)
+                total = int(stats.f_blocks) * block_size
+                used = (int(stats.f_blocks) - int(stats.f_bfree)) * block_size
+                free = int(stats.f_bavail) * block_size
+                return Ok(DiskUsage(total=total, used=used, free=free))
             Err(err) => return Err(_io_error(self.clone(), err.to_string()))
 
     def touch(self, exist_ok: bool) -> Result[None, IoError]:
-        """Create the file if missing; fail on an existing path when `exist_ok` is false."""
-        if self.exists() and not exist_ok:
-            return Err(IoError(path=self, kind="already_exists", detail="path already exists"))
+        """Create the file if missing, or update access and modification time."""
+        if self.exists():
+            if not exist_ok:
+                return Err(IoError(path=self, kind="already_exists", detail="path already exists"))
+            now = SystemTime.now()
+            self._set_times(now, now)?
+            return Ok(None)
         mut opts = RustOpenOptions.new()
         opts.write(True).create(True)
         match opts.open(RustPath.new(self.0)):
@@ -452,12 +444,29 @@ pub type Path = newtype str:
                     Err(err) => return Err(_io_error(self.clone(), err.to_string()))
             Err(err) => return Err(_io_error(self.clone(), err.to_string()))
 
-    def _copy_permissions_to(self, target: Path) -> Result[None, IoError]:
+    def _copy_metadata_to(self, target: Path) -> Result[None, IoError]:
         match metadata(RustPath.new(self.0)):
             Ok(meta) =>
                 match set_permissions(RustPath.new(target.0), meta.permissions()):
-                    Ok(_) => return Ok(None)
+                    Ok(_) =>
+                        match meta.modified():
+                            Ok(modified) =>
+                                match meta.accessed():
+                                    Ok(accessed) =>
+                                        target._set_times(modified, accessed)?
+                                        return Ok(None)
+                                    Err(err) => return Err(_io_error(self.clone(), err.to_string()))
+                            Err(err) => return Err(_io_error(self.clone(), err.to_string()))
                     Err(err) => return Err(_io_error(target, err.to_string()))
+            Err(err) => return Err(_io_error(self.clone(), err.to_string()))
+
+    def _set_times(self, modified: SystemTime, accessed: SystemTime) -> Result[None, IoError]:
+        match RustFile.open(RustPath.new(self.0)):
+            Ok(file) =>
+                times = FileTimes.new().set_modified(modified).set_accessed(accessed)
+                match file.set_times(times):
+                    Ok(_) => return Ok(None)
+                    Err(err) => return Err(_io_error(self.clone(), err.to_string()))
             Err(err) => return Err(_io_error(self.clone(), err.to_string()))
 
     def cwd() -> Result[Path, IoError]:
@@ -490,11 +499,11 @@ pub class File:
     pub newline: Option[str]
 
     def read(self, size: int) -> Result[str, IoError]:
-        """Read up to `size` bytes as UTF-8 text, or the rest of the file when `size` is negative."""
+        """Read up to `size` bytes as text, or the rest of the file when `size` is negative."""
         data = self.read_bytes(size)?
-        match RustString.from_utf8(data):
-            Ok(text) => return Ok(_normalize_newlines(text))
-            Err(err) => return Err(_io_error(self.path.clone(), err.to_string()))
+        encoding = _option_or_str(self.encoding, "utf-8")
+        errors = _option_or_str(self.errors, "strict")
+        return _decode_text(self.path.clone(), data, encoding, errors)
 
     def read_bytes(self, size: int) -> Result[bytes, IoError]:
         """Read up to `size` bytes, or the rest of the file when `size` is negative."""
@@ -524,7 +533,9 @@ pub class File:
             None =>
                 pass
         mut file = self.handle.borrow_mut()
-        bytes_out = RustString.from(out).into_bytes()
+        encoding = _option_or_str(self.encoding, "utf-8")
+        errors = _option_or_str(self.errors, "strict")
+        bytes_out = _encode_text(self.path.clone(), out, encoding, errors)?
         match file.write_all(bytes_out):
             Ok(_) =>
                 return Ok(len(out))
@@ -968,29 +979,56 @@ def _validate_open_options(path: Path, mode: str, buffering: int, encoding: Opti
         return Ok(None)
     match encoding:
         Some(value) =>
-            if value != "utf-8":
-                return Err(IoError(path=path, kind="invalid_input", detail="std.fs text handles currently support utf-8 encoding"))
+            _validate_text_encoding(path.clone(), value)?
         None => pass
     match errors:
         Some(value) =>
-            if value != "strict":
-                return Err(IoError(path=path, kind="invalid_input", detail="std.fs text handles currently support strict error handling"))
+            _validate_text_errors(path.clone(), value)?
         None => pass
     return Ok(None)
 
 
-def _df_data_columns(text: str) -> Result[list[str], IoError]:
-    mut data_line = ""
-    for line in text.split("\n"):
-        if line != "" and not line.starts_with("Filesystem"):
-            data_line = line
-    mut parts: list[str] = []
-    for item in data_line.split(" "):
-        if item != "":
-            parts.append(item.to_string())
-    if len(parts) < 4:
-        return Err(IoError(path=Path(""), kind="invalid_data", detail="df output did not contain disk usage columns"))
-    return Ok(parts)
+def _validate_text_encoding(path: Path, encoding: str) -> Result[None, IoError]:
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(_) => return Ok(None)
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
+    if errors == "strict" or errors == "replace":
+        return Ok(None)
+    return Err(IoError(path=path, kind="invalid_input", detail="std.fs text errors must be strict or replace"))
+
+
+def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Result[str, IoError]:
+    _validate_text_errors(path.clone(), errors)?
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(enc) =>
+            decoded = enc.decode(data)
+            if decoded.2 and errors == "strict":
+                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be decoded as {encoding}"))
+            return Ok(_normalize_newlines(decoded.0.to_string()))
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Result[bytes, IoError]:
+    _validate_text_errors(path.clone(), errors)?
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(enc) =>
+            encoded = enc.encode(data)
+            if encoded.2 and errors == "strict":
+                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be encoded as {encoding}"))
+            return Ok(encoded.0.to_vec())
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+def _option_or_str(value: Option[str], fallback: str) -> str:
+    match value:
+        Some(inner) => return inner
+        None => return fallback
 
 
 def _io_error(path: Path, message: str) -> IoError:
