@@ -4154,6 +4154,32 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
+    fn test_parse_list_comprehension_tuple_unpack_binding() {
+        let source =
+            "def names(xs: list[str]) -> list[str]:\n  return [name for idx, name in enumerate(xs)]\n";
+        let program = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("list comprehension tuple-unpack binding should parse: {errs:?}"),
+        };
+        let Declaration::Function(function) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            panic!("expected return statement");
+        };
+        let Expr::ListComp(comp) = &expr.node else {
+            panic!("expected list comprehension");
+        };
+        let Pattern::Tuple(items) = &comp.pattern.node else {
+            panic!("expected tuple binding pattern");
+        };
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+    }
+
+    #[test]
     fn test_parse_loop_expression_with_break_value() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def run() -> int:

@@ -647,7 +647,7 @@ impl<'a> Parser<'a> {
     /// Parse the restricted binding-pattern subset accepted in `for` headers.
     ///
     /// Match patterns stay broader; loop bindings only need identifiers, `_`, and comma-separated tuple bindings.
-    fn for_binding_pattern(&mut self) -> Result<Spanned<Pattern>, CompileError> {
+    pub(super) fn for_binding_pattern(&mut self) -> Result<Spanned<Pattern>, CompileError> {
         let start = self.current_span().start;
         let first = self.for_binding_pattern_item()?;
 

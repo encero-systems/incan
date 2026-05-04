@@ -124,6 +124,7 @@ def normalize(name: str) -> Result[str, NameError]:
 
 ## What to learn next
 
+- Choosing between plain values, `Option`, `Result`, and panics: [Fallible and infallible paths](../fallible_and_infallible_paths.md)
 - Results, Options, and the `?` operator (deep dive): [Error Handling](../../explanation/error_handling.md)
 - Common error message patterns: [Error Messages](../../how-to/error_messages.md)
 

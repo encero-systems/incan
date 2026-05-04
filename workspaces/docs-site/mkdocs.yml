@@ -113,6 +113,7 @@ nav:
               - 12. Newtypes (stronger types): language/tutorials/book/12_newtypes.md
               - 13. Unit tests: language/tutorials/book/13_unit_tests.md
           - Build your first API: language/tutorials/build_your_first_api.md
+          - Fallible and infallible paths: language/tutorials/fallible_and_infallible_paths.md
           - Web framework: language/tutorials/web_framework.md
       - How-to:
           - Async programming: language/how-to/async_programming.md

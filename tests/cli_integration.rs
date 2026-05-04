@@ -169,6 +169,83 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let lock_path = root.join("incan.lock");
+    let original = fs::read_to_string(&lock_path)?;
+    let stale = original.replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale");
+    fs::write(lock_path, &stale)?;
+    Ok(stale)
+}
+
+#[test]
+fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_build_project", "")?;
+
+    let lock_output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock_output, "incan lock before default build");
+    let stale_lock = stale_lockfile_without_changing_cargo_payload(tmp.path())?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+
+    assert_success(&build_output, "incan build with stale lockfile by default");
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        "default build should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        stale_lock,
+        "default build must not rewrite an existing stale incan.lock"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_test_project", "")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.testing import assert_eq
+
+def test_smoke() -> None:
+  assert_eq(1, 1)
+"#,
+    )?;
+
+    let lock_output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock_output, "incan lock before default test");
+    let stale_lock = stale_lockfile_without_changing_cargo_payload(tmp.path())?;
+
+    let test_output = run_incan(tmp.path(), &["test"])?;
+
+    assert_success(&test_output, "incan test with stale lockfile by default");
+    let stderr = String::from_utf8_lossy(&test_output.stderr);
+    assert!(
+        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        "default test should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("incan.lock"))?,
+        stale_lock,
+        "default test must not rewrite an existing stale incan.lock"
+    );
+    Ok(())
+}
+
 #[test]
 fn build_locked_rejects_stale_lockfile() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

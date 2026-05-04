@@ -230,6 +230,7 @@ Prefer:
 ## See also
 
 - [Example: Error Handling](https://github.com/dannys-code-corner/incan/blob/main/examples/intermediate/error_handling.incn)
+- [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md)
 - [Async programming](../how-to/async_programming.md)
 - [Error handling recipes](../how-to/error_handling_recipes.md)
 - [Error trait](../reference/stdlib_traits/error.md)

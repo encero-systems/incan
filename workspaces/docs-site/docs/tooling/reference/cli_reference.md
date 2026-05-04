@@ -85,6 +85,8 @@ Dependency flags:
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
 
+Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
+
 Environment defaults:
 
 - `INCAN_OFFLINE=1`, `INCAN_LOCKED=1`, and `INCAN_FROZEN=1` behave like their matching flags.
@@ -191,6 +193,8 @@ Test runner flags:
 Dependency flags (same as `build`):
 
 - `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+
+Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
 Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat.
 

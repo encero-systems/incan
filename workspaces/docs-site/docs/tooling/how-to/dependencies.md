@@ -112,10 +112,12 @@ incan lock
 `incan.lock` embeds the resolved `Cargo.lock` and a fingerprint of your dependency inputs. **Commit it to version control**
 for reproducible builds.
 
-### Automatic lock generation
+### Default build/test behavior
 
 If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created
 automatically on first build.
+
+If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and reuse the existing embedded `Cargo.lock` payload without rewriting `incan.lock`. Run `incan lock` when you intentionally want to refresh the committed lock file.
 
 For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state.
 

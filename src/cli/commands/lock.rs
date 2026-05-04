@@ -110,7 +110,9 @@ pub fn lock_project(
 /// Resolve the lock payload for a project build.
 ///
 /// Returns `None` if no manifest is present (standalone file compilation).
-/// Otherwise, loads or regenerates the lock file and returns the Cargo.lock payload.
+/// Otherwise, loads the lock file and returns the Cargo.lock payload. Non-strict commands still
+/// generate `incan.lock` on first use, but they do not rewrite an existing stale lockfile as a
+/// side effect of ordinary build or test verification.
 pub(crate) struct LockResolutionRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
@@ -121,7 +123,11 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub cargo_policy: &'a CargoPolicy,
 }
 
-/// Resolve or refresh the embedded Cargo.lock payload for build/test policy enforcement.
+/// Resolve the embedded Cargo lock payload that generated Cargo projects should reuse.
+///
+/// Manifest-less single-file builds have no project lockfile, so they return no payload. Project
+/// builds generate `incan.lock` only when it is missing in default mode; stale existing lockfiles
+/// are reused with a warning unless `--locked` or `--frozen` requires a hard failure.
 pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliResult<Option<String>> {
     let LockResolutionRequest {
         project_root,
@@ -172,15 +178,10 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                     actual = lock.deps_fingerprint,
                 )));
             }
-            let lock = generate_lockfile(
-                project_root,
-                project_name,
-                rust_edition.clone(),
-                &resolved_with_requirements,
-                project_requirements,
-                cargo_features,
-                cargo_policy,
-            )?;
+            eprintln!(
+                "warning: incan.lock is out of date; using the existing lock payload without rewriting it. \
+                 Run `incan lock` to refresh it."
+            );
             return Ok(Some(lock.cargo_lock_payload));
         }
         return Ok(Some(lock.cargo_lock_payload));

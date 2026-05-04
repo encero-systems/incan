@@ -20,16 +20,7 @@ impl TypeChecker {
         let elem_ty = self.infer_iterator_element_type(&iter_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
-        self.symbols.define(Symbol {
-            name: comp.var.clone(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: elem_ty,
-                is_mutable: false,
-                is_used: false,
-            }),
-            span: comp.iter.span,
-            scope: 0,
-        });
+        self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
 
         if let Some(filter) = &comp.filter {
             self.check_expr(filter);
@@ -51,16 +42,7 @@ impl TypeChecker {
         let elem_ty = self.infer_iterator_element_type(&iter_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
-        self.symbols.define(Symbol {
-            name: comp.var.clone(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: elem_ty,
-                is_mutable: false,
-                is_used: false,
-            }),
-            span: comp.iter.span,
-            scope: 0,
-        });
+        self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
 
         if let Some(filter) = &comp.filter {
             self.check_expr(filter);

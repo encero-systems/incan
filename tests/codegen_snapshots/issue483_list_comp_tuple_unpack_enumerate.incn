@@ -1,0 +1,13 @@
+model Binding:
+    name: str
+    output_index: int
+    expr_index: int
+
+def field_ref(index: int) -> int:
+    return index
+
+pub def bind(xs: list[str]) -> list[Binding]:
+    return [Binding(name=name, output_index=idx, expr_index=field_ref(idx)) for idx, name in enumerate(xs)]
+
+def main() -> None:
+    bind(["a", "bb"])
