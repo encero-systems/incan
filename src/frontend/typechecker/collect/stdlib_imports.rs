@@ -10,7 +10,7 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
-use crate::frontend::testing_markers::load_testing_marker_semantics;
+use crate::frontend::testing_markers::{TestingMarkerSemantics, load_testing_marker_semantics};
 use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
@@ -39,6 +39,103 @@ enum ManifestExportRef<'a> {
     Static(&'a StaticExport),
 }
 
+/// Classified context for a `from ... import ...` declaration during first-pass collection.
+///
+/// This keeps stdlib namespace decisions close to the parsed module path while leaving concrete item materialization to
+/// helpers that can return "not handled" and preserve the ordinary imported-module fallback.
+struct FromImportContext<'a> {
+    module: &'a ImportPath,
+    stdlib: Option<StdlibFromImportContext>,
+}
+
+impl<'a> FromImportContext<'a> {
+    /// Classify one parsed from-import module path for namespace validation and stdlib import materialization.
+    fn new(module: &'a ImportPath) -> Self {
+        Self {
+            module,
+            stdlib: StdlibFromImportContext::new(module),
+        }
+    }
+
+    /// Return `true` when this from-import references an unknown stdlib module that should emit the RFC 022 diagnostic.
+    fn is_unknown_stdlib_module(&self) -> bool {
+        self.stdlib.as_ref().is_some_and(|stdlib| stdlib.is_unknown_module)
+    }
+
+    /// Join the source module segments as the user-facing dotted stdlib path.
+    fn dotted_module_path(&self) -> String {
+        self.module.segments.join(".")
+    }
+}
+
+/// Stdlib-specific classification for unqualified `from std... import ...` paths.
+///
+/// `incan_core::lang::stdlib` remains the source of truth for known modules; this struct only snapshots the repeated
+/// predicates needed while collecting individual import items.
+struct StdlibFromImportContext {
+    module_path_str: String,
+    is_unknown_module: bool,
+    is_web_namespace: bool,
+    is_async_namespace: bool,
+    is_reflection_module: bool,
+    is_testing_module: bool,
+    has_stub: bool,
+}
+
+impl StdlibFromImportContext {
+    /// Build stdlib classification for an unqualified `std...` module path.
+    fn new(module: &ImportPath) -> Option<Self> {
+        if module.parent_levels != 0 || module.is_absolute || !stdlib::is_any_stdlib_path(&module.segments) {
+            return None;
+        }
+
+        let module_path_str = module.segments.join(".");
+        let is_known_module = stdlib::is_known_stdlib_module(&module.segments);
+        let is_web_namespace = module.segments.len() >= 2
+            && module.segments[0] == stdlib::STDLIB_ROOT
+            && module.segments[1] == stdlib::STDLIB_WEB;
+        let is_async_namespace =
+            module.segments.len() >= 2 && module.segments[0] == stdlib::STDLIB_ROOT && module.segments[1] == "async";
+        let is_reflection_module = module.segments.len() == 2
+            && module.segments[0] == stdlib::STDLIB_ROOT
+            && module.segments[1] == "reflection";
+        let is_testing_module =
+            module.segments.len() == 2 && module.segments[0] == stdlib::STDLIB_ROOT && module.segments[1] == "testing";
+        let has_stub = is_known_module && stdlib::stdlib_stub_path(&module.segments).is_some();
+
+        Some(Self {
+            module_path_str,
+            is_unknown_module: !is_known_module,
+            is_web_namespace,
+            is_async_namespace,
+            is_reflection_module,
+            is_testing_module,
+            has_stub,
+        })
+    }
+
+    /// Return `true` when a surface type import is legal from this stdlib module.
+    fn allows_surface_type_import(&self, item_name: &str) -> bool {
+        let Some(id) = surface_types::from_str(item_name) else {
+            return false;
+        };
+        let Some(expected_module_path) = surface_types::stdlib_module_path(id) else {
+            return false;
+        };
+
+        match expected_module_path {
+            "std.web" => self.is_web_namespace,
+            "std.reflection" => self.is_reflection_module,
+            _ if expected_module_path.starts_with("std.async.") => {
+                let async_root_or_prelude =
+                    self.module_path_str == "std.async" || self.module_path_str == "std.async.prelude";
+                self.is_async_namespace && (async_root_or_prelude || self.module_path_str == expected_module_path)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl TypeChecker {
     /// Reject names that shadow reserved root namespaces.
     pub(super) fn validate_root_namespace(&mut self, name: &str, span: Span) {
@@ -52,243 +149,13 @@ impl TypeChecker {
         self.validate_import_visibility(import, span);
         match &import.kind {
             ImportKind::Module(path) => {
-                // Reject `import std.f64.consts` — unknown stdlib module; suggest `import rust::std::f64::consts`.
-                if stdlib::is_any_stdlib_path(&path.segments)
-                    && !stdlib::is_known_stdlib_module(&path.segments)
-                {
-                    self.errors
-                        .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
-                }
-                let name = import
-                    .alias
-                    .clone()
-                    .unwrap_or_else(|| path.segments.last().cloned().unwrap_or_else(|| "module".to_string()));
-                // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a different reserved root).
-                let same_root = path.segments.first().map(|s| s.as_str()) == Some(&name);
-                if !same_root {
-                    self.validate_root_namespace(&name, span);
-                }
-                let normalized_path = canonicalize_source_module_segments(&path.segments);
-                self.define_import_symbol(name, normalized_path, false, span);
+                self.collect_module_import(path, import.alias.as_ref(), span);
             }
             ImportKind::From { module, items } => {
-                // Reject unknown stdlib module, e.g. `from std.f64.consts import PI`;
-                // suggest a correction, e.g.`from rust::std::f64::consts import PI`.
-                if module.parent_levels == 0
-                    && !module.is_absolute
-                    && stdlib::is_any_stdlib_path(&module.segments)
-                    && !stdlib::is_known_stdlib_module(&module.segments)
-                {
-                    self.errors
-                        .push(errors::unknown_stdlib_module(&module.segments.join("."), span));
-                }
-
-                let is_std_web = module.parent_levels == 0
-                    && !module.is_absolute
-                    && module.segments.len() >= 2
-                    && module.segments[0] == stdlib::STDLIB_ROOT
-                    && module.segments[1] == stdlib::STDLIB_WEB;
-                let is_std_async = module.parent_levels == 0
-                    && !module.is_absolute
-                    && module.segments.len() >= 2
-                    && module.segments[0] == stdlib::STDLIB_ROOT
-                    && module.segments[1] == "async";
-                let is_std_reflection = module.parent_levels == 0
-                    && !module.is_absolute
-                    && module.segments.len() == 2
-                    && module.segments[0] == stdlib::STDLIB_ROOT
-                    && module.segments[1] == "reflection";
-                let is_std_testing = module.parent_levels == 0
-                    && !module.is_absolute
-                    && module.segments.len() == 2
-                    && module.segments[0] == stdlib::STDLIB_ROOT
-                    && module.segments[1] == "testing";
-                let is_known_stdlib_with_stub = module.parent_levels == 0
-                    && !module.is_absolute
-                    && stdlib::is_known_stdlib_module(&module.segments)
-                    && stdlib::stdlib_stub_path(&module.segments).is_some();
-                let module_path_str = module.segments.join(".");
-                let testing_semantics = if is_std_testing {
-                    match load_testing_marker_semantics() {
-                        Ok(semantics) => Some(semantics),
-                        Err(err) => {
-                            self.errors
-                                .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                // For each item in `from module import item1, item2, ...`
-                // create a symbol as if it were `import module::item`
-                for item in items {
-                    if is_typechecker_only_stdlib(&module.segments) && is_rust_capability_bound(item.name.as_str()) {
-                        let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                        self.validate_root_namespace(&local_name, span);
-                        self.symbols.define(Symbol {
-                            name: local_name,
-                            kind: SymbolKind::Trait(TraitInfo {
-                                type_params: vec![],
-                                methods: HashMap::new(),
-                                method_aliases: HashMap::new(),
-                                requires: vec![],
-                                supertraits: vec![],
-                            }),
-                            span,
-                            scope: 0,
-                        });
-                        continue;
-                    }
-
-                    // Stdlib-scoped surface types: define them as builtin types only when imported from their owning
-                    // module.
-                    if let Some(id) = surface_types::from_str(item.name.as_str())
-                        && let Some(expected_module_path) = surface_types::stdlib_module_path(id) {
-                            let allow = match expected_module_path {
-                                "std.web" => is_std_web,
-                                "std.reflection" => is_std_reflection,
-                                _ if expected_module_path.starts_with("std.async.") => {
-                                    let async_root_or_prelude =
-                                        module_path_str == "std.async" || module_path_str == "std.async.prelude";
-                                    is_std_async
-                                        && (async_root_or_prelude || module_path_str == expected_module_path)
-                                }
-                                _ => false,
-                            };
-                            if allow {
-                                let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                                self.validate_root_namespace(&local_name, span);
-                                self.symbols.define(Symbol {
-                                    name: local_name,
-                                    kind: SymbolKind::Type(TypeInfo::Builtin),
-                                    span,
-                                    scope: 0,
-                                });
-                                continue;
-                            }
-                        }
-
-                    // RFC 023: for known stdlib modules with `.incn` stubs, prefer AST-derived signatures.
-                    if is_known_stdlib_with_stub {
-                        // Try function lookup first.
-                        let ast_info = self.stdlib_cache.lookup_function(&module.segments, &item.name);
-                        if let Some(info) = ast_info {
-                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                            let mut resolved_marker_path = module.segments.clone();
-                            resolved_marker_path.push(item.name.clone());
-                            let module_feature = self.surface_context.decorator_feature_for_path(&resolved_marker_path);
-                            let marker_feature =
-                                testing_semantics
-                                    .as_ref()
-                                    .and_then(|semantics| semantics.marker_kind(&item.name))
-                                    .map(|_| SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker));
-                            if is_std_testing
-                                && module_feature
-                                    == Some(SurfaceFeatureKey::Decorator(
-                                        DecoratorFeature::StdlibDecoratorFunction,
-                                    ))
-                                && marker_feature
-                                    == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker))
-                            {
-                                self.testing_marker_import_bindings.insert(local_name.clone());
-                            }
-                            self.validate_root_namespace(&local_name, span);
-                            self.symbols.define(Symbol {
-                                name: local_name,
-                                kind: SymbolKind::Function(info),
-                                span,
-                                scope: 0,
-                            });
-                            continue;
-                        }
-
-                        // Phase 6: try trait lookup (e.g., `from std.derives.comparison import Eq`).
-                        let trait_info = self.stdlib_cache.lookup_trait(&module.segments, &item.name);
-                        if let Some(info) = trait_info {
-                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                            self.validate_root_namespace(&local_name, span);
-                            self.symbols.define(Symbol {
-                                name: local_name,
-                                kind: SymbolKind::Trait(info),
-                                span,
-                                scope: 0,
-                            });
-                            continue;
-                        }
-
-                        // Top-level stdlib type declarations (models/classes/enums/type aliases/newtypes).
-                        let type_info = self.stdlib_cache.lookup_type(&module.segments, &item.name);
-                        if let Some(info) = type_info {
-                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                            self.validate_root_namespace(&local_name, span);
-                            self.symbols.define(Symbol {
-                                name: local_name,
-                                kind: SymbolKind::Type(info),
-                                span,
-                                scope: 0,
-                            });
-                            continue;
-                        }
-
-                        // Top-level stdlib const bindings (e.g. `from std.math import PI`).
-                        let const_info = self.stdlib_cache.lookup_constant(&module.segments, &item.name);
-                        if let Some(info) = const_info {
-                            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                            self.validate_root_namespace(&local_name, span);
-                            self.symbols.define(Symbol {
-                                name: local_name,
-                                kind: SymbolKind::Variable(info),
-                                span,
-                                scope: 0,
-                            });
-                            continue;
-                        }
-                    }
-
-                    // If dependency metadata has already materialized this imported item as a concrete symbol,
-                    // preserve that symbol kind (especially `static`) instead of rewriting it as a module path proxy.
-                    if let Some(mut imported_kind) = self.existing_from_import_symbol_kind(&item.name) {
-                        if let SymbolKind::Static(info) = &mut imported_kind {
-                            info.is_imported = true;
-                        }
-                        if let Some(alias) = &item.alias {
-                            if self.symbols.lookup(alias).is_none() {
-                                self.validate_root_namespace(alias, span);
-                                if matches!(imported_kind, SymbolKind::Static(_)) {
-                                    self.type_info.static_bindings.insert(
-                                        alias.clone(),
-                                        crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
-                                    );
-                                }
-                                self.symbols.define(Symbol {
-                                    name: alias.clone(),
-                                    kind: imported_kind,
-                                    span,
-                                    scope: 0,
-                                });
-                                self.mark_static_binding_imported(&item.name);
-                                continue;
-                            }
-                        } else {
-                            self.mark_static_binding_imported(&item.name);
-                            continue;
-                        }
-                    }
-
-                    let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                    self.validate_root_namespace(&name, span);
-                    let mut path = canonicalize_source_module_segments(&module.segments);
-                    path.push(item.name.clone());
-                    self.define_import_symbol(name, path, false, span);
-                }
+                self.collect_from_imports(module, items, span);
             }
             ImportKind::PubLibrary { library } => {
-                let name = import.alias.clone().unwrap_or_else(|| library.clone());
-                self.validate_root_namespace(&name, span);
-                self.validate_pub_library_entry(library, span);
-                self.define_import_symbol(name, vec!["pub".to_string(), library.clone()], false, span);
+                self.collect_pub_library_import(library, import.alias.as_ref(), span);
             }
             ImportKind::PubFrom { library, items } => {
                 self.collect_pub_imports(library, items, span);
@@ -299,29 +166,7 @@ impl TypeChecker {
                 self.define_import_symbol(name, vec![pkg.clone()], true, span);
             }
             ImportKind::RustCrate { crate_name, path, .. } => {
-                if self.reject_unsupported_rust_core_alloc(crate_name, span) {
-                    return;
-                }
-
-                // Rust crate import: `import rust::serde_json`` or `import rust::serde_json::Value`
-                let name = import
-                    .alias
-                    .clone()
-                    .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.clone()));
-                let full_path = self.rust_import_full_path(crate_name, path, None);
-                let binding = if path.is_empty() {
-                    RustImportBindingKind::CrateRoot
-                } else {
-                    RustImportBindingKind::RootedPath
-                };
-                let canonical_path = full_path.join("::");
-                let info = RustItemInfo {
-                    crate_name: crate_name.clone(),
-                    path: canonical_path.clone(),
-                    binding,
-                    metadata: self.rust_item_metadata_for_path(&canonical_path),
-                };
-                self.define_rust_import_binding(name, info, span);
+                self.collect_rust_crate_import(crate_name, path, import.alias.as_ref(), span);
             }
             ImportKind::RustFrom {
                 crate_name,
@@ -329,51 +174,338 @@ impl TypeChecker {
                 items,
                 ..  // version, features: not used here
             } => {
-                if self.reject_unsupported_rust_core_alloc(crate_name, span) {
-                    return;
-                }
-
-                // from rust::time import Instant, Duration
-                for item in items {
-                    let name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                    let full_path = self.rust_import_full_path(crate_name, path, Some(&item.name));
-                    let canonical_path = full_path.join("::");
-                    let item_name = item.name.trim_start_matches("r#");
-                    let is_primitive = matches!(
-                        item_name,
-                        "bool"
-                            | "char"
-                            | "str"
-                            | "f32"
-                            | "f64"
-                            | "i8"
-                            | "i16"
-                            | "i32"
-                            | "i64"
-                            | "i128"
-                            | "isize"
-                            | "u8"
-                            | "u16"
-                            | "u32"
-                            | "u64"
-                            | "u128"
-                            | "usize"
-                    );
-                    let should_block_for_item = !is_primitive;
-                    let info = RustItemInfo {
-                        crate_name: crate_name.clone(),
-                        path: canonical_path.clone(),
-                        binding: RustImportBindingKind::FromImport,
-                        metadata: if should_block_for_item {
-                            self.rust_item_metadata_for_path_blocking(&canonical_path)
-                        } else {
-                            self.rust_item_metadata_for_path(&canonical_path)
-                        },
-                    };
-                    self.define_rust_import_binding(name, info, span);
-                }
+                self.collect_rust_from_imports(crate_name, path, items, span);
             }
         }
+    }
+
+    /// Collect a plain module import, including stdlib namespace validation.
+    fn collect_module_import(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) {
+        // Reject `import std.f64.consts` - unknown stdlib module; suggest `import rust::std::f64::consts`.
+        if stdlib::is_any_stdlib_path(&path.segments) && !stdlib::is_known_stdlib_module(&path.segments) {
+            self.errors
+                .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
+        }
+
+        let name = alias
+            .cloned()
+            .unwrap_or_else(|| path.segments.last().cloned().unwrap_or_else(|| "module".to_string()));
+        // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a
+        // different reserved root).
+        let same_root = path.segments.first().map(|segment| segment.as_str()) == Some(&name);
+        if !same_root {
+            self.validate_root_namespace(&name, span);
+        }
+        let normalized_path = canonicalize_source_module_segments(&path.segments);
+        self.define_import_symbol(name, normalized_path, false, span);
+    }
+
+    /// Collect a `from module import item, ...` declaration as concrete stdlib/dependency symbols when possible,
+    /// otherwise as module-path placeholders.
+    fn collect_from_imports(&mut self, module: &ImportPath, items: &[ImportItem], span: Span) {
+        let context = FromImportContext::new(module);
+        if context.is_unknown_stdlib_module() {
+            self.errors
+                .push(errors::unknown_stdlib_module(&context.dotted_module_path(), span));
+        }
+
+        let testing_semantics = self.load_testing_semantics_for_import(&context, span);
+
+        for item in items {
+            if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
+                continue;
+            }
+            if self.preserve_existing_from_import_symbol(item, span) {
+                continue;
+            }
+            self.define_from_import_placeholder(module, item, span);
+        }
+    }
+
+    /// Define `import pub::library` as a module placeholder after validating the manifest entry.
+    fn collect_pub_library_import(&mut self, library: &str, alias: Option<&Ident>, span: Span) {
+        let name = alias.cloned().unwrap_or_else(|| library.to_string());
+        self.validate_root_namespace(&name, span);
+        self.validate_pub_library_entry(library, span);
+        self.define_import_symbol(name, vec!["pub".to_string(), library.to_string()], false, span);
+    }
+
+    /// Collect a Rust crate or crate-path import and attach metadata when available.
+    fn collect_rust_crate_import(&mut self, crate_name: &str, path: &[Ident], alias: Option<&Ident>, span: Span) {
+        if self.reject_unsupported_rust_core_alloc(crate_name, span) {
+            return;
+        }
+
+        // Rust crate import: `import rust::serde_json` or `import rust::serde_json::Value`.
+        let name = alias
+            .cloned()
+            .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.to_string()));
+        let full_path = self.rust_import_full_path(crate_name, path, None);
+        let binding = if path.is_empty() {
+            RustImportBindingKind::CrateRoot
+        } else {
+            RustImportBindingKind::RootedPath
+        };
+        let canonical_path = full_path.join("::");
+        let info = RustItemInfo {
+            crate_name: crate_name.to_string(),
+            path: canonical_path.clone(),
+            binding,
+            metadata: self.rust_item_metadata_for_path(&canonical_path),
+        };
+        self.define_rust_import_binding(name, info, span);
+    }
+
+    /// Collect `from rust::... import ...` items and attach blocking metadata for non-primitive items.
+    fn collect_rust_from_imports(&mut self, crate_name: &str, path: &[Ident], items: &[ImportItem], span: Span) {
+        if self.reject_unsupported_rust_core_alloc(crate_name, span) {
+            return;
+        }
+
+        for item in items {
+            let name = Self::import_item_local_name(item);
+            let full_path = self.rust_import_full_path(crate_name, path, Some(&item.name));
+            let canonical_path = full_path.join("::");
+            let info = RustItemInfo {
+                crate_name: crate_name.to_string(),
+                path: canonical_path.clone(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: if Self::rust_from_import_requires_blocking_metadata(&item.name) {
+                    self.rust_item_metadata_for_path_blocking(&canonical_path)
+                } else {
+                    self.rust_item_metadata_for_path(&canonical_path)
+                },
+            };
+            self.define_rust_import_binding(name, info, span);
+        }
+    }
+
+    /// Return `true` when Rust from-import metadata lookup should use the blocking path.
+    fn rust_from_import_requires_blocking_metadata(item_name: &str) -> bool {
+        let item_name = item_name.trim_start_matches("r#");
+        !matches!(
+            item_name,
+            "bool"
+                | "char"
+                | "str"
+                | "f32"
+                | "f64"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+        )
+    }
+
+    /// Return an import item's local binding name after applying `as alias`.
+    fn import_item_local_name(item: &ImportItem) -> Ident {
+        item.alias.clone().unwrap_or_else(|| item.name.clone())
+    }
+
+    /// Load stdlib testing marker metadata only for `from std.testing import ...`.
+    fn load_testing_semantics_for_import(
+        &mut self,
+        context: &FromImportContext<'_>,
+        span: Span,
+    ) -> Option<TestingMarkerSemantics> {
+        let stdlib_context = context.stdlib.as_ref()?;
+        if !stdlib_context.is_testing_module {
+            return None;
+        }
+
+        match load_testing_marker_semantics() {
+            Ok(semantics) => Some(semantics),
+            Err(err) => {
+                self.errors
+                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
+                None
+            }
+        }
+    }
+
+    /// Materialize one stdlib from-import item as a concrete symbol when stdlib metadata owns it.
+    ///
+    /// Returns `true` when the item was handled; callers should otherwise preserve the ordinary module-placeholder
+    /// fallback.
+    fn materialize_stdlib_from_import(
+        &mut self,
+        context: &FromImportContext<'_>,
+        item: &ImportItem,
+        testing_semantics: Option<&TestingMarkerSemantics>,
+        span: Span,
+    ) -> bool {
+        let Some(stdlib_context) = context.stdlib.as_ref() else {
+            return false;
+        };
+
+        if self.materialize_typechecker_only_stdlib_import(context.module, item, span) {
+            return true;
+        }
+        if stdlib_context.allows_surface_type_import(&item.name) {
+            self.define_from_import_symbol(item, SymbolKind::Type(TypeInfo::Builtin), span);
+            return true;
+        }
+        if stdlib_context.has_stub {
+            return self.materialize_stdlib_stub_import(context, item, testing_semantics, span);
+        }
+        false
+    }
+
+    /// Materialize typechecker-only stdlib capability bounds as empty trait symbols.
+    fn materialize_typechecker_only_stdlib_import(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        span: Span,
+    ) -> bool {
+        if !is_typechecker_only_stdlib(&module.segments) || !is_rust_capability_bound(item.name.as_str()) {
+            return false;
+        }
+
+        self.define_from_import_symbol(
+            item,
+            SymbolKind::Trait(TraitInfo {
+                type_params: vec![],
+                methods: HashMap::new(),
+                method_aliases: HashMap::new(),
+                requires: vec![],
+                supertraits: vec![],
+            }),
+            span,
+        );
+        true
+    }
+
+    /// Materialize one known stdlib stub item from AST-derived function, trait, type, or constant metadata.
+    fn materialize_stdlib_stub_import(
+        &mut self,
+        context: &FromImportContext<'_>,
+        item: &ImportItem,
+        testing_semantics: Option<&TestingMarkerSemantics>,
+        span: Span,
+    ) -> bool {
+        if let Some(info) = self.stdlib_cache.lookup_function(&context.module.segments, &item.name) {
+            let local_name = Self::import_item_local_name(item);
+            self.record_testing_marker_import(context, item, &local_name, testing_semantics);
+            self.define_named_import_symbol(local_name, SymbolKind::Function(info), span);
+            return true;
+        }
+
+        if let Some(info) = self.stdlib_cache.lookup_trait(&context.module.segments, &item.name) {
+            self.define_from_import_symbol(item, SymbolKind::Trait(info), span);
+            return true;
+        }
+
+        if let Some(info) = self.stdlib_cache.lookup_type(&context.module.segments, &item.name) {
+            self.define_from_import_symbol(item, SymbolKind::Type(info), span);
+            return true;
+        }
+
+        if let Some(info) = self.stdlib_cache.lookup_constant(&context.module.segments, &item.name) {
+            self.define_from_import_symbol(item, SymbolKind::Variable(info), span);
+            return true;
+        }
+
+        false
+    }
+
+    /// Record imported `std.testing` marker aliases so decorator validation can reject runtime calls consistently.
+    fn record_testing_marker_import(
+        &mut self,
+        context: &FromImportContext<'_>,
+        item: &ImportItem,
+        local_name: &str,
+        testing_semantics: Option<&TestingMarkerSemantics>,
+    ) {
+        let Some(stdlib_context) = context.stdlib.as_ref() else {
+            return;
+        };
+        if !stdlib_context.is_testing_module {
+            return;
+        }
+
+        let mut resolved_marker_path = context.module.segments.clone();
+        resolved_marker_path.push(item.name.clone());
+        let module_feature = self.surface_context.decorator_feature_for_path(&resolved_marker_path);
+        let marker_feature = testing_semantics
+            .and_then(|semantics| semantics.marker_kind(&item.name))
+            .map(|_| SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker));
+        if module_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
+            && marker_feature == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::TestingMarker))
+        {
+            self.testing_marker_import_bindings.insert(local_name.to_string());
+        }
+    }
+
+    /// Preserve an imported item that has already been materialized as a concrete symbol in this collection pass.
+    ///
+    /// This keeps dependency metadata imports, especially statics, from being rewritten as module path proxies.
+    /// Returns `true` when the caller should skip fallback placeholder materialization.
+    fn preserve_existing_from_import_symbol(&mut self, item: &ImportItem, span: Span) -> bool {
+        let Some(mut imported_kind) = self.existing_from_import_symbol_kind(&item.name) else {
+            return false;
+        };
+
+        if let SymbolKind::Static(info) = &mut imported_kind {
+            info.is_imported = true;
+        }
+        if let Some(alias) = &item.alias {
+            if self.symbols.lookup(alias).is_none() {
+                self.validate_root_namespace(alias, span);
+                if matches!(imported_kind, SymbolKind::Static(_)) {
+                    self.type_info.static_bindings.insert(
+                        alias.clone(),
+                        crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
+                    );
+                }
+                self.symbols.define(Symbol {
+                    name: alias.clone(),
+                    kind: imported_kind,
+                    span,
+                    scope: 0,
+                });
+                self.mark_static_binding_imported(&item.name);
+                return true;
+            }
+        } else {
+            self.mark_static_binding_imported(&item.name);
+            return true;
+        }
+        false
+    }
+
+    /// Define a fallback module placeholder for one `from module import item` binding.
+    fn define_from_import_placeholder(&mut self, module: &ImportPath, item: &ImportItem, span: Span) {
+        let name = Self::import_item_local_name(item);
+        self.validate_root_namespace(&name, span);
+        let mut path = canonicalize_source_module_segments(&module.segments);
+        path.push(item.name.clone());
+        self.define_import_symbol(name, path, false, span);
+    }
+
+    /// Define one imported item under its local alias after root namespace validation.
+    fn define_from_import_symbol(&mut self, item: &ImportItem, kind: SymbolKind, span: Span) {
+        let local_name = Self::import_item_local_name(item);
+        self.define_named_import_symbol(local_name, kind, span);
+    }
+
+    /// Define one already named imported symbol after root namespace validation.
+    fn define_named_import_symbol(&mut self, name: Ident, kind: SymbolKind, span: Span) {
+        self.validate_root_namespace(&name, span);
+        self.symbols.define(Symbol {
+            name,
+            kind,
+            span,
+            scope: 0,
+        });
     }
 
     fn validate_pub_library_entry(&mut self, library: &str, span: Span) {

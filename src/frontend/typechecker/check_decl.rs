@@ -16,7 +16,7 @@ use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
-use incan_core::lang::traits::{self, TraitId};
+use incan_core::lang::stdlib;
 use std::collections::{HashMap, HashSet};
 
 /// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
@@ -34,49 +34,6 @@ fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
         ParamKind::RestPositional => list_ty(ty),
         ParamKind::RestKeyword => dict_ty(ResolvedType::Str, ty),
     }
-}
-
-/// Module path segments for builtin traits whose [`SymbolTable`] stubs carry no methods.
-///
-/// [`TypeChecker::trait_method_info_resolved`] uses this when symbol-table lookup finds no concrete method: it loads
-/// the full trait from the stdlib `.incn` stub so signatures like `clone(self) -> Self` exist for typechecking.
-///
-/// ## Coverage (intentional)
-///
-/// Only traits declared under **`std.derives.*`** are mapped today:
-/// - `std.derives.copying` — `Clone`, `Copy` (derive id), `Default`
-/// - `std.derives.string` — `Debug`, `Display`
-/// - `std.derives.comparison` — `Eq`, `PartialEq`, `Ord`, `PartialOrd`, `Hash`
-///
-/// Traits declared in **other** stdlib trees (e.g. `Serialize` / `Deserialize` in `std.serde.json`) return `None`
-/// here. JSON helpers are handled elsewhere (`inject_json_methods`, etc.); if you need the same empty-stub fallback
-/// for instance methods on those traits, extend this map or replace it with registry-driven discovery (trait → owning
-/// module path) rather than growing ad hoc `if` chains without a single source of truth.
-///
-/// Introduced for `@derive(Clone)` and direct `.clone()` on concrete types (GitHub #193).
-fn stdlib_module_segments_for_trait_methods(trait_name: &str) -> Option<Vec<String>> {
-    let copying = || Some(vec!["std".into(), "derives".into(), "copying".into()]);
-    let string_mod = || Some(vec!["std".into(), "derives".into(), "string".into()]);
-    let comparison = || Some(vec!["std".into(), "derives".into(), "comparison".into()]);
-
-    if trait_name == traits::as_str(TraitId::Clone)
-        || trait_name == derives::as_str(DeriveId::Copy)
-        || trait_name == traits::as_str(TraitId::Default)
-    {
-        return copying();
-    }
-    if trait_name == traits::as_str(TraitId::Debug) || trait_name == traits::as_str(TraitId::Display) {
-        return string_mod();
-    }
-    if trait_name == traits::as_str(TraitId::Eq)
-        || trait_name == traits::as_str(TraitId::PartialEq)
-        || trait_name == traits::as_str(TraitId::Ord)
-        || trait_name == traits::as_str(TraitId::PartialOrd)
-        || trait_name == traits::as_str(TraitId::Hash)
-    {
-        return comparison();
-    }
-    None
 }
 
 /// Callable signature resolved for one `interop:` adapter reference.
@@ -1026,7 +983,7 @@ impl TypeChecker {
         }
         let filtered = self.filter_supertrait_dominated_entries(entries);
         if filtered.is_empty()
-            && let Some(segments) = stdlib_module_segments_for_trait_methods(adopted_trait)
+            && let Some(segments) = stdlib::trait_method_module_segments(adopted_trait)
             && let Some(full_trait) = self.stdlib_cache.lookup_trait(&segments, adopted_trait)
             && let Some(info) = full_trait.methods.get(method)
         {
