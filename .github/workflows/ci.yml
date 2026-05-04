@@ -241,8 +241,63 @@ jobs:
         with:
           profile: minimal
       - uses: ./.github/actions/install-nightly-toolchain
+      - name: Compute udeps cache key
+        id: udeps-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workspace_version="$(
+            awk '
+              /^\[workspace.package\]/ { in_section=1; next }
+              /^\[/ { in_section=0 }
+              in_section && /^version = / {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+              }
+            ' Cargo.toml
+          )"
+          if [ -z "$workspace_version" ]; then
+            echo "failed to read [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+
+          release_line="$(
+            printf '%s\n' "$workspace_version" |
+              sed -E 's/^([0-9]+)\.([0-9]+)\..*$/v\1.\2/'
+          )"
+          if [ "$release_line" = "$workspace_version" ]; then
+            echo "failed to derive release line from workspace version: $workspace_version" >&2
+            exit 1
+          fi
+
+          key="$(
+            {
+              rustc +nightly -Vv
+              cargo +nightly -V
+              printf 'workspace-release-line=%s\n' "$release_line"
+              git ls-files 'Cargo.toml' '*/Cargo.toml' 'Cargo.lock' '*/Cargo.lock' | sort | while read -r file; do
+                printf '== %s ==\n' "$file"
+                WORKSPACE_VERSION="$workspace_version" RELEASE_LINE="$release_line" perl -pe '
+                  BEGIN {
+                    $from = quotemeta($ENV{"WORKSPACE_VERSION"});
+                    $to = $ENV{"RELEASE_LINE"};
+                  }
+                  s/$from/$to/g;
+                ' "$file"
+              done
+            } | shasum -a 256 | cut -d ' ' -f 1
+          )"
+
+          echo "release-line=$release_line" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: incan-udeps
+          key: ${{ steps.udeps-cache-key.outputs.key }}
+          add-rust-environment-hash-key: "false"
+          cache-all-crates: "true"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
       - name: Install cargo-udeps
