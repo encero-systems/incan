@@ -15,7 +15,7 @@ validation:
 
 theme:
   name: material
-  logo: assets/incapunk/wordmark_small_001.png
+  logo: /shared/incapunk/wordmark_small_001.png
   highlightjs: false
   pygments_style: default
   pygments_style_dark: native
@@ -78,7 +78,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - stylesheets/incapunk.css
+  - /shared/incapunk/incapunk.css
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
