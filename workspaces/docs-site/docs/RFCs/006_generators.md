@@ -1,18 +1,18 @@
 # RFC 006: Python-style generators
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2024-12-10
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 016 (loop and break value), RFC 019 (runner testing)
+- **Related:** RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/324
+- **Follow-up:** RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —
 
 ## Summary
 
-This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use `yield` inside `def`, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of `T` exposed as
-`Generator[T]`.
+This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use `yield` inside `def`, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of `T` exposed as `Generator[T]`.
 
 ## Motivation
 
@@ -21,8 +21,7 @@ Incan currently has eager collections and iterator-shaped loops, but it does not
 - large or unbounded sequences that should not be materialized eagerly;
 - streaming transformations that would otherwise allocate intermediate lists;
 - recursive traversals where the natural shape is "produce one value, suspend, resume";
-- portability for authors coming from Python, where `yield` and generator
-expressions are familiar ways to express lazy iteration.
+- portability for authors coming from Python, where `yield` and generator expressions are familiar ways to express lazy iteration.
 
 The feature also fits Incan's backend well. Incan does not need a separate user-facing coroutine model just to support this control-flow shape; the compiler can lower generators to ordinary backend state-machine machinery.
 
@@ -32,14 +31,15 @@ The feature also fits Incan's backend well. Incan does not need a separate user-
 - Support both generator functions and generator expressions as part of that model.
 - Make lazy iteration explicit in type signatures instead of inferring it from incidental usage.
 - Preserve ordinary `for`-loop ergonomics over generator results.
+- Standardize the minimum helper surface needed to transform and realize generator values ergonomically: `.map()`, `.filter()`, `.take()`, and `.collect()`.
 - Distinguish generator `yield` clearly from fixture `yield`.
 
 ## Non-Goals
 
 - Async generators in this RFC.
 - Bidirectional coroutine features such as Python-style `send()`.
-- A wholesale redesign of comprehensions or iterator combinators beyond generator support itself.
-- Standardizing every possible `Generator` helper method in the initial draft.
+- A wholesale redesign of comprehensions or iterator adapters beyond generator support itself.
+- Standardizing the broader `Iterator[T]` adapter surface in the initial draft. Methods such as `.flat_map()`, `.skip()`, `.chain()`, `.enumerate()`, `.zip()`, `.take_while()`, `.skip_while()`, `.count()`, `.any()`, `.all()`, `.find()`, `.fold()`, and `.batch()` belong in RFC 088.
 
 ## Guide-level explanation (how users think about it)
 
@@ -85,6 +85,24 @@ fibs = fibonacci().take(10).collect()
 
 This is the core value proposition: the generator can describe an unbounded stream, while the consumer decides how much to realize.
 
+### Lazy transformations
+
+```incan
+def square(n: int) -> int:
+    return n * n
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+evens_squared = count_up(0, 1_000_000)
+    .filter(is_even)
+    .map(square)
+    .take(10)
+    .collect()
+```
+
+Generator helper methods are lazy until a terminal operation consumes them. In the example above, `.filter()`, `.map()`, and `.take()` build a generator pipeline; `.collect()` realizes only the first ten transformed values as a `list[int]`.
+
 ### Recursive traversal
 
 ```incan
@@ -103,32 +121,39 @@ Generators are useful when the control flow is naturally incremental instead of 
 
 - A function is a generator function when its body contains `yield` and its declared return type is `Generator[T]`.
 - `yield expr` produces one element of type `T` for the surrounding generator.
-- `yield` must not appear in ordinary functions, except where another RFC
-explicitly gives `yield` special meaning for a distinct construct such as fixtures.
-- A generator function may use `return` to terminate iteration early, but `return value` is not part of this RFC.
+- `yield` must not appear in ordinary functions, except where another RFC explicitly gives `yield` special meaning for a distinct construct such as fixtures.
+- A generator function may use `return` without a value to terminate iteration early.
+- `return value` inside a generator is a compile-time error. Generator return values are reserved for a future delegation or coroutine-oriented RFC.
 
 ### Generator expressions reference
 
-- A generator expression has the form `(expr for binding in iterable)` and
-yields a `Generator[T]`, where `T` is the type of `expr`.
+- A generator expression has the form `(expr for binding in iterable [if condition] ...)` and yields a `Generator[T]`, where `T` is the type of `expr`.
+- Generator expressions support the same comprehension-clause shape as list comprehensions: one leading `for` clause followed by zero or more nested `for` clauses and zero or more trailing `if` filters.
 - The iterable source is consumed lazily as the resulting generator is advanced.
-- A generator expression is semantically equivalent to an anonymous generator
-that iterates the source and yields `expr` for each bound element.
+- A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields `expr` for each bound element.
 - Generator expressions are lazy; the list-comprehension surface remains the eager collection form.
 
 ### Typing
 
 - Every yielded expression must type-check against the element type `T` in `Generator[T]`.
 - Declaring `Generator[T]` without any reachable `yield` is a compile-time error.
-- Using `yield` without a `Generator[T]` return type is a compile-time error
-unless another construct has already claimed `yield` semantics for that context.
+- Using `yield` without a `Generator[T]` return type is a compile-time error unless another construct has already claimed `yield` semantics for that context.
 
 ### Consumption
 
-- `for` loops must accept generator values anywhere they accept iterable values.
-- Generator values may expose chainable helper methods such as `.map()`,
-  `.filter()`, `.take()`, and `.collect()`, but this RFC does not yet freeze
-the full helper surface.
+- `Generator[T]` is the semantic type for values produced by generator functions and generator expressions.
+- `Generator[T]` must satisfy the static iteration protocol from RFC 068: it may be consumed anywhere an `Iterable[T]`/`Iterator[T]` value is accepted, and `for` loops must accept generator values anywhere they accept iterable values.
+- Generator values must expose the following minimum helper surface:
+
+```incan
+def map[U](self, f: (T) -> U) -> Generator[U]
+def filter(self, f: (T) -> bool) -> Generator[T]
+def take(self, n: int) -> Generator[T]
+def collect(self) -> list[T]
+```
+
+- `.map()`, `.filter()`, and `.take()` are lazy: they return new generator values and must not materialize intermediate lists.
+- `.collect()` is terminal and eager: it consumes the generator and returns a `list[T]`.
 - Exhausting a generator ends iteration normally.
 
 ## Design details
@@ -151,16 +176,20 @@ The language already uses `yield` in fixture-oriented testing flows. That overla
 
 This RFC therefore treats the declaration context, not the token alone, as the source of truth for `yield` meaning.
 
+No separate lint or style guidance is required. Fixture `yield` and generator `yield` share the same surface mental model: produce a value, suspend, and later resume. The compiler only needs to make invalid context errors precise.
+
 ### Lowering model
 
 The intended implementation strategy is to lower generator functions and generator expressions through a compiler-owned state-machine transformation or equivalent backend support. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of `T`.
+
+Generator helper methods should lower to backend-native lazy iterator machinery where the target supports it. For the Rust backend, `.map()`, `.filter()`, `.take()`, and `.collect()` should preserve Rust iterator-chain behavior rather than inserting eager intermediate collections.
 
 ### Interaction with existing features
 
 - `for` loops consume generators the same way they consume other iterable sources.
 - Recursive generators are valid as long as the yielded element type remains consistent.
-- Generator expressions are the lazy counterpart to eager list-comprehension
-syntax rather than a separate collection feature.
+- Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.
+- The broader `Iterator[T]` adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that design and issue #127 tracks it.
 
 ### Compatibility / migration
 
@@ -169,16 +198,13 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 ## Alternatives considered
 
 1. **Explicit `gen` keyword**
-   - Clear, but more backend-shaped than Incan needs. Requiring `Generator[T]`
-     plus `yield` already communicates intent.
+   - Clear, but more backend-shaped than Incan needs. Requiring `Generator[T]` plus `yield` already communicates intent.
 
 2. **Dedicated `generator` declaration form**
-   - Avoids overloading ordinary `def`, but splits the function surface for a
-     feature that is still "a function producing values over time."
+   - Avoids overloading ordinary `def`, but splits the function surface for a feature that is still "a function producing values over time."
 
 3. **Functions only, expressions later**
-   - Not actually more principled. It would make the RFC weaker while still
-     aiming at the same north-star generator model.
+   - Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.
 
 ## Drawbacks
 
@@ -191,17 +217,91 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 - **Language surface**: `yield` must be valid in generator function bodies, and generator-expression syntax must be recognized.
 - **Type system**: yielded expressions must match `Generator[T]`, and generator declarations must remain internally consistent.
 - **Execution model**: implementations must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.
-- **Stdlib / surface vocabulary**: the language must define the `Generator` type and any stable helper methods it promises publicly.
+- **Stdlib / surface vocabulary**: the language must define the `Generator` type, its RFC 068 iteration-protocol conformance, and the minimum stable helper methods promised publicly.
 - **Formatter / tooling**: multi-line generators should format predictably, and diagnostics should explain generator-specific behavior clearly.
 
-## Unresolved questions
+## Implementation Plan
 
-1. Should generator expressions support the full comprehension clause surface
-immediately, including multiple `for` clauses and trailing `if` filters, or should this RFC only normatively require the single-`for` core form?
-2. What is the minimum `Generator` helper surface that Incan wants to
-standardize rather than inheriting opportunistically from backend details?
-3. Should `return value` inside a generator be rejected outright, or reserved for a future coroutine-oriented extension?
-4. How much of the fixture/generator `yield` distinction should be surfaced in
-linting or style guidance so that mixed mental models do not leak into user code?
+### Phase 1: Spec, parser, and AST
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Keep RFC 006 aligned with the settled design decisions: full generator-expression clause support, no `return value` in generators, and no extra fixture/generator lint policy.
+- Extend parser and AST support for generator expressions using the existing comprehension clause surface.
+- Preserve existing fixture `yield` parsing while separating generator-context validation into later semantic stages.
+
+### Phase 2: Typechecker and diagnostics
+
+- Add `Generator[T]` as a checked semantic type that satisfies the RFC 068 iteration protocol.
+- Validate generator function bodies: yielded expressions must match `Generator[T]`, ordinary functions must reject `yield`, and generator functions must reject `return value`.
+- Type-check generator expressions lazily while preserving the same binding and filter semantics as list comprehensions.
+- Type-check the minimum generator helper surface: `.map()`, `.filter()`, `.take()`, and `.collect()`.
+
+### Phase 3: Lowering, emission, and runtime surface
+
+- Lower generator functions and generator expressions to lazy backend state-machine or iterator-equivalent behavior.
+- Emit Rust code that preserves suspension, ordering, and laziness for generator values.
+- Expose the minimum generator helper surface through stdlib-visible declarations and runtime support as needed.
+- Ensure generator values work in `for` loops anywhere the RFC 068 iteration protocol is accepted.
+
+### Phase 4: Tooling, docs, and release readiness
+
+- Format generator functions and multi-clause generator expressions predictably.
+- Add parser, typechecker, codegen snapshot, integration, and diagnostic tests for the full RFC surface.
+- Update authored user-facing docs, release notes, and the active development version when implementation lands.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Decide that generator expressions support the full comprehension-clause surface.
+- [x] Decide that `return value` in generators is rejected and reserved for future delegation or coroutine work.
+- [x] Decide that fixture and generator `yield` need precise diagnostics but no extra lint/style guidance.
+
+### Parser / AST / formatter
+
+- [ ] Parser: parse generator expressions with the full comprehension-clause surface.
+- [ ] AST: represent generator expressions without confusing them with eager list comprehensions.
+- [ ] Parser: preserve existing fixture `yield` parsing behavior.
+- [ ] Formatter: round-trip generator functions and multi-clause generator expressions stably.
+
+### Typechecker / diagnostics
+
+- [ ] Type system: represent `Generator[T]` as the checked generator semantic type.
+- [ ] Protocols: make `Generator[T]` satisfy the RFC 068 iteration protocol.
+- [ ] Diagnostics: reject `yield` outside generator functions and fixture contexts.
+- [ ] Diagnostics: reject generator functions whose yielded values do not match `Generator[T]`.
+- [ ] Diagnostics: reject `return value` inside generator functions.
+- [ ] Typechecker: validate generator expressions with nested `for` clauses and trailing `if` filters.
+- [ ] Typechecker: validate `.map()`, `.filter()`, `.take()`, and `.collect()` on generator values.
+
+### Lowering / emission / runtime
+
+- [ ] Lower generator functions to lazy resumable producer behavior.
+- [ ] Lower generator expressions to lazy generator values.
+- [ ] Emit Rust that preserves generator suspension, ordering, and laziness.
+- [ ] Runtime/stdlib: expose the `Generator[T]` surface and minimum helper methods.
+- [ ] Runtime/stdlib: ensure `.map()`, `.filter()`, and `.take()` stay lazy and `.collect()` is terminal.
+
+### Tests
+
+- [ ] Parser tests for generator function `yield` and generator-expression clauses.
+- [ ] Typechecker tests for valid and invalid generator function return/yield combinations.
+- [ ] Typechecker tests for invalid `return value` in generator functions.
+- [ ] Typechecker tests for generator helper callback arity and return-type diagnostics.
+- [ ] Codegen snapshot tests for generator functions, generator expressions, and helper chains.
+- [ ] Integration tests for `for` loops over generators and `.map().filter().take().collect()` chains.
+- [ ] Regression tests that fixture `yield` behavior still works.
+
+### Docs / release
+
+- [ ] Update generator language reference or tutorial docs.
+- [ ] Update release notes for the active `0.3` development line.
+- [ ] Bump the active `0.3.0-dev.N` version.
+
+## Design decisions
+
+1. `Generator[T]` is the user-facing semantic type for `yield`-produced values. It should satisfy the iteration protocol rather than being collapsed into a bare `Iterator[T]` return type.
+2. The first stable generator helper surface is intentionally small: `.map()`, `.filter()`, `.take()`, and `.collect()`.
+3. The broader iterator adapter surface belongs in RFC 088, tracked by issue #127.
+4. Generator expressions support the full comprehension-clause surface rather than only a single `for` clause.
+5. `return` without a value may terminate a generator early, but `return value` is rejected in RFC 006 and reserved for future generator delegation or coroutine work.
+6. Fixture `yield` and generator `yield` do not need extra lint or style guidance beyond precise context-sensitive diagnostics.

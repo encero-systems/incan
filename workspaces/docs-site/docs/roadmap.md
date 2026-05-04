@@ -57,7 +57,7 @@ kept high-level and status-oriented (RFCs will be added over time).
 - UI runtime (signals/effects/components) + examples
 - Test runner fixture execution (setup/teardown lifecycle)
 - Dev server + prod build pipeline for WASM target
-- Python-style generators ([RFC 006]) — `yield` + `Iterator[T]` → Rust `gen` blocks
+- Python-style generators ([RFC 006]) — `yield` + `Generator[T]` satisfying the iteration protocol
 - Inline tests ([RFC 007]) — `@test` in source files, Rust-style proximity
 
 ## Deferred / Later
