@@ -419,6 +419,57 @@ def check_flags(ready: bool, done: bool) -> None:
     Ok(())
 }
 
+/// Regression (GitHub #484): parenthesized logical chains should wrap at obvious boolean breakpoints.
+#[test]
+fn test_cli_fmt_wraps_long_parenthesized_logical_expression_chain() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("long_logical_chain.incn");
+    fs::write(
+        &path,
+        r#"model Item:
+    kind_name: str
+    predicate_kind_name: str
+    source_name: str
+
+
+def matches(item: Item) -> bool:
+    return (item.kind_name == "filter" and item.predicate_kind_name == "bool_literal" and item.source_name == "rewritten_prism_node")
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"model Item:
+    kind_name: str
+    predicate_kind_name: str
+    source_name: str
+
+
+def matches(item: Item) -> bool:
+    return (
+        item.kind_name == "filter"
+        and item.predicate_kind_name == "bool_literal"
+        and item.source_name == "rewritten_prism_node"
+    )
+"#;
+    assert_eq!(formatted, expected);
+    assert!(
+        formatted.lines().all(|line| line.len() <= 120),
+        "expected formatted output to stay within 120 columns:\n{formatted}"
+    );
+
+    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected wrapped expression to parse/typecheck after CLI fmt; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
 /// Regression (GitHub #289): `incan fmt` must preserve escaped newlines in f-strings as textual `\\n`.
 #[test]
 fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
