@@ -39,7 +39,9 @@ jobs:
       - name: Install MkDocs dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-docs.txt
+          # release/v0.1 predates the explicit Pygments pin; newer Pygments
+          # crashes on older pymdownx.highlight fence metadata while rendering.
+          python -m pip install -r requirements-docs.txt "pygments<2.20"
 
       - name: Configure git identity
         run: |
