@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../derives/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../reflection/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 055: std.fs — pathlib-shaped filesystem APIs with chunked file I/O - Incan Documentation</title>
+        <title>std.fs - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-055-stdfs-pathlib-shaped-filesystem-apis-with-chunked-file-io" class="md-skip">
+        <a href="#stdfs-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 055: std.fs — pathlib-shaped filesystem APIs with chunked file I/O
+              std.fs
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -573,7 +579,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -606,7 +612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -627,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -648,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -669,7 +675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -690,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -711,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -732,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -753,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -774,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -795,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -816,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -837,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -858,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1025,7 +1031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1046,7 +1052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1067,7 +1073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1088,7 +1094,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1109,7 +1115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1130,7 +1136,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1151,7 +1157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1172,7 +1178,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1193,7 +1199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1214,7 +1220,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1235,7 +1241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1256,7 +1262,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1277,7 +1283,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1298,7 +1304,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1324,8 +1330,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1366,11 +1374,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -1384,7 +1392,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1398,7 +1406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1419,7 +1427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1440,7 +1448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1461,7 +1469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1482,7 +1490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1503,7 +1511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1524,7 +1532,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1545,7 +1553,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1566,7 +1574,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1587,7 +1595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1608,7 +1616,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1629,7 +1637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1650,7 +1658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1668,6 +1676,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1689,21 +1699,23 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_14" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1720,7 +1732,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_14_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_14">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1736,7 +1748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1757,7 +1769,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1775,10 +1787,152 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#path" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existence-and-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Existence and Metadata
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#directory-and-tree-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Directory and Tree Operations
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#glob-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      Glob Patterns
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      File Contents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copy-move-and-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      Copy, Move, and Links
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      File
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#openoptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      OpenOptions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporary-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Temporary Files
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1799,7 +1953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1820,7 +1974,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1841,7 +1995,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1902,7 +2056,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1935,7 +2089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1956,7 +2110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1977,7 +2131,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1998,7 +2152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2019,7 +2173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2040,7 +2194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2120,7 +2274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2141,7 +2295,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2162,7 +2316,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2183,7 +2337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2204,7 +2358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2225,7 +2379,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2333,7 +2487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2354,7 +2508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2375,7 +2529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2396,7 +2550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2417,7 +2571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2438,7 +2592,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2459,7 +2613,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2480,7 +2634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2501,7 +2655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2522,7 +2676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2543,7 +2697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2564,7 +2718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2585,7 +2739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2630,7 +2784,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2663,7 +2817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2684,7 +2838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2713,7 +2867,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2734,7 +2888,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2801,7 +2955,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2879,7 +3033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2900,7 +3054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2921,7 +3075,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3005,7 +3159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3026,7 +3180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3047,7 +3201,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3068,7 +3222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3089,7 +3243,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3110,7 +3264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3131,7 +3285,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3152,7 +3306,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3224,7 +3378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3245,7 +3399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3323,7 +3477,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3344,7 +3498,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3365,7 +3519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3386,7 +3540,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3407,7 +3561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3468,7 +3622,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3501,7 +3655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3569,7 +3723,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3679,7 +3833,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3712,7 +3866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3733,7 +3887,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3754,7 +3908,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3775,7 +3929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3796,7 +3950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3817,7 +3971,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3838,7 +3992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3859,7 +4013,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3945,7 +4099,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3966,7 +4120,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3987,7 +4141,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4008,7 +4162,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4029,7 +4183,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4109,7 +4263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4130,7 +4284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4151,7 +4305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4172,7 +4326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4193,7 +4347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4214,7 +4368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4243,7 +4397,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4281,6 +4435,8 @@
       
         
       
+        
+      
     
     
       
@@ -4298,7 +4454,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4331,7 +4487,28 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4352,7 +4529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4380,7 +4557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4400,7 +4577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4440,98 +4617,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      Summary
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Motivation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-target-and-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility target and extensions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#required-capabilities-initial-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      Required capabilities (initial contract)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pathlib-alignment-roadmap" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pathlib alignment roadmap
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#expected-api-shape-skeletal" class="md-nav__link">
-    <span class="md-ellipsis">
-      Expected API shape (skeletal)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Expected API shape (skeletal)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
   <a href="#path" class="md-nav__link">
     <span class="md-ellipsis">
       Path
@@ -4539,17 +4624,53 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#openoptions" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#existence-and-metadata" class="md-nav__link">
     <span class="md-ellipsis">
-      OpenOptions
+      Existence and Metadata
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
+  <a href="#directory-and-tree-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Directory and Tree Operations
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#glob-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      Glob Patterns
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      File Contents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copy-move-and-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      Copy, Move, and Links
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#file" class="md-nav__link">
     <span class="md-ellipsis">
       File
@@ -4557,126 +4678,20 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#direntry" class="md-nav__link">
-    <span class="md-ellipsis">
-      DirEntry
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#errors-and-compatibility" class="md-nav__link">
-    <span class="md-ellipsis">
-      Errors and compatibility
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
+  <a href="#openoptions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-chunked-file-io-belongs-in-stdfs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why chunked file I/O belongs in std.fs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cpython-baseline-plus-explicit-incan-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      CPython baseline plus explicit Incan extensions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#copy-and-tree-semantics-that-should-not-stay-implicit" class="md-nav__link">
-    <span class="md-ellipsis">
-      Copy and tree semantics that should not stay implicit
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-rust-interop" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with Rust interop
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
+      OpenOptions
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
+  <a href="#temporary-files" class="md-nav__link">
     <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation architecture
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design Decisions
+      Temporary Files
     </span>
   </a>
   
@@ -4700,274 +4715,405 @@
   
 
 
-<h1 id="rfc-055-stdfs-pathlib-shaped-filesystem-apis-with-chunked-file-io">RFC 055: <code>std.fs</code> — pathlib-shaped filesystem APIs with chunked file I/O<a class="headerlink" href="#rfc-055-stdfs-pathlib-shaped-filesystem-apis-with-chunked-file-io" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-04-11</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 000 (core language builtins, including whole-file helpers)</li>
-<li>RFC 005 (Rust interop)</li>
-<li>RFC 010 (temporary filesystem objects)</li>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 041 (first-class Rust interop authoring)</li>
-<li>RFC 056 (<code>std.io</code> in-memory byte cursors)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/286</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces <code>std.fs</code> as Incan's path-centric filesystem module. The compatibility target for the core path surface is CPython 3.14 <code>pathlib.Path</code>, while Incan also exposes a small set of explicit filesystem extensions inspired by Rust's <code>std::fs</code> where <code>pathlib</code> is intentionally incomplete. The module should be broad enough that users can stay inside <code>std.fs.Path</code> for ordinary filesystem work, including copy and move operations, without needing a separate <code>os</code>- or <code>shutil</code>-shaped layer. The initial contract is not limited to whole-file helpers: <code>std.fs</code> must also provide chunked binary file I/O through <code>Path.open(...)</code> and a <code>File</code> surface with bounded reads, writes, seeking, and durability operations so large files do not require loading the entire payload into memory.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan already exposes minimal whole-file builtins for the common text case, but that is not a complete filesystem story. Programs need ordinary path operations, metadata, directory lifecycle operations, and binary-safe reads and writes. They also need a truthful large-file path: authors must be able to open a file and process it incrementally in chunks rather than pretending <code>read_bytes()</code> is sufficient for every workload. Today, authors fall through to <code>rust::std::fs</code> and <code>rust::std::io</code>, which works but fragments documentation, discoverability, and examples. A namespaced stdlib surface matches RFC 022's direction and gives the project one place to define contracts for path behavior, binary I/O, durability, and errors while letting the runtime stay Rust-native underneath.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide <code>std.fs.Path</code> as Incan's primary filesystem entry point, with method names and grouping that should match CPython 3.14 <code>pathlib.Path</code> wherever semantics and language grammar allow.</li>
-<li>Make large files chunkable from day one: the <code>std.fs</code> contract must include <code>open(...)</code>, bounded <code>read(size)</code>, exact <code>read_exact(size)</code>, <code>write(...)</code>, <code>tell()</code>, and <code>seek(...)</code> on a file type so streaming workloads do not depend on <code>rust::</code>.</li>
-<li>Keep the API path-centric for ordinary tasks: tutorials should center <code>Path</code>, not ad hoc compiler builtins or direct <code>rust::std::fs</code> usage.</li>
-<li>Expose a small set of explicit Incan extensions where <code>pathlib</code> is not enough for everyday work, including honest existence checks, recursive delete, path-centric copy and move operations, structured open flags, and durability primitives.</li>
-<li>Keep Rust interop (RFC 005) as the escape hatch for advanced or host-specific behavior such as memory mapping, ACL-specific operations, or exotic platform knobs.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Defining async filesystem APIs in this RFC.</li>
-<li>Delivering every committed <code>std.fs</code> capability in a single PR or release. The spec is end-to-end; implementation may still land in phases.</li>
-<li>Standardizing in-memory byte cursors here; that belongs to RFC 056 (<code>std.io</code>).</li>
-<li>Mirroring Rust's <code>std::fs</code> names one-to-one; Rust remains the implementation substrate, not the tutorial vocabulary.</li>
-<li>Introducing a parallel <code>std.os</code> or <code>std.shutil</code> module for common path-owned chores unless a later RFC shows that <code>std.fs</code> is the wrong home.</li>
-<li>Importing every newer <code>pathlib</code> addition mechanically. CPython 3.14 remains the baseline reference, but Incan should still choose a coherent path-centric surface rather than mirroring every adjacent Python helper without judgment.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors work with <code>std.fs.Path</code> the way they would with <code>pathlib.Path</code>: they join components, inspect lexical parts, create directories, and read or write files using path methods.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
-
-<span class="k">model</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;model.bin&quot;</span><span class="p">)</span>
-<span class="n">data</span> <span class="o">=</span> <span class="k">model</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">?</span>
-
-<span class="n">out</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;out&quot;</span><span class="p">)</span> <span class="o">/</span> <span class="s2">&quot;copy.bin&quot;</span>
-<span class="n">out</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
-
-<span class="n">cfg_dir</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;config&quot;</span><span class="p">)</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">cfg_dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-    <span class="n">cfg_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">?</span>
+<h1 id="stdfs-reference">std.fs reference<a class="headerlink" href="#stdfs-reference" title="Permanent link">&para;</a></h1>
+<p><code>std.fs</code> is the standard-library module for filesystem paths, directory operations, metadata, and file handles.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DirEntry</span><span class="p">,</span> <span class="nc">DiskUsage</span><span class="p">,</span> <span class="nc">File</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">OpenFileMode</span><span class="p">,</span> <span class="nc">OpenOptions</span><span class="p">,</span> <span class="kt">Path</span><span class="p">,</span> <span class="nc">PathStat</span>
 </code></pre></div>
-<p>When the file is too large to load all at once, authors open it and process bounded chunks.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
-
-<span class="n">fh</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;video.bin&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">header</span> <span class="o">=</span> <span class="n">fh</span><span class="o">.</span><span class="n">read_exact</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span><span class="o">?</span>
-<span class="n">chunk</span> <span class="o">=</span> <span class="n">fh</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">8192</span><span class="p">)</span><span class="o">?</span>
-<span class="n">offset</span> <span class="o">=</span> <span class="n">fh</span><span class="o">.</span><span class="n">tell</span><span class="p">()</span><span class="o">?</span>
-</code></pre></div>
-<p>The mental model is simple: <code>Path</code> owns path-based operations; <code>File</code> owns open-file streaming; whole-file helpers are convenience operations, not the only supported route.</p>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="compatibility-target-and-extensions">Compatibility target and extensions<a class="headerlink" href="#compatibility-target-and-extensions" title="Permanent link">&para;</a></h3>
-<ul>
-<li>The standard library must expose <code>std.fs</code> for path-based filesystem work.</li>
-<li><code>std.fs.Path</code> should follow CPython 3.14 <code>pathlib.Path</code> for method spelling and behavior when that surface already exists there.</li>
-<li>When Incan exposes capabilities that are outside <code>pathlib</code> proper, the docs must describe them as explicit Incan extensions rather than implying they are standard <code>pathlib</code> behavior.</li>
-<li>The initial extension set includes <code>try_exists</code>, <code>copy</code>, <code>copy_into</code>, <code>move</code>, <code>move_into</code>, <code>remove_tree</code>, <code>scandir</code>, <code>disk_usage</code>, <code>OpenOptions</code>, <code>File.sync</code>, and <code>File.sync_data</code>.</li>
-<li>CPython 3.14 compatibility is a baseline, not a wholesale import rule: Incan should adopt the pieces that strengthen a coherent path-centric filesystem module, not every adjacent helper automatically.</li>
-<li>Implementations may use Rust <code>std::fs</code>, <code>std::io</code>, and related crates internally, but user-visible semantics are defined by this RFC and stdlib docs, not by Rust's type names.</li>
-</ul>
-<h3 id="required-capabilities-initial-contract">Required capabilities (initial contract)<a class="headerlink" href="#required-capabilities-initial-contract" title="Permanent link">&para;</a></h3>
-<p>The first <code>std.fs</code> release must provide the following baseline:</p>
-<ul>
-<li><code>Path(path: str | Path) -&gt; Path</code>.</li>
-<li>Path joining via <code>/</code> and/or <code>joinpath(...)</code>.</li>
-<li>Lexical properties <code>parent</code>, <code>name</code>, <code>suffix</code>, and <code>stem</code>.</li>
-<li>Predicates <code>exists()</code>, <code>is_file()</code>, <code>is_dir()</code>, and <code>is_symlink()</code> where the host OS supports symlink inspection.</li>
-<li><code>try_exists() -&gt; Result[bool, E]</code> as the honest existence probe when callers must distinguish "missing" from "could not determine".</li>
-<li><code>mkdir(...)</code> with <code>parents</code> / <code>exist_ok</code> style options.</li>
-<li>Whole-file binary helpers <code>read_bytes()</code> and <code>write_bytes(...)</code>.</li>
-<li><code>open(...)</code> with the full Python-style mode family: <code>"r"</code>, <code>"w"</code>, <code>"a"</code>, <code>"x"</code>, <code>"rb"</code>, <code>"wb"</code>, <code>"ab"</code>, <code>"xb"</code>, <code>"r+"</code>, <code>"w+"</code>, <code>"a+"</code>, <code>"x+"</code>, <code>"rb+"</code>, <code>"wb+"</code>, <code>"ab+"</code>, and <code>"xb+"</code>.</li>
-<li>A <code>File</code> surface that must support <code>read(size)</code>, <code>read_exact(size)</code>, <code>write(data)</code>, <code>tell()</code>, <code>seek(offset, whence=0)</code>, <code>sync()</code>, and <code>sync_data()</code>.</li>
-</ul>
-<p>Large-file behavior is normative:</p>
-<ul>
-<li><code>File.read(size)</code> must return at most <code>size</code> bytes and must not require loading the remainder of the file into memory.</li>
-<li><code>File.read(size)</code> must return an empty <code>bytes</code> value at EOF rather than failing.</li>
-<li><code>File.read_exact(size)</code> must fail if fewer than <code>size</code> bytes remain.</li>
-<li><code>Path.read_bytes()</code> remains valid convenience API, but it must be documented as a whole-file helper rather than the preferred route for large inputs.</li>
-</ul>
-<p>Durability semantics are also normative:</p>
-<ul>
-<li>Successful <code>write(...)</code>, <code>write_bytes(...)</code>, or object drop must not by themselves imply crash-safe persistence.</li>
-<li><code>sync()</code> is the explicit durability operation and must request persistence of file content and associated metadata.</li>
-<li><code>fsync()</code> must exist as an alias of <code>sync()</code> with identical semantics.</li>
-<li><code>sync_data()</code> is the lighter durability operation and may omit metadata that is not required for data visibility, subject to host-platform behavior documented by the stdlib.</li>
-</ul>
-<p><code>open(...)</code> mode semantics are also normative:</p>
-<ul>
-<li><code>"r"</code> / <code>"rb"</code> must open an existing file for reading and fail if the path does not exist.</li>
-<li><code>"w"</code> / <code>"wb"</code> must open for writing, creating the file if needed and truncating it if it already exists.</li>
-<li><code>"a"</code> / <code>"ab"</code> must open for append, creating the file if needed and writing new data at the end.</li>
-<li><code>"x"</code> / <code>"xb"</code> must open for exclusive creation and fail if the target already exists.</li>
-<li>Modes containing <code>"+"</code> must permit both reading and writing.</li>
-<li>Modes containing <code>"b"</code> must use binary I/O.</li>
-<li>Modes without <code>"b"</code> must use text I/O and therefore participate in the encoding / newline rules defined elsewhere in this RFC.</li>
-</ul>
-<p>Text I/O defaults are also normative:</p>
-<ul>
-<li>Text mode must default to <code>encoding="utf-8"</code> and <code>errors="strict"</code>.</li>
-<li><code>read_text(...)</code> and text-mode <code>open(...)</code> must use universal newline handling on read, accepting <code>"\n"</code>, <code>"\r\n"</code>, and <code>"\r"</code> as line boundaries and normalizing them in the returned text.</li>
-<li><code>write_text(...)</code> and text-mode <code>open(...)</code> must default to writing <code>"\n"</code> line endings unless <code>newline=...</code> is explicitly provided.</li>
-<li>Callers may override <code>encoding</code>, <code>errors</code>, and <code>newline</code> when interoperating with legacy systems or external formats that require different text conventions.</li>
-</ul>
-<p>Existence-query behavior is also normative:</p>
-<ul>
-<li><code>exists()</code>, <code>is_file()</code>, <code>is_dir()</code>, and <code>is_symlink()</code> may follow CPython 3.14's ergonomic bool style, where callers get <code>false</code> for missing or inaccessible paths instead of a raised OS error.</li>
-<li><code>try_exists()</code> exists specifically because the bool style is lossy: it must return <code>Ok(false)</code> only when absence is known, and <code>Err(...)</code> when the runtime cannot determine existence without ambiguity.</li>
-</ul>
-<p>Copy, move, and tree-removal behavior is also normative:</p>
-<ul>
-<li><code>copy(...)</code> and <code>copy_into(...)</code> must work for both regular files and directory trees.</li>
-<li>If <code>follow_symlinks</code> is <code>true</code>, copying a symlink must copy the symlink target's contents. If <code>follow_symlinks</code> is <code>false</code>, the symlink itself must be recreated at the destination rather than dereferenced.</li>
-<li>If <code>preserve_metadata</code> is <code>false</code>, the implementation must guarantee copied file data and directory structure, but it must not promise preservation of ownership, timestamps, ACLs, extended attributes, or platform-specific metadata.</li>
-<li>If <code>preserve_metadata</code> is <code>true</code>, the implementation should preserve permissions, modification/access times, flags, and extended attributes where the host platform can do so. The docs must state clearly which metadata classes are best-effort rather than guaranteed.</li>
-<li><code>move(...)</code> and <code>move_into(...)</code> must behave like ordinary renames when the source and destination are on the same filesystem and must fall back to copy-then-delete semantics when they are not.</li>
-<li><code>remove_tree()</code> must delete a directory tree rooted at <code>self</code>.</li>
-<li><code>remove_tree()</code> must fail if <code>self</code> names a regular file; callers must use <code>unlink()</code> for files.</li>
-<li><code>remove_tree()</code> must fail if <code>self</code> is a symbolic link, including a symlink to a directory; it must never recurse into a symlink target.</li>
-<li><code>remove_tree()</code> must remove entries bottom-up so non-empty directories are not removed before their children.</li>
-</ul>
-<h3 id="pathlib-alignment-roadmap">Pathlib alignment roadmap<a class="headerlink" href="#pathlib-alignment-roadmap" title="Permanent link">&para;</a></h3>
-<p>The path-centric API is approved as a staged roadmap under this one RFC so follow-on <code>std.fs</code> work does not need a new design record for every additional <code>pathlib</code> method.</p>
+<p>The public surface is path-centric. Construct a <code>Path</code>, then call path or file-handle methods from there. Host failures return <code>Result[..., IoError]</code>; the error includes the affected <code>path</code>, a normalized <code>kind</code>, and a human-readable <code>message()</code>.</p>
+<p>Current <code>std.fs</code> support follows the repository's Unix-like host target: macOS, Linux, and Windows through WSL. Native Windows filesystem semantics are not yet part of this reference contract.</p>
+<h2 id="path">Path<a class="headerlink" href="#path" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Tier</th>
-<th>Intent</th>
-<th>Capabilities</th>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>A — Initial contract</strong></td>
-<td>Must ship with the first <code>std.fs</code> release.</td>
-<td>Construction from <code>str</code>; joining; <code>parent</code> / <code>name</code> / <code>suffix</code> / <code>stem</code>; <code>exists</code> / <code>is_file</code> / <code>is_dir</code> / <code>is_symlink</code>; <code>try_exists</code>; <code>mkdir</code>; <code>read_bytes</code> / <code>write_bytes</code>; <code>open(...)</code>; <code>File.read</code> / <code>read_exact</code> / <code>write</code> / <code>tell</code> / <code>seek</code> / <code>sync</code> / <code>sync_data</code>.</td>
+<td><code>Path(path: str)</code></td>
+<td><code>Path</code></td>
+<td>Construct a lexical path value.</td>
 </tr>
 <tr>
-<td><strong>B — Everyday pathlib</strong></td>
-<td>Should land in near-term releases without a new RFC.</td>
-<td><code>read_text</code> / <code>write_text</code>; <code>unlink</code>; <code>rmdir</code>; <code>rename</code>; <code>replace</code>; <code>iterdir</code>; <code>glob</code>; <code>rglob</code>; <code>resolve</code>; <code>absolute</code>; <code>stat</code>; <code>lstat</code>; <code>Path.cwd()</code>; <code>Path.home()</code>; <code>copy</code>; <code>copy_into</code>; <code>move</code>; <code>move_into</code>; <code>disk_usage</code>; <code>OpenOptions</code>; <code>remove_tree</code>; <code>scandir</code>; <code>DirEntry</code>; <code>flush</code>; <code>fsync</code>.</td>
+<td><code>left / child</code></td>
+<td><code>Path</code></td>
+<td>Join with one child segment.</td>
 </tr>
 <tr>
-<td><strong>C — Host-sensitive edges</strong></td>
-<td>May trail later or require a follow-on RFC if semantics become too platform-specific.</td>
-<td><code>chmod</code>; <code>chown</code>; <code>touch</code>; <code>symlink_to</code>; <code>hardlink_to</code>; <code>samefile</code>; <code>is_mount</code>; <code>expanduser</code>; <code>walk</code>; <code>owner</code>; <code>group</code>; other permission or host-sensitive edges.</td>
+<td><code>path.joinpath(child: str)</code></td>
+<td><code>Path</code></td>
+<td>Join with one child segment.</td>
+</tr>
+<tr>
+<td><code>path.parent()</code></td>
+<td><code>Path</code></td>
+<td>Parent path.</td>
+</tr>
+<tr>
+<td><code>path.name()</code></td>
+<td><code>str</code></td>
+<td>Final component.</td>
+</tr>
+<tr>
+<td><code>path.suffix()</code></td>
+<td><code>str</code></td>
+<td>Final suffix, including the dot.</td>
+</tr>
+<tr>
+<td><code>path.stem()</code></td>
+<td><code>str</code></td>
+<td>Final component without its suffix.</td>
+</tr>
+<tr>
+<td><code>Path.cwd()</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Current working directory.</td>
+</tr>
+<tr>
+<td><code>Path.home()</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Current user's home directory.</td>
 </tr>
 </tbody>
 </table>
-<h3 id="expected-api-shape-skeletal">Expected API shape (skeletal)<a class="headerlink" href="#expected-api-shape-skeletal" title="Permanent link">&para;</a></h3>
-<p>This subsection names the user-visible spellings. It is not an implementation plan.</p>
-<h4 id="path"><code>Path</code><a class="headerlink" href="#path" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>Path(path: str | Path) -&gt; Path</code> — <strong>[A]</strong>.</li>
-<li><code>/</code> and <code>joinpath(...)</code> for path composition — <strong>[A]</strong>.</li>
-<li><code>parent() -&gt; Path</code>, <code>name() -&gt; str</code>, <code>suffix() -&gt; str</code>, <code>stem() -&gt; str</code> — <strong>[A]</strong>.</li>
-<li><code>exists() -&gt; bool</code>, <code>is_file() -&gt; bool</code>, <code>is_dir() -&gt; bool</code>, <code>is_symlink() -&gt; bool</code> — <strong>[A]</strong>.</li>
-<li><code>try_exists() -&gt; Result[bool, E]</code> — <strong>[A]</strong> explicit Incan extension.</li>
-<li><code>mkdir(...) -&gt; Result[(), E]</code> — <strong>[A]</strong>.</li>
-<li><code>read_bytes() -&gt; Result[bytes, E]</code>, <code>write_bytes(data: bytes) -&gt; Result[(), E]</code> — <strong>[A]</strong>.</li>
-<li><code>open(mode: str = "r", buffering: int = -1, encoding: str | None = None, errors: str | None = None, newline: str | None = None) -&gt; Result[File, E]</code> — <strong>[A]</strong>. Supports the full Python-style mode family defined above.</li>
-<li><code>read_text(encoding: str = "utf-8", errors: str = "strict") -&gt; Result[str, E]</code>, <code>write_text(data: str, encoding: str = "utf-8", errors: str = "strict", newline: str | None = "\n") -&gt; Result[(), E]</code> — <strong>[B]</strong>.</li>
-<li><code>iterdir() -&gt; Result[Iterator[Path], E]</code>, <code>glob(pattern: str) -&gt; Result[Iterator[Path], E]</code>, <code>rglob(pattern: str) -&gt; Result[Iterator[Path], E]</code> — <strong>[B]</strong>.</li>
-<li><code>stat(...) -&gt; Result[PathStat, E]</code>, <code>lstat() -&gt; Result[PathStat, E]</code> — <strong>[B]</strong>.</li>
-<li><code>copy(target: Path | str, follow_symlinks: bool = True, preserve_metadata: bool = False) -&gt; Result[Path, E]</code> — <strong>[B]</strong>. Copies a file or directory tree to <code>target</code> and returns the new path. With <code>preserve_metadata=False</code>, only file data and directory structure are guaranteed; with <code>preserve_metadata=True</code>, metadata preservation is attempted where supported and documented.</li>
-<li><code>copy_into(target_dir: Path | str, follow_symlinks: bool = True, preserve_metadata: bool = False) -&gt; Result[Path, E]</code> — <strong>[B]</strong>. Copies this path into an existing target directory and returns the copied path.</li>
-<li><code>move(target: Path | str) -&gt; Result[Path, E]</code>, <code>move_into(target_dir: Path | str) -&gt; Result[Path, E]</code> — <strong>[B]</strong>. Path-centric move operations following CPython 3.14 naming. Same-filesystem moves should use rename/replace-class semantics; cross-filesystem moves must behave as copy-then-delete.</li>
-<li><code>disk_usage() -&gt; Result[DiskUsage, E]</code> — <strong>[B]</strong> explicit Incan extension returning at least <code>total</code>, <code>used</code>, and <code>free</code> in bytes for the filesystem containing this path.</li>
-<li><code>remove_tree() -&gt; Result[(), E]</code> — <strong>[B]</strong> explicit Incan extension for directory trees only. It must fail on regular files and symlinks rather than silently treating them as trees.</li>
-<li><code>scandir() -&gt; Result[Iterator[DirEntry], E]</code> — <strong>[B]</strong> explicit Incan extension.</li>
-<li><code>chown(user: str | int | None = None, group: str | int | None = None, follow_symlinks: bool = True) -&gt; Result[(), E]</code> — <strong>[C]</strong> host-sensitive ownership change where the platform supports it.</li>
-</ul>
-<h4 id="openoptions"><code>OpenOptions</code><a class="headerlink" href="#openoptions" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>OpenOptions.new() -&gt; OpenOptions</code> — <strong>[B]</strong>.</li>
-<li><code>read(v: bool) -&gt; OpenOptions</code>, <code>write(v: bool) -&gt; OpenOptions</code>, <code>append(v: bool) -&gt; OpenOptions</code>, <code>truncate(v: bool) -&gt; OpenOptions</code> — <strong>[B]</strong>.</li>
-<li><code>create(v: bool) -&gt; OpenOptions</code>, <code>create_new(v: bool) -&gt; OpenOptions</code> — <strong>[B]</strong>.</li>
-<li><code>open(path: Path | str) -&gt; Result[File, E]</code> — <strong>[B]</strong>.</li>
-</ul>
-<h4 id="file"><code>File</code><a class="headerlink" href="#file" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>read(size: int = -1) -&gt; Result[bytes | str, E]</code> — <strong>[A]</strong>. Return type depends on whether the file was opened in binary or text mode.</li>
-<li><code>read_exact(size: int) -&gt; Result[bytes, E]</code> — <strong>[A]</strong>.</li>
-<li><code>write(data: bytes | str) -&gt; Result[int, E]</code> — <strong>[A]</strong>. Accepted data type depends on whether the file was opened in binary or text mode.</li>
-<li><code>tell() -&gt; Result[int, E]</code>, <code>seek(offset: int, whence: int = 0) -&gt; Result[int, E]</code> — <strong>[A]</strong>.</li>
-<li><code>sync() -&gt; Result[(), E]</code> — <strong>[A]</strong> explicit durability primitive.</li>
-<li><code>fsync() -&gt; Result[(), E]</code> — <strong>[B]</strong> alias of <code>sync()</code> with identical semantics.</li>
-<li><code>sync_data() -&gt; Result[(), E]</code> — <strong>[A]</strong> explicit durability primitive that may omit non-essential metadata writes.</li>
-<li><code>flush() -&gt; Result[(), E]</code> — <strong>[B]</strong>. Flushes user-space buffers but does not imply durable persistence.</li>
-</ul>
-<h4 id="direntry"><code>DirEntry</code><a class="headerlink" href="#direntry" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>path() -&gt; Path</code>, <code>file_name() -&gt; str</code> — <strong>[B]</strong>.</li>
-<li><code>is_file(...) -&gt; bool</code>, <code>is_dir(...) -&gt; bool</code>, <code>is_symlink() -&gt; bool</code> — <strong>[B]</strong>.</li>
-<li><code>metadata() -&gt; Result[PathStat, E]</code> — <strong>[B]</strong>.</li>
-</ul>
-<h3 id="errors-and-compatibility">Errors and compatibility<a class="headerlink" href="#errors-and-compatibility" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Operations must surface failure through ordinary <code>Result</code> returns unless a helper is explicitly documented otherwise.</li>
-<li>Error payloads should be actionable, including at minimum the relevant path and the underlying OS message for filesystem failures.</li>
-<li>This RFC is additive. Existing programs and builtins keep compiling while <code>std.fs</code> becomes the documented default.</li>
-</ul>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-chunked-file-io-belongs-in-stdfs">Why chunked file I/O belongs in <code>std.fs</code><a class="headerlink" href="#why-chunked-file-io-belongs-in-stdfs" title="Permanent link">&para;</a></h3>
-<p>Large-file chunking is a filesystem concern before it is an in-memory parsing concern. A program that wants to hash, upload, transcode, or scan a multi-gigabyte file must be able to open that file and consume bounded reads without routing through <code>read_bytes()</code>. That is why <code>Path.open(...)</code> and a minimal <code>File</code> contract are part of the initial <code>std.fs</code> approval unit rather than a deferred convenience.</p>
-<h3 id="cpython-baseline-plus-explicit-incan-extensions">CPython baseline plus explicit Incan extensions<a class="headerlink" href="#cpython-baseline-plus-explicit-incan-extensions" title="Permanent link">&para;</a></h3>
-<p>The core design rule is: if CPython 3.14 <code>pathlib.Path</code> already has the operation, Incan should prefer the same spelling and broadly compatible behavior. When Incan needs more, the RFC should say so plainly. <code>try_exists</code>, path-centric copy and move helpers, <code>remove_tree</code>, <code>OpenOptions</code>, and durability methods are not "secret pathlib"; they are deliberate Incan extensions informed by Rust's <code>std::fs</code> because they solve real filesystem tasks cleanly.</p>
-<p>CPython 3.14 also made <code>exists()</code>-style queries more aggressively bool-shaped by returning <code>false</code> rather than surfacing OS errors for inaccessible paths. That is a reasonable default for quick predicates, but it is not sufficient for correctness-sensitive code. Incan therefore keeps the ergonomic bool predicates and also standardizes <code>try_exists()</code> for callers that need to preserve the distinction between "missing" and "unknown because the probe failed."</p>
-<p>CPython 3.14 introduced path copy and move helpers as well. Those belong in Incan's <code>std.fs</code> story for the exact reason you called out: users should be able to stay on <code>Path</code> for ordinary filesystem work instead of reaching for a second filesystem module. This RFC adopts the CPython 3.14 spellings directly: <code>copy</code>, <code>copy_into</code>, <code>move</code>, and <code>move_into</code>.</p>
-<p>Some <code>shutil</code> ideas do fit naturally in a path-centric module. Disk-usage queries are a good example because they are path-owned and filesystem-facing: a <code>Path.disk_usage()</code> method keeps the operation in <code>std.fs</code> without introducing a second high-level file-operations namespace. By contrast, shell/environment helpers such as path-variable expansion or executable lookup should not be pulled into <code>std.fs</code> just because Python happens to expose them elsewhere.</p>
-<p>This same principle applies to whole-file helpers. The RFC does not expose parallel module-level <code>read_bytes(...)</code> / <code>write_bytes(...)</code> / <code>read_text(...)</code> / <code>write_text(...)</code> shortcuts, because keeping a second "string path first" style alive would weaken the intended <code>Path</code>-first model. Incan should teach: construct a <code>Path</code>, then operate on that path.</p>
-<p>Existing compiler builtins such as <code>read_file</code> and <code>write_file</code> may remain for compatibility. This RFC does not deprecate or remove them. The design claim is narrower: <code>std.fs.Path</code> is the canonical filesystem model for new APIs, documentation, and examples, and any builtin overlap should converge on the same observable semantics where practical.</p>
-<p>The text defaults follow the same philosophy. Incan should choose explicit, modern defaults rather than inheriting ambient host conventions, so UTF-8 with strict error handling and <code>"\n"</code> output are the normative defaults. At the same time, the API must stay parameterized because migration and interoperability work are real use cases; callers need to be able to opt into ASCII, Latin-1, Windows line endings, or other legacy conventions when the target system requires them.</p>
-<h3 id="copy-and-tree-semantics-that-should-not-stay-implicit">Copy and tree semantics that should not stay implicit<a class="headerlink" href="#copy-and-tree-semantics-that-should-not-stay-implicit" title="Permanent link">&para;</a></h3>
-<p>The weak point in many filesystem APIs is not naming but hand-wavy behavior around metadata, symlinks, and recursive deletion. This RFC should be explicit there.</p>
-<p><code>copy(..., preserve_metadata=False)</code> is intentionally the lower-guarantee path: callers get copied bytes and the expected directory structure, but not a portability promise about timestamps, ownership, ACLs, or extended attributes. <code>preserve_metadata=True</code> is the opt-in request for richer preservation, with the understanding that some metadata classes are inherently host-sensitive and must remain best-effort unless the platform can guarantee them.</p>
-<p><code>remove_tree()</code> also needs a hard boundary: it is for real directory trees, not a polymorphic "delete whatever I point at" shortcut. Python's <code>rmtree()</code> explicitly says the path "must point to a directory (but not a symbolic link to a directory)" (<a href="https://docs.python.org/3.14/library/shutil.html">shutil 3.14</a>), and that is the right safety posture here too.</p>
-<p>Durability should also stay explicit. Python normally requires <code>flush()</code> plus <code>os.fsync(...)</code> for a strong persistence request (<a href="https://docs.python.org/3.14/library/os.html">os 3.14</a>), and Rust exposes <code>sync_all()</code> / <code>sync_data()</code> rather than treating ordinary writes or drop as durability boundaries (<a href="https://doc.rust-lang.org/std/fs/struct.File.html">Rust <code>std::fs::File</code></a>). Incan should follow that model: successful writes mean normal write success, while <code>sync()</code> / <code>sync_data()</code> express persistence intent. Because the runtime is Rust-backed, the RFC does not require an explicit <code>close()</code> method as part of the public contract.</p>
-<h3 id="interaction-with-rust-interop">Interaction with Rust interop<a class="headerlink" href="#interaction-with-rust-interop" title="Permanent link">&para;</a></h3>
-<p>Authors may still use <code>rust::std::fs</code> and <code>rust::std::io</code> for capabilities this RFC does not standardize. The stdlib module should remain the documented default for portable baseline filesystem work.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Whole-file helpers only</strong> — smaller initial surface, but it does not solve large-file chunking and would leave serious workloads on <code>rust::</code>.</li>
-<li><strong>Keep <code>std.fs</code> and <code>std.io</code> in one RFC</strong> — rejected because filesystem review and in-memory byte-cursor review are separable approval units.</li>
-<li><strong>Rust-shaped public API</strong> — accurate to the backing implementation, but a worse tutorial and documentation story for Incan users.</li>
-<li><strong>Separate <code>std.os</code> / <code>std.shutil</code> style modules</strong> — rejected for now because ordinary path-owned chores should stay path-centric in Incan.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>std.fs</code> is still a broad surface area even after splitting out <code>std.io</code>.</li>
-<li>Promise drift is a risk: docs must not claim "pathlib parity" while quietly changing semantics or inventing extensions without labeling them as such.</li>
-<li>Durability, recursive deletion, and cross-platform metadata have semantic corners that require careful stdlib documentation and tests.</li>
-<li>Whole-file helpers remain easy to misuse on large inputs, so docs must explicitly teach when to choose chunked <code>open(...)</code> instead.</li>
-</ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A practical first delivery implements <code>Path</code>, <code>File</code>, and related helpers as normal Incan stdlib code that uses <code>rust::</code> interop to reach <code>std::fs</code>, <code>std::io</code>, and associated path and file primitives. Large Rust-only wrappers should be reserved for narrow host boundaries rather than used as the default substitute for writing ordinary stdlib logic in Incan.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: new <code>std.fs</code> module and supporting types such as <code>Path</code>, <code>File</code>, <code>OpenOptions</code>, and <code>DirEntry</code>.</li>
-<li><strong>Language surface</strong>: imports, constructors, methods, and helpers must be available without ad hoc special cases.</li>
-<li><strong>Reference docs</strong>: documentation must explain the difference between whole-file helpers and chunked file-handle APIs.</li>
-<li><strong>LSP / tooling</strong>: completions and hovers for <code>std.fs</code> members.</li>
-<li><strong>Tests / docs-site</strong>: API docs and examples must cover both whole-file and chunked large-file workflows.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>std.fs.Path</code> is the canonical filesystem model. Existing builtins such as <code>read_file</code> and <code>write_file</code> may remain for compatibility, but new APIs, documentation, and examples should prefer <code>Path</code>.</li>
-<li>Construction uses direct calls such as <code>Path("config.toml")</code>, not <code>Path.new(...)</code>.</li>
-<li><code>Path.open(...)</code> commits to the full Python-style mode-string family. Delivery may still be phased, but the spec is not intentionally partial.</li>
-<li><code>Path</code> remains the single path object for both files and directories. Opening a path yields <code>File</code>; there is no parallel <code>Folder</code> abstraction.</li>
-<li>Durability is explicit. Successful writes and object drop do not imply crash-safe persistence; callers use <code>sync()</code> or <code>sync_data()</code> when they need persistence guarantees. <code>fsync()</code> exists as an alias of <code>sync()</code>.</li>
-<li>Text I/O defaults are <code>utf-8</code>, <code>strict</code>, and <code>"\n"</code> output, with override parameters for interoperability and migration work.</li>
-<li><code>std.fs</code> stays path-centric: copy, move, recursive deletion, scanning, and disk-usage queries belong on <code>Path</code> rather than being pushed into separate <code>os</code>- or <code>shutil</code>-style modules.</li>
-</ul>
+<p>Construction and lexical helpers do not read the filesystem.</p>
+<h2 id="existence-and-metadata">Existence and Metadata<a class="headerlink" href="#existence-and-metadata" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path.exists()</code></td>
+<td><code>bool</code></td>
+<td><code>true</code> when the path exists; inaccessible paths collapse to <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>path.is_file()</code></td>
+<td><code>bool</code></td>
+<td><code>true</code> for regular files.</td>
+</tr>
+<tr>
+<td><code>path.is_dir()</code></td>
+<td><code>bool</code></td>
+<td><code>true</code> for directories.</td>
+</tr>
+<tr>
+<td><code>path.is_symlink()</code></td>
+<td><code>bool</code></td>
+<td><code>true</code> for symlinks.</td>
+</tr>
+<tr>
+<td><code>path.try_exists()</code></td>
+<td><code>Result[bool, IoError]</code></td>
+<td>Honest existence check that preserves host errors.</td>
+</tr>
+<tr>
+<td><code>path.stat()</code></td>
+<td><code>Result[PathStat, IoError]</code></td>
+<td>Metadata that follows symlinks.</td>
+</tr>
+<tr>
+<td><code>path.lstat()</code></td>
+<td><code>Result[PathStat, IoError]</code></td>
+<td>Metadata for the path itself.</td>
+</tr>
+<tr>
+<td><code>path.samefile(other: Path \| str)</code></td>
+<td><code>Result[bool, IoError]</code></td>
+<td>Whether two paths identify the same file.</td>
+</tr>
+<tr>
+<td><code>path.is_mount()</code></td>
+<td><code>Result[bool, IoError]</code></td>
+<td>Whether the path is a mount point.</td>
+</tr>
+<tr>
+<td><code>path.disk_usage()</code></td>
+<td><code>Result[DiskUsage, IoError]</code></td>
+<td>Total, used, and free bytes for the containing filesystem.</td>
+</tr>
+</tbody>
+</table>
+<p>Use <code>try_exists()</code> when "missing" and "could not check" lead to different behavior.</p>
+<h2 id="directory-and-tree-operations">Directory and Tree Operations<a class="headerlink" href="#directory-and-tree-operations" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path.mkdir(parents: bool, exist_ok: bool)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Create a directory.</td>
+</tr>
+<tr>
+<td><code>path.iterdir()</code></td>
+<td><code>Result[list[Path], IoError]</code></td>
+<td>Immediate children.</td>
+</tr>
+<tr>
+<td><code>path.scandir()</code></td>
+<td><code>Result[list[DirEntry], IoError]</code></td>
+<td>Immediate children as directory entries.</td>
+</tr>
+<tr>
+<td><code>path.glob(pattern: str)</code></td>
+<td><code>Result[list[Path], IoError]</code></td>
+<td>Match children below the path.</td>
+</tr>
+<tr>
+<td><code>path.rglob(pattern: str)</code></td>
+<td><code>Result[list[Path], IoError]</code></td>
+<td>Recursive glob.</td>
+</tr>
+<tr>
+<td><code>path.unlink()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Remove a file or symlink.</td>
+</tr>
+<tr>
+<td><code>path.rmdir()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Remove an empty directory.</td>
+</tr>
+<tr>
+<td><code>path.remove_tree()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Remove a directory tree; files and symlinks are errors.</td>
+</tr>
+<tr>
+<td><code>path.touch(exist_ok: bool)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Create the file if needed, or update access and modification times.</td>
+</tr>
+</tbody>
+</table>
+<p><code>glob()</code> and <code>rglob()</code> support <code>*</code>, <code>?</code>, and bracket character classes such as <code>[abc]</code>, <code>[!abc]</code>, and <code>[a-z]</code>. <code>remove_tree()</code> is deliberately not "delete anything"; use <code>unlink()</code> for files.</p>
+<h2 id="glob-patterns">Glob Patterns<a class="headerlink" href="#glob-patterns" title="Permanent link">&para;</a></h2>
+<p>Use <code>std.fs.glob</code> when you need the same pattern rules for strings that are not filesystem paths:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs.glob</span><span class="w"> </span><span class="kn">import</span> <span class="n">filter_matches</span><span class="p">,</span> <span class="n">matches</span>
+
+<span class="nb">println</span><span class="p">(</span><span class="n">matches</span><span class="p">(</span><span class="s2">&quot;routes/users.incn&quot;</span><span class="p">,</span> <span class="s2">&quot;routes/*.incn&quot;</span><span class="p">))</span>
+<span class="n">api_routes</span> <span class="o">=</span> <span class="n">filter_matches</span><span class="p">([</span><span class="s2">&quot;api/users&quot;</span><span class="p">,</span> <span class="s2">&quot;docs/readme&quot;</span><span class="p">,</span> <span class="s2">&quot;api/orders&quot;</span><span class="p">],</span> <span class="s2">&quot;api/*&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>matches(value: str, pattern: str)</code></td>
+<td><code>bool</code></td>
+<td>Whether <code>value</code> matches the glob pattern.</td>
+</tr>
+<tr>
+<td><code>filter_matches(values: list[str], pattern: str)</code></td>
+<td><code>list[str]</code></td>
+<td>Matching values in their original order.</td>
+</tr>
+</tbody>
+</table>
+<p><code>std.fs.glob</code> is pure string matching. It does not read directories; use <code>Path.glob()</code> or <code>Path.rglob()</code> for filesystem traversal.</p>
+<h2 id="file-contents">File Contents<a class="headerlink" href="#file-contents" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path.read_bytes()</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read an entire file into memory.</td>
+</tr>
+<tr>
+<td><code>path.write_bytes(data: bytes)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Write a complete byte buffer.</td>
+</tr>
+<tr>
+<td><code>path.read_text(encoding: str, errors: str)</code></td>
+<td><code>Result[str, IoError]</code></td>
+<td>Read and decode an entire file.</td>
+</tr>
+<tr>
+<td><code>path.write_text(data: str, encoding: str, errors: str, newline: Option[str])</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Encode and write text.</td>
+</tr>
+<tr>
+<td><code>path.open(mode: str = "r", buffering: int = -1, encoding: Option[str] = None, errors: Option[str] = None, newline: Option[str] = None)</code></td>
+<td><code>Result[File, IoError]</code></td>
+<td>Open a file handle.</td>
+</tr>
+</tbody>
+</table>
+<p>Whole-file helpers are for small payloads. Use <code>open(...)</code> when memory bounds or streaming matter.</p>
+<p><code>open(...)</code> supports <code>r</code>, <code>w</code>, <code>a</code>, <code>x</code>, their binary forms, and <code>+</code> read-write variants. <code>OpenFileMode</code> names the text-mode values accepted by <code>open(...)</code>; insert <code>b</code> before the optional <code>+</code> for binary mode strings such as <code>rb</code> or <code>wb+</code>. Binary modes reject <code>encoding</code>, <code>errors</code>, and <code>newline</code>. Text modes use UTF-8 and strict error handling by default. Encoding labels are resolved with the WHATWG Encoding Standard labels implemented by <code>encoding_rs</code>; <code>errors</code> accepts <code>strict</code> or <code>replace</code>. Unknown encodings or unsupported error strategies return <code>IoError(kind="invalid_input")</code>.</p>
+<h2 id="copy-move-and-links">Copy, Move, and Links<a class="headerlink" href="#copy-move-and-links" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path.copy(target: Path \| str, follow_symlinks: bool, preserve_metadata: bool)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Copy a file or directory tree.</td>
+</tr>
+<tr>
+<td><code>path.copy_into(target_dir: Path \| str, follow_symlinks: bool, preserve_metadata: bool)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Copy into an existing directory.</td>
+</tr>
+<tr>
+<td><code>path.move(target: Path \| str)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Move or rename, with copy-delete fallback when required.</td>
+</tr>
+<tr>
+<td><code>path.move_into(target_dir: Path \| str)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Move into an existing directory.</td>
+</tr>
+<tr>
+<td><code>path.rename(target: Path \| str)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Rename and return the new path.</td>
+</tr>
+<tr>
+<td><code>path.replace(target: Path \| str)</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Replace the target when supported.</td>
+</tr>
+<tr>
+<td><code>path.symlink_to(target: Path \| str)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Create a symlink at this path.</td>
+</tr>
+<tr>
+<td><code>path.hardlink_to(target: Path \| str)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Create a hard link at this path.</td>
+</tr>
+<tr>
+<td><code>path.chmod(readonly: bool)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Set or clear readonly permissions.</td>
+</tr>
+<tr>
+<td><code>path.absolute()</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Absolute path without canonicalization.</td>
+</tr>
+<tr>
+<td><code>path.resolve()</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Canonical path.</td>
+</tr>
+<tr>
+<td><code>path.expanduser()</code></td>
+<td><code>Result[Path, IoError]</code></td>
+<td>Expand a leading <code>~</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Metadata preservation during copy preserves permissions plus modification and access times where the host platform exposes them. Ownership, ACLs, flags, and extended attributes remain host-sensitive and best-effort.</p>
+<h2 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file.read(size: int)</code></td>
+<td><code>Result[str, IoError]</code></td>
+<td>Read text from the current cursor.</td>
+</tr>
+<tr>
+<td><code>file.read_bytes(size: int)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read at most <code>size</code> bytes, or the rest when <code>size</code> is negative.</td>
+</tr>
+<tr>
+<td><code>file.read_exact(size: int)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read exactly <code>size</code> bytes or fail.</td>
+</tr>
+<tr>
+<td><code>file.write(data: str)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Write text and return characters accepted.</td>
+</tr>
+<tr>
+<td><code>file.write_bytes(data: bytes)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Write bytes and return bytes accepted.</td>
+</tr>
+<tr>
+<td><code>file.tell()</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Current cursor.</td>
+</tr>
+<tr>
+<td><code>file.seek(offset: int, whence: int)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Move cursor; <code>0</code> start, <code>1</code> current, <code>2</code> end.</td>
+</tr>
+<tr>
+<td><code>file.flush()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Flush user-space buffers.</td>
+</tr>
+<tr>
+<td><code>file.sync()</code> / <code>file.fsync()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Request data and metadata persistence.</td>
+</tr>
+<tr>
+<td><code>file.sync_data()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Request data persistence.</td>
+</tr>
+</tbody>
+</table>
+<p>Successful writes do not imply crash-safe persistence. Call <code>sync()</code> or <code>sync_data()</code> when durability matters.</p>
+<h2 id="openoptions">OpenOptions<a class="headerlink" href="#openoptions" title="Permanent link">&para;</a></h2>
+<p><code>OpenOptions</code> provides explicit open flags:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OpenOptions</span><span class="p">,</span> <span class="kt">Path</span>
+
+<span class="n">file</span> <span class="o">=</span> <span class="nc">OpenOptions</span><span class="p">()</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;data.bin&quot;</span><span class="p">))</span><span class="o">?</span>
+</code></pre></div>
+<p>Builder methods are <code>read</code>, <code>write</code>, <code>append</code>, <code>truncate</code>, <code>create</code>, and <code>create_new</code>.</p>
+<h2 id="temporary-files">Temporary Files<a class="headerlink" href="#temporary-files" title="Permanent link">&para;</a></h2>
+<p><code>std.tempfile</code> owns temporary location creation and cleanup. Once a temporary path exists, use <code>std.fs</code> for path joins, reads, writes, opens, metadata, copy/move, and cleanup.</p>
+<p><code>std.tempfile.SpooledTemporaryFile</code> remains planned for the temporary-file library rather than part of <code>std.fs</code>.</p>
 
 
 
@@ -5016,18 +5162,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

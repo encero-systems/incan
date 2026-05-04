@@ -1818,6 +1818,8 @@
       
         
       
+        
+      
     
     
       
@@ -1891,6 +1893,27 @@
   
   <span class="md-ellipsis">
     std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
   </span>
   
 
@@ -4410,6 +4433,8 @@
       
         
       
+        
+      
     
     
       
@@ -4451,6 +4476,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4697,12 +4743,12 @@ and “what to do when…”.</p>
 <h2 id="pattern-convert-errors-at-module-boundaries-map_err">Pattern: Convert errors at module boundaries (<code>map_err</code>)<a class="headerlink" href="#pattern-convert-errors-at-module-boundaries-map_err" title="Permanent link">&para;</a></h2>
 <p>Convert low-level errors into a stable, module-level error type.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">ConfigError</span><span class="p">:</span>
-    <span class="nc">Io</span><span class="p">(</span><span class="nc">IoError</span><span class="p">)</span>
+    <span class="nc">Io</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
     <span class="nc">Parse</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">ConfigError</span><span class="p">]:</span>
-    <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_toml</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span> <span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">(</span><span class="n">e</span><span class="p">))</span><span class="o">?</span>
+    <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span> <span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">(</span><span class="n">e</span><span class="p">))</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
 </code></pre></div>
 <p>Tip: do this once at the boundary, not at every call site.</p>
