@@ -7855,6 +7855,242 @@ def main() -> None:
 }
 
 #[test]
+fn test_rfc068_structural_protocol_hooks_resolve_for_syntax() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Flag:
+  ready: bool
+
+  def __bool__(self) -> bool:
+    return self.ready
+
+model Bag:
+  size: int
+
+  def __len__(self) -> int:
+    return self.size
+
+  def __contains__(self, item: int) -> bool:
+    return item == self.size
+
+model CallableBox:
+  seed: int
+
+  def __call__(self, value: int) -> int:
+    return self.seed + value
+
+model CounterIter:
+  value: int
+  limit: int
+
+  def __next__(self) -> Option[int]:
+    if self.value < self.limit:
+      return Some(self.value)
+    return None
+
+model Counter:
+  limit: int
+
+  def __iter__(self) -> CounterIter:
+    return CounterIter(value=0, limit=self.limit)
+
+def main() -> None:
+  flag = Flag(ready=true)
+  bag = Bag(size=3)
+  callable = CallableBox(seed=4)
+  if flag:
+    pass
+  while flag:
+    break
+  n = len(bag)
+  present = 3 in bag
+  absent = 4 not in bag
+  called = callable(5)
+  for item in Counter(limit=2):
+    seen = item
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let calls: Vec<_> = checker
+        .type_info()
+        .resolved_operator_calls
+        .values()
+        .map(|call| (call.method.as_str(), call.kind))
+        .collect();
+    for expected in [
+        ("__bool__", ResolvedOperatorKind::Truthiness),
+        ("__len__", ResolvedOperatorKind::Len),
+        ("__contains__", ResolvedOperatorKind::Contains),
+        ("__call__", ResolvedOperatorKind::Call),
+    ] {
+        assert!(
+            calls.contains(&expected),
+            "expected RFC 068 hook {:?}, got {:?}",
+            expected,
+            checker.type_info().resolved_operator_calls
+        );
+    }
+    assert!(
+        checker
+            .type_info()
+            .protocol_iterations
+            .values()
+            .any(|info| info.iter_method == "__iter__"
+                && info.next_method == "__next__"
+                && info.item_type == ResolvedType::Int),
+        "expected custom iteration metadata, got {:?}",
+        checker.type_info().protocol_iterations
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc068_explicit_trait_adoption_supplies_protocol_hook() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Sized:
+  def __len__(self) -> int: ...
+
+model Bag with Sized:
+  size: int
+
+  def __len__(self) -> int:
+    return self.size
+
+def main() -> int:
+  return len(Bag(size=4))
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc068_missing_protocol_hooks_are_rejected() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  box_value = Box(value=1)
+  if box_value:
+    pass
+  n = len(box_value)
+  present = 1 in box_value
+  called = box_value()
+  for item in box_value:
+    pass
+"#;
+
+    let errs = check_str_err(source, "expected missing RFC 068 protocol hooks");
+    for method in ["__bool__", "__len__", "__contains__", "__call__", "__iter__"] {
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains(&format!("has no method '{method}(...)'"))),
+            "expected missing {method} diagnostic, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc068_incompatible_protocol_hooks_are_rejected() {
+    let source = r#"
+model BadFlag:
+  value: int
+
+  def __bool__(self) -> int:
+    return self.value
+
+model BadBag:
+  value: int
+
+  def __len__(self) -> bool:
+    return true
+
+  def __contains__(self, item: int) -> int:
+    return item
+
+model BadCounter:
+  value: int
+
+  def __iter__(self) -> BadCounter:
+    return self
+
+  def __next__(self) -> int:
+    return self.value
+
+model BadCallable:
+  value: int
+
+  def __call__(self, item: str) -> int:
+    return self.value
+
+def main() -> None:
+  flag = BadFlag(value=1)
+  bag = BadBag(value=1)
+  counter = BadCounter(value=1)
+  callable = BadCallable(value=1)
+  if flag:
+    pass
+  n = len(bag)
+  present = 1 in bag
+  called = callable(1)
+  for item in counter:
+    pass
+"#;
+
+    let errs = check_str_err(source, "expected incompatible RFC 068 protocol hooks");
+    for expected in [
+        "expected 'bool', found 'int'",
+        "expected 'int', found 'bool'",
+        "expected 'Option[_]', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'str', found 'int'")),
+        "expected __call__ argument mismatch diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc068_option_and_result_are_not_truthy() {
+    let source = r#"
+def maybe_value() -> Option[int]:
+  return None
+
+def parse_value() -> Result[int, str]:
+  return Ok(1)
+
+def main() -> None:
+  if maybe_value():
+    pass
+  while parse_value():
+    break
+  maybe_bool = bool(maybe_value())
+  result_bool = bool(parse_value())
+"#;
+
+    let errs = check_str_err(source, "expected Option/Result truthiness rejection");
+    for expected in [
+        "expected 'bool', found 'Option[int]'",
+        "expected 'bool', found 'Result[int, str]'",
+        "bool() does not support type Option[int]",
+        "bool() does not support type Result[int, str]",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
 fn test_rfc028_extended_operator_glyphs_resolve_dunders() -> Result<(), Vec<CompileError>> {
     let source = r#"
 model OpBox:

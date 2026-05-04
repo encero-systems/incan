@@ -176,6 +176,11 @@ pub struct TypeCheckInfo {
     ///
     /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
     pub testing_fixtures: HashMap<String, TestingFixtureInfo>,
+    /// RFC 068: Custom `for` iteration protocol choices keyed by iterable expression span.
+    ///
+    /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
+    /// resolved hooks without relying on Rust's `IntoIterator`.
+    pub protocol_iterations: HashMap<(usize, usize), ProtocolIterationInfo>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -187,6 +192,19 @@ pub struct ResolvedOperatorCall {
     pub kind: ResolvedOperatorKind,
 }
 
+/// Typechecker-resolved custom iteration protocol consumed by IR lowering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtocolIterationInfo {
+    /// Method selected on the iterable expression.
+    pub iter_method: String,
+    /// Concrete iterator object type returned from `__iter__`.
+    pub iterator_type: ResolvedType,
+    /// Method selected on the iterator object.
+    pub next_method: String,
+    /// Element type unwrapped from `__next__() -> Option[T]`.
+    pub item_type: ResolvedType,
+}
+
 /// Operator expression shape for a resolved user-defined operator call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedOperatorKind {
@@ -194,6 +212,10 @@ pub enum ResolvedOperatorKind {
     Unary,
     Index,
     IndexAssign,
+    Truthiness,
+    Len,
+    Contains,
+    Call,
 }
 
 /// Typechecker-proven call-unpack shape consumed by IR lowering.
@@ -350,6 +372,11 @@ impl TypeCheckInfo {
         self.resolved_operator_calls.get(&(span.start, span.end))
     }
 
+    /// Return custom iteration protocol metadata for `span`, if any.
+    pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
+        self.protocol_iterations.get(&(span.start, span.end))
+    }
+
     /// Record a user-defined operator call that lowering should emit as a direct dunder method call.
     pub(crate) fn record_resolved_operator_call(
         &mut self,
@@ -364,6 +391,11 @@ impl TypeCheckInfo {
                 kind,
             },
         );
+    }
+
+    /// Record a custom `for` iteration protocol route.
+    pub(crate) fn record_protocol_iteration(&mut self, span: Span, info: ProtocolIterationInfo) {
+        self.protocol_iterations.insert((span.start, span.end), info);
     }
 }
 

@@ -173,7 +173,7 @@ Test runner flags:
 | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `-k <KEYWORD>`                   | Filter tests by stable test id substring                                                                 |
 | `-m <EXPR>` / `--markers <EXPR>` | Filter tests by marker expression (`and`, `or`, `not`, parentheses)                                      |
-| `-v`                             | Verbose output (include timing)                                                                          |
+| `-v`                             | Verbose output, including per-test timing and generated-harness preheat diagnostics                       |
 | `-x`                             | Stop on first failure                                                                                    |
 | `--slow`                         | Include slow tests (marked `@slow`)                                                                      |
 | `--strict-markers`               | Reject unknown marker names during collection unless registered in `TEST_MARKERS`                        |
@@ -197,6 +197,8 @@ Dependency flags (same as `build`):
 Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
 Timeouts apply to generated test batches. `--timeout` sets the default batch timeout and `@timeout("duration")` from `std.testing` can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.
+
+Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing `incan.lock`, so the next harness run can reuse dependency artifacts instead of discovering a subzero Cargo graph on the hot path.
 
 Examples:
 

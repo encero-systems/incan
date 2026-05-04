@@ -75,7 +75,7 @@ fn queue_resolved_source_import(
 /// `src/greet.incn` — the same file that `src/main.incn` uses.
 ///
 /// Collected modules include transitive dependencies (e.g. if `greet.incn` imports `utils.incn`, it is collected too).
-pub(super) fn collect_source_modules_for_test(
+pub(crate) fn collect_source_modules_for_test(
     test_ast: &Program,
     source_root: &Path,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,

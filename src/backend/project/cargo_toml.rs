@@ -181,6 +181,7 @@ impl ProjectGenerator {
     /// The output is valid TOML by construction.
     pub(super) fn generate_cargo_toml(&self) -> io::Result<String> {
         let edition = self.rust_edition.as_deref().unwrap_or("2021").to_string();
+        let package_name = self.package_name.as_deref().unwrap_or(&self.name).to_string();
 
         // ---- Resolve workspace-rooted paths for internal crates ----
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -271,7 +272,7 @@ impl ProjectGenerator {
         // ---- Assemble and serialize ----
         let manifest = CargoManifest {
             package: PackageSection {
-                name: self.name.clone(),
+                name: package_name,
                 version: INCAN_VERSION.to_string(),
                 edition,
             },
@@ -341,6 +342,17 @@ mod tests {
         let toml = generator.generate_cargo_toml()?;
         assert!(toml.contains("name = \"hello\""));
         assert!(toml.contains("[[bin]]"));
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_toml_supports_distinct_package_and_target_names() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_runner", "test_runner_abc", false);
+        generator.set_package_name(Some("locked_root".to_string()));
+        let toml = generator.generate_cargo_toml()?;
+
+        assert!(toml.contains("[package]\nname = \"locked_root\""));
+        assert!(toml.contains("[lib]\nname = \"test_runner_abc\""));
         Ok(())
     }
 

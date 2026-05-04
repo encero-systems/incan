@@ -33,10 +33,12 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::frontend::ast::{Declaration, Expr, ImportKind, ImportPath, Program};
+use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
+use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
@@ -108,6 +110,33 @@ fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_
         module_path.first().map(String::as_str),
         Some(stdlib::INCAN_STD_NAMESPACE)
     )
+}
+
+/// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
+///
+/// Binary-style dependency emission prunes otherwise-unreferenced private items. Route handlers are different because
+/// their Rust attribute expands into inventory registration after IR emission, so the function itself is a generated
+/// entrypoint even when no Incan expression calls it directly.
+fn has_web_route_passthrough_decorator(
+    func: &ast::FunctionDecl,
+    aliases: &HashMap<String, Vec<String>>,
+    stdlib_cache: &mut StdlibAstCache,
+) -> bool {
+    func.decorators.iter().any(|decorator| {
+        let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, aliases);
+        if resolved.len() < 2 {
+            return false;
+        }
+        let module_segments = &resolved[..resolved.len() - 1];
+        let name = &resolved[resolved.len() - 1];
+        if name != "route" {
+            return false;
+        }
+        let Some(meta) = stdlib_cache.lookup_function_meta(module_segments, name) else {
+            return false;
+        };
+        meta.is_rust_extern && meta.rust_module_path.as_deref() == Some("incan_web_macros")
+    })
 }
 
 /// Collect dependency-module declarations that are referenced through imports.
@@ -188,6 +217,21 @@ fn collect_externally_reachable_items_by_module(
                 }
                 false
             });
+        }
+        if module_paths.contains(current_module_path) {
+            let aliases = decorator_resolution::collect_import_aliases(program);
+            let mut stdlib_cache = StdlibAstCache::new();
+            for decl in &program.declarations {
+                let Declaration::Function(func) = &decl.node else {
+                    continue;
+                };
+                if has_web_route_passthrough_decorator(func, &aliases, &mut stdlib_cache) {
+                    reachable
+                        .entry(current_module_path.to_vec())
+                        .or_default()
+                        .insert(func.name.clone());
+                }
+            }
         }
     }
 

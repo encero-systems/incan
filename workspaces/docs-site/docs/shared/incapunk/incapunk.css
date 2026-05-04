@@ -106,7 +106,7 @@ body::before {
   opacity: 0.38;
   background:
     linear-gradient(180deg, rgba(4, 4, 6, 0.08), rgba(4, 4, 6, 0.25)),
-    url("../assets/incapunk/background_002.jpg") center 6rem / cover no-repeat;
+    url("/shared/incapunk/background_002.jpg") center 6rem / cover no-repeat;
   mix-blend-mode: screen;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), black 18%, black 74%, rgba(0, 0, 0, 0.52));
 }
@@ -470,26 +470,30 @@ body::after {
 
 .md-nav__link {
   position: relative;
+  color: rgba(228, 235, 242, 0.78);
+  font-weight: 400;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease, text-shadow 160ms ease;
+}
+
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link:not(.md-nav__container):not([for="__toc"]) {
   display: flex;
   align-items: center;
   min-height: 1.45rem;
   margin: 0.02rem -0.65rem;
   padding: 0.18rem 0.65rem;
   border-radius: 0;
-  color: rgba(228, 235, 242, 0.78);
-  font-weight: 400;
-  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease, text-shadow 160ms ease;
 }
 
-.md-nav__link:hover,
-.md-nav__link:focus-visible,
-.md-nav__link--active,
-.md-nav__item .md-nav__link--active {
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link:not(.md-nav__container):not([for="__toc"]):hover,
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link:not(.md-nav__container):not([for="__toc"]):focus-visible,
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link--active,
+.md-nav__item:not(.md-nav__item--section) > .md-nav__container:focus-within > .md-nav__link,
+.md-nav__item:not(.md-nav__item--section) > .md-nav__container:hover > .md-nav__link {
   color: var(--inc-gold-2);
 }
 
-.md-nav__link:hover,
-.md-nav__link:focus-visible {
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link:not(.md-nav__container):not([for="__toc"]):hover,
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link:not(.md-nav__container):not([for="__toc"]):focus-visible {
   background:
     linear-gradient(
       90deg,
@@ -508,8 +512,7 @@ body::after {
   text-shadow: 0 0 12px rgba(255, 193, 90, 0.34), 0 0 18px rgba(72, 240, 239, 0.14);
 }
 
-.md-nav__link--active,
-.md-nav__item .md-nav__link--active {
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link--active {
   background: linear-gradient(90deg, rgba(255, 193, 90, 0.2), rgba(255, 193, 90, 0.1) 62%, rgba(255, 92, 105, 0.05));
   box-shadow:
     inset 3px 0 0 rgba(255, 193, 90, 0.64),
@@ -517,11 +520,18 @@ body::after {
     inset 0 -1px 0 rgba(255, 193, 90, 0.06);
 }
 
+.md-sidebar--primary .md-nav__item > label.md-nav__link[for="__toc"] {
+  display: none;
+}
+
 .md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container {
+  display: flex;
   align-items: stretch;
+  gap: 0;
   min-height: 1.45rem;
   margin: 0.02rem -0.65rem;
-  padding: 0;
+  padding: 0 0.65rem 0 0;
+  border-radius: 0;
   background: none;
   box-shadow: none;
 }
@@ -539,7 +549,11 @@ body::after {
 }
 
 .md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container > .md-nav__link {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
   min-height: 1.45rem;
+  min-width: 0;
   margin: 0;
   padding: 0.18rem 0.48rem 0.18rem 0.65rem;
   background: none;
@@ -547,10 +561,24 @@ body::after {
 }
 
 .md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container > label.md-nav__link {
+  display: flex;
+  align-items: center;
   flex: 0 0 1.35rem;
   justify-content: center;
-  padding-right: 0.15rem;
-  padding-left: 0.15rem;
+  margin: 0 0 0 auto;
+  padding: 0;
+}
+
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container > label.md-nav__link .md-nav__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container > label.md-nav__link .md-nav__icon::after {
+  display: block;
+  vertical-align: 0;
 }
 
 .md-nav__item:not(.md-nav__item--section) > .md-nav__link.md-nav__container > .md-nav__link:hover,

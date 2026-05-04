@@ -369,15 +369,21 @@ trait MatMulAssign[Rhs, Output]:
 
 trait GetItem[Key, Output]:
     """
-    GetItem trait - Enables `obj[key]` read access for custom types
-    Python equivalent: __getitem__
+    Compatibility/operator alias for indexed read access.
+
+    Prefer std.traits.indexing.Index[Key, Output] in new docs, bounds,
+    and explicit trait adoption. This alias remains for older operator
+    vocabulary that names the same __getitem__ hook.
     """
     def __getitem__(self, key: Key) -> Output: ...
 
 
 trait SetItem[Key, Value]:
     """
-    SetItem trait - Enables `obj[key] = value` write access for custom types
-    Python equivalent: __setitem__
+    Compatibility/operator alias for indexed write access.
+
+    Prefer std.traits.indexing.IndexMut[Key, Value] in new docs, bounds,
+    and explicit trait adoption. This alias remains for older operator
+    vocabulary that names the same __setitem__ hook.
     """
     def __setitem__(self, key: Key, value: Value) -> None: ...

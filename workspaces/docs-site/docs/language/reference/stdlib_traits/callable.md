@@ -44,4 +44,6 @@ These stdlib traits model "objects that can be called" like `obj()`, `obj(x)`, `
 - **Callable2[A, B, R]**
     - Hook: `__call__(self, a: A, b: B) -> R`
 
+The `__call__` method is the implementation hook. Explicit `CallableN` adoption gives generic bounds and diagnostics a named capability; function type annotations should continue to use arrow types or the `Callable[Params, R]` sugar above.
+
 --8<-- "_snippets/rfcs_refs.md"

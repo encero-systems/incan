@@ -21,6 +21,11 @@ mod generic_bounds;
 mod rust_boundary;
 
 impl TypeChecker {
+    /// Type-check a call expression after parsing has identified the callee, explicit type arguments, and value
+    /// arguments.
+    ///
+    /// This is the central call coordinator: it preserves constructor and builtin special cases first, then resolves
+    /// function values, callable objects, and ordinary value calls through the same argument-binding machinery.
     pub(in crate::frontend::typechecker::check_expr) fn check_call(
         &mut self,
         callee: &Spanned<Expr>,
@@ -214,6 +219,16 @@ impl TypeChecker {
                 let mut type_bindings = std::collections::HashMap::new();
                 self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
                 substitute_resolved_type(&ret, &type_bindings)
+            }
+            ty if self.is_user_operator_receiver(&ty)
+                && !matches!(
+                    self.type_info.ident_kind(callee.span),
+                    Some(IdentKind::TypeName | IdentKind::Variant | IdentKind::Trait)
+                ) =>
+            {
+                let arg_types = self.check_call_arg_types(args);
+                self.resolve_call_dunder(&ty, args, &arg_types, span)
+                    .unwrap_or(ResolvedType::Unknown)
             }
             ResolvedType::Named(name) => {
                 self.check_call_args(args);

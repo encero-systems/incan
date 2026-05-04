@@ -6,7 +6,7 @@ Operator traits are capability contracts. Dunder methods are the implementation 
 
 The surface follows a split model: dunder methods are the implementation surface, while traits are the nominal capability vocabulary.
 
-A type may also define a dunder hook directly. When a dunder-only implementation matches a standard operator protocol, the compiler may expose the corresponding trait view for generic reasoning.
+A type may define a compatible dunder hook directly for syntax. Use explicit trait adoption when you want a named capability for bounds, documentation, or diagnostics.
 
 ## Binary arithmetic
 
@@ -42,16 +42,16 @@ A type may also define a dunder hook directly. When a dunder-only implementation
 | `a \|> b` | `PipeForward[Rhs, Output]`  | `__pipe_forward__(self, other: Rhs) -> Output`  |
 | `a <\| b` | `PipeBackward[Rhs, Output]` | `__pipe_backward__(self, other: Rhs) -> Output` |
 
-## Indexing hooks in the operator vocabulary
+## Indexing hooks
 
-Indexing dunders are part of the operator protocol vocabulary:
+Indexing uses the canonical `std.traits.indexing` names. `GetItem` and `SetItem` remain compatibility/operator aliases for the same hooks; do not use them as a second source of truth in new docs or bounds.
 
 | Syntax             | Trait                  | Required hook                                       |
 | ------------------ | ---------------------- | --------------------------------------------------- |
-| `obj[key]`         | `GetItem[Key, Output]` | `__getitem__(self, key: Key) -> Output`             |
-| `obj[key] = value` | `SetItem[Key, Value]`  | `__setitem__(self, key: Key, value: Value) -> None` |
+| `obj[key]`         | `Index[Key, Output]`   | `__getitem__(self, key: Key) -> Output`             |
+| `obj[key] = value` | `IndexMut[Key, Value]` | `__setitem__(self, key: Key, value: Value) -> None` |
 
-The existing `std.traits.indexing` module still exposes `Index[K, V]`, `IndexMut[K, V]`, and `Sliceable[T]` for the older indexing-specific vocabulary. See [Indexing and slicing](indexing_and_slicing.md).
+See [Indexing and slicing](indexing_and_slicing.md) for the indexing-specific reference.
 
 ## Compound assignment
 
