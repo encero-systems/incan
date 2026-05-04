@@ -323,6 +323,34 @@ fn batch_has_cross_file_top_level_collision(
     false
 }
 
+/// Partition files into greedy groups that can still share a generated Rust module scope.
+///
+/// A single duplicate top-level name should not force the whole worker batch back to one Cargo harness per file.
+/// This keeps non-conflicting files together while preserving the existing fallback for files that genuinely cannot be
+/// concatenated safely.
+fn partition_collision_free_file_groups(
+    sources_by_file: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> Vec<Vec<PathBuf>> {
+    let mut groups: Vec<Vec<(PathBuf, String)>> = Vec::new();
+    'source: for (path, source) in sources_by_file {
+        for group in &mut groups {
+            let mut candidate = group.clone();
+            candidate.push((path.clone(), source.clone()));
+            if !batch_has_cross_file_top_level_collision(&candidate, library_imported_vocab) {
+                group.push((path.clone(), source.clone()));
+                continue 'source;
+            }
+        }
+        groups.push(vec![(path.clone(), source.clone())]);
+    }
+
+    groups
+        .into_iter()
+        .map(|group| group.into_iter().map(|(path, _)| path).collect())
+        .collect()
+}
+
 /// Resolve a dotted expression path using local import aliases collected from the runner AST.
 fn resolved_expr_path(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
     match &expr.node {
@@ -2251,10 +2279,11 @@ pub(super) fn run_file_tests_batch(
 
     if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
         let mut split_results = Vec::new();
-        for file_path in seen_files {
+        for file_group in partition_collision_free_file_groups(&sources_by_file, Some(&library_imported_vocab)) {
+            let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
             let file_tests = tests
                 .iter()
-                .filter(|test| test.file_path == file_path)
+                .filter(|test| file_group.contains(&test.file_path))
                 .cloned()
                 .collect::<Vec<_>>();
             split_results.extend(run_file_tests_batch(
@@ -3036,6 +3065,42 @@ mod tests {
         ];
 
         assert!(!batch_has_cross_file_top_level_collision(&sources, None));
+    }
+
+    #[test]
+    fn collision_free_partition_keeps_compatible_files_together() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model Customer:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_c.incn"),
+                "model Order:\n  id: int\n\ndef test_c() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_d.incn"),
+                "model Invoice:\n  id: int\n\ndef test_d() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        let groups = partition_collision_free_file_groups(&sources, None);
+
+        assert_eq!(
+            groups,
+            vec![
+                vec![
+                    PathBuf::from("tests/test_a.incn"),
+                    PathBuf::from("tests/test_b.incn"),
+                    PathBuf::from("tests/test_d.incn"),
+                ],
+                vec![PathBuf::from("tests/test_c.incn")],
+            ]
+        );
     }
 
     #[test]
