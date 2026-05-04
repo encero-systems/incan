@@ -38,23 +38,25 @@ trait Contains[T]:
 
 trait Bool:
     """
-    Bool trait - Enables truthiness testing with `if obj:` syntax
-    Python equivalent: __bool__
+    Bool trait - Names the truthiness capability for custom types
+    Hook: __bool__(self) -> bool
     
-    ⚠️  DISCOURAGED: Prefer explicit checks over implicit truthiness.
+    Discouraged as a blanket substitute for explicit checks.
     
     Incan encourages explicit patterns:
 
     ```incan
-    if user is Some(u):      # Option unwrapping
-    if len(items) > 0:       # Length check  
-    if name != "":           # Empty check
-    if conn.is_connected:    # Named boolean
+    if user is Some(u):          # Option unwrapping
+    if result is Ok(value):      # Result unwrapping
+    if len(items) > 0:           # Length check
+    if name != "":               # Empty check
+    if conn.is_connected:        # Named boolean state
     ```
     
-    These are clearer than `if obj:` which hides what's being checked.
+    These are clearer than `if obj:`, which hides what is being checked.
     
-    However, if truthiness genuinely fits your type, you may implement it:
+    If truthiness genuinely matches your type's domain model, implement
+    the hook directly:
     
     ```incan
     model NonEmptyString with Bool:
@@ -64,8 +66,8 @@ trait Bool:
             return len(self.value) > 0
     ```
 
-    Note: Bool cannot be derived with @derive(Bool). You must implement `__bool__` manually. 
-        This is intentional — "explicit is better than implicit!"
+    Note: Bool cannot be derived with @derive(Bool). You must implement
+    `__bool__` manually.
     """
     def __bool__(self) -> bool: ...
 

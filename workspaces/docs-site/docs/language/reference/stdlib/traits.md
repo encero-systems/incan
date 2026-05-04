@@ -19,7 +19,7 @@ from std.traits.convert import From, Into, TryFrom, TryInto
 from std.traits.ops import Add, Sub, Mul, Div, FloorDiv, Mod, Pow
 from std.traits.ops import Neg, Not
 from std.traits.ops import Shr, Shl, BitAnd, BitOr, BitXor, MatMul
-from std.traits.ops import PipeForward, PipeBackward, GetItem, SetItem
+from std.traits.ops import PipeForward, PipeBackward
 from std.traits.ops import AddAssign, BitAndAssign, MatMulAssign, ShrAssign
 from std.traits.error import Error
 from std.traits.indexing import Index, IndexMut, Sliceable
@@ -32,8 +32,8 @@ from std.traits.prelude import *
 The `std.traits.*` modules define the standard trait contracts used by Incan.
 
 - Import them directly when you want to write `with TraitName`, annotate against a trait, or refer to the trait family explicitly.
-- Some language features map onto these traits at the surface level. For example, operator syntax corresponds to `std.traits.ops`, indexing syntax corresponds to `std.traits.indexing` and the `GetItem` / `SetItem` operator vocabulary, and callable-style invocation corresponds to `std.traits.callable`.
-- For operators, dunder methods are implementation hooks and traits are the nominal capability vocabulary that generic code can name.
+- Some language features map onto these traits at the surface level. For example, operator syntax corresponds to `std.traits.ops`, indexing syntax corresponds to `std.traits.indexing`, and callable-style invocation corresponds to `std.traits.callable`.
+- Dunder methods are implementation hooks. Traits are nominal capability vocabulary for explicit adoption, bounds, docs, and diagnostics.
 - `std.traits.prelude` re-exports the most common trait families for convenience.
 
 ## Submodules
@@ -75,8 +75,6 @@ Provides traits behind operator-style behavior:
 - `BitOr[Rhs, Output]`
 - `BitXor[Rhs, Output]`
 - `MatMul[Rhs, Output]`
-- `GetItem[Key, Output]`
-- `SetItem[Key, Value]`
 - `AddAssign[Rhs, Output]`
 - `SubAssign[Rhs, Output]`
 - `MulAssign[Rhs, Output]`
@@ -91,6 +89,8 @@ Provides traits behind operator-style behavior:
 - `ShrAssign[Rhs, Output]`
 
 The assignment traits are explicit in-place hooks for the currently supported compound assignment operators. When the explicit hook is absent, compound assignment falls back to ordinary binary operator assignment.
+
+`GetItem[Key, Output]` and `SetItem[Key, Value]` remain compatibility/operator aliases for indexing hooks. Prefer `Index[Key, Output]` and `IndexMut[Key, Value]` from `std.traits.indexing` in new code and docs.
 
 ### `std.traits.error`
 

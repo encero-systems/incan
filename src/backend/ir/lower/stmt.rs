@@ -771,7 +771,7 @@ impl AstLowering {
         }
 
         let else_branch = self.lower_if_else_chain(elif_branches, else_body)?;
-        let condition = self.lower_expr_spanned(condition)?;
+        let condition = self.lower_condition_expr(condition)?;
         self.push_scope();
         let then_branch = self.lower_statements(then_body)?;
         self.pop_scope();
@@ -1021,7 +1021,7 @@ impl AstLowering {
                         ast::Condition::Expr(condition) => {
                             self.push_scope();
                             let loop_parts = (|| -> Result<(TypedExpr, Vec<IrStmt>), LoweringError> {
-                                let condition = self.lower_expr_spanned(condition)?;
+                                let condition = self.lower_condition_expr(condition)?;
                                 let body = self.lower_statements(&w.body)?;
                                 Ok((condition, body))
                             })();
@@ -1091,11 +1091,19 @@ impl AstLowering {
                 self.push_scope();
 
                 // Infer loop variable type from iterable and add to scope
-                let loop_var_ty = match &iterable.ty {
-                    IrType::List(elem) => (**elem).clone(),
-                    IrType::Dict(k, _) => (**k).clone(),
-                    IrType::String => IrType::String,
-                    _ => IrType::Unknown,
+                let protocol_iteration = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.protocol_iteration(f.iter.span).cloned());
+                let loop_var_ty = if let Some(protocol) = &protocol_iteration {
+                    self.lower_resolved_type(&protocol.item_type)
+                } else {
+                    match &iterable.ty {
+                        IrType::List(elem) => (**elem).clone(),
+                        IrType::Dict(k, _) => (**k).clone(),
+                        IrType::String => IrType::String,
+                        _ => IrType::Unknown,
+                    }
                 };
                 self.define_for_pattern_bindings(&f.pattern.node, &loop_var_ty);
 
@@ -1105,11 +1113,95 @@ impl AstLowering {
                 let body = body_result?;
                 self.pop_scope();
 
-                IrStmtKind::For {
-                    label: None,
-                    pattern: self.lower_pattern(&f.pattern.node),
-                    iterable,
-                    body,
+                if let Some(protocol) = protocol_iteration {
+                    let iterator_ty = self.lower_resolved_type(&protocol.iterator_type);
+                    let option_item_ty = IrType::Option(Box::new(loop_var_ty));
+                    let iter_name = format!("__incan_iter_{}_{}", stmt_span.start, stmt_span.end);
+                    let iter_value = TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(iterable),
+                            method: protocol.iter_method,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: self.callable_signature_for_call_span(f.iter.span),
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        iterator_ty.clone(),
+                    );
+                    let iter_var = TypedExpr::new(
+                        IrExprKind::Var {
+                            name: iter_name.clone(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        iterator_ty,
+                    );
+                    let next_value = TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(iter_var),
+                            method: protocol.next_method,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        option_item_ty.clone(),
+                    );
+                    let some_pattern = IrPattern::Enum {
+                        name: "Option".to_string(),
+                        variant: constructors::as_str(ConstructorId::Some).to_string(),
+                        fields: vec![self.lower_pattern(&f.pattern.node)],
+                    };
+                    let none_pattern = IrPattern::Literal(TypedExpr::new(IrExprKind::None, option_item_ty));
+                    IrStmtKind::Block(vec![
+                        IrStmt::new(IrStmtKind::Let {
+                            name: iter_name,
+                            ty: iter_value.ty.clone(),
+                            type_annotation: None,
+                            mutability: Mutability::Mutable,
+                            value: iter_value,
+                        }),
+                        IrStmt::new(IrStmtKind::Loop {
+                            label: None,
+                            body: vec![IrStmt::new(IrStmtKind::Match {
+                                scrutinee: next_value,
+                                arms: vec![
+                                    MatchArm {
+                                        pattern: some_pattern,
+                                        guard: None,
+                                        body: TypedExpr::new(
+                                            IrExprKind::Block {
+                                                stmts: body,
+                                                value: None,
+                                            },
+                                            IrType::Unit,
+                                        ),
+                                    },
+                                    MatchArm {
+                                        pattern: none_pattern,
+                                        guard: None,
+                                        body: TypedExpr::new(
+                                            IrExprKind::Block {
+                                                stmts: vec![IrStmt::new(IrStmtKind::Break {
+                                                    label: None,
+                                                    value: None,
+                                                })],
+                                                value: None,
+                                            },
+                                            IrType::Unit,
+                                        ),
+                                    },
+                                ],
+                            })],
+                        }),
+                    ])
+                } else {
+                    IrStmtKind::For {
+                        label: None,
+                        pattern: self.lower_pattern(&f.pattern.node),
+                        iterable,
+                        body,
+                    }
                 }
             }
 

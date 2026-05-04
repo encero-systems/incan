@@ -175,8 +175,6 @@ impl<'a> IrEmitter<'a> {
                         IrType::List(_) => Ok(quote! { !(#a).is_empty() }),
                         IrType::Dict(_, _) => Ok(quote! { !(#a).is_empty() }),
                         IrType::Set(_) => Ok(quote! { !(#a).is_empty() }),
-                        IrType::Option(_) => Ok(quote! { (#a).is_some() }),
-                        IrType::Result(_, _) => Ok(quote! { (#a).is_ok() }),
                         _ if is_frozen_collection_named_generic(&arg.ty) => Ok(quote! { !(#a).is_empty() }),
                         _ => Ok(quote! { true }),
                     }

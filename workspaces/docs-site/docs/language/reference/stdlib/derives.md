@@ -23,6 +23,7 @@ Import from the specific derive submodule:
 from std.derives.comparison import Eq, Ord, Hash
 from std.derives.copying import Clone, Copy, Default
 from std.derives.string import Debug, Display
+from std.derives.collection import Contains, Bool, Len, Iterable, Iterator
 ```
 
 ## Surface model
@@ -75,3 +76,4 @@ Provides collection-protocol traits for custom types, including:
 - `Iterator[T]`
 
 Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.
+`Bool` is available, but prefer explicit checks for `Option`, `Result`, emptiness, and named boolean state when that is the behavior you mean.

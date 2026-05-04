@@ -2,6 +2,8 @@
 
 This page documents stdlib traits that model Python-like collection behavior.
 
+Dunder hooks are the implementation methods. Explicit trait adoption names the capability when a bound, diagnostic, or reference page needs stable vocabulary.
+
 ## Contains (membership)
 
 - **Syntax**: `item in collection` / `item not in collection`
@@ -29,3 +31,5 @@ This page documents stdlib traits that model Python-like collection behavior.
 - **Syntax**: `if x:` / `while x:`
 - **Hook**: `__bool__(self) -> bool`
 - **Trait**: `Bool`
+
+`Bool` is available for types whose domain has a clear truth value. It should not replace explicit checks for optionality, errors, emptiness, or named state. Prefer patterns such as `value is Some(x)`, `result is Ok(x)`, `len(items) > 0`, `name != ""`, or `connection.is_open` when those are what the code actually means.

@@ -12,6 +12,7 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
+use crate::frontend::typechecker::ResolvedOperatorKind;
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -264,6 +265,34 @@ impl AstLowering {
             _ => None,
         };
         let func = self.lower_expr_spanned(f)?;
+        if let Some(resolved_operator) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_operator_call(call_span).cloned())
+            && resolved_operator.kind == ResolvedOperatorKind::Len
+        {
+            let Some(first_arg) = args.first() else {
+                return Ok((
+                    IrExprKind::BuiltinCall {
+                        func: BuiltinFn::Len,
+                        args: Vec::new(),
+                    },
+                    IrType::Int,
+                ));
+            };
+            let receiver = self.lower_expr_spanned(Self::call_arg_expr(first_arg))?;
+            return Ok((
+                IrExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: resolved_operator.method,
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    callable_signature: self.callable_signature_for_call_span(call_span),
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Int,
+            ));
+        }
         if let ast::Expr::Ident(name) = &f.node
             && let Some(builtin) = BuiltinFn::from_name(name)
             && imported_callee_path.is_none()
@@ -309,6 +338,30 @@ impl AstLowering {
                     ),
                 },
             );
+        }
+        if let Some(resolved_operator) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_operator_call(call_span).cloned())
+            && resolved_operator.kind == ResolvedOperatorKind::Call
+        {
+            let ret_ty = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.expr_type(call_span))
+                .map(|ty| self.lower_resolved_type(ty))
+                .unwrap_or(IrType::Unknown);
+            return Ok((
+                IrExprKind::MethodCall {
+                    receiver: Box::new(func),
+                    method: resolved_operator.method,
+                    type_args: Vec::new(),
+                    args: args_ir,
+                    callable_signature: self.callable_signature_for_call_span(call_span),
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                ret_ty,
+            ));
         }
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()
