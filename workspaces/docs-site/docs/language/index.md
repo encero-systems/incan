@@ -12,6 +12,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 ## Tutorials (learn)
 
 - The Incan Book (Basics): [Book index](tutorials/book/index.md)
+- Fallible and infallible paths: [Fallible and infallible paths](tutorials/fallible_and_infallible_paths.md)
 - Web framework tutorial: [Web Framework](tutorials/web_framework.md) (advanced; reads like tutorial + how-to)
 
 ## How-to guides (do)
