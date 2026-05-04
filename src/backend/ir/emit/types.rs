@@ -77,6 +77,7 @@ impl<'a> IrEmitter<'a> {
             IrType::Int => quote! { i64 },
             IrType::Float => quote! { f64 },
             IrType::String => quote! { String },
+            IrType::Bytes => quote! { Vec<u8> },
             IrType::StaticStr => quote! { &'static str },
             IrType::StaticBytes => quote! { &'static [u8] },
             IrType::FrozenStr => quote! { incan_stdlib::frozen::FrozenStr },
@@ -357,5 +358,26 @@ impl<'a> IrEmitter<'a> {
                 quote! { #(#ps)|* }
             }
         }
+    }
+
+    /// Emit a pattern plus an optional guard required by the scrutinee's Rust representation.
+    ///
+    /// Incan `str` lowers to Rust `String`. Rust cannot directly match `String` with a string-literal pattern, so
+    /// string literal arms become guarded reference patterns while fallback bindings still receive the original
+    /// `String` value.
+    pub(super) fn emit_pattern_for_scrutinee(
+        &self,
+        pattern: &Pattern,
+        scrutinee_ty: &IrType,
+    ) -> (TokenStream, Option<TokenStream>) {
+        if matches!(scrutinee_ty, IrType::String)
+            && let Pattern::Literal(lit) = pattern
+            && let IrExprKind::String(value) = &lit.kind
+        {
+            let binding = Self::rust_ident("__incan_match_string_literal");
+            return (quote! { ref #binding }, Some(quote! { #binding.as_str() == #value }));
+        }
+
+        (self.emit_pattern(pattern), None)
     }
 }

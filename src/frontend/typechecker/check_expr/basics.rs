@@ -69,7 +69,7 @@ impl TypeChecker {
                                 .iter()
                                 .map(|p| {
                                     CallableParam::positional(
-                                        self.resolved_type_from_rust_display(p.type_display.as_str()),
+                                        self.resolved_param_type_from_rust_display(p.type_display.as_str()),
                                     )
                                 })
                                 .collect();

@@ -1231,20 +1231,23 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Match { scrutinee, arms } => {
-                let scrut = self.emit_expr_for_use(
-                    scrutinee,
-                    ValueUseSite::MatchScrutinee {
-                        target_ty: Some(&scrutinee.ty),
-                    },
-                )?;
+                let scrut = self.emit_match_scrutinee(scrutinee)?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let pat = self.emit_pattern(&arm.pattern);
+                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
                         let body = self.emit_expr(&arm.body)?;
-                        if let Some(guard) = &arm.guard {
-                            let g = self.emit_expr(guard)?;
-                            Ok(quote! { #pat if #g => #body })
+                        let guard = match (&pattern_guard, &arm.guard) {
+                            (Some(pattern_guard), Some(arm_guard)) => {
+                                let arm_guard = self.emit_expr(arm_guard)?;
+                                Some(quote! { (#pattern_guard) && (#arm_guard) })
+                            }
+                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
+                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
+                            (None, None) => None,
+                        };
+                        if let Some(guard) = guard {
+                            Ok(quote! { #pat if #guard => #body })
                         } else {
                             Ok(quote! { #pat => #body })
                         }

@@ -28,7 +28,7 @@
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::frontend::ast;
@@ -120,6 +120,13 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// List public type signatures in a stdlib module.
+    pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key).map(|data| data.types.clone()).unwrap_or_default()
+    }
+
     /// Look up a specific const binding in a stdlib module.
     pub fn lookup_constant(&mut self, module_path: &[String], const_name: &str) -> Option<VariableInfo> {
         self.ensure_loaded(module_path);
@@ -164,6 +171,30 @@ impl StdlibAstCache {
 ///
 /// Returns `None` if the file cannot be found or parsed.
 fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
+    load_stdlib_module_data_inner(module_path, &mut HashSet::new())
+}
+
+/// Load one stdlib module while tracking the current re-export chain.
+///
+/// Returns `None` for recursive re-entry so cyclic stdlib preludes cannot overflow the loader stack.
+fn load_stdlib_module_data_inner(module_path: &[String], loading: &mut HashSet<String>) -> Option<StdlibModuleData> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+
+    let data = load_stdlib_module_data_unguarded(module_path, loading);
+    loading.remove(&key);
+    data
+}
+
+/// Load one stdlib module without inserting it into the active-cycle guard.
+///
+/// Call through `load_stdlib_module_data_inner` unless the caller has already marked `module_path` as in progress.
+fn load_stdlib_module_data_unguarded(
+    module_path: &[String],
+    loading: &mut HashSet<String>,
+) -> Option<StdlibModuleData> {
     let relative = stdlib::stdlib_stub_path(module_path)?;
     let abs_path = find_stdlib_file(&relative)?;
 
@@ -197,15 +228,15 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
     // We recursively load each referenced submodule and merge the imported names' metadata so that
     // `lookup_function_meta(["std", "web"], "route")` finds `route` even though it's declared in
     // `std.web.routing`.
-    merge_reexported_metadata(
-        &program,
-        &mut functions,
-        &mut traits,
-        &mut types,
-        &mut constants,
-        &mut function_meta,
-        &mut trait_meta,
-    );
+    let mut reexport_targets = ReexportMetadataTargets {
+        functions: &mut functions,
+        traits: &mut traits,
+        types: &mut types,
+        constants: &mut constants,
+        function_meta: &mut function_meta,
+        trait_meta: &mut trait_meta,
+    };
+    merge_reexported_metadata(&program, &mut reexport_targets, loading);
 
     Some(StdlibModuleData {
         functions,
@@ -217,18 +248,23 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
     })
 }
 
+struct ReexportMetadataTargets<'a> {
+    functions: &'a mut Vec<(String, FunctionInfo)>,
+    traits: &'a mut Vec<(String, TraitInfo)>,
+    types: &'a mut Vec<(String, TypeInfo)>,
+    constants: &'a mut Vec<(String, VariableInfo)>,
+    function_meta: &'a mut HashMap<String, FunctionMeta>,
+    trait_meta: &'a mut HashMap<String, TraitMeta>,
+}
+
 /// Scan a program's import declarations and merge metadata from referenced stdlib submodules.
 ///
 /// For each `from std.<ns>.<sub> import name1, name2` statement, loads the submodule and copies the
 /// corresponding function/trait signatures and metadata into the parent module's collections.
 fn merge_reexported_metadata(
     program: &ast::Program,
-    functions: &mut Vec<(String, FunctionInfo)>,
-    traits: &mut Vec<(String, TraitInfo)>,
-    types: &mut Vec<(String, TypeInfo)>,
-    constants: &mut Vec<(String, VariableInfo)>,
-    function_meta: &mut HashMap<String, FunctionMeta>,
-    trait_meta: &mut HashMap<String, TraitMeta>,
+    targets: &mut ReexportMetadataTargets<'_>,
+    loading: &mut HashSet<String>,
 ) {
     for decl in &program.declarations {
         let ast::Declaration::Import(import) = &decl.node else {
@@ -246,7 +282,7 @@ fn merge_reexported_metadata(
             continue;
         }
 
-        let Some(sub_data) = load_stdlib_module_data(&module.segments) else {
+        let Some(sub_data) = load_stdlib_module_data_inner(&module.segments, loading) else {
             continue;
         };
 
@@ -255,42 +291,44 @@ fn merge_reexported_metadata(
 
             // Merge function signature.
             if let Some((_, info)) = sub_data.functions.iter().find(|(n, _)| n == &item.name)
-                && !functions.iter().any(|(n, _)| n == effective_name)
+                && !targets.functions.iter().any(|(n, _)| n == effective_name)
             {
-                functions.push((effective_name.to_string(), info.clone()));
+                targets.functions.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge trait signature.
             if let Some((_, info)) = sub_data.traits.iter().find(|(n, _)| n == &item.name)
-                && !traits.iter().any(|(n, _)| n == effective_name)
+                && !targets.traits.iter().any(|(n, _)| n == effective_name)
             {
-                traits.push((effective_name.to_string(), info.clone()));
+                targets.traits.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge type signature.
             if let Some((_, info)) = sub_data.types.iter().find(|(n, _)| n == &item.name)
-                && !types.iter().any(|(n, _)| n == effective_name)
+                && !targets.types.iter().any(|(n, _)| n == effective_name)
             {
-                types.push((effective_name.to_string(), info.clone()));
+                targets.types.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge const signature.
             if let Some((_, info)) = sub_data.constants.iter().find(|(n, _)| n == &item.name)
-                && !constants.iter().any(|(n, _)| n == effective_name)
+                && !targets.constants.iter().any(|(n, _)| n == effective_name)
             {
-                constants.push((effective_name.to_string(), info.clone()));
+                targets.constants.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge function meta.
             if let Some(meta) = sub_data.function_meta.get(&item.name) {
-                function_meta
+                targets
+                    .function_meta
                     .entry(effective_name.to_string())
                     .or_insert_with(|| meta.clone());
             }
 
             // Merge trait meta.
             if let Some(meta) = sub_data.trait_meta.get(&item.name) {
-                trait_meta
+                targets
+                    .trait_meta
                     .entry(effective_name.to_string())
                     .or_insert_with(|| meta.clone());
             }
@@ -1194,6 +1232,77 @@ pub enum Token with Convert[int], Convert[float]:
         let unknown = cache.lookup_function(&path, "nonexistent_function");
         assert!(unknown.is_none(), "should not find unknown function");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_fs_path_lookup_uses_ast_cache_not_web_surface_type() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::std::path import PathBuf as RustPathBuf
+from rust::std::fs import File as RustFile
+
+pub type Path = rusttype RustPathBuf:
+  """Filesystem path wrapper."""
+
+pub type File = rusttype RustFile:
+  """Filesystem file handle wrapper."""
+"#;
+        let tokens = crate::frontend::lexer::lex(source)
+            .map_err(|errs| format!("synthetic std.fs source should lex: {errs:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens)
+            .map_err(|errs| format!("synthetic std.fs source should parse: {errs:?}"))?;
+        let module_data = StdlibModuleData {
+            functions: extract_function_signatures(&program),
+            traits: extract_trait_signatures(&program),
+            types: extract_type_signatures(&program),
+            constants: extract_const_signatures(&program),
+            function_meta: extract_function_meta(&program),
+            trait_meta: extract_trait_meta(&program),
+        };
+        let mut cache = StdlibAstCache::new();
+        cache.cache.insert("std.fs".to_string(), module_data);
+        let path = vec!["std".to_string(), "fs".to_string()];
+        let fs_path = cache
+            .lookup_type(&path, "Path")
+            .ok_or("std.fs Path should resolve through StdlibAstCache::lookup_type")?;
+        match fs_path {
+            TypeInfo::Newtype(info) => {
+                assert!(info.is_rusttype);
+                assert_eq!(
+                    info.underlying,
+                    ResolvedType::RustPath("std::path::PathBuf".to_string())
+                );
+            }
+            other => return Err(format!("std.fs Path should be an AST-loaded rusttype, got {other:?}").into()),
+        }
+        assert!(
+            cache.lookup_type(&path, "File").is_some(),
+            "std.fs File should resolve through the same AST cache path"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_std_fs_prelude_handles_reexport_cycles() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "fs".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load std.fs prelude")?;
+        assert!(
+            module.types.iter().any(|(name, _)| name == "Path"),
+            "std.fs should re-export Path from std.fs.path"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "File"),
+            "std.fs should re-export File from std.fs.file"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "OpenFileMode"),
+            "std.fs should re-export OpenFileMode from std.fs.file"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "PathStat"),
+            "std.fs should re-export PathStat from std.fs.metadata"
+        );
         Ok(())
     }
 

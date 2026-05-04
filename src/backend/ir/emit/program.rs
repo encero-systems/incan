@@ -928,6 +928,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         ) {
             return false;
         }
+        if matches!(receiver.ty, IrType::Unknown) {
+            return true;
+        }
         let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
             return false;
         };
@@ -979,6 +982,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1040,6 +1044,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1397,6 +1402,7 @@ impl<'a> IrEmitter<'a> {
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
         }
+        self.seed_nominal_metadata_from_program(program);
 
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();

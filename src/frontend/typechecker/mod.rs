@@ -608,7 +608,7 @@ impl TypeChecker {
             .params
             .iter()
             .skip(skip)
-            .map(|p| CallableParam::positional(self.resolved_type_from_rust_display(p.type_display.as_str())))
+            .map(|p| CallableParam::positional(self.resolved_param_type_from_rust_display(p.type_display.as_str())))
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
@@ -807,6 +807,30 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
+    ///
+    /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
+    /// into owned Incan value types. Parameters need the opposite treatment: the callable signature must remember the
+    /// borrowed Rust boundary so emission can pass `&arg` instead of moving an owned `String` or `Vec<u8>`.
+    pub(crate) fn resolved_param_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
+        let trimmed = rust_ty.trim();
+        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
+        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let inner_ty = match inner {
+                "str" => ResolvedType::Str,
+                "[u8]" => ResolvedType::Bytes,
+                _ => self.resolved_type_from_rust_display(inner),
+            };
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
+        self.resolved_type_from_rust_display(normalized.as_str())
     }
 
     /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.

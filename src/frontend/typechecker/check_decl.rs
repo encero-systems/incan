@@ -424,7 +424,7 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
                             .collect();
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),

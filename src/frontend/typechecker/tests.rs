@@ -1471,6 +1471,19 @@ fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
 }
 
 #[test]
+fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&str"),
+        ResolvedType::Ref(Box::new(ResolvedType::Str)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[u8]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+}
+
+#[test]
 fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     let checker = TypeChecker::new();
     let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
@@ -7311,6 +7324,19 @@ fn test_known_stdlib_async_prelude_is_accepted() {
 }
 
 #[test]
+fn test_known_stdlib_fs_module_is_accepted() {
+    let source = "from std.fs import Path, File\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.fs should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     let source = "from std.f64.consts import PI\n";
     let Err(errs) = check_str(source) else {
@@ -7325,6 +7351,11 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     assert!(
         err.hints.iter().any(|h| h.contains("std.derives")),
         "Expected hint to include std.derives; hints: {:?}",
+        err.hints
+    );
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.fs")),
+        "Expected hint to include std.fs; hints: {:?}",
         err.hints
     );
     assert!(

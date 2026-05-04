@@ -1,148 +1,176 @@
 # File I/O in Incan
 
-This page is a practical guide to common file and path tasks.
-
-File operations return `Result`, so failures are explicit and easy to handle.
-
-??? tip "Coming from Python?"
-    Incan’s `Path` is similar in spirit to `pathlib.Path`, but file operations return `Result` instead of raising exceptions.
-
-??? tip "Coming from Rust?"
-    Incan’s `Path` is closest to a `std::path::PathBuf`-style API, and file I/O mirrors `std::fs`.
-    Errors are explicit via `Result`, so you’ll typically use `?` to propagate failures.
-
-??? tip "Coming from JavaScript / TypeScript?"
-    Think of `Path` as a typed, composable alternative to Node’s `path` utilities, and file I/O as `fs/promises`-style
-    operations—except errors come back as `Result` instead of throwing (so you use `match` / `?` instead of `try/catch`).
-
-## Recipe: Read a file (text or bytes)
+Use `std.fs.Path` as the entry point for files and directories. File operations return `Result`, so handle recoverable failures with `match` and propagate boundary failures with `?` from functions that return `Result`.
 
 ```incan
-def read_config_text() -> Result[str, IoError]:
-    return Path("config.toml").read_text()
-
-def read_image_bytes() -> Result[bytes, IoError]:
-    return Path("image.png").read_bytes()
+from std.fs import IoError, Path
 ```
 
-## Recipe: Handle vs propagate I/O errors
-
-Use `?` to propagate errors:
+## Build Paths
 
 ```incan
-def read_config_text() -> Result[str, IoError]:
-    content = Path("config.toml").read_text()?
-    return Ok(content)
+from std.fs import Path
+
+def config_path(root: Path) -> Path:
+    return root / "config.toml"
+
+def artifact_path(root: Path, name: str) -> Path:
+    return root.joinpath(name)
 ```
 
-Use `match` when you want to recover:
+Path construction and joins are lexical. They do not prove that anything exists on disk.
+
+## Check Existence
+
+Use bool predicates for quick branches:
 
 ```incan
-def safe_read_text(path: Path) -> str:
-    match path.read_text():
-        case Ok(content): return content
-        case Err(IoError.NotFound(_)): return ""
-        case Err(e):
-            println(f"Failed to read {path}: {e.message()}")
-            return ""
+from std.fs import Path
+
+def has_cache(root: Path) -> bool:
+    return root.joinpath("cache.bin").is_file()
 ```
 
-## Recipe: Print a file line-by-line
+Use `try_exists()` when the difference between "missing" and "the check failed" matters:
 
 ```incan
-def print_file(path: Path) -> Result[None, IoError]:
-    # `read_lines()` returns Result[list[str], IoError]
-    # `?` propagates Err(...) to the caller, otherwise unwraps Ok(lines).
-    for line in path.read_lines()?:
-        println(line)
+from std.fs import IoError, Path
+
+def require_input(path: Path) -> Result[Path, IoError]:
+    if path.try_exists()?:
+        return Ok(path)
+    return Err(IoError(path=path, kind="not_found", detail="input path does not exist"))
+```
+
+## Create Directories
+
+```incan
+from std.fs import IoError, Path
+
+def prepare_output_dir(path: Path) -> Result[None, IoError]:
+    path.mkdir(parents=True, exist_ok=True)?
     return Ok(None)
 ```
 
-## Recipe: Stream a large file (use `File`)
+`parents=True` creates missing parent directories. `exist_ok=True` treats an existing directory as success.
 
-For large files or when you need more control, use `File.open()` and iterate:
+## Read and Write Small Files
 
-```incan
-def count_lines(path: Path) -> Result[int, IoError]:
-    file = File.open(path)?
-
-    mut count = 0
-    for _ in file.lines():
-        count += 1
-
-    return Ok(count)
-    # file is closed automatically when it goes out of scope (RAII)
-```
-
-## Recipe: Write a file (text or bytes)
+Whole-file helpers are convenient for configuration files, test fixtures, and payloads that comfortably fit in memory.
 
 ```incan
-def save_config(content: str) -> Result[None, IoError]:
-    Path("config.toml").write_text(content)?
+from std.fs import IoError, Path
+
+def copy_small_file(source: Path, target: Path) -> Result[None, IoError]:
+    data = source.read_bytes()?
+    target.write_bytes(data)?
     return Ok(None)
 
-def save_image(data: bytes) -> Result[None, IoError]:
-    Path("output.png").write_bytes(data)?
+def save_text(path: Path, text: str) -> Result[None, IoError]:
+    path.write_text(text, "utf-8", "strict", None)?
     return Ok(None)
 ```
 
-## Recipe: Append to a file
+Use `read_text("utf-8", "strict")` and `write_text(..., "utf-8", "strict", None)` for normal UTF-8 text files.
+
+## Stream Large Files
+
+For large files, open a handle and read bounded chunks.
 
 ```incan
-def append_log(message: str) -> Result[None, IoError]:
-    mut file = File.open_append("app.log")?
-    file.write_line(f"[{timestamp()}] {message}")?
+from std.fs import IoError, Path
+
+def copy_in_chunks(source: Path, target: Path) -> Result[None, IoError]:
+    input = source.open("rb", -1, None, None, None)?
+    output = target.open("wb", -1, None, None, None)?
+
+    loop:
+        chunk = input.read_bytes(8192)?
+        if len(chunk) == 0:
+            break
+        output.write_bytes(chunk)?
+
+    output.sync_data()?
     return Ok(None)
 ```
 
-## Recipe: Safe update (write temp, then rename)
+`sync_data()` requests durable file data. Use `sync()` when metadata durability matters too.
+
+## Read a Fixed Header
 
 ```incan
-def safe_update(path: Path, content: str) -> Result[None, IoError]:
-    temp_path = path.with_suffix(".tmp")
+from std.fs import IoError, Path
 
-    temp_path.write_text(content)?
-    temp_path.rename(path)?
+def read_magic(path: Path) -> Result[bytes, IoError]:
+    file = path.open("rb", -1, None, None, None)?
+    return file.read_exact(4)
+```
 
+`read_exact(size)` fails on short reads, which is useful for file headers and binary protocol frames.
+
+## Seek Within a File
+
+```incan
+from std.fs import IoError, Path
+
+def read_footer(path: Path, size: int) -> Result[bytes, IoError]:
+    file = path.open("rb", -1, None, None, None)?
+    file.seek(0 - size, 2)?
+    return file.read_exact(size)
+```
+
+Use `tell()` when you need to save or report the current cursor.
+
+## Copy, Move, and Clean Up
+
+```incan
+from std.fs import IoError, Path
+
+def publish_tree(build_dir: Path, release_dir: Path) -> Result[Path, IoError]:
+    copied = build_dir.copy_into(release_dir, follow_symlinks=True, preserve_metadata=False)?
+    copied.joinpath("READY").touch(exist_ok=True)?
+    return Ok(copied)
+
+def replace_file(source: Path, target: Path) -> Result[Path, IoError]:
+    return source.move(target)
+
+def remove_workspace(path: Path) -> Result[None, IoError]:
+    path.remove_tree()?
     return Ok(None)
 ```
 
-## Recipe: Walk a directory and filter files
+`remove_tree()` is for directories. Use `unlink()` for files and symlinks.
+
+## Directory Listings
 
 ```incan
-def list_toml_configs() -> Result[list[Path], IoError]:
-    mut configs = []
-    for entry in Path("config").read_dir()?:
-        if entry.suffix == ".toml":
-            configs.append(entry)
-    return Ok(configs)
+from std.fs import IoError, Path
+
+def list_inputs(root: Path) -> Result[list[Path], IoError]:
+    return root.glob("*.incn")
+
+def list_all_inputs(root: Path) -> Result[list[Path], IoError]:
+    return root.rglob("*.incn")
 ```
 
-## Recipe: Find files with glob patterns
+Use `scandir()` when you want directory entries that can answer `is_file()`, `is_dir()`, and `metadata()`.
+
+## Temporary-File Layout
+
+Temporary location creation belongs to `std.tempfile`; ordinary operations on those locations belong to `std.fs`.
 
 ```incan
-def find_python_files() -> Result[list[Path], IoError]:
-    return Ok(Path(".").glob("**/*.py")?)
+from std.fs import IoError, Path
 
-def find_configs() -> Result[list[Path], IoError]:
-    return Ok(Path("config").glob("*.toml")?)
+def write_temp_payload(tmp_dir: Path, data: bytes) -> Result[Path, IoError]:
+    path = tmp_dir.joinpath("payload.bin")
+    path.write_bytes(data)?
+    return Ok(path)
 ```
 
-## Recipe: Ensure a config file exists (create default if missing)
+`std.tempfile.SpooledTemporaryFile` is a follow-up API for RFC 010. It should compose with `std.fs` paths and file handles instead of being folded into `std.fs`.
 
-```incan
-const DEFAULT_CONFIG: str = "debug = true\n"
+## See Also
 
-def ensure_config() -> Result[str, IoError]:
-    path = Path("config.toml")
-
-    if not path.exists():
-        path.write_text(DEFAULT_CONFIG)?
-
-    return path.read_text()
-```
-
-## See also
-
-- [Error handling (concepts)](../explanation/error_handling.md)
-- [File I/O reference (Path/File APIs)](../reference/file_io.md)
+- [std.fs reference](../reference/stdlib/fs.md)
+- [Error handling](../explanation/error_handling.md)

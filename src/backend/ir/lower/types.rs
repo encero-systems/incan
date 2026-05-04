@@ -246,7 +246,7 @@ impl AstLowering {
             ResolvedType::Float => IrType::Float,
             ResolvedType::Bool => IrType::Bool,
             ResolvedType::Str => IrType::String,
-            ResolvedType::Bytes => IrType::Unknown,
+            ResolvedType::Bytes => IrType::Bytes,
             ResolvedType::FrozenStr => IrType::FrozenStr,
             ResolvedType::FrozenBytes => IrType::FrozenBytes,
             ResolvedType::FrozenList(elem) => IrType::NamedGeneric(
@@ -383,8 +383,7 @@ impl AstLowering {
                 if let Some(id) = stringlike::from_str(n) {
                     return match id {
                         StringLikeId::Str | StringLikeId::FString => IrType::String,
-                        // NOTE: runtime `bytes` is not yet a dedicated IR type; keep it as unknown for now.
-                        StringLikeId::Bytes => IrType::Unknown,
+                        StringLikeId::Bytes => IrType::Bytes,
                         StringLikeId::FrozenStr => IrType::FrozenStr,
                         StringLikeId::FrozenBytes => IrType::FrozenBytes,
                     };

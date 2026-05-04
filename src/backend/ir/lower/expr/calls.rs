@@ -43,12 +43,31 @@ impl AstLowering {
         }
     }
 
+    /// Resolve the signature for an imported stdlib function by its canonical import path.
+    ///
+    /// Lowered stdlib modules may import private helpers from sibling stdlib modules. Those helpers are not in the
+    /// current module's IR function registry, but their `.incn` declarations are still available through the stdlib AST
+    /// cache. Attaching the exact module-qualified signature here lets codegen apply normal Incan argument conversion
+    /// rules without merging same-named helpers from unrelated stdlib modules.
+    fn callable_signature_for_imported_stdlib_path(&self, path: &[String]) -> Option<FunctionSignature> {
+        if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let function_name = path.last()?;
+        let module_path = &path[..path.len() - 1];
+        let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+        let info = cache.lookup_function(module_path, function_name)?;
+        Some(self.callable_signature_from_params(&info.params, &info.return_type))
+    }
+
+    /// Resolve a callable signature from the callee expression's type information.
+    ///
+    /// This covers values whose type is already known as `Function(...)`, which is separate from call-site metadata
+    /// gathered for defaults, named arguments, and other invocation-specific details.
     fn callable_signature_for_callee_span(&self, span: ast::Span) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         match info.expr_type(span)? {
-            ResolvedType::Function(params, ret) if params.iter().any(|param| param.kind != ast::ParamKind::Normal) => {
-                Some(self.callable_signature_from_params(params, ret))
-            }
+            ResolvedType::Function(params, ret) => Some(self.callable_signature_from_params(params, ret)),
             _ => None,
         }
     }
@@ -373,7 +392,11 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
-                callable_signature: self.callable_signature_for_callee_span(f.span),
+                callable_signature: imported_callee_path
+                    .as_deref()
+                    .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+                    .or_else(|| self.callable_signature_for_call_span(call_span))
+                    .or_else(|| self.callable_signature_for_callee_span(f.span)),
                 canonical_path: imported_callee_path,
             },
             ret_ty,
