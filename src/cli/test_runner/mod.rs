@@ -17,6 +17,7 @@ mod reporter;
 mod types;
 
 pub use discovery::{discover_test_files, discover_tests_and_fixtures};
+pub(crate) use module_graph::collect_source_modules_for_test;
 pub use reporter::{ConsoleReporter, TestReporter};
 pub use types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,

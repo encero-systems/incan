@@ -63,6 +63,17 @@ fn test_preheat_enabled() -> bool {
     parse_test_preheat_env(std::env::var("INCAN_TEST_PREHEAT").ok().as_deref())
 }
 
+fn collect_test_dependency_inline_imports(
+    test_module: &ParsedModule,
+    source_modules: &[ParsedModule],
+) -> Vec<crate::dependency_resolver::InlineRustImport> {
+    let mut inline_imports = common::collect_inline_rust_imports(test_module, true);
+    for module in source_modules {
+        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+    }
+    inline_imports
+}
+
 /// Return a runner-only AST where RFC 018 inline test-module declarations are emitted as ordinary module declarations.
 ///
 /// Production build/run lowering intentionally strips `Declaration::TestModule`. The test runner needs the opposite:
@@ -412,6 +423,27 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     }
 }
 
+fn lock_validation_entry_path(project_root: &Path, manifest: Option<&ProjectManifest>) -> Option<PathBuf> {
+    if let Some(main) = manifest
+        .and_then(|m| m.project.as_ref())
+        .and_then(|project| project.scripts.get("main"))
+    {
+        return Some(project_root.join(main));
+    }
+
+    let lib_entry = project_root.join("src").join("lib.incn");
+    if lib_entry.is_file() {
+        return Some(lib_entry);
+    }
+
+    let main_entry = project_root.join("src").join("main.incn");
+    if main_entry.is_file() {
+        return Some(main_entry);
+    }
+
+    None
+}
+
 /// Shared front-end + dependency work for one test file, reused across parametrized variants and multiple tests in the
 /// same `.incn` file within a single `incan test` session.
 pub(super) struct PreparedTestFile {
@@ -422,6 +454,7 @@ pub(super) struct PreparedTestFile {
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+    pub project_name: String,
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
@@ -2270,21 +2303,21 @@ pub(super) fn run_file_tests_batch(
             source: source.clone(),
             ast: runner_ast.clone(),
         };
+        let source_dependency_modules = source_modules
+            .iter()
+            .map(|m| ParsedModule {
+                name: m.name.clone(),
+                path_segments: m.path_segments.clone(),
+                file_path: m.file_path.clone(),
+                source: m.source.clone(),
+                ast: m.ast.clone(),
+            })
+            .collect::<Vec<_>>();
+        let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules);
 
         let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
         dependency_modules.push(module_for_imports);
-        dependency_modules.extend(source_modules.iter().map(|m| ParsedModule {
-            name: m.name.clone(),
-            path_segments: m.path_segments.clone(),
-            file_path: m.file_path.clone(),
-            source: m.source.clone(),
-            ast: m.ast.clone(),
-        }));
-
-        let mut inline_imports = Vec::new();
-        for module in &dependency_modules {
-            inline_imports.extend(common::collect_inline_rust_imports(module, true));
-        }
+        dependency_modules.extend(source_dependency_modules);
 
         let project_requirements =
             match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
@@ -2320,6 +2353,63 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
 
+        let mut lock_dependency_modules = dependency_modules.clone();
+        let mut lock_project_requirements = project_requirements.clone();
+        let mut lock_resolved = resolved.clone();
+        if (cargo_policy.locked || cargo_policy.frozen)
+            && let Some(lock_entry_path) = lock_validation_entry_path(&project_root, manifest.as_ref())
+        {
+            let lock_entry_arg = lock_entry_path.to_string_lossy().to_string();
+            let lock_entry_modules = match common::collect_modules(&lock_entry_arg) {
+                Ok(modules) => modules,
+                Err(err) => {
+                    return tests
+                        .iter()
+                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                        .collect();
+                }
+            };
+            let mut lock_inline_imports = inline_imports.clone();
+            for module in &lock_entry_modules {
+                lock_inline_imports.extend(common::collect_inline_rust_imports(module, false));
+            }
+            lock_dependency_modules.extend(lock_entry_modules);
+
+            lock_project_requirements =
+                match common::collect_project_requirements(&lock_dependency_modules, &library_manifest_index) {
+                    Ok(requirements) => requirements,
+                    Err(err) => {
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                            .collect();
+                    }
+                };
+            lock_resolved =
+                match resolve_dependencies(manifest.as_ref(), &lock_inline_imports, true, &cargo_feature_selection) {
+                    Ok(resolved) => resolved,
+                    Err(errors) => {
+                        let sources = common::build_source_map(&lock_dependency_modules);
+                        let mut msg = String::new();
+                        for err in &errors {
+                            msg.push_str(&common::format_dependency_error(err, &sources));
+                        }
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
+                            .collect();
+                    }
+                };
+            if let Err(err) =
+                common::merge_project_requirement_dependencies(&mut lock_resolved, &lock_project_requirements)
+            {
+                return tests
+                    .iter()
+                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                    .collect();
+            }
+        }
+
         let project_name = manifest
             .as_ref()
             .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
@@ -2332,13 +2422,13 @@ pub(super) fn run_file_tests_batch(
             })
             .unwrap_or_else(|| "incan_test".to_string());
         #[cfg(feature = "rust_inspect")]
-        let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
+        let metadata_query_paths = collect_rust_inspect_query_paths(&lock_dependency_modules);
         let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
             project_root: &project_root,
             project_name: &project_name,
             manifest: manifest.as_ref(),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
+            resolved: &lock_resolved,
+            project_requirements: &lock_project_requirements,
             cargo_features: &cargo_feature_selection,
             cargo_policy,
             #[cfg(feature = "rust_inspect")]
@@ -2389,14 +2479,27 @@ pub(super) fn run_file_tests_batch(
             rust_inspect_manifest_dir
         };
 
+        let use_lock_dependency_context = lock_payload.is_some() && (cargo_policy.locked || cargo_policy.frozen);
+        let cargo_resolved = if use_lock_dependency_context {
+            lock_resolved
+        } else {
+            resolved
+        };
+        let cargo_project_requirements = if use_lock_dependency_context {
+            lock_project_requirements
+        } else {
+            project_requirements
+        };
+
         let prepared = PreparedTestFile {
             library_manifest_index,
             ast: runner_ast,
             fixture_teardowns,
             source_modules,
             project_root,
-            resolved,
-            project_requirements,
+            resolved: cargo_resolved,
+            project_requirements: cargo_project_requirements,
+            project_name,
             lock_payload,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
@@ -2435,6 +2538,7 @@ pub(super) fn run_file_tests_batch(
     };
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
+    generator.set_package_name(Some(prepared.project_name.clone()));
     generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
@@ -2655,6 +2759,50 @@ mod tests {
         assert!(!parse_test_preheat_env(Some("0")));
         assert!(!parse_test_preheat_env(Some("false")));
         assert!(!parse_test_preheat_env(Some(" off ")));
+    }
+
+    fn parsed_module_for_import_context(
+        name: &str,
+        path: &str,
+        source: &str,
+    ) -> Result<ParsedModule, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+        Ok(ParsedModule {
+            name: name.to_string(),
+            path_segments: vec![name.to_string()],
+            file_path: PathBuf::from(path),
+            source: source.to_string(),
+            ast,
+        })
+    }
+
+    #[test]
+    fn test_dependency_inline_imports_keep_source_imports_normal() -> Result<(), Box<dyn std::error::Error>> {
+        let test_module = parsed_module_for_import_context(
+            "test",
+            "tests/test_dataset.incn",
+            "from rust::tokio @ \"1\" import spawn\n",
+        )?;
+        let source_module = parsed_module_for_import_context(
+            "dataset",
+            "src/dataset.incn",
+            "from rust::datafusion @ \"53\" import SessionContext\n",
+        )?;
+
+        let imports = collect_test_dependency_inline_imports(&test_module, &[source_module]);
+        let tokio = imports
+            .iter()
+            .find(|import| import.crate_name == "tokio")
+            .ok_or("expected tokio import")?;
+        let datafusion = imports
+            .iter()
+            .find(|import| import.crate_name == "datafusion")
+            .ok_or("expected datafusion import")?;
+
+        assert!(tokio.is_test_context);
+        assert!(!datafusion.is_test_context);
+        Ok(())
     }
 
     #[test]

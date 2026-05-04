@@ -13,18 +13,17 @@ use std::time::{Duration, Instant, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::backend::ProjectGenerator;
+use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_dependencies};
-use crate::frontend::ast::ImportKind;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    CargoPolicy, ProjectRequirements, build_inline_rust_import, build_source_map, cargo_command_flags,
-    cargo_lockfile_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
-    format_dependency_error, format_rust_from_import_path, format_rust_import_base_path,
+    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags,
+    collect_inline_rust_imports, collect_modules, collect_project_requirements, format_dependency_error,
     merge_project_requirement_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
@@ -78,6 +77,7 @@ pub fn lock_project(
         manifest.project_root(),
         Some(&library_imported_vocab),
         Some(&library_imported_dsl_surfaces),
+        Some(&library_manifest_index),
     )?);
 
     let cargo_features = CargoFeatureSelection {
@@ -560,9 +560,11 @@ fn collect_test_inline_imports(
     project_root: &Path,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
+    library_manifest_index: Option<&LibraryManifestIndex>,
 ) -> CliResult<Vec<InlineRustImport>> {
     let mut imports = Vec::new();
     let test_files = crate::cli::test_runner::discover_test_files(project_root);
+    let source_root = project_root.join("src");
 
     for file_path in test_files {
         let source = fs::read_to_string(&file_path)
@@ -589,51 +591,29 @@ fn collect_test_inline_imports(
             CliError::failure(msg.trim_end())
         })?;
 
-        for decl in &ast.declarations {
-            let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
-                continue;
-            };
-            match &import.kind {
-                ImportKind::RustCrate {
-                    crate_name,
-                    path,
-                    version,
-                    features,
-                    ..
-                } => {
-                    let import_path = format_rust_import_base_path(crate_name, path);
-                    imports.push(build_inline_rust_import(
-                        crate_name,
-                        import_path,
-                        version,
-                        features,
-                        decl.span,
-                        &file_path,
-                        true,
-                    ));
-                }
-                ImportKind::RustFrom {
-                    crate_name,
-                    path,
-                    items,
-                    version,
-                    features,
-                    ..
-                } => {
-                    let imported = items.iter().map(|item| item.name.clone()).collect::<Vec<_>>();
-                    let import_path = format_rust_from_import_path(crate_name, path, &imported);
-                    imports.push(build_inline_rust_import(
-                        crate_name,
-                        import_path,
-                        version,
-                        features,
-                        decl.span,
-                        &file_path,
-                        true,
-                    ));
-                }
-                _ => {}
-            }
+        let test_module = ParsedModule {
+            name: file_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("test")
+                .to_string(),
+            path_segments: vec!["test".to_string()],
+            file_path: file_path.clone(),
+            source: source.clone(),
+            ast: ast.clone(),
+        };
+        imports.extend(collect_inline_rust_imports(&test_module, true));
+
+        let source_modules = crate::cli::test_runner::collect_source_modules_for_test(
+            &ast,
+            &source_root,
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+            library_manifest_index,
+        )
+        .map_err(CliError::failure)?;
+        for module in &source_modules {
+            imports.extend(collect_inline_rust_imports(module, false));
         }
     }
 
@@ -714,6 +694,36 @@ mod tests {
         let mut requirements = empty_project_requirements();
         requirements.stdlib_features.push("json".to_string());
         assert!(should_preheat_lockfile_dependencies(&empty_resolved(), &requirements));
+    }
+
+    #[test]
+    fn lock_collects_test_imported_source_modules_as_normal_deps() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_root = temp_dir.path();
+        fs::create_dir_all(project_root.join("src"))?;
+        fs::create_dir_all(project_root.join("tests"))?;
+        fs::write(
+            project_root.join("src").join("internal.incn"),
+            "from rust::datafusion @ \"53\" import SessionContext\n",
+        )?;
+        fs::write(
+            project_root.join("tests").join("test_internal.incn"),
+            "from internal import SessionContext\nfrom rust::tokio @ \"1\" import spawn\n",
+        )?;
+
+        let imports = collect_test_inline_imports(project_root, None, None, None)?;
+        let tokio = imports
+            .iter()
+            .find(|import| import.crate_name == "tokio")
+            .ok_or("expected direct test tokio import")?;
+        let datafusion = imports
+            .iter()
+            .find(|import| import.crate_name == "datafusion")
+            .ok_or("expected test-imported source module datafusion import")?;
+
+        assert!(tokio.is_test_context);
+        assert!(!datafusion.is_test_context);
+        Ok(())
     }
 
     #[test]
