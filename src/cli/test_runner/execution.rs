@@ -3196,7 +3196,10 @@ mod tests {
             ],
         };
 
-        let merged = merge_lock_project_requirements(&current, &lock_entry).expect("requirements should merge");
+        let merged = match merge_lock_project_requirements(&current, &lock_entry) {
+            Ok(merged) => merged,
+            Err(err) => panic!("expected requirements to merge: {err}"),
+        };
 
         assert_eq!(merged.stdlib_features, vec!["async".to_string(), "json".to_string()]);
         assert_eq!(
@@ -3220,7 +3223,10 @@ mod tests {
             dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
         };
 
-        let error = merge_lock_project_requirements(&current, &lock_entry).expect_err("expected conflict");
+        let error = match merge_lock_project_requirements(&current, &lock_entry) {
+            Ok(merged) => panic!("expected conflict, got merged requirements: {merged:?}"),
+            Err(err) => err,
+        };
 
         assert!(error.contains("tokio"));
         assert!(error.contains("conflicts"));
