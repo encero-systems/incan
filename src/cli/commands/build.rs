@@ -465,6 +465,8 @@ fn prepare_project(
         }
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -475,6 +477,8 @@ fn prepare_project(
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
     {
@@ -488,7 +492,6 @@ fn prepare_project(
             &project_requirements,
             lock_payload.clone(),
         )?;
-        let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
         prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
     }
@@ -647,6 +650,8 @@ pub fn build_library(
         }
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
 
     let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
@@ -656,6 +661,8 @@ pub fn build_library(
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         cargo_policy: &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
@@ -669,7 +676,6 @@ pub fn build_library(
             &project_requirements,
             lock_payload_for_typecheck.clone(),
         )?;
-        let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
         prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
     }
 
@@ -805,6 +811,8 @@ pub fn build_library(
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
 
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
@@ -814,6 +822,8 @@ pub fn build_library(
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         cargo_policy: &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
     {
@@ -825,7 +835,6 @@ pub fn build_library(
             &project_requirements,
             lock_payload.clone(),
         )?;
-        let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
         prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
         codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
     }

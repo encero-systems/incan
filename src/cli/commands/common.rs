@@ -711,39 +711,11 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
         })
     }
 
-    fn should_prewarm_item(item_name: &str) -> bool {
-        let stripped = item_name.trim_start_matches("r#");
-        if matches!(
-            stripped,
-            "bool"
-                | "char"
-                | "str"
-                | "f32"
-                | "f64"
-                | "i8"
-                | "i16"
-                | "i32"
-                | "i64"
-                | "i128"
-                | "isize"
-                | "u8"
-                | "u16"
-                | "u32"
-                | "u64"
-                | "u128"
-                | "usize"
-        ) {
-            return false;
-        }
-        stripped
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_lowercase() || ch == '_')
-    }
-
-    // Default policy: prewarm likely callable *user* imports only. This avoids eager extraction of heavyweight
-    // type/module imports (especially `incan_stdlib::*`) that can force expensive rust-analyzer def-map walks during
-    // `incan test`.
+    // Default policy: prewarm explicit non-stdlib `from rust::... import Item` imports. These are the exact paths
+    // semantic/codegen hot paths may query later, including Rust types with uppercase names.
+    //
+    // We still avoid crate/module imports and `incan_stdlib::*` by default. Full eager prewarm can force broad
+    // rust-analyzer walks and persist negative module lookups that are not safe metadata items.
     // Set `INCAN_RUST_INSPECT_PREWARM_ALL=1` to restore full eager prewarm for debugging/regressions.
     let prewarm_all = env_flag_enabled("INCAN_RUST_INSPECT_PREWARM_ALL");
     let mut paths: BTreeSet<String> = BTreeSet::new();
@@ -780,7 +752,7 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
                     }
                     let primitive_ns = matches!(base.as_str(), "std::primitive" | "core::primitive");
                     for item in items {
-                        if !primitive_ns && (prewarm_all || should_prewarm_item(&item.name)) {
+                        if !primitive_ns {
                             paths.insert(format!("{base}::{}", item.name));
                         }
                     }
@@ -792,14 +764,27 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
     paths.into_iter().collect()
 }
 
+/// Return whether rust-inspect prewarm should run for the supplied environment value.
+#[cfg(feature = "rust_inspect")]
+fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
+    let Some(raw) = raw else {
+        return true;
+    };
+    !matches!(raw.trim(), "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO")
+}
+
+#[cfg(feature = "rust_inspect")]
+fn rust_inspect_prewarm_enabled() -> bool {
+    parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())
+}
+
 /// Eagerly load rust-inspect metadata before typechecking/codegen hot paths.
+///
+/// Prewarm defaults to enabled because lazy rust-analyzer extraction can dominate warm CLI runs.
+/// Set `INCAN_RUST_INSPECT_PREWARM=0` to disable it for troubleshooting.
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn prewarm_rust_inspect_workspace(manifest_dir: &Path, query_paths: &[String]) -> CliResult<()> {
-    let prewarm_enabled = std::env::var_os("INCAN_RUST_INSPECT_PREWARM").is_some_and(|value| {
-        let value = value.to_string_lossy();
-        matches!(value.as_ref(), "1" | "true" | "TRUE" | "on" | "ON")
-    });
-    if !prewarm_enabled {
+    if !rust_inspect_prewarm_enabled() {
         return Ok(());
     }
     if query_paths.is_empty() {
@@ -1592,6 +1577,46 @@ mod tests {
         assert!(policy.offline);
         assert!(policy.locked);
         assert_eq!(policy.extra_args, vec!["--timings", "--verbose"]);
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_prewarm_env_defaults_to_enabled() {
+        assert!(parse_rust_inspect_prewarm_env(None));
+        assert!(parse_rust_inspect_prewarm_env(Some("")));
+        assert!(parse_rust_inspect_prewarm_env(Some("1")));
+        assert!(parse_rust_inspect_prewarm_env(Some("true")));
+        assert!(parse_rust_inspect_prewarm_env(Some("on")));
+        assert!(parse_rust_inspect_prewarm_env(Some("unexpected")));
+        assert!(!parse_rust_inspect_prewarm_env(Some("0")));
+        assert!(!parse_rust_inspect_prewarm_env(Some("false")));
+        assert!(!parse_rust_inspect_prewarm_env(Some(" OFF ")));
+        assert!(!parse_rust_inspect_prewarm_env(Some("no")));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_query_paths_include_explicit_non_stdlib_rust_types() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+from rust::datafusion::execution::context import SessionContext
+from rust::datafusion::prelude import CsvReadOptions, read_csv
+from rust::incan_stdlib::async::runtime import block_on
+from rust::std::primitive import i64 as RustI64
+"#,
+        )?;
+
+        let paths = collect_rust_inspect_query_paths(&[module]);
+
+        assert_eq!(
+            paths,
+            vec![
+                "datafusion::execution::context::SessionContext".to_string(),
+                "datafusion::prelude::CsvReadOptions".to_string(),
+                "datafusion::prelude::read_csv".to_string(),
+            ]
+        );
+        Ok(())
     }
 
     #[test]

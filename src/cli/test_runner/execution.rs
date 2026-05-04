@@ -2331,6 +2331,8 @@ pub(super) fn run_file_tests_batch(
                     .map(|s| s.to_string())
             })
             .unwrap_or_else(|| "incan_test".to_string());
+        #[cfg(feature = "rust_inspect")]
+        let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
         let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
             project_root: &project_root,
             project_name: &project_name,
@@ -2339,6 +2341,8 @@ pub(super) fn run_file_tests_batch(
             project_requirements: &project_requirements,
             cargo_features: &cargo_feature_selection,
             cargo_policy,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_query_paths: &metadata_query_paths,
         }) {
             Ok(payload) => payload,
             Err(err) => {
@@ -2351,7 +2355,6 @@ pub(super) fn run_file_tests_batch(
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
-            let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
             let mut rust_inspect_requirements = project_requirements.clone();
             rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
                 prep_cache

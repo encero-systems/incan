@@ -27,6 +27,8 @@ use super::common::{
     format_dependency_error, format_rust_from_import_path, format_rust_import_base_path,
     merge_project_requirement_dependencies,
 };
+#[cfg(feature = "rust_inspect")]
+use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
 
 const LOCK_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_dependency_preheat_fingerprint";
 const LOCK_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_dependency_preheat.lock";
@@ -104,6 +106,8 @@ pub fn lock_project(
         .unwrap_or_else(|| "incan_project".to_string());
     let rust_edition = manifest.build.as_ref().and_then(|b| b.rust_edition.clone());
     let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_query_paths = collect_rust_inspect_query_paths(&modules);
     generate_lockfile(
         manifest.project_root(),
         &project_name,
@@ -112,6 +116,8 @@ pub fn lock_project(
         &project_requirements,
         &cargo_features,
         &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        &rust_inspect_query_paths,
     )?;
 
     Ok(ExitCode::SUCCESS)
@@ -131,6 +137,8 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub project_requirements: &'a ProjectRequirements,
     pub cargo_features: &'a CargoFeatureSelection,
     pub cargo_policy: &'a CargoPolicy,
+    #[cfg(feature = "rust_inspect")]
+    pub rust_inspect_query_paths: &'a [String],
 }
 
 /// Resolve the embedded Cargo lock payload that generated Cargo projects should reuse.
@@ -147,6 +155,8 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_requirements,
         cargo_features,
         cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths,
     } = request;
 
     if manifest.is_none() {
@@ -209,6 +219,8 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_requirements,
         cargo_features,
         cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths,
     )?;
     Ok(Some(lock.cargo_lock_payload))
 }
@@ -442,6 +454,32 @@ fn run_lock_dependency_preheat(
     Ok(())
 }
 
+/// Prewarm rust-inspect metadata into the lock workspace cache when lock generation knows the query set.
+#[cfg(feature = "rust_inspect")]
+fn run_lock_rust_inspect_prewarm(
+    project_root: &Path,
+    project_name: &str,
+    rust_edition: Option<String>,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    lock: &IncanLock,
+    query_paths: &[String],
+) -> CliResult<()> {
+    if query_paths.is_empty() {
+        return Ok(());
+    }
+
+    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+        project_root,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        Some(lock.cargo_lock_payload.clone()),
+    )?;
+    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, query_paths)
+}
+
 /// Generate an `incan.lock` file by creating a temporary Cargo project and resolving dependencies.
 pub(crate) fn generate_lockfile(
     project_root: &Path,
@@ -451,9 +489,12 @@ pub(crate) fn generate_lockfile(
     project_requirements: &ProjectRequirements,
     cargo_features: &CargoFeatureSelection,
     cargo_policy: &CargoPolicy,
+    #[cfg(feature = "rust_inspect")] rust_inspect_query_paths: &[String],
 ) -> CliResult<IncanLock> {
     let lock_dir = project_root.join("target").join("incan_lock");
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
+    #[cfg(feature = "rust_inspect")]
+    let rust_edition_for_prewarm = rust_edition.clone();
     generator.set_dependencies(resolved.dependencies.clone());
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
@@ -496,6 +537,16 @@ pub(crate) fn generate_lockfile(
     if should_preheat_lockfile_dependencies(resolved, project_requirements) {
         run_lock_dependency_preheat(project_root, &lock_dir, cargo_features, cargo_policy)?;
     }
+    #[cfg(feature = "rust_inspect")]
+    run_lock_rust_inspect_prewarm(
+        project_root,
+        project_name,
+        rust_edition_for_prewarm,
+        resolved,
+        project_requirements,
+        &lock,
+        rust_inspect_query_paths,
+    )?;
 
     let lock_path = project_root.join("incan.lock");
     lock.write(&lock_path)
