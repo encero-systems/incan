@@ -3173,9 +3173,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#automatic-lock-generation" class="md-nav__link">
+  <a href="#default-buildtest-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Automatic lock generation
+      Default build/test behavior
     </span>
   </a>
   
@@ -4779,9 +4779,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#automatic-lock-generation" class="md-nav__link">
+  <a href="#default-buildtest-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Automatic lock generation
+      Default build/test behavior
     </span>
   </a>
   
@@ -4983,9 +4983,10 @@ code produces a compile-time error.</p>
 </code></pre></div>
 <p><code>incan.lock</code> embeds the resolved <code>Cargo.lock</code> and a fingerprint of your dependency inputs. <strong>Commit it to version control</strong>
 for reproducible builds.</p>
-<h3 id="automatic-lock-generation">Automatic lock generation<a class="headerlink" href="#automatic-lock-generation" title="Permanent link">&para;</a></h3>
+<h3 id="default-buildtest-behavior">Default build/test behavior<a class="headerlink" href="#default-buildtest-behavior" title="Permanent link">&para;</a></h3>
 <p>If <code>incan.lock</code> doesn't exist and you run <code>incan build</code> or <code>incan test</code> without strict flags, the lock file is created
 automatically on first build.</p>
+<p>If <code>incan.lock</code> already exists but is stale, default <code>incan build</code> and <code>incan test</code> warn and reuse the existing embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>. Run <code>incan lock</code> when you intentionally want to refresh the committed lock file.</p>
 <h3 id="strict-mode-for-ci">Strict mode for CI<a class="headerlink" href="#strict-mode-for-ci" title="Permanent link">&para;</a></h3>
 <p>Use <code>--locked</code> or <code>--frozen</code> to enforce that the lock file exists and is up to date. Use <code>--offline</code> when Cargo must fail instead of touching the network:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Requires incan.lock to exist and match current deps</span>

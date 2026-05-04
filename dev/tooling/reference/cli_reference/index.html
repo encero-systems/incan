@@ -4973,6 +4973,7 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 <li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
 <li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
 </ul>
+<p>Without <code>--locked</code> or <code>--frozen</code>, <code>incan build</code> creates <code>incan.lock</code> when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>; run <code>incan lock</code> to refresh the committed lockfile intentionally.</p>
 <p>Environment defaults:</p>
 <ul>
 <li><code>INCAN_OFFLINE=1</code>, <code>INCAN_LOCKED=1</code>, and <code>INCAN_FROZEN=1</code> behave like their matching flags.</li>
@@ -5112,6 +5113,7 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <ul>
 <li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
 </ul>
+<p>Without <code>--locked</code> or <code>--frozen</code>, <code>incan test</code> creates <code>incan.lock</code> when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>; run <code>incan lock</code> to refresh the committed lockfile intentionally.</p>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="c1"># Run all tests in a directory</span>
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
