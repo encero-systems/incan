@@ -6,6 +6,7 @@ use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
     LibraryManifestLoadFailure,
 };
+use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
@@ -7002,6 +7003,159 @@ def main() -> None:
     assert!(
         errs.iter().any(|e| e.message.contains("cannot be called at runtime")),
         "Expected marker runtime-call diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_async_fixture_records_frontend_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture(scope="module", autouse=true)
+async def resource() -> int:
+  yield 1
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let info = checker
+        .type_info()
+        .testing_fixture("resource")
+        .ok_or_else(|| std::io::Error::other("expected fixture metadata for resource"))?;
+    assert_eq!(info.scope, TestingFixtureScope::Module);
+    assert!(info.autouse);
+    assert!(info.is_async);
+    assert!(info.has_teardown);
+    assert!(info.dependencies.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_async_fixture_records_mixed_fixture_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+def config() -> int:
+  return 1
+
+@fixture(scope="session")
+async def service(config: int) -> int:
+  yield config
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let info = checker
+        .type_info()
+        .testing_fixture("service")
+        .ok_or_else(|| std::io::Error::other("expected fixture metadata for service"))?;
+    assert_eq!(info.scope, TestingFixtureScope::Session);
+    assert_eq!(info.dependencies, vec!["config".to_string()]);
+    assert!(info.is_async);
+    Ok(())
+}
+
+#[test]
+fn test_async_fixture_requires_exactly_one_yield() {
+    let missing = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  return 1
+"#;
+    let missing_errs = check_str_err(missing, "async fixture without yield should fail");
+    assert!(
+        missing_errs
+            .iter()
+            .any(|e| e.message.contains("must contain exactly one top-level `yield value`")),
+        "Expected missing-yield async fixture diagnostic; got: {:?}",
+        missing_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let repeated = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  yield 1
+  yield 2
+"#;
+    let repeated_errs = check_str_err(repeated, "async fixture with repeated yield should fail");
+    assert!(
+        repeated_errs
+            .iter()
+            .any(|e| e.message.contains("must use exactly one top-level `yield value`")),
+        "Expected repeated-yield async fixture diagnostic; got: {:?}",
+        repeated_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_async_fixture_rejects_nested_or_empty_yield() {
+    let nested = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource(flag: bool) -> int:
+  if flag:
+    yield 1
+  return 2
+"#;
+    let nested_errs = check_str_err(nested, "async fixture with nested yield should fail");
+    assert!(
+        nested_errs
+            .iter()
+            .any(|e| e.message.contains("must use exactly one top-level `yield value`")),
+        "Expected nested-yield async fixture diagnostic; got: {:?}",
+        nested_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let empty = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  yield
+"#;
+    let empty_errs = check_str_err(empty, "async fixture with empty yield should fail");
+    assert!(
+        empty_errs
+            .iter()
+            .any(|e| e.message.contains("must yield the fixture value")),
+        "Expected empty-yield async fixture diagnostic; got: {:?}",
+        empty_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_fixture_rejects_per_fixture_timeout_config() {
+    let source = r#"
+from std.testing import fixture
+
+@fixture(timeout="1s")
+def resource() -> int:
+  return 1
+"#;
+    let errs = check_str_err(source, "fixture timeout config should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("cannot declare per-fixture timeout configuration")),
+        "Expected fixture-timeout diagnostic; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

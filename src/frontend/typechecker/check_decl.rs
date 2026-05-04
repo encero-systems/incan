@@ -1,12 +1,17 @@
 //! Second-pass declaration checking: validate models, classes, traits, enums, functions, methods.
 
 use crate::frontend::ast::*;
+use crate::frontend::ast_walk::any_expr_in_body;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_method_info, substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
+use crate::frontend::testing_markers::{
+    TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
+    resolve_testing_fixture_marker_args,
+};
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::TypeChecker;
+use super::{TestingFixtureInfo, TypeChecker};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -98,7 +103,167 @@ struct TraitMethodEntry {
     info: MethodInfo,
 }
 
+enum AsyncFixtureYieldShape {
+    Valid { has_teardown: bool },
+    Missing,
+    Invalid(Span),
+    MissingValue(Span),
+}
+
+/// Return a top-level fixture `yield` expression when the statement is exactly `yield ...`.
+fn top_level_fixture_yield(stmt: &Spanned<Statement>) -> Option<&Spanned<Expr>> {
+    if let Statement::Expr(expr) = &stmt.node
+        && matches!(expr.node, Expr::Yield(_))
+    {
+        return Some(expr);
+    }
+    None
+}
+
+/// Validate the declaration-only async fixture yield shape required before runner execution can be async-aware.
+fn validate_async_fixture_yield_shape(body: &[Spanned<Statement>]) -> AsyncFixtureYieldShape {
+    let top_level_yields: Vec<(usize, &Spanned<Expr>)> = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, stmt)| top_level_fixture_yield(stmt).map(|expr| (index, expr)))
+        .collect();
+
+    if top_level_yields.is_empty() {
+        if any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))) {
+            return AsyncFixtureYieldShape::Invalid(body.first().map_or_else(Span::default, |stmt| stmt.span));
+        }
+        return AsyncFixtureYieldShape::Missing;
+    }
+    if top_level_yields.len() != 1 {
+        return AsyncFixtureYieldShape::Invalid(top_level_yields[1].1.span);
+    }
+
+    let (yield_index, yield_expr) = top_level_yields[0];
+    let has_yield_elsewhere = body.iter().enumerate().any(|(index, stmt)| {
+        index != yield_index && any_expr_in_body(std::slice::from_ref(stmt), |expr| matches!(expr, Expr::Yield(_)))
+    });
+    if has_yield_elsewhere {
+        return AsyncFixtureYieldShape::Invalid(yield_expr.span);
+    }
+
+    if matches!(yield_expr.node, Expr::Yield(None)) {
+        return AsyncFixtureYieldShape::MissingValue(yield_expr.span);
+    }
+
+    AsyncFixtureYieldShape::Valid { has_teardown: true }
+}
+
+/// Return whether any yield expression appears in a fixture body.
+fn fixture_body_has_yield(body: &[Spanned<Statement>]) -> bool {
+    any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
+}
+
+/// Pick a stable declaration span for fixture-level diagnostics when the AST helper receives only the function node.
+fn fixture_function_span(func: &FunctionDecl) -> Span {
+    func.decorators.first().map_or_else(
+        || func.body.first().map_or_else(Span::default, |stmt| stmt.span),
+        |dec| dec.span,
+    )
+}
+
+/// Return whether a decorator resolves to the RFC 004 `std.testing.fixture` marker path.
+fn is_possible_testing_fixture_decorator(dec: &Decorator, aliases: &HashMap<String, Vec<String>>) -> bool {
+    let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
+    resolved.len() == 3 && resolved[0] == "std" && resolved[1] == "testing" && resolved[2] == "fixture"
+}
+
+/// Return whether any declaration in this slice of AST may be a `std.testing.fixture`.
+fn declarations_may_contain_testing_fixture(
+    declarations: &[Spanned<Declaration>],
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<Span> {
+    for decl in declarations {
+        match &decl.node {
+            Declaration::Function(func) => {
+                if let Some(decorator) = func
+                    .decorators
+                    .iter()
+                    .find(|decorator| is_possible_testing_fixture_decorator(&decorator.node, aliases))
+                {
+                    return Some(decorator.span);
+                }
+            }
+            Declaration::TestModule(test_module) => {
+                if let Some(span) = declarations_may_contain_testing_fixture(&test_module.body, aliases) {
+                    return Some(span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 impl TypeChecker {
+    /// Collect fixture names before function bodies are checked so dependency metadata is independent of declaration
+    /// order.
+    pub(crate) fn collect_testing_fixture_names(&mut self, program: &Program) {
+        self.testing_fixture_names.clear();
+        let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.import_aliases) else {
+            return;
+        };
+        let semantics = match load_testing_marker_semantics() {
+            Ok(semantics) => semantics,
+            Err(err) => {
+                self.errors
+                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
+                return;
+            }
+        };
+        self.collect_testing_fixture_names_from_decls(&program.declarations, &semantics);
+    }
+
+    /// Recursively collect fixture names from top-level and inline test-module declarations.
+    fn collect_testing_fixture_names_from_decls(
+        &mut self,
+        declarations: &[Spanned<Declaration>],
+        semantics: &TestingMarkerSemantics,
+    ) {
+        for decl in declarations {
+            match &decl.node {
+                Declaration::Function(func)
+                    if resolve_testing_fixture_marker_args(&func.decorators, &self.import_aliases, semantics)
+                        .is_some() =>
+                {
+                    self.testing_fixture_names.insert(func.name.clone());
+                }
+                Declaration::TestModule(test_module) => {
+                    self.collect_testing_fixture_names_from_decls(&test_module.body, semantics);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Resolve fixture marker arguments for a declaration, reporting stdlib metadata failures through type diagnostics.
+    fn testing_fixture_marker_args(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        span: Span,
+    ) -> Option<TestingFixtureMarkerArgs> {
+        if !decorators
+            .iter()
+            .any(|decorator| is_possible_testing_fixture_decorator(&decorator.node, &self.import_aliases))
+        {
+            return None;
+        }
+
+        match load_testing_marker_semantics() {
+            Ok(semantics) => resolve_testing_fixture_marker_args(decorators, &self.import_aliases, &semantics),
+            Err(err) => {
+                self.errors
+                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
+                None
+            }
+        }
+    }
+
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.
     fn validate_callable_rest_params(&mut self, params: &[Spanned<Param>]) {
         let mut saw_rest_positional = false;
@@ -2029,6 +2194,54 @@ impl TypeChecker {
 
         self.validate_decorators(&func.decorators);
         self.validate_callable_rest_params(&func.params);
+        let fixture_span = fixture_function_span(func);
+        let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
+        if let Some(args) = &fixture_args {
+            if let Some(span) = args.unsupported_timeout_span {
+                self.errors
+                    .push(errors::fixture_timeout_config_not_supported(&func.name, span));
+            }
+
+            let has_teardown = if func.is_async() {
+                match validate_async_fixture_yield_shape(&func.body) {
+                    AsyncFixtureYieldShape::Valid { has_teardown } => has_teardown,
+                    AsyncFixtureYieldShape::Missing => {
+                        self.errors
+                            .push(errors::async_fixture_requires_yield(&func.name, fixture_span));
+                        false
+                    }
+                    AsyncFixtureYieldShape::Invalid(span) => {
+                        self.errors
+                            .push(errors::async_fixture_invalid_yield_shape(&func.name, span));
+                        false
+                    }
+                    AsyncFixtureYieldShape::MissingValue(span) => {
+                        self.errors
+                            .push(errors::async_fixture_yield_requires_value(&func.name, span));
+                        false
+                    }
+                }
+            } else {
+                fixture_body_has_yield(&func.body)
+            };
+
+            let dependencies = func
+                .params
+                .iter()
+                .filter(|param| self.testing_fixture_names.contains(&param.node.name))
+                .map(|param| param.node.name.clone())
+                .collect();
+            self.type_info.testing_fixtures.insert(
+                func.name.clone(),
+                TestingFixtureInfo {
+                    scope: args.scope,
+                    autouse: args.autouse,
+                    is_async: func.is_async(),
+                    has_teardown,
+                    dependencies,
+                },
+            );
+        }
         // TODO(#146): add async return-type and related validation here via the surface semantics registry — not
         // hardcoded KeywordId checks.
 

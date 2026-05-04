@@ -66,6 +66,7 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
+use crate::frontend::testing_markers::TestingFixtureScope;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::RustMetadataCache;
 use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
@@ -171,6 +172,10 @@ pub struct TypeCheckInfo {
     /// Lowering consumes this map so `a + b`, `-a`, and `a[b]` can become direct dunder method calls without
     /// re-running backend-side infix/index semantics. Primitive operators are intentionally absent from this map.
     pub resolved_operator_calls: HashMap<(usize, usize), ResolvedOperatorCall>,
+    /// `std.testing.fixture` declarations resolved during typechecking.
+    ///
+    /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
+    pub testing_fixtures: HashMap<String, TestingFixtureInfo>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -248,6 +253,24 @@ pub struct StaticBindingInfo {
     pub is_imported: bool,
 }
 
+/// Declaration metadata for one `std.testing.fixture` function.
+///
+/// This is the frontend handoff for test-runner and lowering-adjacent code that needs to know fixture shape without
+/// re-resolving decorators from raw AST nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestingFixtureInfo {
+    /// Fixture scope selected by `@fixture(scope=...)`, defaulting to function scope.
+    pub scope: TestingFixtureScope,
+    /// Whether `@fixture(autouse=true)` was set.
+    pub autouse: bool,
+    /// Whether the fixture declaration used `async def`.
+    pub is_async: bool,
+    /// Whether the fixture has a yield-based teardown boundary.
+    pub has_teardown: bool,
+    /// Fixture parameters that resolve to other fixture names in this checked program.
+    pub dependencies: Vec<String>,
+}
+
 impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
@@ -267,6 +290,11 @@ impl TypeCheckInfo {
     /// Return static-binding metadata for `name`, if the checker recorded one.
     pub fn static_binding(&self, name: &str) -> Option<&StaticBindingInfo> {
         self.static_bindings.get(name)
+    }
+
+    /// Return frontend fixture metadata for `name`, if the declaration was marked with `@fixture`.
+    pub fn testing_fixture(&self, name: &str) -> Option<&TestingFixtureInfo> {
+        self.testing_fixtures.get(name)
     }
 
     /// Return the computed const value for `name`, when const evaluation succeeded.
@@ -444,6 +472,8 @@ pub struct TypeChecker {
     /// These names are disallowed in runtime call expressions; markers are decorator-only semantics consumed by the
     /// test runner.
     pub(crate) testing_marker_import_bindings: HashSet<String>,
+    /// Fixture function names collected before body checking so dependency metadata is order-independent.
+    pub(crate) testing_fixture_names: HashSet<String>,
     /// Import aliases collected from `import` / `from ... import` declarations.
     ///
     /// Maps each local binding name to the fully qualified module path segments. Used as a fallback in
@@ -504,6 +534,7 @@ impl TypeChecker {
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
             testing_marker_import_bindings: HashSet::new(),
+            testing_fixture_names: HashSet::new(),
             import_aliases: HashMap::new(),
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
@@ -2566,6 +2597,7 @@ impl TypeChecker {
         self.warnings.clear();
         self.errors.clear();
         self.testing_marker_import_bindings.clear();
+        self.testing_fixture_names.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();
@@ -2596,6 +2628,7 @@ impl TypeChecker {
         self.finalize_supertrait_graph();
         self.merge_supertrait_requires_into_traits();
         self.validate_static_dependencies();
+        self.collect_testing_fixture_names(program);
 
         // Second pass: check consts first so their resolved types are available to later checks.
         for decl in &program.declarations {

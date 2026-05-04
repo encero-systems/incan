@@ -250,6 +250,7 @@ pub(crate) fn discover_tests_and_fixtures_with_context(
                 tests.push(TestInfo {
                     file_path: file_path.to_path_buf(),
                     function_name: func.name.clone(),
+                    is_async: func.is_async(),
                     markers,
                     required_fixtures,
                     parameter_names: func.params.iter().map(|param| param.node.name.clone()).collect(),

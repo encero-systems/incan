@@ -224,6 +224,27 @@ def database() -> Database:
 
 Teardown can reference setup locals such as `db` and fixture parameters. If teardown fails, the test run fails. Timeout-enforced worker termination can still bypass teardown.
 
+### Async fixtures
+
+Use the same `@fixture` decorator for async setup and teardown. The only surface difference is that the fixture is declared with `async def`:
+
+```incan
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+@fixture
+async def resource() -> int:
+    await sleep_ms(1)
+    yield 42
+    await sleep_ms(1)
+
+async def test_uses_resource(resource: int) -> None:
+    await sleep_ms(1)
+    assert_eq(resource, 42)
+```
+
+Async fixtures use `yield` exactly once. Setup before `yield` is awaited before any dependent fixture or test runs. Teardown after `yield` is awaited after the dependent test or scope finishes, and before the runner proceeds to the next dependent teardown. There is no separate async fixture decorator.
+
 ### Fixture scopes
 
 By default, a fixture is created and torn down for **each test** that uses it. If the setup is expensive, share it across a wider scope with the `scope` argument:
@@ -267,6 +288,32 @@ def test_user_count(populated_db: Database) -> None:
 
 The test runner resolves the dependency chain for you: `populated_db` needs `database`, so `database()` runs first, then its result is passed into `populated_db()`.
 
+Sync and async fixtures can be mixed in the same dependency graph:
+
+```incan
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+@fixture
+def seed() -> int:
+    return 40
+
+@fixture
+async def resource(seed: int) -> int:
+    await sleep_ms(1)
+    yield seed + 2
+    await sleep_ms(1)
+
+@fixture
+def doubled(resource: int) -> int:
+    return resource * 2
+
+def test_mixed_fixture_graph(doubled: int) -> None:
+    assert_eq(doubled, 84)
+```
+
+The runner awaits async setup before sync dependents run, and it still tears fixtures down in reverse dependency order. In this example, `doubled` finishes first, then `resource` teardown is awaited, then `seed` leaves scope.
+
 ## Parametrized tests
 
 When you want to test the same logic with different inputs, you could write a separate test for each case:
@@ -308,6 +355,8 @@ test_add[-1-1-0] ... PASSED
 
 Adding a new case is just one more tuple — no new function needed.
 
+Parametrized tests expand before fixture resolution. Each expanded case resolves fixtures by name after the case's parameter values are known. Function-scoped fixtures run separately for each expanded case, while module-scoped and session-scoped fixtures keep their normal cache boundaries.
+
 Use `param_case(...)` when one parameter set needs a stable id or marker:
 
 ```incan
@@ -320,6 +369,12 @@ from std.testing import assert_eq, param_case, parametrize, xfail
 def test_double(x: int, expected: int) -> None:
     assert_eq(x * 2, expected)
 ```
+
+## Timeouts and worker termination
+
+Use `incan test --timeout <duration>` or `@timeout("duration")` to set a timeout for the generated test batch. Fixtures do not have their own timeout configuration.
+
+For async fixtures, the runner awaits teardown after ordinary assertion failures and panics while the worker remains alive. `--timeout`, `@timeout`, external interruption, and process termination are enforced at the generated worker or batch level; if that enforcement terminates the worker process, remaining teardown is best-effort and may not run. Keep teardown idempotent and prefer narrow fixture scopes for resources that must be released promptly.
 
 ## Full example
 

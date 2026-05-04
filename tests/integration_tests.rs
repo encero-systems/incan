@@ -6362,6 +6362,49 @@ def test_body_passes(resource: int) -> None:
     }
 
     #[test]
+    fn e2e_yield_fixture_teardown_failures_are_aggregated() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_yield_fixture_teardown_aggregate.incn",
+            r#"
+from std.testing import assert_eq, fixture
+
+@fixture
+def parent() -> int:
+    yield 1
+    assert_eq(1, 2, "parent teardown failed")
+
+@fixture
+def child(parent: int) -> int:
+    yield parent + 1
+    assert_eq(3, 4, "child teardown failed")
+
+def test_body_passes(child: int) -> None:
+    assert_eq(child, 2)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+        assert!(
+            !output.status.success(),
+            "expected aggregate teardown failures to fail the run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            combined.contains("fixture teardown failed")
+                && combined.contains("child teardown failed")
+                && combined.contains("parent teardown failed"),
+            "expected both teardown failures in aggregate output.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_yield_fixture_teardown_captures_setup_locals() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "test_yield_fixture_capture.incn",
@@ -6526,6 +6569,184 @@ def test_after() -> None:
             "expected dependent fixtures to tear down in reverse dependency order.\nstdout:\n{}\nstderr:\n{}",
             stdout,
             stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_async_yield_fixture_setup_and_teardown_are_awaited() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_async_yield_fixture.incn",
+            r#"
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+static order: int = 0
+
+@fixture
+def seed() -> int:
+    order += 1
+    return 40
+
+@fixture
+async def resource(seed: int) -> int:
+    await sleep_ms(1)
+    order += 1
+    yield seed + 2
+    await sleep_ms(1)
+    order += 10
+
+def test_1_uses_async_fixture(resource: int) -> None:
+    assert_eq(resource, 42)
+    assert_eq(order, 2)
+
+def test_2_observes_async_teardown() -> None:
+    assert_eq(order, 12)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected async fixture setup and teardown to be awaited.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_async_yield_fixture_teardown_runs_after_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_async_yield_fixture_failure.incn",
+            r#"
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+static calls: int = 0
+
+@fixture
+async def resource() -> int:
+    calls += 1
+    await sleep_ms(1)
+    yield calls
+    await sleep_ms(1)
+    calls += 10
+
+def test_1_fails(resource: int) -> None:
+    assert_eq(resource, 99)
+
+def test_2_observes_async_teardown() -> None:
+    assert_eq(calls, 11)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "expected the intentionally failing async-fixture test to fail the run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_2_observes_async_teardown PASSED"),
+            "expected async teardown to run before the following test observed shared state.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_async_yield_fixture_teardown_runs_in_reverse_dependency_order() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_async_yield_teardown_order.incn",
+            r#"
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+static order: str = ""
+
+@fixture
+async def parent() -> int:
+    order += "setup-parent;"
+    await sleep_ms(1)
+    yield 1
+    await sleep_ms(1)
+    order += "teardown-parent;"
+
+@fixture
+async def child(parent: int) -> int:
+    order += "setup-child;"
+    await sleep_ms(1)
+    yield parent + 1
+    await sleep_ms(1)
+    order += "teardown-child;"
+
+def test_1_uses_child(child: int) -> None:
+    assert_eq(child, 2)
+    assert_eq(order, "setup-parent;setup-child;")
+
+def test_2_observes_reverse_teardown() -> None:
+    assert_eq(order, "setup-parent;setup-child;teardown-child;teardown-parent;")
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected async yield teardowns to run in reverse dependency order.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_async_fixture_composes_with_parametrize_before_resolution() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "test_async_param_fixture.incn",
+            r#"
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture, parametrize
+
+static setups: int = 0
+
+@fixture
+async def base() -> int:
+    setups += 1
+    await sleep_ms(1)
+    yield 10
+
+@parametrize("value", [1, 2])
+async def test_param_async_fixture(value: int, base: int) -> None:
+    await sleep_ms(1)
+    assert_eq(base, 10)
+    assert_eq(value > 0, true)
+
+def test_after_param_cases() -> None:
+    assert_eq(setups, 2)
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected parametrized async tests to resolve async fixtures per expanded case.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_param_async_fixture[1]") && stdout.contains("test_param_async_fixture[2]"),
+            "expected both parametrized async cases in reporter output.\nstdout:\n{}",
+            stdout,
         );
         Ok(())
     }

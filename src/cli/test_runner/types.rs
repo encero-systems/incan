@@ -27,6 +27,8 @@ pub struct TestSummary {
 pub struct TestInfo {
     pub file_path: PathBuf,
     pub function_name: String,
+    /// Whether the collected test function is declared with `async def`.
+    pub is_async: bool,
     pub markers: Vec<TestMarker>,
     pub required_fixtures: Vec<String>,
     /// Ordered callable parameter names used to interleave parametrized arguments with fixture injections.

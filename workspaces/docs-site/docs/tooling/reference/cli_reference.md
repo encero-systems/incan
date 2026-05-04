@@ -196,6 +196,8 @@ Dependency flags (same as `build`):
 
 Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
+Timeouts apply to generated test batches. `--timeout` sets the default batch timeout and `@timeout("duration")` from `std.testing` can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.
+
 Examples:
 
 ```bash

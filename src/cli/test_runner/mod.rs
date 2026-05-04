@@ -115,6 +115,7 @@ fn expand_parametrized_tests(tests: Vec<TestInfo>) -> Vec<TestInfo> {
                 out.push(TestInfo {
                     file_path: test.file_path.clone(),
                     function_name: test.function_name.clone(),
+                    is_async: test.is_async,
                     markers: non_parametrize_markers,
                     required_fixtures: test.required_fixtures.clone(),
                     parameter_names: test.parameter_names.clone(),
@@ -1420,6 +1421,7 @@ mod tests {
         TestInfo {
             file_path: PathBuf::from("test_example.incn"),
             function_name: name.to_string(),
+            is_async: false,
             markers,
             required_fixtures: Vec::new(),
             parameter_names: Vec::new(),

@@ -354,6 +354,42 @@ pub fn testing_marker_runtime_call_not_supported(name: &str, span: Span) -> Comp
     .with_note("Marker semantics are consumed by `incan test` during discovery")
 }
 
+/// `@fixture(timeout=...)` tried to configure per-fixture timeout behavior, which RFC 004 intentionally excludes.
+pub fn fixture_timeout_config_not_supported(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Fixture '{name}' cannot declare per-fixture timeout configuration"),
+        span,
+    )
+    .with_hint("Use test-runner timeout configuration or a test-level timeout marker instead")
+    .with_note("RFC 004 keeps async fixture declaration metadata limited to scope, autouse, and async/yield shape")
+}
+
+/// An `async def` fixture omitted the mandatory `yield value` boundary.
+pub fn async_fixture_requires_yield(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Async fixture '{name}' must contain exactly one top-level `yield value` expression"),
+        span,
+    )
+    .with_hint("Yield the fixture value between awaited setup and awaited teardown")
+    .with_note("Async fixture setup runs before the yield; teardown after the yield is awaited by the test runner")
+}
+
+/// An async fixture used a nested or repeated yield boundary.
+pub fn async_fixture_invalid_yield_shape(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Async fixture '{name}' must use exactly one top-level `yield value` expression"),
+        span,
+    )
+    .with_hint("Place a single `yield value` statement in the fixture body")
+    .with_note("Nested or repeated yields cannot define one deterministic setup/teardown boundary")
+}
+
+/// An async fixture used `yield` without a yielded value.
+pub fn async_fixture_yield_requires_value(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Async fixture '{name}' must yield the fixture value"), span)
+        .with_hint("Use `yield value` so dependents receive the fixture value")
+}
+
 pub fn try_on_non_result(found: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Cannot use '?' on type '{}' - expected Result[T, E]", found),

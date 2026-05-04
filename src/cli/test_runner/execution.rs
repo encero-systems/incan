@@ -17,7 +17,7 @@ use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
-    Program, Spanned, Statement, Type,
+    Program, Span, Spanned, Statement, Type,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -399,7 +399,7 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
 pub(super) struct PreparedTestFile {
     pub library_manifest_index: LibraryManifestIndex,
     pub ast: Program,
-    pub fixture_teardowns: HashMap<String, YieldFixtureTeardown>,
+    pub fixtures: HashMap<String, FixtureExecutionInfo>,
     pub source_modules: Vec<ParsedModule>,
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
@@ -754,6 +754,7 @@ fn split_yield_fixture_declarations(ast: &mut Program) -> Result<HashMap<String,
             );
             func.return_type.node = Type::Tuple(state_types);
         }
+        func.decorators.clear();
         func.body = setup_body;
         teardowns.insert(
             func.name.clone(),
@@ -1054,10 +1055,11 @@ fn builtin_fixture_arg(
 }
 
 #[derive(Debug, Clone)]
-struct FixtureExecutionInfo {
+pub(super) struct FixtureExecutionInfo {
     params: Vec<String>,
     scope: FixtureScope,
     has_teardown: bool,
+    is_async: bool,
     return_rust_type: Option<String>,
     state_rust_type: Option<String>,
     teardown: Option<YieldFixtureTeardown>,
@@ -1125,6 +1127,48 @@ fn fixture_value_ident(index: usize, name: &str) -> String {
     format!("__incan_fixture_value_{index}_{}", safe_fixture_ident(name))
 }
 
+/// Wrap an async generated harness call in the shared runner runtime when needed.
+fn maybe_await_harness_call(call: String, is_async: bool) -> String {
+    if is_async {
+        format!("__incan_async_block_on({call})")
+    } else {
+        call
+    }
+}
+
+/// Return the generated Rust expression that sets up one fixture.
+fn fixture_setup_call(name: &str, args: &str, fixture: &FixtureExecutionInfo) -> String {
+    maybe_await_harness_call(format!("super::{name}({args})"), fixture.is_async)
+}
+
+/// Return the generated Rust statement that tears down one yield fixture.
+fn fixture_teardown_call(fixture: &FixtureExecutionInfo, teardown_function: &str, args: &str) -> String {
+    let call = if args.is_empty() {
+        format!("super::{teardown_function}()")
+    } else {
+        format!("super::{teardown_function}({args})")
+    };
+    format!("{};", maybe_await_harness_call(call, fixture.is_async))
+}
+
+/// Return whether the generated harness needs to drive async tests or fixtures.
+fn harness_needs_async_runtime(tests: &[TestInfo], fixtures: &HashMap<String, FixtureExecutionInfo>) -> bool {
+    tests.iter().any(|test| test.is_async) || fixtures.values().any(|fixture| fixture.is_async)
+}
+
+/// Add the stdlib async feature when the generated harness itself needs the runtime.
+fn test_runner_stdlib_features(
+    base: &[String],
+    tests: &[TestInfo],
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+) -> Vec<String> {
+    let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
+    if harness_needs_async_runtime(tests, fixtures) {
+        features.insert("async".to_string());
+    }
+    features.into_iter().collect()
+}
+
 /// Generate an expression that calls a fixture, recursively filling fixture dependencies.
 fn fixture_arg(
     name: &str,
@@ -1168,20 +1212,21 @@ fn fixture_arg(
     let Some(fixture) = fixtures.get(name) else {
         return format!("super::{name}({args})");
     };
+    let setup_call = fixture_setup_call(name, &args, fixture);
     let Some(return_rust_type) = fixture.return_rust_type.as_ref() else {
-        return format!("super::{name}({args})");
+        return setup_call;
     };
     if fixture.has_teardown {
         let Some(teardown) = &fixture.teardown else {
-            return format!("super::{name}({args})");
+            return setup_call;
         };
         if fixture.scope == FixtureScope::Function {
             let state_ident = fixture_state_ident(index, name);
             let value_ident = fixture_value_ident(index, name);
-            setup.push_str(&format!("        let {state_ident} = super::{name}({args});\n"));
+            setup.push_str(&format!("        let {state_ident} = {setup_call};\n"));
             if teardown.captures.is_empty() {
                 setup.push_str(&format!("        let {value_ident} = {state_ident};\n"));
-                teardown_steps.push(format!("super::{}();", teardown.teardown_function));
+                teardown_steps.push(fixture_teardown_call(fixture, &teardown.teardown_function, ""));
             } else {
                 let capture_names = teardown
                     .captures
@@ -1192,10 +1237,10 @@ fn fixture_arg(
                     "        let ({value_ident}, {}) = {state_ident};\n",
                     capture_names.join(", ")
                 ));
-                teardown_steps.push(format!(
-                    "super::{}({});",
-                    teardown.teardown_function,
-                    capture_names.join(", ")
+                teardown_steps.push(fixture_teardown_call(
+                    fixture,
+                    &teardown.teardown_function,
+                    &capture_names.join(", "),
                 ));
             }
             return value_ident;
@@ -1206,7 +1251,7 @@ fn fixture_arg(
                 "{{\n\
                      let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                      let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
                      let Some(__incan_value) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                      __incan_value.clone()\n\
                  }}"
@@ -1216,7 +1261,7 @@ fn fixture_arg(
             "{{\n\
                      let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                      let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
                      let Some(__incan_state) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                      let __incan_value: &{return_rust_type} = &__incan_state.0;\n\
                      __incan_value.clone()\n\
@@ -1224,7 +1269,7 @@ fn fixture_arg(
         );
     }
     if fixture.scope == FixtureScope::Function {
-        return format!("super::{name}({args})");
+        return setup_call;
     }
 
     let static_name = fixture_cache_static_name(name);
@@ -1232,7 +1277,7 @@ fn fixture_arg(
         "{{\n\
                  let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                  let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new(super::{name}({args}))); }}\n\
+                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new({setup_call})); }}\n\
                  let Some(__incan_boxed) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                  let Some(__incan_value) = __incan_boxed.downcast_ref::<{return_rust_type}>() else {{ panic!(\"fixture cache `{name}` had an unexpected type\"); }};\n\
                  __incan_value.clone()\n\
@@ -1306,22 +1351,24 @@ fn harness_call(test: &TestInfo, index: usize, fixtures: &HashMap<String, Fixtur
     }
 
     let joined = args.join(", ");
+    let test_call = maybe_await_harness_call(format!("super::{}({joined})", test.function_name), test.is_async);
     if teardown_steps.is_empty() {
-        return format!("{setup}        super::{}({joined});\n", test.function_name);
+        return format!("{setup}        {test_call};\n");
     }
 
     let mut teardown = String::new();
     for step in teardown_steps.iter().rev() {
-        teardown.push_str("        ");
+        teardown.push_str("        __incan_run_teardown(&mut __incan_teardown_failures, || { ");
         teardown.push_str(step);
-        teardown.push('\n');
+        teardown.push_str(" });\n");
     }
     format!(
-        "{setup}        let __incan_test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
-                     super::{}({joined});\n\
+        "{setup}        let mut __incan_teardown_failures = Vec::new();\n\
+                 let __incan_test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
+                     {test_call};\n\
                  }}));\n\
-         {teardown}        if let Err(__incan_panic) = __incan_test_result {{ std::panic::resume_unwind(__incan_panic); }}\n",
-        test.function_name
+         {teardown}        if !__incan_teardown_failures.is_empty() {{ panic!(\"fixture teardown failed:\\n{{}}\", __incan_teardown_failures.join(\"\\n\")); }}\n\
+                 if let Err(__incan_panic) = __incan_test_result {{ std::panic::resume_unwind(__incan_panic); }}\n",
     )
 }
 
@@ -1397,6 +1444,7 @@ fn collect_fixture_execution_info(
                         params: func.params.iter().map(|param| param.node.name.clone()).collect(),
                         scope,
                         has_teardown: teardown.is_some(),
+                        is_async: func.is_async(),
                         return_rust_type: teardown
                             .as_ref()
                             .and_then(|teardown| rust_type_for_fixture_cache(&teardown.value_ty))
@@ -1410,6 +1458,34 @@ fn collect_fixture_execution_info(
             }
         })
         .collect()
+}
+
+/// Attach runner-local teardown metadata to fixture declarations collected before yield-splitting.
+fn apply_fixture_teardowns(
+    fixtures: &mut HashMap<String, FixtureExecutionInfo>,
+    fixture_teardowns: &HashMap<String, YieldFixtureTeardown>,
+) {
+    for (name, teardown) in fixture_teardowns {
+        let Some(fixture) = fixtures.get_mut(name) else {
+            continue;
+        };
+        fixture.has_teardown = true;
+        fixture.return_rust_type = rust_type_for_fixture_cache(&teardown.value_ty);
+        fixture.state_rust_type = if teardown.captures.is_empty() {
+            rust_type_for_fixture_cache(&teardown.value_ty)
+        } else {
+            let mut state_types = Vec::with_capacity(1 + teardown.captures.len());
+            state_types.push(Spanned::new(teardown.value_ty.clone(), Span::default()));
+            state_types.extend(
+                teardown
+                    .captures
+                    .iter()
+                    .map(|capture| Spanned::new(capture.ty.clone(), Span::default())),
+            );
+            rust_type_for_fixture_cache(&Type::Tuple(state_types))
+        };
+        fixture.teardown = Some(teardown.clone());
+    }
 }
 
 /// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
@@ -1457,6 +1533,45 @@ fn inject_file_test_harness(
              }\n\
          }\n",
     );
+    if fixtures.values().any(|fixture| fixture.has_teardown) {
+        out.push_str(
+            "fn __incan_run_teardown<F>(failures: &mut Vec<String>, teardown: F)\n\
+             where\n\
+                 F: FnOnce(),\n\
+             {\n\
+                 if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(teardown)) {\n\
+                     let message = if let Some(message) = payload.downcast_ref::<&str>() {\n\
+                         (*message).to_string()\n\
+                     } else if let Some(message) = payload.downcast_ref::<String>() {\n\
+                         message.clone()\n\
+                     } else {\n\
+                         \"non-string panic payload\".to_string()\n\
+                     };\n\
+                     failures.push(message);\n\
+                 }\n\
+             }\n",
+        );
+    }
+    if harness_needs_async_runtime(tests, fixtures) {
+        out.push_str(
+            "static __INCAN_ASYNC_RUNTIME: std::sync::OnceLock<incan_stdlib::__private::tokio::runtime::Runtime> = std::sync::OnceLock::new();\n\
+             /// Drive one async generated test or fixture on the shared runner runtime.\n\
+             fn __incan_async_block_on<F>(future: F) -> F::Output\n\
+             where\n\
+                 F: std::future::Future,\n\
+             {\n\
+                 let __incan_runtime = __INCAN_ASYNC_RUNTIME.get_or_init(|| {\n\
+                     let mut builder = incan_stdlib::__private::tokio::runtime::Builder::new_multi_thread();\n\
+                     builder.enable_all();\n\
+                     match builder.build() {\n\
+                         Ok(runtime) => runtime,\n\
+                         Err(err) => panic!(\"failed to build async test runtime: {}\", err),\n\
+                     }\n\
+                 });\n\
+                 __incan_runtime.block_on(future)\n\
+             }\n",
+        );
+    }
     let teardown_fixtures = ordered_teardown_fixtures(tests, fixtures);
     for (index, t) in tests.iter().enumerate() {
         let fname = harness_fn_name(t, index);
@@ -1476,6 +1591,7 @@ fn inject_file_test_harness(
     }
     if !teardown_fixtures.is_empty() {
         out.push_str("    #[test]\n    fn zzzz_incan_harness_teardown_cached_fixtures() {\n");
+        out.push_str("        let mut __incan_teardown_failures = Vec::new();\n");
         out.push_str("        let __incan_cwd_guard = __IncanCwdGuard(std::env::current_dir().ok());\n");
         out.push_str("        let _ = &__incan_cwd_guard;\n");
         out.push_str("        if let Err(err) = std::env::set_current_dir(");
@@ -1498,7 +1614,10 @@ fn inject_file_test_harness(
             ));
             if teardown.captures.is_empty() {
                 out.push_str("            let _ = __incan_state;\n");
-                out.push_str(&format!("            super::{}();\n", teardown.teardown_function));
+                out.push_str(&format!(
+                    "            __incan_run_teardown(&mut __incan_teardown_failures, || {{ {} }});\n",
+                    fixture_teardown_call(fixture, &teardown.teardown_function, "")
+                ));
             } else {
                 let capture_names = teardown
                     .captures
@@ -1510,13 +1629,17 @@ fn inject_file_test_harness(
                     capture_names.join(", ")
                 ));
                 out.push_str(&format!(
-                    "            super::{}({});\n",
-                    teardown.teardown_function,
-                    capture_names.join(", ")
+                    "            __incan_run_teardown(&mut __incan_teardown_failures, || {{ {} }});\n",
+                    fixture_teardown_call(fixture, &teardown.teardown_function, &capture_names.join(", "))
                 ));
             }
             out.push_str("                         }\n        }\n");
         }
+        out.push_str(
+            "        if !__incan_teardown_failures.is_empty() {\n\
+                         panic!(\"fixture teardown failed:\\n{}\", __incan_teardown_failures.join(\"\\n\"));\n\
+                     }\n",
+        );
         out.push_str("    }\n");
     }
     out.push_str("}\n");
@@ -1869,6 +1992,7 @@ pub(super) fn run_file_tests_batch(
     normalize_runner_assert_statements(&mut runner_ast);
     prune_shadowed_fixture_declarations(&mut runner_ast);
     dedupe_import_declarations(&mut runner_ast);
+    let mut fixtures = collect_fixture_execution_info(&runner_ast, &HashMap::new());
     let fixture_teardowns = match split_yield_fixture_declarations(&mut runner_ast) {
         Ok(teardowns) => teardowns,
         Err(message) => {
@@ -1878,6 +2002,7 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
     };
+    apply_fixture_teardowns(&mut fixtures, &fixture_teardowns);
 
     let cargo_feature_selection = CargoFeatureSelection {
         cargo_features: cargo_features.to_vec(),
@@ -2054,7 +2179,7 @@ pub(super) fn run_file_tests_batch(
         let prepared = PreparedTestFile {
             library_manifest_index,
             ast: runner_ast,
-            fixture_teardowns,
+            fixtures,
             source_modules,
             project_root,
             resolved,
@@ -2080,7 +2205,7 @@ pub(super) fn run_file_tests_batch(
     for module in &prepared.source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
+    let fixtures = prepared.fixtures.clone();
     codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
 
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
@@ -2097,7 +2222,11 @@ pub(super) fn run_file_tests_batch(
     };
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
-    generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
+    generator.set_stdlib_features(test_runner_stdlib_features(
+        &prepared.project_requirements.stdlib_features,
+        tests,
+        &fixtures,
+    ));
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     generator.set_cargo_policy_flags(common::cargo_command_flags(cargo_policy, &cargo_feature_selection));
 
@@ -2547,6 +2676,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             TestInfo {
                 file_path: PathBuf::from("t.incn"),
                 function_name: "test_a".to_string(),
+                is_async: false,
                 markers: vec![],
                 required_fixtures: vec![],
                 parameter_names: vec![],
@@ -2556,6 +2686,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             TestInfo {
                 file_path: PathBuf::from("t.incn"),
                 function_name: "test_b".to_string(),
+                is_async: false,
                 markers: vec![],
                 required_fixtures: vec![],
                 parameter_names: vec![],
@@ -2570,5 +2701,45 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
         assert!(g.contains("set_current_dir"));
         assert!(g.contains("super::test_a();"));
         assert!(g.contains("super::test_b();"));
+    }
+
+    #[test]
+    fn inject_file_test_harness_wraps_async_tests_and_fixtures() {
+        let rust = "async fn resource() -> i64 { 42 }\nasync fn test_async(resource: i64) {}\n";
+        let tests = vec![TestInfo {
+            file_path: PathBuf::from("t.incn"),
+            function_name: "test_async".to_string(),
+            is_async: true,
+            markers: vec![],
+            required_fixtures: vec!["resource".to_string()],
+            parameter_names: vec!["resource".to_string()],
+            timeout: None,
+            parametrize_call: None,
+        }];
+        let mut fixtures = HashMap::new();
+        fixtures.insert(
+            "resource".to_string(),
+            FixtureExecutionInfo {
+                params: Vec::new(),
+                scope: FixtureScope::Function,
+                has_teardown: true,
+                is_async: true,
+                return_rust_type: Some("i64".to_string()),
+                state_rust_type: Some("i64".to_string()),
+                teardown: Some(YieldFixtureTeardown {
+                    teardown_function: "__incan_fixture_teardown_resource".to_string(),
+                    captures: Vec::new(),
+                    value_ty: Type::Simple("int".to_string()),
+                }),
+            },
+        );
+
+        let generated = inject_file_test_harness(rust, &tests, Path::new("."), &fixtures);
+
+        assert!(generated.contains("__INCAN_ASYNC_RUNTIME"));
+        assert!(generated.contains("__incan_async_block_on(super::resource())"));
+        assert!(generated.contains("__incan_async_block_on(super::test_async(__incan_fixture_value_0_resource))"));
+        assert!(generated.contains("__incan_run_teardown"));
+        assert!(generated.contains("__incan_async_block_on(super::__incan_fixture_teardown_resource())"));
     }
 }
