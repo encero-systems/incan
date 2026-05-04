@@ -1,8 +1,9 @@
-//! Emit Rust code for list and dict comprehensions.
+//! Emit Rust code for comprehensions and generator expressions.
 //!
 //! This module handles:
 //! - List comprehensions: `[expr for var in iter if cond]`
 //! - Dict comprehensions: `{key: value for var in iter if cond}`
+//! - Generator expressions: `(expr for var in iter if cond)`
 
 use proc_macro2::TokenStream;
 use quote::quote;

@@ -15,7 +15,7 @@
 //! - [`methods`]: Method calls (both known methods via `MethodKind` and regular Rust method-call emission)
 //! - [`calls`]: Regular function calls and binary operations
 //! - [`indexing`]: Index, slice, and field access expressions
-//! - [`comprehensions`]: List and dict comprehensions
+//! - [`comprehensions`]: List comprehensions, dict comprehensions, and generator expressions
 //! - [`structs_enums`]: Struct constructor expressions
 //! - [`mod@format`]: Format strings and range expressions
 //! - [`lvalue`]: Assignment target expressions

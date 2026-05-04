@@ -9,9 +9,9 @@ use std::thread;
 
 /// Runtime representation for RFC 006 lazy generator values.
 ///
-/// The compiler can lower generator functions and generator expressions to this wrapper once the frontend provides
-/// typed generator bodies. The wrapper intentionally owns a boxed iterator so emitted code has one stable concrete
-/// return type for `Generator[T]` without leaking the Rust adapter chain that produced it.
+/// Lowering and emission use this wrapper for both `yield`-based generator functions and generator expressions. The
+/// wrapper intentionally owns a boxed iterator so emitted code has one stable concrete return type for `Generator[T]`
+/// without leaking the Rust adapter chain that produced it.
 pub struct Generator<T> {
     iter: Box<dyn Iterator<Item = T>>,
 }
@@ -30,7 +30,7 @@ impl<T> Generator<T> {
         Self { iter: Box::new(iter) }
     }
 
-    /// Create a generator from compiler-emitted yield code.
+    /// Create a lazy generator from a compiler-emitted body closure.
     #[must_use]
     pub fn spawn<F>(f: F) -> Self
     where
@@ -66,7 +66,7 @@ impl<T> Generator<T> {
 
     /// Lazily stop after at most `count` yielded values.
     ///
-    /// Negative counts behave like Python slicing limits that cannot admit any item.
+    /// Negative counts produce an empty generator, matching Python's empty slice limits.
     #[must_use]
     pub fn take(self, count: i64) -> Self
     where

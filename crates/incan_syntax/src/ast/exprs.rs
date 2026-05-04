@@ -343,11 +343,11 @@ pub struct LoopExpr {
 pub struct ListComp {
     /// Element expression produced for each accepted binding.
     pub expr: Spanned<Expr>,
-    /// First `for` binding retained for existing downstream comprehension lowering.
+    /// First `for` binding mirrored for single-clause comprehension lowering.
     pub pattern: Spanned<Pattern>,
-    /// First `for` iterable retained for existing downstream comprehension lowering.
+    /// First `for` iterable mirrored for single-clause comprehension lowering.
     pub iter: Spanned<Expr>,
-    /// First trailing `if` filter retained for existing downstream comprehension lowering.
+    /// First trailing `if` filter mirrored for single-clause comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
     /// Parsed comprehension clauses in source order.
     pub clauses: Vec<ComprehensionClause>,
@@ -359,11 +359,11 @@ pub struct DictComp {
     pub key: Spanned<Expr>,
     /// Value expression produced for each accepted binding.
     pub value: Spanned<Expr>,
-    /// First `for` binding retained for existing downstream comprehension lowering.
+    /// First `for` binding mirrored for single-clause comprehension lowering.
     pub pattern: Spanned<Pattern>,
-    /// First `for` iterable retained for existing downstream comprehension lowering.
+    /// First `for` iterable mirrored for single-clause comprehension lowering.
     pub iter: Spanned<Expr>,
-    /// First trailing `if` filter retained for existing downstream comprehension lowering.
+    /// First trailing `if` filter mirrored for single-clause comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
     /// Parsed comprehension clauses in source order.
     pub clauses: Vec<ComprehensionClause>,

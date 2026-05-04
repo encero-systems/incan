@@ -1,4 +1,4 @@
-//! List and dict comprehension lowering.
+//! Comprehension and generator-expression lowering.
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{IrExprKind, IrGeneratorClause};

@@ -1,7 +1,7 @@
 //! Check comprehensions and closures.
 //!
-//! This module implements list/dict comprehensions and closure expressions, introducing local
-//! bindings and type-checking the generated element/value expressions in a nested scope.
+//! This module implements comprehensions, generator expressions, and closure expressions, introducing local bindings
+//! and type-checking the generated element/value expressions in a nested scope.
 
 use crate::frontend::ast::*;
 use crate::frontend::symbols::*;

@@ -414,7 +414,7 @@ pub fn generator_yield_requires_value(span: Span) -> CompileError {
         .with_hint("Use `yield value` so the generator can produce its declared element type")
 }
 
-/// A generator attempted to return a final value, which RFC 006 reserves for future coroutine work.
+/// A generator attempted to return a final value, which RFC 006 does not support.
 pub fn generator_return_value_not_supported(span: Span) -> CompileError {
     CompileError::type_error("Generator functions cannot use `return value`".to_string(), span)
         .with_hint("Use bare `return` to terminate iteration early")
