@@ -69,6 +69,198 @@ fn none_constructor_name() -> String {
     surface_constructors::as_str(ConstructorId::None).to_string()
 }
 
+#[test]
+fn top_level_function_alias_typechecks_as_callable() -> Result<(), String> {
+    let source = r#"
+def avg(x: int) -> int:
+  return x
+
+mean = avg
+
+def main() -> int:
+  return mean(10)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let alias = checker
+        .lookup_symbol("mean")
+        .ok_or_else(|| "expected alias symbol to be collected".to_string())?;
+    assert!(matches!(alias.kind, crate::frontend::symbols::SymbolKind::Function(_)));
+    Ok(())
+}
+
+#[test]
+fn qualified_top_level_alias_resolves_imported_module_target() -> Result<(), String> {
+    let source = r#"
+import std.math as math
+
+def sqrt(value: str) -> str:
+  return value
+
+root = math.sqrt
+
+def main() -> float:
+  return root(4.0)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let alias = checker
+        .lookup_symbol("root")
+        .ok_or_else(|| "expected qualified alias symbol to be collected".to_string())?;
+    let crate::frontend::symbols::SymbolKind::Function(info) = &alias.kind else {
+        return Err(format!("expected root to resolve as a function, got {:?}", alias.kind));
+    };
+    assert_eq!(info.return_type, ResolvedType::Float);
+    Ok(())
+}
+
+#[test]
+fn top_level_alias_rejects_non_callable_value_target() {
+    let errors = check_str_err(
+        r#"
+const count = 1
+total = count
+"#,
+        "const alias target should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("targets unsupported symbol 'count'")),
+        "expected unsupported alias target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn top_level_alias_cycle_is_rejected() {
+    let errors = check_str_err(
+        r#"
+left = right
+right = left
+"#,
+        "alias cycle should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err.message.contains("Alias cycle detected")),
+        "expected alias cycle diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn public_top_level_alias_rejects_private_target() {
+    let errors = check_str_err(
+        r#"
+pub mean = avg
+
+def avg(x: int) -> int:
+  return x
+"#,
+        "public alias to private target should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Public alias 'mean' targets private symbol 'avg'")),
+        "expected public/private alias diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn same_type_method_alias_typechecks_as_method_call() -> Result<(), String> {
+    let source = r#"
+model Stats:
+  value: int
+  mean = avg
+
+  def avg(self) -> int:
+    return self.value
+
+def main() -> int:
+  let stats = Stats(value=10)
+  return stats.mean()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let Some(TypeInfo::Model(model)) = checker.lookup_type_info("Stats") else {
+        return Err("expected Stats model metadata".to_string());
+    };
+    assert_eq!(model.method_aliases.get("mean").map(String::as_str), Some("avg"));
+    assert!(model.methods.contains_key("mean"));
+    assert_eq!(model.methods["mean"].alias_of.as_deref(), Some("avg"));
+    Ok(())
+}
+
+#[test]
+fn method_alias_rejects_unknown_target() {
+    let errors = check_str_err(
+        r#"
+model Stats:
+  value: int
+  mean = avg
+"#,
+        "method alias to missing target should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err
+            .message
+            .contains("Method alias 'Stats.mean' targets unknown method 'avg'")),
+        "expected missing method alias target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn method_alias_cycle_is_rejected() {
+    let errors = check_str_err(
+        r#"
+model Stats:
+  value: int
+  mean = average
+  average = mean
+"#,
+        "method alias cycle should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Method alias cycle detected on 'Stats'")),
+        "expected method alias cycle diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn public_top_level_alias_exports_as_alias_metadata() -> Result<(), String> {
+    let source = r#"
+pub def avg(x: int) -> int:
+  return x
+
+pub mean = alias avg
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("stats".to_string(), "0.1.0".to_string(), &exports);
+    assert_eq!(manifest.exports.aliases.len(), 1);
+    assert_eq!(manifest.exports.aliases[0].name, "mean");
+    assert_eq!(manifest.exports.aliases[0].target_path, vec!["avg"]);
+    assert!(
+        manifest
+            .exports
+            .functions
+            .iter()
+            .all(|function| function.name != "mean"),
+        "alias must not be flattened into a duplicate function export"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "rust_inspect")]
 fn write_rust_inspect_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(root.join("src"))?;
@@ -207,6 +399,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
             models: vec![ModelExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
@@ -239,6 +432,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 supertraits: Vec::new(),
                 requires: Vec::new(),
                 methods: vec![MethodExport {
+                    alias_of: None,
                     name: "label".to_string(),
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
@@ -269,6 +463,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     },
                 ],
                 methods: vec![MethodExport {
+                    alias_of: None,
                     name: "label".to_string(),
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
@@ -320,6 +515,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
             models: Vec::new(),
             classes: Vec::new(),
             functions: Vec::new(),
@@ -376,6 +572,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
             models: vec![ModelExport {
                 name: "ImportedReading".to_string(),
                 type_params: Vec::new(),
@@ -385,6 +582,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 fields: Vec::new(),
                 methods: vec![
                     MethodExport {
+                        alias_of: None,
                         name: "convert".to_string(),
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
@@ -396,6 +594,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         has_body: true,
                     },
                     MethodExport {
+                        alias_of: None,
                         name: "convert".to_string(),
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
@@ -419,6 +618,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 supertraits: Vec::new(),
                 requires: Vec::new(),
                 methods: vec![MethodExport {
+                    alias_of: None,
                     name: "convert".to_string(),
                     type_params: Vec::new(),
                     receiver: Some(ReceiverExport::Immutable),
@@ -441,6 +641,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 }],
                 methods: vec![
                     MethodExport {
+                        alias_of: None,
                         name: "convert".to_string(),
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
@@ -452,6 +653,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                         has_body: true,
                     },
                     MethodExport {
+                        alias_of: None,
                         name: "convert".to_string(),
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),
@@ -499,6 +701,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
             models: vec![ModelExport {
                 name: "SessionError".to_string(),
                 type_params: Vec::new(),
@@ -519,6 +722,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     fields: Vec::new(),
                     methods: vec![
                         MethodExport {
+                            alias_of: None,
                             name: "default".to_string(),
                             type_params: Vec::new(),
                             receiver: None,
@@ -530,6 +734,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             has_body: true,
                         },
                         MethodExport {
+                            alias_of: None,
                             name: "read_csv".to_string(),
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Mutable),
@@ -567,6 +772,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             has_body: true,
                         },
                         MethodExport {
+                            alias_of: None,
                             name: "collect".to_string(),
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Immutable),
@@ -621,6 +827,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     derives: vec![clone_trait_name()],
                     fields: Vec::new(),
                     methods: vec![MethodExport {
+                        alias_of: None,
                         name: "collect".to_string(),
                         type_params: Vec::new(),
                         receiver: Some(ReceiverExport::Immutable),

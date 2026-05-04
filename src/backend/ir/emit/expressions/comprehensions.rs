@@ -5,9 +5,9 @@
 //! - Dict comprehensions: `{key: value for var in iter if cond}`
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
-use super::super::super::expr::{IrExprKind, TypedExpr};
+use super::super::super::expr::{BuiltinFn, IrExprKind, Pattern, TypedExpr};
 use super::super::super::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
     plan_list_comprehension_iteration,
@@ -27,15 +27,19 @@ impl<'a> IrEmitter<'a> {
     pub(in super::super) fn emit_list_comp(
         &self,
         element: &TypedExpr,
-        variable: &str,
+        pattern: &Pattern,
         iterable: &TypedExpr,
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let iter = self.emit_expr(iterable)?;
-        let var_ident = format_ident!("{}", variable);
+        let pattern_tokens = self.emit_pattern(pattern);
         let elem = self.emit_expr(element)?;
 
+        if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
+            return self.emit_direct_list_comp(iter, pattern_tokens, elem, filter);
+        }
+
+        let iter = self.emit_expr(iterable)?;
         let is_range = self.is_range_iterable(iterable);
         let iter_wrapped = quote! { (#iter) };
 
@@ -48,11 +52,11 @@ impl<'a> IrEmitter<'a> {
                 };
                 let filter_tokens = self.emit_expr(filter)?;
                 Ok(quote! {
-                    #iter_wrapped.filter(|&#var_ident| #filter_tokens).map(|#var_ident| #elem).collect::<Vec<_>>()
+                    #iter_wrapped.filter(|&#pattern_tokens| #filter_tokens).map(|#pattern_tokens| #elem).collect::<Vec<_>>()
                 })
             }
             ComprehensionIterationPlan::RangeDirect => Ok(quote! {
-                #iter_wrapped.map(|#var_ident| #elem).collect::<Vec<_>>()
+                #iter_wrapped.map(|#pattern_tokens| #elem).collect::<Vec<_>>()
             }),
             ComprehensionIterationPlan::FilterMapCloneBinding => {
                 let Some(filter) = filter else {
@@ -61,11 +65,12 @@ impl<'a> IrEmitter<'a> {
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
+                let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter_wrapped
                         .iter()
-                        .filter_map(|#var_ident| {
-                            let #var_ident = (*#var_ident).clone();
+                        .filter_map(|#item_binding| {
+                            let #pattern_tokens = (*#item_binding).clone();
                             if #filter_tokens {
                                 Some(#elem)
                             } else {
@@ -76,7 +81,7 @@ impl<'a> IrEmitter<'a> {
                 })
             }
             ComprehensionIterationPlan::IterCloned => Ok(quote! {
-                #iter_wrapped.iter().cloned().map(|#var_ident| #elem).collect::<Vec<_>>()
+                #iter_wrapped.iter().cloned().map(|#pattern_tokens| #elem).collect::<Vec<_>>()
             }),
         }
     }
@@ -91,13 +96,12 @@ impl<'a> IrEmitter<'a> {
         &self,
         key: &TypedExpr,
         value: &TypedExpr,
-        variable: &str,
+        pattern: &Pattern,
         iterable: &TypedExpr,
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let iter = self.emit_expr(iterable)?;
-        let var_ident = format_ident!("{}", variable);
+        let pattern_tokens = self.emit_pattern(pattern);
         let key_tokens = self.emit_expr(key)?;
         let value_tokens = self.emit_expr(value)?;
 
@@ -112,6 +116,11 @@ impl<'a> IrEmitter<'a> {
             quote! { #key_tokens }
         };
 
+        if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
+            return self.emit_direct_dict_comp(iter, pattern_tokens, cloned_key, value_tokens, filter);
+        }
+
+        let iter = self.emit_expr(iterable)?;
         match plan_dict_comprehension_iteration(filter.is_some()) {
             ComprehensionIterationPlan::FilterMapCloneBinding => {
                 let Some(filter) = filter else {
@@ -120,11 +129,12 @@ impl<'a> IrEmitter<'a> {
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
+                let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
                 Ok(quote! {
                     #iter
                         .iter()
-                        .filter_map(|#var_ident| {
-                            let #var_ident = (*#var_ident).clone();
+                        .filter_map(|#item_binding| {
+                            let #pattern_tokens = (*#item_binding).clone();
                             if #filter_tokens {
                                 Some((#cloned_key, #value_tokens))
                             } else {
@@ -135,7 +145,7 @@ impl<'a> IrEmitter<'a> {
                 })
             }
             ComprehensionIterationPlan::IterCloned => Ok(quote! {
-                #iter.iter().cloned().map(|#var_ident| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
+                #iter.iter().cloned().map(|#pattern_tokens| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
             }),
             ComprehensionIterationPlan::RangeDirect | ComprehensionIterationPlan::RangeFilter => {
                 unreachable!("dict comprehensions do not use range-specific iteration plans")
@@ -152,5 +162,91 @@ impl<'a> IrEmitter<'a> {
                         == Some(incan_core::lang::builtins::BuiltinFnId::Range)))
             || matches!(&iterable.kind, IrExprKind::BuiltinCall { func, .. }
                 if matches!(func, super::super::super::expr::BuiltinFn::Range))
+    }
+
+    /// Choose the borrowed closure binding used before cloning a filtered non-range comprehension item.
+    fn filter_map_item_binding(pattern: &Pattern, pattern_tokens: &TokenStream) -> TokenStream {
+        if matches!(pattern, Pattern::Var(_)) {
+            pattern_tokens.clone()
+        } else {
+            quote! { __incan_comp_item }
+        }
+    }
+
+    /// Emit iterable expressions that already produce iterator items with the ownership shape a comprehension expects.
+    fn emit_direct_comprehension_iterable(&self, iterable: &TypedExpr) -> Result<Option<TokenStream>, EmitError> {
+        match &iterable.kind {
+            IrExprKind::BuiltinCall {
+                func: BuiltinFn::Enumerate,
+                args,
+            } => self.emit_owned_enumerate_iter(args).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// Emit `enumerate(xs)` for comprehension closures, cloning values to match the typechecker's owned tuple item
+    /// type.
+    fn emit_owned_enumerate_iter(&self, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
+        if let Some(arg) = args.first() {
+            let a = self.emit_expr(arg)?;
+            Ok(quote! {
+                #a.iter().enumerate().map(|(idx, value)| (idx as i64, value.clone()))
+            })
+        } else {
+            Ok(quote! { std::iter::empty::<(i64, ())>() })
+        }
+    }
+
+    /// Emit a comprehension over an iterable expression that already returns owned values for closure binding.
+    fn emit_direct_list_comp(
+        &self,
+        iter: TokenStream,
+        pattern: TokenStream,
+        elem: TokenStream,
+        filter: Option<&TypedExpr>,
+    ) -> Result<TokenStream, EmitError> {
+        if let Some(filter) = filter {
+            let filter_tokens = self.emit_expr(filter)?;
+            Ok(quote! {
+                (#iter)
+                    .filter_map(|#pattern| {
+                        if #filter_tokens {
+                            Some(#elem)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+        } else {
+            Ok(quote! { (#iter).map(|#pattern| #elem).collect::<Vec<_>>() })
+        }
+    }
+
+    /// Emit a dict comprehension over an iterable expression that already returns owned values for closure binding.
+    fn emit_direct_dict_comp(
+        &self,
+        iter: TokenStream,
+        pattern: TokenStream,
+        key: TokenStream,
+        value: TokenStream,
+        filter: Option<&TypedExpr>,
+    ) -> Result<TokenStream, EmitError> {
+        if let Some(filter) = filter {
+            let filter_tokens = self.emit_expr(filter)?;
+            Ok(quote! {
+                (#iter)
+                    .filter_map(|#pattern| {
+                        if #filter_tokens {
+                            Some((#key, #value))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+        } else {
+            Ok(quote! { (#iter).map(|#pattern| (#key, #value)).collect::<std::collections::HashMap<_, _>>() })
+        }
     }
 }

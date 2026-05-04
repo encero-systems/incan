@@ -1,5 +1,5 @@
 name: Setup Rust sccache
-description: Install sccache and configure Cargo/Rust jobs to use the GitHub Actions cache backend.
+description: Install sccache and configure Cargo/Rust jobs to use a local compiler cache.
 inputs:
   version:
     description: sccache release version to install.
@@ -14,5 +14,4 @@ runs:
     - name: Configure Rust sccache
       shell: bash
       run: |
-        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
         echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"

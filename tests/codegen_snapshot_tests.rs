@@ -1640,6 +1640,17 @@ fn test_issue389_for_tuple_unpack_enumerate_codegen() {
 }
 
 #[test]
+fn test_issue483_list_comp_tuple_unpack_enumerate_codegen() {
+    let source = load_test_file("issue483_list_comp_tuple_unpack_enumerate");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue483_list_comp_tuple_unpack_enumerate", rust_code);
+    assert!(
+        rust_code.contains(".map(|(idx, name)| Binding"),
+        "expected enumerate list comprehension to destructure tuple bindings in the map closure"
+    );
+}
+
+#[test]
 fn test_fixed_call_unpack_codegen() {
     let source = load_test_file("fixed_call_unpack");
     let rust_code = generate_rust(&source);

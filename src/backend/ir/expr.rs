@@ -208,14 +208,14 @@ pub enum IrExprKind {
     // List comprehension
     ListComp {
         element: Box<IrExpr>,
-        variable: String,
+        pattern: Box<Pattern>,
         iterable: Box<IrExpr>,
         filter: Option<Box<IrExpr>>,
     },
     DictComp {
         key: Box<IrExpr>,
         value: Box<IrExpr>,
-        variable: String,
+        pattern: Box<Pattern>,
         iterable: Box<IrExpr>,
         filter: Option<Box<IrExpr>>,
     },

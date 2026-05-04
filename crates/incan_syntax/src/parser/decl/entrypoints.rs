@@ -4,6 +4,7 @@ impl<'a> Parser<'a> {
     // Declarations
     // ========================================================================
 
+    /// Parse one top-level declaration, including declaration-shaped aliases.
     fn declaration(&mut self) -> Result<Spanned<Declaration>, CompileError> {
         let start = self.current_span().start;
 
@@ -57,6 +58,14 @@ impl<'a> Parser<'a> {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.starts_surface_function_decl() {
             Declaration::Function(self.function_decl(decorators, visibility)?)
+        } else if self.starts_alias_decl() {
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "Alias declarations cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Alias(self.alias_decl(visibility)?)
         } else if self.is_module_tests_header() {
             if visibility == Visibility::Public {
                 return Err(CompileError::syntax(
@@ -100,6 +109,32 @@ impl<'a> Parser<'a> {
             name,
             ty,
             value,
+        })
+    }
+
+    /// Return whether the current token pair starts a module-level alias declaration.
+    fn starts_alias_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Parse a module-level alias declaration.
+    fn alias_decl(&mut self, visibility: Visibility) -> Result<AliasDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in alias declaration")?;
+        let explicit_marker = self.match_ident_text("alias");
+        let target = self.import_path()?;
+        if target.segments.is_empty() || target.parent_levels > 0 || target.is_absolute {
+            return Err(errors::expected_token_message(
+                "Expected alias target to be a symbol path",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        Ok(AliasDecl {
+            visibility,
+            name,
+            target,
+            explicit_marker,
         })
     }
 

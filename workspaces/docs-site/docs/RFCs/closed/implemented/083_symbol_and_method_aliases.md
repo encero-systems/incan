@@ -1,6 +1,6 @@
 # RFC 083: Symbol and method aliases
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-29
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
 - **Issue:** [#437](https://github.com/dannys-code-corner/incan/issues/437)
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -511,6 +511,28 @@ Manifest and checked API metadata should grow explicit alias representations rat
 - **Formatter**: must format alias declarations deterministically and should preserve whether the author used the explicit RHS `alias` marker unless a later style rule says otherwise.
 - **LSP / Tooling**: should surface alias hover, go-to-definition, rename, completion, and diagnostics using both the alias name and canonical target where useful.
 - **Docs**: should document aliases as aliases rather than duplicate function, type, or method declarations.
+
+## Implementation Plan
+
+1. Add shared AST/parser/formatter support for top-level alias declarations and same-type method aliases, preserving the optional RHS `alias` marker.
+2. Extend symbol collection and typechecking so aliases resolve after declarations/imports/type members are known, reject invalid targets and cycles, and expose projected target behavior at use sites.
+3. Lower aliases without creating wrapper declarations, emit backend-native aliases or re-exports where needed, and preserve private alias calls as canonical target calls.
+4. Add explicit top-level and method alias records to library manifests, checked API metadata, and tooling-facing summaries instead of duplicating target declarations.
+5. Document the feature, update release notes, bump the development version, and verify with focused alias tests plus the repository pre-commit suite.
+
+## Implementation Log
+
+- [x] RFC intake reviewed for In Progress transition; no unresolved design questions found.
+- [x] Parser / AST / formatter support for top-level aliases.
+- [x] Parser / AST / formatter support for same-type method aliases.
+- [x] Symbol resolution and typechecking for supported top-level alias targets.
+- [x] Symbol resolution and typechecking for same-type method aliases.
+- [x] Diagnostics for arbitrary assignment, unsupported targets, duplicates, cycles, unresolved targets, and public aliases to private targets.
+- [x] IR lowering and emission preserve alias behavior without wrapper functions or methods.
+- [x] Library manifest and checked API metadata preserve alias identity.
+- [x] Import/export behavior supports public aliases as aliases.
+- [x] Docs, release notes, and version bump updated.
+- [x] Focused alias tests and full pre-commit verification pass.
 
 ## Design Decisions
 

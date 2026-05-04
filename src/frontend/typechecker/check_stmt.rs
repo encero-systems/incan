@@ -1103,7 +1103,11 @@ impl TypeChecker {
     ///
     /// The parser currently admits only bindings, `_`, and tuple bindings, but the exhaustive match keeps hand-built
     /// ASTs from silently reaching lowering with unsupported pattern forms.
-    fn define_for_pattern_bindings(&mut self, pattern: &Spanned<Pattern>, ty: &ResolvedType) {
+    pub(in crate::frontend::typechecker) fn define_for_pattern_bindings(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        ty: &ResolvedType,
+    ) {
         match &pattern.node {
             Pattern::Binding(name) => {
                 self.symbols.define(Symbol {

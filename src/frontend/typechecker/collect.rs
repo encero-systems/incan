@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
+use crate::frontend::diagnostics::CompileError;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
@@ -15,8 +16,8 @@ pub(super) mod decorators;
 mod stdlib_imports;
 
 use self::decl_helpers::{
-    collect_fields, collect_method_overloads, collect_methods, collect_methods_from_overloads, inject_json_methods,
-    inject_validate_methods,
+    collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
+    inject_json_methods, inject_validate_methods,
 };
 
 type InheritedMembers = (
@@ -74,6 +75,10 @@ impl TypeChecker {
                 self.validate_root_namespace(&tr.name, decl.span);
                 self.collect_trait(tr, decl.span);
             }
+            Declaration::Alias(alias) => {
+                self.validate_root_namespace(&alias.name, decl.span);
+                self.collect_alias(alias, decl.span);
+            }
             Declaration::TypeAlias(a) => {
                 self.validate_root_namespace(&a.name, decl.span);
                 // Register the alias name as a known type so other declarations can reference it.
@@ -97,6 +102,79 @@ impl TypeChecker {
                 self.collect_function(func, decl.span);
             }
             Declaration::Docstring(_) | Declaration::TestModule(_) => {} // Docstrings/tests don't need root collection
+        }
+    }
+
+    /// Register a module-level alias after concrete symbols have been collected.
+    fn collect_alias(&mut self, alias: &AliasDecl, span: Span) {
+        let target_name = alias.target.segments.join(".");
+        let Some(kind) = self.alias_target_symbol_kind(&alias.target.segments) else {
+            self.errors.push(CompileError::type_error(
+                format!("Alias '{}' targets unknown symbol '{}'", alias.name, target_name),
+                span,
+            ));
+            return;
+        };
+
+        let kind = match kind {
+            SymbolKind::Function(info) => SymbolKind::Function(info),
+            SymbolKind::Type(info) => SymbolKind::Type(info),
+            SymbolKind::Trait(info) => SymbolKind::Trait(info),
+            other => {
+                self.errors.push(CompileError::type_error(
+                    format!("Alias '{}' targets unsupported symbol '{}'", alias.name, target_name),
+                    span,
+                ));
+                tracing::debug!(?other, alias = %alias.name, target = %target_name, "unsupported alias target");
+                return;
+            }
+        };
+
+        self.symbols.define(Symbol {
+            name: alias.name.clone(),
+            kind,
+            span,
+            scope: 0,
+        });
+    }
+
+    /// Resolve an alias target path to the semantic symbol kind it projects.
+    ///
+    /// Single-segment targets use ordinary module-scope lookup. Qualified targets must begin with an imported module
+    /// binding and are resolved through stdlib or `pub::` library metadata so `lib.name` cannot accidentally fall back
+    /// to an unrelated local `name`.
+    fn alias_target_symbol_kind(&mut self, segments: &[String]) -> Option<SymbolKind> {
+        match segments {
+            [name] => self.lookup_symbol(name).map(|symbol| symbol.kind.clone()),
+            [module_name, rest @ ..] => {
+                let member = rest.last()?;
+                let module_path = {
+                    let symbol = self.lookup_symbol(module_name)?;
+                    let SymbolKind::Module(info) = &symbol.kind else {
+                        return None;
+                    };
+                    if info.is_python {
+                        return None;
+                    }
+                    let mut module_path = info.path.clone();
+                    module_path.extend_from_slice(&rest[..rest.len().saturating_sub(1)]);
+                    module_path
+                };
+                if let Some(info) = self.stdlib_cache.lookup_function(&module_path, member) {
+                    return Some(SymbolKind::Function(info));
+                }
+                if let Some(info) = self.stdlib_cache.lookup_type(&module_path, member) {
+                    return Some(SymbolKind::Type(info));
+                }
+                if let Some(info) = self.stdlib_cache.lookup_trait(&module_path, member) {
+                    return Some(SymbolKind::Trait(info));
+                }
+                if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
+                    return self.lookup_pub_library_symbol_member(&module_path[1], member);
+                }
+                None
+            }
+            [] => None,
         }
     }
 
@@ -175,6 +253,7 @@ impl TypeChecker {
             &field_order,
             &derives,
         );
+        let method_aliases = collect_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
         let trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
 
         self.symbols.define(Symbol {
@@ -187,6 +266,7 @@ impl TypeChecker {
                 fields,
                 methods,
                 method_overloads,
+                method_aliases,
             })),
             span,
             scope: 0,
@@ -209,6 +289,7 @@ impl TypeChecker {
         // Inject JSON methods based on derives
         let derives = self.extract_derive_names(&class.decorators);
         inject_json_methods(&mut methods, &mut method_overloads, &class.name, &derives);
+        let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
         let trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
 
         self.symbols.define(Symbol {
@@ -222,6 +303,7 @@ impl TypeChecker {
                 fields,
                 methods,
                 method_overloads,
+                method_aliases,
             })),
             span,
             scope: 0,
@@ -261,7 +343,9 @@ impl TypeChecker {
 
     /// Register a trait declaration with its method signatures, supertraits, and requirements.
     fn collect_trait(&mut self, tr: &TraitDecl, span: Span) {
-        let methods = collect_methods(&tr.methods, self, None, &tr.type_params);
+        let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params);
+        let mut methods = collect_methods_from_overloads(&method_overloads);
+        let method_aliases = collect_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
         let requires = self.extract_requires(&tr.decorators);
         if !tr.traits.is_empty() {
             self.pending_trait_supertraits
@@ -274,6 +358,7 @@ impl TypeChecker {
                 type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                 supertraits: Vec::new(),
                 methods,
+                method_aliases,
                 requires,
             }),
             span,
@@ -506,6 +591,7 @@ impl TypeChecker {
                 has_interop: !nt.interop_edges.is_empty(),
                 underlying: underlying.clone(),
                 method_rebindings,
+                method_aliases: HashMap::new(),
                 methods: HashMap::new(), // Empty for now
             })),
             span,
@@ -513,7 +599,9 @@ impl TypeChecker {
         });
 
         // Now collect methods - they can reference the newtype name
-        let methods = collect_methods(&nt.methods, self, Some(&nt.name), &nt.type_params);
+        let mut method_overloads = collect_method_overloads(&nt.methods, self, Some(&nt.name), &nt.type_params);
+        let mut methods = collect_methods_from_overloads(&method_overloads);
+        let method_aliases = collect_method_aliases(&nt.method_aliases, &mut methods, &mut method_overloads);
 
         // Update the symbol with the collected methods
         if let Some(sym_id) = self.symbols.lookup(&nt.name)
@@ -521,6 +609,7 @@ impl TypeChecker {
             && let SymbolKind::Type(TypeInfo::Newtype(info)) = &mut sym.kind
         {
             info.methods = methods;
+            info.method_aliases = method_aliases;
         }
     }
 

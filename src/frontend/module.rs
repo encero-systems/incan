@@ -374,6 +374,11 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     exports.push(ExportedSymbol::Type(a.name.clone()));
                 }
             }
+            Declaration::Alias(a) => {
+                if matches!(a.visibility, Visibility::Public) {
+                    exports.push(ExportedSymbol::Reexported(a.name.clone()));
+                }
+            }
             Declaration::Newtype(n) => {
                 if matches!(n.visibility, Visibility::Public) {
                     exports.push(ExportedSymbol::Type(n.name.clone()));
@@ -830,6 +835,7 @@ source-root = "library"
             traits: vec![],
             docstring: None,
             fields: vec![],
+            method_aliases: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -856,6 +862,7 @@ source-root = "library"
             traits: vec![],
             docstring: None,
             fields: vec![],
+            method_aliases: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -939,6 +946,7 @@ source-root = "library"
             underlying: make_spanned(Type::Simple("i64".to_string())),
             docstring: None,
             rebindings: vec![],
+            method_aliases: vec![],
             interop_edges: vec![],
             methods: vec![],
         };
@@ -964,6 +972,7 @@ source-root = "library"
             type_params: vec![],
             traits: vec![],
             docstring: None,
+            method_aliases: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -1127,6 +1136,7 @@ source-root = "library"
             traits: vec![],
             docstring: None,
             fields: vec![],
+            method_aliases: vec![],
             methods: vec![],
         };
         let func = FunctionDecl {
@@ -1146,6 +1156,7 @@ source-root = "library"
             type_params: vec![],
             traits: vec![],
             docstring: None,
+            method_aliases: vec![],
             methods: vec![],
         };
         let program = Program {

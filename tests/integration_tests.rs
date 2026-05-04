@@ -419,6 +419,57 @@ def check_flags(ready: bool, done: bool) -> None:
     Ok(())
 }
 
+/// Regression (GitHub #484): parenthesized logical chains should wrap at obvious boolean breakpoints.
+#[test]
+fn test_cli_fmt_wraps_long_parenthesized_logical_expression_chain() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let path = dir.join("long_logical_chain.incn");
+    fs::write(
+        &path,
+        r#"model Item:
+    kind_name: str
+    predicate_kind_name: str
+    source_name: str
+
+
+def matches(item: Item) -> bool:
+    return (item.kind_name == "filter" and item.predicate_kind_name == "bool_literal" and item.source_name == "rewritten_prism_node")
+"#,
+    )?;
+
+    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    assert!(status.success(), "incan fmt failed");
+
+    let formatted = fs::read_to_string(&path)?;
+    let expected = r#"model Item:
+    kind_name: str
+    predicate_kind_name: str
+    source_name: str
+
+
+def matches(item: Item) -> bool:
+    return (
+        item.kind_name == "filter"
+        and item.predicate_kind_name == "bool_literal"
+        and item.source_name == "rewritten_prism_node"
+    )
+"#;
+    assert_eq!(formatted, expected);
+    assert!(
+        formatted.lines().all(|line| line.len() <= 120),
+        "expected formatted output to stay within 120 columns:\n{formatted}"
+    );
+
+    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    assert!(
+        output.status.success(),
+        "expected wrapped expression to parse/typecheck after CLI fmt; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    Ok(())
+}
+
 /// Regression (GitHub #289): `incan fmt` must preserve escaped newlines in f-strings as textual `\\n`.
 #[test]
 fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -1975,6 +2026,39 @@ mod codegen_tests {
     }
 
     #[test]
+    fn test_method_alias_codegen_rewrites_to_target_method() {
+        let source = r#"
+model Stats:
+  value: int
+  mean = avg
+
+  def avg(self) -> int:
+    return self.value
+
+def main() -> None:
+  let stats = Stats(value=10)
+  println(stats.mean())
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lex failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains(".avg("),
+            "expected method alias call to lower to target method, got:\n{rust_code}"
+        );
+        assert!(
+            !rust_code.contains(".mean("),
+            "method alias must not emit an independent wrapper call, got:\n{rust_code}"
+        );
+    }
+
+    #[test]
     fn test_run_c_import_this() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args(["run", "-c", "import this"])
@@ -2223,6 +2307,19 @@ def describe_wide_chain(value: int | float | str | bool) -> str:
         return value.upper()
     return "unknown"
 
+def describe_wide_match(value: int | float | str | bool) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "bool:true"
+            return "bool:false"
+        int(n) =>
+            return str(n)
+        float(f) =>
+            return str(f)
+        str(s) =>
+            return s.upper()
+
 def describe_optional_narrow(value: int | str | None) -> str:
     if isinstance(value, int):
         return "number"
@@ -2246,6 +2343,10 @@ def main() -> None:
     println(describe_chain(False))
     println(describe_wide_chain("wide-chain"))
     println(describe_wide_chain(1.25))
+    println(describe_wide_match(True))
+    println(describe_wide_match(7))
+    println(describe_wide_match(2.5))
+    println(describe_wide_match("match"))
     println(describe_optional_narrow("optional"))
     println(describe_optional_narrow(None))
 "#,
@@ -2278,6 +2379,10 @@ def main() -> None:
                 "false",
                 "WIDE-CHAIN",
                 "float",
+                "bool:true",
+                "7",
+                "2.5",
+                "MATCH",
                 "OPTIONAL",
                 "missing"
             ],
@@ -8965,6 +9070,36 @@ def main() -> None:\n  bind([\"a\", \"bb\"])\n",
         assert!(
             project_build.status.success(),
             "expected for-loop tuple unpacking with enumerate to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&project_build.stdout),
+            String::from_utf8_lossy(&project_build.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_succeeds_for_list_comp_tuple_unpack_enumerate() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("list_comp_tuple_unpack_enumerate_project");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"list_comp_tuple_unpack_enumerate\"\nversion = \"0.1.0\"\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            "model Binding:\n  name: str\n  output_index: int\n  expr_index: int\n\n\
+def field_ref(index: int) -> int:\n  return index\n\n\
+pub def bind(xs: list[str]) -> list[Binding]:\n  return [Binding(name=name, output_index=idx, expr_index=field_ref(idx)) for idx, name in enumerate(xs)]\n\n\
+def main() -> None:\n  bind([\"a\", \"bb\"])\n",
+        )?;
+
+        let out_dir = project_root.join("out");
+        let project_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            project_build.status.success(),
+            "expected list-comprehension tuple unpacking with enumerate to build successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
         );

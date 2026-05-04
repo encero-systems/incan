@@ -115,6 +115,11 @@ impl AstLowering {
                 is_rusttype: false,
                 interop_edges: Vec::new(),
             },
+            ast::Declaration::Alias(a) => IrDeclKind::SymbolAlias {
+                visibility: Self::map_visibility(a.visibility),
+                name: a.name.clone(),
+                target_path: a.target.segments.clone(),
+            },
             ast::Declaration::Newtype(n) => {
                 if n.is_rusttype {
                     let interop_edges = self.lower_interop_edges(&n.interop_edges)?;

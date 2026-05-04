@@ -258,12 +258,14 @@ fn module_key(path_segments: &[String]) -> String {
     canonicalize_source_module_segments(path_segments).join("_")
 }
 
+/// Rename one checked export while preserving its semantic export kind.
 fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
     let mut renamed = export.clone();
     renamed.name = exported_name.to_string();
 
     match &mut renamed.kind {
         CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
+        CheckedExportKind::Alias(alias_export) => alias_export.name = exported_name.to_string(),
         CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
         CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
         CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),

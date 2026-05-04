@@ -110,6 +110,8 @@ pub struct AstLowering {
     pub(super) non_linear_context_depth: usize,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Module-level symbol aliases mapped from alias name to canonical target name.
+    pub(super) symbol_aliases: HashMap<String, String>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
     pub(super) stdlib_cache: StdlibAstCache,
     /// `rusttype` underlying Rust type lookup by alias name.
@@ -222,6 +224,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
+            symbol_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
             rusttype_underlying: HashMap::new(),
             rusttype_interop_edges: HashMap::new(),
@@ -390,6 +393,14 @@ impl AstLowering {
             .unwrap_or_else(|| method_name.to_string())
     }
 
+    /// Convert parsed same-type method aliases into lowering-time alias-to-target maps.
+    fn method_alias_rebindings(aliases: &[ast::Spanned<ast::MethodAliasDecl>]) -> HashMap<String, String> {
+        aliases
+            .iter()
+            .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+            .collect()
+    }
+
     /// RFC 021: Register field aliases for a struct/model/class.
     ///
     /// Called during model/class lowering to populate `struct_field_aliases`.
@@ -457,6 +468,19 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
+        self.symbol_aliases = program
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let ast::Declaration::Alias(alias) = &decl.node else {
+                    return None;
+                };
+                let [target] = alias.target.segments.as_slice() else {
+                    return None;
+                };
+                Some((alias.name.clone(), target.clone()))
+            })
+            .collect();
 
         // RFC 023: propagate rust.module() path from AST to IR.
         ir_program.rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
@@ -473,6 +497,22 @@ impl AstLowering {
                 let method_names: Vec<String> = t.methods.iter().map(|m| m.node.name.clone()).collect();
                 self.trait_methods.insert(t.name.clone(), method_names);
                 self.trait_decls.insert(t.name.clone(), t.clone());
+                let aliases = Self::method_alias_rebindings(&t.method_aliases);
+                if !aliases.is_empty() {
+                    self.type_method_rebindings.insert(t.name.clone(), aliases);
+                }
+            }
+            if let ast::Declaration::Model(ref m) = decl.node {
+                let aliases = Self::method_alias_rebindings(&m.method_aliases);
+                if !aliases.is_empty() {
+                    self.type_method_rebindings.insert(m.name.clone(), aliases);
+                }
+            }
+            if let ast::Declaration::Class(ref c) = decl.node {
+                let aliases = Self::method_alias_rebindings(&c.method_aliases);
+                if !aliases.is_empty() {
+                    self.type_method_rebindings.insert(c.name.clone(), aliases);
+                }
             }
             if let ast::Declaration::Newtype(ref n) = decl.node {
                 let rebindings: HashMap<String, String> = n
@@ -483,6 +523,8 @@ impl AstLowering {
                             .map(|target| (rebinding.node.name.clone(), target))
                     })
                     .collect();
+                let mut rebindings = rebindings;
+                rebindings.extend(Self::method_alias_rebindings(&n.method_aliases));
                 if !rebindings.is_empty() {
                     self.type_method_rebindings.insert(n.name.clone(), rebindings);
                 }
@@ -562,6 +604,13 @@ impl AstLowering {
                 ir_program
                     .function_registry
                     .register(f.name.clone(), params, return_type);
+            } else if let ast::Declaration::Alias(ref alias) = decl.node
+                && let [target] = alias.target.segments.as_slice()
+                && let Some(signature) = ir_program.function_registry.get(target).cloned()
+            {
+                ir_program
+                    .function_registry
+                    .register(alias.name.clone(), signature.params, signature.return_type);
             }
         }
 

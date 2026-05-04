@@ -107,7 +107,7 @@ impl AstLowering {
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
-    fn define_for_pattern_bindings(&mut self, pattern: &ast::Pattern, ty: &IrType) {
+    pub(in crate::backend::ir::lower) fn define_for_pattern_bindings(&mut self, pattern: &ast::Pattern, ty: &IrType) {
         match pattern {
             ast::Pattern::Binding(name) => self.define_local_binding(name.clone(), ty.clone(), false),
             ast::Pattern::Wildcard => {}

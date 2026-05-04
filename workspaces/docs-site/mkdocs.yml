@@ -135,6 +135,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
+          - Symbol aliases: language/reference/symbol_aliases.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md

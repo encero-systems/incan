@@ -22,8 +22,7 @@ def display_name(user: User) -> str:
     return user.name.strip()
 ```
 
-This function can still be wrong if the program built a bad `User`, but there is no expected runtime failure for the
-caller to handle. The signature says: pass a `User`, get a `str`.
+This function can still be wrong if the program built a bad `User`, but there is no expected runtime failure for the caller to handle. The signature says: pass a `User`, get a `str`.
 
 ## Use `Option` for absence
 
@@ -42,8 +41,7 @@ def print_user_if_present(id: int, users: list[User]) -> None:
         None => println("no user found")
 ```
 
-The caller decides whether `None` is acceptable. This is better than inventing an error when the outcome is simply "not
-there".
+The caller decides whether `None` is acceptable. This is better than inventing an error when the outcome is simply "not there".
 
 ## Use `Result` for recoverable failure
 
@@ -78,8 +76,7 @@ def explain_signup(id: int, raw_name: str, users: list[User]) -> str:
 
 ## Propagate when the caller owns the decision
 
-Use `?` when the current function cannot make the right recovery decision. The containing function must also return a
-compatible `Result`.
+Use `?` when the current function cannot make the right recovery decision. The containing function must also return a compatible `Result`.
 
 ```incan
 from std.fs import IoError, Path
@@ -98,11 +95,9 @@ The `?` is visible in the body, and the fallibility is visible in the return typ
 
 ## Convert at boundaries
 
-Low-level functions should usually return low-level errors. Boundary functions should convert those errors into the
-language of the caller.
+Low-level functions should usually return low-level errors. Boundary functions should convert those errors into the language of the caller.
 
-That keeps public APIs stable and caller-oriented. A CLI should not leak parser, filesystem, or backend implementation
-types when the useful caller-facing question is whether config can be read or validated.
+That keeps public APIs stable and caller-oriented. A CLI should not leak parser, filesystem, or backend implementation types when the useful caller-facing question is whether config can be read or validated.
 
 ```incan
 from std.fs import IoError, Path
@@ -128,13 +123,11 @@ def load_cli_user(path: Path, users: list[User]) -> Result[User, CliError]:
     return Ok(user)
 ```
 
-Only the boundary needs to know whether config came from files, environment variables, network calls, or generated
-defaults.
+Only the boundary needs to know whether config came from files, environment variables, network calls, or generated defaults.
 
 ## Keep panics for invariants
 
-`unwrap()` says "this cannot fail here." If it can fail because of user input, config, files, network state, or ordinary
-runtime data, use `Result` or `Option` instead.
+`unwrap()` says "this cannot fail here." If it can fail because of user input, config, files, network state, or ordinary runtime data, use `Result` or `Option` instead.
 
 ```incan
 def first_registered_user(users: list[User]) -> User:

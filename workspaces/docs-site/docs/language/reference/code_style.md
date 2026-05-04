@@ -116,6 +116,8 @@ Use exactly `2` blank lines around top-level body-bearing type-like and callable
 - `newtype`
 - `rusttype`
 
+Top-level aliases are declaration syntax, but they are not body-bearing declarations. Keep them grouped tightly with nearby imports, constants, statics, or related declarations unless they border one of the body-bearing declarations above.
+
 ```incan
 def parse_user(raw: str) -> User:
     ...

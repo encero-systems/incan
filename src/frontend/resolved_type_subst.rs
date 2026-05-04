@@ -87,5 +87,6 @@ pub(crate) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, Re
         return_type: substitute_resolved_type(&info.return_type, map),
         is_async: info.is_async,
         has_body: info.has_body,
+        alias_of: info.alias_of.clone(),
     }
 }

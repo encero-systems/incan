@@ -6,10 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata, LibraryExports,
-    LibraryManifest, LibraryManifestError, ModelExport, NewtypeExport, SoftKeywordActivation, SoftKeywordExports,
-    StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration,
-    VocabProviderManifest,
+    AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
+    LibraryExports, LibraryManifest, LibraryManifestError, ModelExport, NewtypeExport, SoftKeywordActivation,
+    SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact, VocabExports,
+    VocabKeywordRegistration, VocabProviderManifest,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,6 +28,8 @@ pub(super) struct RawLibraryManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct RawLibraryExports {
+    #[serde(default)]
+    pub(super) aliases: Vec<AliasExport>,
     #[serde(default)]
     pub(super) models: Vec<ModelExport>,
     #[serde(default)]
@@ -77,6 +79,7 @@ impl RawLibraryManifest {
             incan_version: semantic.incan_version.clone(),
             manifest_format: semantic.manifest_format,
             exports: RawLibraryExports {
+                aliases: semantic.exports.aliases.clone(),
                 models: semantic.exports.models.clone(),
                 classes: semantic.exports.classes.clone(),
                 functions: semantic.exports.functions.clone(),
@@ -110,6 +113,7 @@ impl RawLibraryManifest {
             incan_version: self.incan_version,
             manifest_format: self.manifest_format,
             exports: LibraryExports {
+                aliases: self.exports.aliases,
                 models: self.exports.models,
                 classes: self.exports.classes,
                 functions: self.exports.functions,

@@ -22,7 +22,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.3.0-dev.27"
+version = "0.3.0-dev.29"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.92"
@@ -71,7 +71,7 @@ incan_semantics_core = { path = "crates/incan_semantics_core" }
 incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
 
 # LSP server implementation
-tower-lsp = { version = "0.17", optional = true }  # TODO: update to latest version
+tower-lsp = { version = "0.20", optional = true }
 # Async runtime (for LSP and generated async code)
 tokio = { version = "1", features = ["full"], optional = true }
 # JSON serialization (for LSP protocol)
