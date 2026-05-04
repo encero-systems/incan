@@ -3230,6 +3230,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logical-expression-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logical Expression Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       Limitations
@@ -4629,6 +4638,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logical-expression-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logical Expression Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       Limitations
@@ -4741,6 +4759,7 @@ In particular, the current formatter contract includes:</p>
 <ul>
 <li><code>4</code>-space indentation</li>
 <li>a <code>120</code>-character line-length target</li>
+<li>best-effort wrapping for long parenthesized logical expression chains at <code>and</code> / <code>or</code> breakpoints</li>
 <li>top-level double-blank-line spacing only where the style guide permits it</li>
 <li>preservation of one authored readability gap inside ordinary code blocks</li>
 <li>comment placement that remains same-scope and structure-aware</li>
@@ -4807,6 +4826,15 @@ Configuration file support (for example <code>incan.toml</code>) is planned for 
 </ul>
 <p>The same formatting behavior applies through both <code>incan fmt</code> and the library formatter API.
 <code>FormatConfig</code> controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.</p>
+<h2 id="logical-expression-chains">Logical Expression Chains<a class="headerlink" href="#logical-expression-chains" title="Permanent link">&para;</a></h2>
+<p>When a parenthesized logical expression chain exceeds the configured line-length target, <code>incan fmt</code> may split the chain onto multiple lines with the <code>and</code> / <code>or</code> operators leading each continuation line:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="p">(</span>
+    <span class="n">item</span><span class="o">.</span><span class="n">kind_name</span> <span class="o">==</span> <span class="s2">&quot;filter&quot;</span>
+    <span class="ow">and</span> <span class="n">item</span><span class="o">.</span><span class="n">predicate_kind_name</span> <span class="o">==</span> <span class="s2">&quot;bool_literal&quot;</span>
+    <span class="ow">and</span> <span class="n">item</span><span class="o">.</span><span class="n">source_name</span> <span class="o">==</span> <span class="s2">&quot;rewritten_prism_node&quot;</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Short parenthesized logical expressions remain inline.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <h3 id="parse-required">Parse-required<a class="headerlink" href="#parse-required" title="Permanent link">&para;</a></h3>
 <p><strong>The formatter requires valid syntax.</strong>
