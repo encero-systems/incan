@@ -1110,6 +1110,28 @@ async def foo() -> None:
     }
 
     #[test]
+    fn test_parse_async_fixture_with_yield_ok() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture(scope="function")
+async def resource() -> int:
+  yield 1
+"#;
+        let program = parse_str(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let Declaration::Function(func) = &program.declarations[2].node else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(func.is_async());
+        assert!(matches!(
+            &func.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Yield(Some(_)))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_await_with_std_async_import_ok() -> Result<(), Vec<CompileError>> {
         let source = r#"
 from std.async.time import sleep

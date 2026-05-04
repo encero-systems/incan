@@ -945,8 +945,7 @@ impl TypeChecker {
         self.apply_branch_refinements(incoming_refinements);
 
         let cond_ty = self.check_expr(expr);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
+        self.validate_truthiness_condition(&cond_ty, expr.span);
         let true_narrowing = self.condition_branch_narrowing(expr);
         let false_refinement = true_narrowing.as_ref().cloned().and_then(Self::branch_false_refinement);
 
@@ -986,13 +985,13 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check a statement-form `while`, including ordinary truthiness and pattern-driven `while let` conditions.
     fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
         match &while_stmt.condition {
             // ---- Context: ordinary boolean `while` condition ----
             Condition::Expr(expr) => {
                 let cond_ty = self.check_expr(expr);
-                let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-                ensure_bool_condition(&cond_ty, expr.span, is_compatible, &mut self.errors);
+                self.validate_truthiness_condition(&cond_ty, expr.span);
 
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.push_loop_context(LoopContextKind::Statement, None);
@@ -1031,11 +1030,12 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Type-check a statement-form `for`, binding the loop pattern from builtin collections or RFC 068 iteration hooks.
     fn check_for_stmt(&mut self, for_stmt: &ForStmt) {
         let iter_ty = self.check_expr(&for_stmt.iter);
 
         // Infer element type from iterator
-        let elem_ty = self.infer_iterator_element_type(&iter_ty);
+        let elem_ty = self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
@@ -1349,5 +1349,23 @@ impl TypeChecker {
             ResolvedType::Str => ResolvedType::Str, // String iteration gives chars/strings
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
+    pub(crate) fn infer_iterator_element_type_from_expr(
+        &mut self,
+        iter_expr: &Spanned<Expr>,
+        iter_ty: &ResolvedType,
+    ) -> ResolvedType {
+        let elem_ty = self.infer_iterator_element_type(iter_ty);
+        if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
+            return elem_ty;
+        }
+        if self.is_user_operator_receiver(iter_ty) {
+            return self
+                .resolve_iteration_protocol(iter_ty, iter_expr.span)
+                .unwrap_or(ResolvedType::Unknown);
+        }
+        elem_ty
     }
 }

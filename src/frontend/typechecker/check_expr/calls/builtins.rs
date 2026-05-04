@@ -145,7 +145,16 @@ impl TypeChecker {
                     Some(ResolvedType::Unit)
                 }
                 BuiltinFnId::Len => {
-                    self.check_call_args(args);
+                    if args.len() != 1 {
+                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
+                        self.check_call_args(args);
+                        return Some(ResolvedType::Int);
+                    }
+                    let arg_expr = Self::call_arg_expr(&args[0]);
+                    let arg_ty = self.check_expr(arg_expr);
+                    if self.is_user_operator_receiver(&arg_ty) {
+                        let _ = self.resolve_len_dunder(&arg_ty, call_span);
+                    }
                     Some(ResolvedType::Int)
                 }
                 BuiltinFnId::Sum => {
@@ -244,8 +253,6 @@ impl TypeChecker {
                                         | CollectionTypeId::Set
                                         | CollectionTypeId::FrozenSet
                                         | CollectionTypeId::Tuple
-                                        | CollectionTypeId::Option
-                                        | CollectionTypeId::Result
                                 )
                             )
                     ) || matches!(

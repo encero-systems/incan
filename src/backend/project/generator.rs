@@ -50,6 +50,8 @@ pub struct ProjectGenerator {
     pub(super) output_dir: PathBuf,
     /// Project name
     pub(super) name: String,
+    /// Optional Cargo package name when it should differ from the generated target name.
+    pub(super) package_name: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
     /// Enabled stdlib feature flags for the generated project (for example `json`, `async`, `web`).
@@ -84,6 +86,7 @@ impl ProjectGenerator {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             name: name.to_string(),
+            package_name: None,
             is_binary,
             stdlib_features: Vec::new(),
             dependencies: Vec::new(),
@@ -106,6 +109,11 @@ impl ProjectGenerator {
         normalized.sort();
         normalized.dedup();
         self.stdlib_features = normalized;
+    }
+
+    /// Override the Cargo package name while preserving the generated Rust target name.
+    pub fn set_package_name(&mut self, package_name: Option<String>) {
+        self.package_name = package_name;
     }
 
     /// Set resolved Rust dependencies.

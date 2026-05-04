@@ -2,6 +2,8 @@
 
 This page documents stdlib traits for `obj[key]`, `obj[key] = value`, and slicing.
 
+`Index` and `IndexMut` are the canonical trait names for indexed read and write capabilities. The `GetItem` and `SetItem` names in `std.traits.ops` are compatibility/operator aliases for the same hooks.
+
 ## Index (read)
 
 - **Syntax**: `obj[key]`
@@ -25,7 +27,7 @@ column = table["name"]  # Index[str, str]
 first = table[0]        # Index[int, str]
 ```
 
-If two `__getitem__` methods are backed by different instantiations of the same `Index` trait family, the compiler selects the method from the key expression type. This is not general method overloading: same-name hooks from unrelated trait families are rejected unless a future language feature adds explicit qualification or aliasing.
+When explicit adoption uses multiple `Index` instantiations, the key expression type identifies the intended indexed access shape. This is not general method overloading: same-name hooks from unrelated trait families are rejected unless a future language feature adds explicit qualification or aliasing.
 
 ## IndexMut (write)
 
@@ -40,5 +42,3 @@ If two `__getitem__` methods are backed by different instantiations of the same 
 Incan’s long-term direction is slice-aware `__getitem__` (Python-style).
 The current stdlib vocabulary includes `Sliceable[T]` and `__getslice__`, which will be aligned with `__getitem__`
 as the feature is finalized.
-
-

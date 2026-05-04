@@ -1,5 +1,9 @@
 //! Canonical stdlib module names.
-use super::keywords;
+use super::{
+    derives::{self, DeriveId},
+    keywords,
+    traits::{self, TraitId},
+};
 
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
@@ -78,6 +82,90 @@ pub enum StdlibExtraCrateSource {
     /// Registry version dependency.
     Version(&'static str),
 }
+
+/// Builtin trait identity for stdlib method-stub lookup.
+///
+/// Most source-defined trait contracts are canonical builtin traits. `Copy` is represented as a derive vocabulary item
+/// today because it has no separate [`TraitId`] entry, but still needs the same empty-stub fallback as trait contracts
+/// such as `Clone` and `Default`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdlibTraitMethodOwner {
+    /// Builtin trait vocabulary item.
+    Trait(TraitId),
+    /// Builtin derive vocabulary item that also names a source-defined stdlib trait.
+    Derive(DeriveId),
+}
+
+impl StdlibTraitMethodOwner {
+    /// Return the canonical source spelling used to match this owner against a typechecker trait name.
+    fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Trait(id) => traits::as_str(id),
+            Self::Derive(id) => derives::as_str(id),
+        }
+    }
+}
+
+/// Registry entry for stdlib modules whose trait stubs provide fallback method signatures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StdlibTraitMethodModule {
+    /// Builtin trait or derive vocabulary item resolved by canonical spelling.
+    pub owner: StdlibTraitMethodOwner,
+    /// Canonical segmented stdlib module path, e.g. `["std", "derives", "copying"]`.
+    pub module_segments: &'static [&'static str],
+}
+
+const STDLIB_DERIVES_COPYING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "copying"];
+const STDLIB_DERIVES_STRING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "string"];
+const STDLIB_DERIVES_COMPARISON_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "comparison"];
+
+/// Builtin stdlib trait-method fallback registry.
+///
+/// This intentionally covers only the derive-tree source-defined traits that previously needed fallback from empty
+/// symbol-table stubs. Other stdlib trait families, such as `std.traits.convert`, do not get implicit fallback unless
+/// they are added here deliberately.
+pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Clone),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Derive(DeriveId::Copy),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Default),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Debug),
+        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Display),
+        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Eq),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialEq),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Ord),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialOrd),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Hash),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+];
 
 /// Registry of top-level stdlib namespaces.
 ///
@@ -178,6 +266,25 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
+}
+
+/// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
+///
+/// The returned segments can be passed to the typechecker's stdlib cache to load the full `.incn` trait declaration
+/// when an imported symbol-table stub has no methods. Unknown traits and builtin traits outside the registered
+/// fallback surface return `None`.
+#[must_use]
+pub fn trait_method_module_segments(trait_name: &str) -> Option<Vec<String>> {
+    STDLIB_TRAIT_METHOD_MODULES
+        .iter()
+        .find(|entry| entry.owner.canonical_name() == trait_name)
+        .map(|entry| {
+            entry
+                .module_segments
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect()
+        })
 }
 
 /// Resolve soft keywords activated by a stdlib import path.
@@ -352,6 +459,57 @@ mod tests {
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
         assert!(hint.contains(&"std.rust".to_string()));
+    }
+
+    #[test]
+    fn trait_method_module_lookup_preserves_derive_fallback_surface() {
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Clone)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(derives::as_str(DeriveId::Copy)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Default)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Debug)),
+            Some(segs(&["std", "derives", "string"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Display)),
+            Some(segs(&["std", "derives", "string"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Eq)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::PartialEq)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Ord)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::PartialOrd)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Hash)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+    }
+
+    #[test]
+    fn trait_method_module_lookup_leaves_other_builtin_traits_unmapped() {
+        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::From)), None);
+        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::Into)), None);
+        assert_eq!(trait_method_module_segments(derives::as_str(DeriveId::Serialize)), None);
     }
 
     #[test]

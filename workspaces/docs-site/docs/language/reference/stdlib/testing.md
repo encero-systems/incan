@@ -103,6 +103,8 @@ Runs the test alone against all other scheduled units.
 
 Overrides the timeout for the generated test batch that contains this test. Durations use strings such as `"250ms"`, `"5s"`, or `"2m"`.
 
+`@timeout` is test-batch policy, not fixture policy. Fixtures do not have a separate per-fixture timeout decorator or argument. A timeout is reported for the affected generated batch if setup, the test body, or teardown exceeds the deadline; if timeout enforcement terminates the worker process, remaining teardown is best-effort and may be bypassed.
+
 ## `assert_raises`
 
 `std.testing.assert_raises[E](block, msg = "")` asserts that a zero-argument callable raises or panics with the runtime error kind `E`.
@@ -134,3 +136,26 @@ Fixture scopes:
 - `@fixture(scope="session")`: cached once per worker batch. With `--jobs 1`, one session fixture instance can be shared across compatible collected files; with `--jobs N`, each worker gets its own instance.
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
+
+Async fixtures use the same `@fixture` decorator:
+
+```incan
+from std.async import sleep_ms
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+    await sleep_ms(1)
+    yield 42
+    await sleep_ms(1)
+```
+
+Async fixture contract:
+
+- Async fixtures are declared with `async def`; there is no separate async fixture decorator.
+- Async fixtures use `yield` exactly once. The yielded value is injected into dependent tests and fixtures.
+- Setup before `yield` is awaited before dependent fixtures or tests run.
+- Teardown after `yield` is awaited before the runner continues to the next dependent teardown.
+- Synchronous and asynchronous fixtures compose in the same dependency graph under function, module, and session scopes.
+- Parametrized tests expand into separate cases before fixture resolution. Function-scoped fixtures resolve per expanded case; module and session fixtures keep their normal cache boundaries.
+- Teardown order is reverse dependency order. If an async fixture depends on a sync fixture, or a sync fixture depends on an async fixture, the runner still tears down dependents before dependencies.

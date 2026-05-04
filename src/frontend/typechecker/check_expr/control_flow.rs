@@ -9,7 +9,6 @@ use crate::frontend::symbols::{ResolvedType, ScopeKind};
 
 use super::TypeChecker;
 use crate::frontend::typechecker::LoopContextKind;
-use crate::frontend::typechecker::helpers::ensure_bool_condition;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 
 impl TypeChecker {
@@ -80,14 +79,14 @@ impl TypeChecker {
         inner_ty.result_ok_type().cloned().unwrap_or(ResolvedType::Unknown)
     }
 
+    /// Type-check an expression-form `if`, including RFC 068 truthiness validation for its condition.
     pub(in crate::frontend::typechecker::check_expr) fn check_if_expr(
         &mut self,
         if_expr: &IfExpr,
         _span: Span,
     ) -> ResolvedType {
         let cond_ty = self.check_expr(&if_expr.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, if_expr.condition.span, is_compatible, &mut self.errors);
+        self.validate_truthiness_condition(&cond_ty, if_expr.condition.span);
 
         self.symbols.enter_scope(ScopeKind::Block);
         for stmt in &if_expr.then_body {

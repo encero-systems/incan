@@ -1,9 +1,11 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
@@ -13,11 +15,11 @@ use crate::cli::commands::common::{
     collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
-use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
+use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
-    Program, Spanned, Statement, Type,
+    Program, Span, Spanned, Statement, Type,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -39,10 +41,37 @@ pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
     pub jobs: usize,
+    pub verbose: bool,
+    pub emit_progress: bool,
 }
+
+const TEST_HARNESS_PREHEAT_FINGERPRINT_FILE: &str = ".incan_preheat_fingerprint";
+const TEST_HARNESS_PREHEAT_LOCK_FILE: &str = ".incan_preheat.lock";
+const TEST_HARNESS_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 
 fn parse_isolated_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
+}
+
+/// Return whether generated test-harness preheat should run for the supplied environment value.
+fn parse_test_preheat_env(raw: Option<&str>) -> bool {
+    !matches!(raw.map(str::trim), Some("0" | "false" | "no" | "off"))
+}
+
+/// Return whether generated test-harness preheat is enabled for this process.
+fn test_preheat_enabled() -> bool {
+    parse_test_preheat_env(std::env::var("INCAN_TEST_PREHEAT").ok().as_deref())
+}
+
+fn collect_test_dependency_inline_imports(
+    test_module: &ParsedModule,
+    source_modules: &[ParsedModule],
+) -> Vec<crate::dependency_resolver::InlineRustImport> {
+    let mut inline_imports = common::collect_inline_rust_imports(test_module, true);
+    for module in source_modules {
+        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+    }
+    inline_imports
 }
 
 /// Return a runner-only AST where RFC 018 inline test-module declarations are emitted as ordinary module declarations.
@@ -294,6 +323,34 @@ fn batch_has_cross_file_top_level_collision(
     false
 }
 
+/// Partition files into greedy groups that can still share a generated Rust module scope.
+///
+/// A single duplicate top-level name should not force the whole worker batch back to one Cargo harness per file.
+/// This keeps non-conflicting files together while preserving the existing fallback for files that genuinely cannot be
+/// concatenated safely.
+fn partition_collision_free_file_groups(
+    sources_by_file: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> Vec<Vec<PathBuf>> {
+    let mut groups: Vec<Vec<(PathBuf, String)>> = Vec::new();
+    'source: for (path, source) in sources_by_file {
+        for group in &mut groups {
+            let mut candidate = group.clone();
+            candidate.push((path.clone(), source.clone()));
+            if !batch_has_cross_file_top_level_collision(&candidate, library_imported_vocab) {
+                group.push((path.clone(), source.clone()));
+                continue 'source;
+            }
+        }
+        groups.push(vec![(path.clone(), source.clone())]);
+    }
+
+    groups
+        .into_iter()
+        .map(|group| group.into_iter().map(|(path, _)| path).collect())
+        .collect()
+}
+
 /// Resolve a dotted expression path using local import aliases collected from the runner AST.
 fn resolved_expr_path(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
     match &expr.node {
@@ -394,19 +451,55 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     }
 }
 
+fn lock_validation_entry_path(project_root: &Path, manifest: Option<&ProjectManifest>) -> Option<PathBuf> {
+    if let Some(main) = manifest
+        .and_then(|m| m.project.as_ref())
+        .and_then(|project| project.scripts.get("main"))
+    {
+        return Some(project_root.join(main));
+    }
+
+    let lib_entry = project_root.join("src").join("lib.incn");
+    if lib_entry.is_file() {
+        return Some(lib_entry);
+    }
+
+    let main_entry = project_root.join("src").join("main.incn");
+    if main_entry.is_file() {
+        return Some(main_entry);
+    }
+
+    None
+}
+
 /// Shared front-end + dependency work for one test file, reused across parametrized variants and multiple tests in the
 /// same `.incn` file within a single `incan test` session.
 pub(super) struct PreparedTestFile {
     pub library_manifest_index: LibraryManifestIndex,
     pub ast: Program,
-    pub fixture_teardowns: HashMap<String, YieldFixtureTeardown>,
+    pub fixtures: HashMap<String, FixtureExecutionInfo>,
     pub source_modules: Vec<ParsedModule>,
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+    pub project_name: String,
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+}
+
+/// Parsed dependency context for the project lock-validation entry point, shared across test batches in one session.
+struct PreparedLockEntry {
+    modules: Vec<ParsedModule>,
+    inline_imports: Vec<InlineRustImport>,
+    project_requirements: ProjectRequirements,
+}
+
+/// Session-local preparation cache for one `incan test` invocation.
+#[derive(Default)]
+pub(super) struct TestPrepCache {
+    prepared_files: HashMap<String, Arc<PreparedTestFile>>,
+    lock_entries: HashMap<String, Arc<PreparedLockEntry>>,
 }
 
 /// Return the generated function name that contains the post-yield teardown body.
@@ -754,6 +847,7 @@ fn split_yield_fixture_declarations(ast: &mut Program) -> Result<HashMap<String,
             );
             func.return_type.node = Type::Tuple(state_types);
         }
+        func.decorators.clear();
         func.body = setup_body;
         teardowns.insert(
             func.name.clone(),
@@ -899,6 +993,78 @@ fn merge_rust_inspect_stdlib_features<'a>(
         merged.extend(features.iter().cloned());
     }
     merged.into_iter().collect()
+}
+
+/// Return a stable session-local cache key for a lock-validation entry path.
+fn lock_entry_cache_key(lock_entry_path: &Path) -> String {
+    fs::canonicalize(lock_entry_path)
+        .unwrap_or_else(|_| lock_entry_path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Prepare the parsed lock-validation entry graph once per test session.
+fn prepare_lock_entry(
+    lock_entry_path: &Path,
+    library_manifest_index: &LibraryManifestIndex,
+    prep_cache: &mut TestPrepCache,
+) -> Result<Arc<PreparedLockEntry>, String> {
+    let cache_key = lock_entry_cache_key(lock_entry_path);
+    if let Some(hit) = prep_cache.lock_entries.get(&cache_key) {
+        return Ok(Arc::clone(hit));
+    }
+
+    let lock_entry_arg = lock_entry_path.to_string_lossy().to_string();
+    let modules = common::collect_modules(&lock_entry_arg).map_err(|err| err.message.clone())?;
+    let mut inline_imports = Vec::new();
+    for module in &modules {
+        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+    }
+    let project_requirements =
+        common::collect_project_requirements(&modules, library_manifest_index).map_err(|err| err.message.clone())?;
+
+    let prepared = Arc::new(PreparedLockEntry {
+        modules,
+        inline_imports,
+        project_requirements,
+    });
+    prep_cache.lock_entries.insert(cache_key, Arc::clone(&prepared));
+    Ok(prepared)
+}
+
+/// Merge requirements collected from the current test batch and the project lock-validation entry.
+fn merge_lock_project_requirements(
+    current: &ProjectRequirements,
+    lock_entry: &ProjectRequirements,
+) -> Result<ProjectRequirements, String> {
+    let stdlib_features = current
+        .stdlib_features
+        .iter()
+        .chain(lock_entry.stdlib_features.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut dependencies = current.dependencies.clone();
+    for candidate in &lock_entry.dependencies {
+        if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+            if existing != candidate {
+                return Err(format!(
+                    "dependency requirement `{}` conflicts between test batch and lock entry context",
+                    candidate.crate_name
+                ));
+            }
+            continue;
+        }
+        dependencies.push(candidate.clone());
+    }
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+
+    Ok(ProjectRequirements {
+        stdlib_features,
+        dependencies,
+    })
 }
 
 /// Promote project dev dependencies into ordinary dependencies for generated test-runner crates.
@@ -1054,10 +1220,11 @@ fn builtin_fixture_arg(
 }
 
 #[derive(Debug, Clone)]
-struct FixtureExecutionInfo {
+pub(super) struct FixtureExecutionInfo {
     params: Vec<String>,
     scope: FixtureScope,
     has_teardown: bool,
+    is_async: bool,
     return_rust_type: Option<String>,
     state_rust_type: Option<String>,
     teardown: Option<YieldFixtureTeardown>,
@@ -1125,6 +1292,48 @@ fn fixture_value_ident(index: usize, name: &str) -> String {
     format!("__incan_fixture_value_{index}_{}", safe_fixture_ident(name))
 }
 
+/// Wrap an async generated harness call in the shared runner runtime when needed.
+fn maybe_await_harness_call(call: String, is_async: bool) -> String {
+    if is_async {
+        format!("__incan_async_block_on({call})")
+    } else {
+        call
+    }
+}
+
+/// Return the generated Rust expression that sets up one fixture.
+fn fixture_setup_call(name: &str, args: &str, fixture: &FixtureExecutionInfo) -> String {
+    maybe_await_harness_call(format!("super::{name}({args})"), fixture.is_async)
+}
+
+/// Return the generated Rust statement that tears down one yield fixture.
+fn fixture_teardown_call(fixture: &FixtureExecutionInfo, teardown_function: &str, args: &str) -> String {
+    let call = if args.is_empty() {
+        format!("super::{teardown_function}()")
+    } else {
+        format!("super::{teardown_function}({args})")
+    };
+    format!("{};", maybe_await_harness_call(call, fixture.is_async))
+}
+
+/// Return whether the generated harness needs to drive async tests or fixtures.
+fn harness_needs_async_runtime(tests: &[TestInfo], fixtures: &HashMap<String, FixtureExecutionInfo>) -> bool {
+    tests.iter().any(|test| test.is_async) || fixtures.values().any(|fixture| fixture.is_async)
+}
+
+/// Add the stdlib async feature when the generated harness itself needs the runtime.
+fn test_runner_stdlib_features(
+    base: &[String],
+    tests: &[TestInfo],
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+) -> Vec<String> {
+    let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
+    if harness_needs_async_runtime(tests, fixtures) {
+        features.insert("async".to_string());
+    }
+    features.into_iter().collect()
+}
+
 /// Generate an expression that calls a fixture, recursively filling fixture dependencies.
 fn fixture_arg(
     name: &str,
@@ -1168,20 +1377,21 @@ fn fixture_arg(
     let Some(fixture) = fixtures.get(name) else {
         return format!("super::{name}({args})");
     };
+    let setup_call = fixture_setup_call(name, &args, fixture);
     let Some(return_rust_type) = fixture.return_rust_type.as_ref() else {
-        return format!("super::{name}({args})");
+        return setup_call;
     };
     if fixture.has_teardown {
         let Some(teardown) = &fixture.teardown else {
-            return format!("super::{name}({args})");
+            return setup_call;
         };
         if fixture.scope == FixtureScope::Function {
             let state_ident = fixture_state_ident(index, name);
             let value_ident = fixture_value_ident(index, name);
-            setup.push_str(&format!("        let {state_ident} = super::{name}({args});\n"));
+            setup.push_str(&format!("        let {state_ident} = {setup_call};\n"));
             if teardown.captures.is_empty() {
                 setup.push_str(&format!("        let {value_ident} = {state_ident};\n"));
-                teardown_steps.push(format!("super::{}();", teardown.teardown_function));
+                teardown_steps.push(fixture_teardown_call(fixture, &teardown.teardown_function, ""));
             } else {
                 let capture_names = teardown
                     .captures
@@ -1192,10 +1402,10 @@ fn fixture_arg(
                     "        let ({value_ident}, {}) = {state_ident};\n",
                     capture_names.join(", ")
                 ));
-                teardown_steps.push(format!(
-                    "super::{}({});",
-                    teardown.teardown_function,
-                    capture_names.join(", ")
+                teardown_steps.push(fixture_teardown_call(
+                    fixture,
+                    &teardown.teardown_function,
+                    &capture_names.join(", "),
                 ));
             }
             return value_ident;
@@ -1206,7 +1416,7 @@ fn fixture_arg(
                 "{{\n\
                      let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                      let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
                      let Some(__incan_value) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                      __incan_value.clone()\n\
                  }}"
@@ -1216,7 +1426,7 @@ fn fixture_arg(
             "{{\n\
                      let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                      let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some(super::{name}({args})); }}\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
                      let Some(__incan_state) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                      let __incan_value: &{return_rust_type} = &__incan_state.0;\n\
                      __incan_value.clone()\n\
@@ -1224,7 +1434,7 @@ fn fixture_arg(
         );
     }
     if fixture.scope == FixtureScope::Function {
-        return format!("super::{name}({args})");
+        return setup_call;
     }
 
     let static_name = fixture_cache_static_name(name);
@@ -1232,7 +1442,7 @@ fn fixture_arg(
         "{{\n\
                  let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                  let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new(super::{name}({args}))); }}\n\
+                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new({setup_call})); }}\n\
                  let Some(__incan_boxed) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
                  let Some(__incan_value) = __incan_boxed.downcast_ref::<{return_rust_type}>() else {{ panic!(\"fixture cache `{name}` had an unexpected type\"); }};\n\
                  __incan_value.clone()\n\
@@ -1306,22 +1516,24 @@ fn harness_call(test: &TestInfo, index: usize, fixtures: &HashMap<String, Fixtur
     }
 
     let joined = args.join(", ");
+    let test_call = maybe_await_harness_call(format!("super::{}({joined})", test.function_name), test.is_async);
     if teardown_steps.is_empty() {
-        return format!("{setup}        super::{}({joined});\n", test.function_name);
+        return format!("{setup}        {test_call};\n");
     }
 
     let mut teardown = String::new();
     for step in teardown_steps.iter().rev() {
-        teardown.push_str("        ");
+        teardown.push_str("        __incan_run_teardown(&mut __incan_teardown_failures, || { ");
         teardown.push_str(step);
-        teardown.push('\n');
+        teardown.push_str(" });\n");
     }
     format!(
-        "{setup}        let __incan_test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
-                     super::{}({joined});\n\
+        "{setup}        let mut __incan_teardown_failures = Vec::new();\n\
+                 let __incan_test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
+                     {test_call};\n\
                  }}));\n\
-         {teardown}        if let Err(__incan_panic) = __incan_test_result {{ std::panic::resume_unwind(__incan_panic); }}\n",
-        test.function_name
+         {teardown}        if !__incan_teardown_failures.is_empty() {{ panic!(\"fixture teardown failed:\\n{{}}\", __incan_teardown_failures.join(\"\\n\")); }}\n\
+                 if let Err(__incan_panic) = __incan_test_result {{ std::panic::resume_unwind(__incan_panic); }}\n",
     )
 }
 
@@ -1397,6 +1609,7 @@ fn collect_fixture_execution_info(
                         params: func.params.iter().map(|param| param.node.name.clone()).collect(),
                         scope,
                         has_teardown: teardown.is_some(),
+                        is_async: func.is_async(),
                         return_rust_type: teardown
                             .as_ref()
                             .and_then(|teardown| rust_type_for_fixture_cache(&teardown.value_ty))
@@ -1410,6 +1623,34 @@ fn collect_fixture_execution_info(
             }
         })
         .collect()
+}
+
+/// Attach runner-local teardown metadata to fixture declarations collected before yield-splitting.
+fn apply_fixture_teardowns(
+    fixtures: &mut HashMap<String, FixtureExecutionInfo>,
+    fixture_teardowns: &HashMap<String, YieldFixtureTeardown>,
+) {
+    for (name, teardown) in fixture_teardowns {
+        let Some(fixture) = fixtures.get_mut(name) else {
+            continue;
+        };
+        fixture.has_teardown = true;
+        fixture.return_rust_type = rust_type_for_fixture_cache(&teardown.value_ty);
+        fixture.state_rust_type = if teardown.captures.is_empty() {
+            rust_type_for_fixture_cache(&teardown.value_ty)
+        } else {
+            let mut state_types = Vec::with_capacity(1 + teardown.captures.len());
+            state_types.push(Spanned::new(teardown.value_ty.clone(), Span::default()));
+            state_types.extend(
+                teardown
+                    .captures
+                    .iter()
+                    .map(|capture| Spanned::new(capture.ty.clone(), Span::default())),
+            );
+            rust_type_for_fixture_cache(&Type::Tuple(state_types))
+        };
+        fixture.teardown = Some(teardown.clone());
+    }
 }
 
 /// Append a `#[cfg(test)]` module with one `#[test]` per collected case so `cargo test` runs an entire file in one
@@ -1457,6 +1698,45 @@ fn inject_file_test_harness(
              }\n\
          }\n",
     );
+    if fixtures.values().any(|fixture| fixture.has_teardown) {
+        out.push_str(
+            "fn __incan_run_teardown<F>(failures: &mut Vec<String>, teardown: F)\n\
+             where\n\
+                 F: FnOnce(),\n\
+             {\n\
+                 if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(teardown)) {\n\
+                     let message = if let Some(message) = payload.downcast_ref::<&str>() {\n\
+                         (*message).to_string()\n\
+                     } else if let Some(message) = payload.downcast_ref::<String>() {\n\
+                         message.clone()\n\
+                     } else {\n\
+                         \"non-string panic payload\".to_string()\n\
+                     };\n\
+                     failures.push(message);\n\
+                 }\n\
+             }\n",
+        );
+    }
+    if harness_needs_async_runtime(tests, fixtures) {
+        out.push_str(
+            "static __INCAN_ASYNC_RUNTIME: std::sync::OnceLock<incan_stdlib::__private::tokio::runtime::Runtime> = std::sync::OnceLock::new();\n\
+             /// Drive one async generated test or fixture on the shared runner runtime.\n\
+             fn __incan_async_block_on<F>(future: F) -> F::Output\n\
+             where\n\
+                 F: std::future::Future,\n\
+             {\n\
+                 let __incan_runtime = __INCAN_ASYNC_RUNTIME.get_or_init(|| {\n\
+                     let mut builder = incan_stdlib::__private::tokio::runtime::Builder::new_multi_thread();\n\
+                     builder.enable_all();\n\
+                     match builder.build() {\n\
+                         Ok(runtime) => runtime,\n\
+                         Err(err) => panic!(\"failed to build async test runtime: {}\", err),\n\
+                     }\n\
+                 });\n\
+                 __incan_runtime.block_on(future)\n\
+             }\n",
+        );
+    }
     let teardown_fixtures = ordered_teardown_fixtures(tests, fixtures);
     for (index, t) in tests.iter().enumerate() {
         let fname = harness_fn_name(t, index);
@@ -1476,6 +1756,7 @@ fn inject_file_test_harness(
     }
     if !teardown_fixtures.is_empty() {
         out.push_str("    #[test]\n    fn zzzz_incan_harness_teardown_cached_fixtures() {\n");
+        out.push_str("        let mut __incan_teardown_failures = Vec::new();\n");
         out.push_str("        let __incan_cwd_guard = __IncanCwdGuard(std::env::current_dir().ok());\n");
         out.push_str("        let _ = &__incan_cwd_guard;\n");
         out.push_str("        if let Err(err) = std::env::set_current_dir(");
@@ -1498,7 +1779,10 @@ fn inject_file_test_harness(
             ));
             if teardown.captures.is_empty() {
                 out.push_str("            let _ = __incan_state;\n");
-                out.push_str(&format!("            super::{}();\n", teardown.teardown_function));
+                out.push_str(&format!(
+                    "            __incan_run_teardown(&mut __incan_teardown_failures, || {{ {} }});\n",
+                    fixture_teardown_call(fixture, &teardown.teardown_function, "")
+                ));
             } else {
                 let capture_names = teardown
                     .captures
@@ -1510,13 +1794,17 @@ fn inject_file_test_harness(
                     capture_names.join(", ")
                 ));
                 out.push_str(&format!(
-                    "            super::{}({});\n",
-                    teardown.teardown_function,
-                    capture_names.join(", ")
+                    "            __incan_run_teardown(&mut __incan_teardown_failures, || {{ {} }});\n",
+                    fixture_teardown_call(fixture, &teardown.teardown_function, &capture_names.join(", "))
                 ));
             }
             out.push_str("                         }\n        }\n");
         }
+        out.push_str(
+            "        if !__incan_teardown_failures.is_empty() {\n\
+                         panic!(\"fixture teardown failed:\\n{}\", __incan_teardown_failures.join(\"\\n\"));\n\
+                     }\n",
+        );
         out.push_str("    }\n");
     }
     out.push_str("}\n");
@@ -1706,6 +1994,323 @@ fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HarnessPreheatStatus {
+    Disabled,
+    UpToDate,
+    Ran,
+    ReusedAfterWait,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HarnessPreheatOutcome {
+    status: HarnessPreheatStatus,
+    elapsed: Duration,
+    waited: Duration,
+}
+
+struct HarnessPreheatRequest<'a> {
+    manifest_path: &'a Path,
+    generated_dir: &'a Path,
+    project_root: &'a Path,
+    shared_target_dir: &'a Path,
+    cargo_flags: &'a [String],
+    include_cargo_lock: bool,
+    jobs: usize,
+    timeout: Option<Duration>,
+    emit_progress: bool,
+}
+
+struct PreheatLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for PreheatLockGuard {
+    /// Remove the cooperative preheat lock file when this writer leaves the critical section.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Return the age after which an abandoned preheat lock may be reclaimed.
+fn stale_preheat_lock_after() -> Duration {
+    std::env::var("INCAN_TEST_PREHEAT_STALE_LOCK_SECS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(TEST_HARNESS_PREHEAT_STALE_LOCK_SECS))
+}
+
+/// Return whether the recorded preheat fingerprint matches the generated harness inputs.
+fn preheat_stamp_matches(stamp_path: &Path, fingerprint: &str) -> bool {
+    fs::read_to_string(stamp_path)
+        .map(|existing| existing.trim() == fingerprint)
+        .unwrap_or(false)
+}
+
+/// Try to become the single preheat writer for one generated harness.
+fn try_acquire_preheat_lock(lock_path: &Path) -> io::Result<Option<PreheatLockGuard>> {
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(lock_path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "pid={}", std::process::id());
+            Ok(Some(PreheatLockGuard {
+                path: lock_path.to_path_buf(),
+            }))
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Return whether an existing cooperative preheat lock is old enough to discard.
+fn preheat_lock_is_stale(lock_path: &Path, stale_after: Duration) -> bool {
+    let Ok(metadata) = fs::metadata(lock_path) else {
+        return false;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= stale_after)
+}
+
+/// Add one generated harness input file to the preheat fingerprint.
+fn hash_preheat_file(hasher: &mut Sha256, base: &Path, path: &Path) -> io::Result<()> {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    hasher.update(relative.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(fs::read(path)?);
+    hasher.update(b"\0");
+    Ok(())
+}
+
+/// Collect generated Rust source files that define one harness fingerprint.
+fn collect_preheat_source_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_preheat_source_files(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Compute the fingerprint that determines whether `cargo test --no-run` must be repeated for a harness.
+fn compute_generated_harness_preheat_fingerprint(
+    generated_dir: &Path,
+    cargo_flags: &[String],
+    shared_target_dir: &Path,
+    include_cargo_lock: bool,
+) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan_test_harness_preheat/1\0");
+    hasher.update(shared_target_dir.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    for flag in cargo_flags {
+        hasher.update(flag.as_bytes());
+        hasher.update(b"\0");
+    }
+    hash_preheat_file(&mut hasher, generated_dir, &generated_dir.join("Cargo.toml"))?;
+    if include_cargo_lock {
+        let file_name = "Cargo.lock";
+        let path = generated_dir.join(file_name);
+        if path.is_file() {
+            hash_preheat_file(&mut hasher, generated_dir, &path)?;
+        } else {
+            hasher.update(file_name.as_bytes());
+            hasher.update(b":absent\0");
+        }
+    }
+    let mut source_files = Vec::new();
+    collect_preheat_source_files(&generated_dir.join("src"), &mut source_files)?;
+    source_files.sort();
+    for file in source_files {
+        hash_preheat_file(&mut hasher, generated_dir, &file)?;
+    }
+    Ok(format!(
+        "{}{}",
+        TEST_HARNESS_PREHEAT_FINGERPRINT_FILE,
+        hex::encode(hasher.finalize())
+    ))
+}
+
+/// Build the Cargo command used by both harness preheat and actual harness execution.
+fn cargo_test_command(
+    manifest_path: &Path,
+    cargo_flags: &[String],
+    jobs: usize,
+    shared_target_dir: &Path,
+    project_root: &Path,
+    no_run: bool,
+    no_capture: bool,
+) -> Command {
+    let mut command = Command::new("cargo");
+    command.arg("test");
+    if no_run {
+        command.arg("--no-run");
+    }
+    if jobs > 1 {
+        command.arg("--jobs");
+        command.arg(jobs.to_string());
+    }
+    command.arg("--manifest-path");
+    command.arg(manifest_path);
+    for flag in cargo_flags {
+        command.arg(flag);
+    }
+    if !no_run {
+        // Batched per-file execution shares one process across all generated #[test] fns.
+        // Force deterministic single-thread libtest execution to preserve historical
+        // isolation assumptions for tests that use shared global runtime state.
+        command.arg("--");
+        command.arg("--test-threads=1");
+        if no_capture {
+            command.arg("--nocapture");
+        }
+    }
+    command.env("CARGO_TARGET_DIR", shared_target_dir);
+    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
+    command.current_dir(project_root);
+    command
+}
+
+/// Run `cargo test --no-run` for one generated harness and return its elapsed time.
+fn run_generated_harness_preheat(request: &HarnessPreheatRequest<'_>) -> Result<Duration, String> {
+    let start = Instant::now();
+    let command = cargo_test_command(
+        request.manifest_path,
+        request.cargo_flags,
+        request.jobs,
+        request.shared_target_dir,
+        request.project_root,
+        true,
+        false,
+    );
+    let (output, timed_out) = run_command_with_timeout(command, request.timeout)
+        .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
+    if timed_out {
+        let timeout = request
+            .timeout
+            .map(|timeout| format!("{:.3}s", timeout.as_secs_f64()))
+            .unwrap_or_else(|| "configured timeout".to_string());
+        return Err(format!("cargo test --no-run timed out after {timeout}"));
+    }
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cargo test --no-run failed:\n{stdout}\n{stderr}"));
+    }
+    Ok(start.elapsed())
+}
+
+/// Preheat one generated harness if its recorded fingerprint is missing or stale.
+fn preheat_generated_harness_if_needed(request: HarnessPreheatRequest<'_>) -> Result<HarnessPreheatOutcome, String> {
+    let start = Instant::now();
+    if !test_preheat_enabled() {
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::Disabled,
+            elapsed: start.elapsed(),
+            waited: Duration::ZERO,
+        });
+    }
+
+    let fingerprint = compute_generated_harness_preheat_fingerprint(
+        request.generated_dir,
+        request.cargo_flags,
+        request.shared_target_dir,
+        request.include_cargo_lock,
+    )
+    .map_err(|err| format!("failed to fingerprint generated test harness: {err}"))?;
+    let stamp_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_FINGERPRINT_FILE);
+    if preheat_stamp_matches(&stamp_path, &fingerprint) {
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::UpToDate,
+            elapsed: start.elapsed(),
+            waited: Duration::ZERO,
+        });
+    }
+
+    if request.emit_progress {
+        println!(
+            "preheating generated Rust test harness {}",
+            request.generated_dir.display()
+        );
+        let _ = io::stdout().flush();
+    }
+
+    let lock_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
+    let stale_after = stale_preheat_lock_after();
+    let wait_start = Instant::now();
+    let mut announced_wait = false;
+    let lock = loop {
+        if preheat_stamp_matches(&stamp_path, &fingerprint) {
+            let waited = wait_start.elapsed();
+            return Ok(HarnessPreheatOutcome {
+                status: HarnessPreheatStatus::ReusedAfterWait,
+                elapsed: start.elapsed(),
+                waited,
+            });
+        }
+
+        match try_acquire_preheat_lock(&lock_path) {
+            Ok(Some(lock)) => break lock,
+            Ok(None) => {
+                if preheat_lock_is_stale(&lock_path, stale_after) {
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                if request.emit_progress && !announced_wait && wait_start.elapsed() >= Duration::from_secs(1) {
+                    println!("waiting for another incan test preheat to finish");
+                    let _ = io::stdout().flush();
+                    announced_wait = true;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(err) => return Err(format!("failed to acquire preheat lock {}: {err}", lock_path.display())),
+        }
+    };
+
+    if preheat_stamp_matches(&stamp_path, &fingerprint) {
+        drop(lock);
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::UpToDate,
+            elapsed: start.elapsed(),
+            waited: wait_start.elapsed(),
+        });
+    }
+
+    run_generated_harness_preheat(&request)?;
+    fs::write(&stamp_path, &fingerprint)
+        .map_err(|err| format!("failed to write preheat fingerprint {}: {err}", stamp_path.display()))?;
+    drop(lock);
+
+    Ok(HarnessPreheatOutcome {
+        status: HarnessPreheatStatus::Ran,
+        elapsed: start.elapsed(),
+        waited: wait_start.elapsed(),
+    })
+}
+
+/// Return the stable diagnostic label for a preheat outcome.
+fn preheat_status_label(status: HarnessPreheatStatus) -> &'static str {
+    match status {
+        HarnessPreheatStatus::Disabled => "disabled",
+        HarnessPreheatStatus::UpToDate => "up-to-date",
+        HarnessPreheatStatus::Ran => "ran",
+        HarnessPreheatStatus::ReusedAfterWait => "reused-after-wait",
+    }
+}
+
 /// Run every collected test in `tests` that lives in the same `.incn` file with **one** `cargo test` invocation (#271).
 ///
 /// Returns an empty vector when `tests` is empty. Otherwise every entry must share the same [`TestInfo::file_path`].
@@ -1714,7 +2319,7 @@ fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> 
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    prep_cache: &mut HashMap<String, Arc<PreparedTestFile>>,
+    prep_cache: &mut TestPrepCache,
     cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
@@ -1797,10 +2402,11 @@ pub(super) fn run_file_tests_batch(
 
     if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
         let mut split_results = Vec::new();
-        for file_path in seen_files {
+        for file_group in partition_collision_free_file_groups(&sources_by_file, Some(&library_imported_vocab)) {
+            let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
             let file_tests = tests
                 .iter()
-                .filter(|test| test.file_path == file_path)
+                .filter(|test| file_group.contains(&test.file_path))
                 .cloned()
                 .collect::<Vec<_>>();
             split_results.extend(run_file_tests_batch(
@@ -1869,6 +2475,7 @@ pub(super) fn run_file_tests_batch(
     normalize_runner_assert_statements(&mut runner_ast);
     prune_shadowed_fixture_declarations(&mut runner_ast);
     dedupe_import_declarations(&mut runner_ast);
+    let mut fixtures = collect_fixture_execution_info(&runner_ast, &HashMap::new());
     let fixture_teardowns = match split_yield_fixture_declarations(&mut runner_ast) {
         Ok(teardowns) => teardowns,
         Err(message) => {
@@ -1878,6 +2485,7 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
     };
+    apply_fixture_teardowns(&mut fixtures, &fixture_teardowns);
 
     let cargo_feature_selection = CargoFeatureSelection {
         cargo_features: cargo_features.to_vec(),
@@ -1924,7 +2532,7 @@ pub(super) fn run_file_tests_batch(
         cargo_policy,
     );
 
-    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.get(&cache_key) {
+    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.prepared_files.get(&cache_key) {
         Arc::clone(hit)
     } else {
         // ---- Context: cold prep — inline imports, resolve and merge Cargo deps, lock + rust-inspect workspace ----
@@ -1935,21 +2543,21 @@ pub(super) fn run_file_tests_batch(
             source: source.clone(),
             ast: runner_ast.clone(),
         };
+        let source_dependency_modules = source_modules
+            .iter()
+            .map(|m| ParsedModule {
+                name: m.name.clone(),
+                path_segments: m.path_segments.clone(),
+                file_path: m.file_path.clone(),
+                source: m.source.clone(),
+                ast: m.ast.clone(),
+            })
+            .collect::<Vec<_>>();
+        let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules);
 
         let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
         dependency_modules.push(module_for_imports);
-        dependency_modules.extend(source_modules.iter().map(|m| ParsedModule {
-            name: m.name.clone(),
-            path_segments: m.path_segments.clone(),
-            file_path: m.file_path.clone(),
-            source: m.source.clone(),
-            ast: m.ast.clone(),
-        }));
-
-        let mut inline_imports = Vec::new();
-        for module in &dependency_modules {
-            inline_imports.extend(common::collect_inline_rust_imports(module, true));
-        }
+        dependency_modules.extend(source_dependency_modules);
 
         let project_requirements =
             match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
@@ -1985,6 +2593,60 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
 
+        let mut lock_dependency_modules = dependency_modules.clone();
+        let mut lock_project_requirements = project_requirements.clone();
+        let mut lock_resolved = resolved.clone();
+        if (cargo_policy.locked || cargo_policy.frozen)
+            && let Some(lock_entry_path) = lock_validation_entry_path(&project_root, manifest.as_ref())
+        {
+            let lock_entry = match prepare_lock_entry(&lock_entry_path, &library_manifest_index, prep_cache) {
+                Ok(entry) => entry,
+                Err(message) => {
+                    return tests
+                        .iter()
+                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                        .collect();
+                }
+            };
+            let mut lock_inline_imports = inline_imports.clone();
+            lock_inline_imports.extend(lock_entry.inline_imports.iter().cloned());
+            lock_dependency_modules.extend(lock_entry.modules.iter().cloned());
+
+            lock_project_requirements =
+                match merge_lock_project_requirements(&project_requirements, &lock_entry.project_requirements) {
+                    Ok(requirements) => requirements,
+                    Err(message) => {
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                            .collect();
+                    }
+                };
+            lock_resolved =
+                match resolve_dependencies(manifest.as_ref(), &lock_inline_imports, true, &cargo_feature_selection) {
+                    Ok(resolved) => resolved,
+                    Err(errors) => {
+                        let sources = common::build_source_map(&lock_dependency_modules);
+                        let mut msg = String::new();
+                        for err in &errors {
+                            msg.push_str(&common::format_dependency_error(err, &sources));
+                        }
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
+                            .collect();
+                    }
+                };
+            if let Err(err) =
+                common::merge_project_requirement_dependencies(&mut lock_resolved, &lock_project_requirements)
+            {
+                return tests
+                    .iter()
+                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                    .collect();
+            }
+        }
+
         let project_name = manifest
             .as_ref()
             .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
@@ -1996,14 +2658,18 @@ pub(super) fn run_file_tests_batch(
                     .map(|s| s.to_string())
             })
             .unwrap_or_else(|| "incan_test".to_string());
+        #[cfg(feature = "rust_inspect")]
+        let metadata_query_paths = collect_rust_inspect_query_paths(&lock_dependency_modules);
         let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
             project_root: &project_root,
             project_name: &project_name,
             manifest: manifest.as_ref(),
-            resolved: &resolved,
-            project_requirements: &project_requirements,
+            resolved: &lock_resolved,
+            project_requirements: &lock_project_requirements,
             cargo_features: &cargo_feature_selection,
             cargo_policy,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_query_paths: &metadata_query_paths,
         }) {
             Ok(payload) => payload,
             Err(err) => {
@@ -2016,10 +2682,10 @@ pub(super) fn run_file_tests_batch(
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
-            let metadata_query_paths = collect_rust_inspect_query_paths(&dependency_modules);
             let mut rust_inspect_requirements = project_requirements.clone();
             rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
                 prep_cache
+                    .prepared_files
                     .values()
                     .map(|prepared| prepared.project_requirements.stdlib_features.as_slice()),
                 &project_requirements.stdlib_features,
@@ -2051,20 +2717,33 @@ pub(super) fn run_file_tests_batch(
             rust_inspect_manifest_dir
         };
 
+        let use_lock_dependency_context = lock_payload.is_some() && (cargo_policy.locked || cargo_policy.frozen);
+        let cargo_resolved = if use_lock_dependency_context {
+            lock_resolved
+        } else {
+            resolved
+        };
+        let cargo_project_requirements = if use_lock_dependency_context {
+            lock_project_requirements
+        } else {
+            project_requirements
+        };
+
         let prepared = PreparedTestFile {
             library_manifest_index,
             ast: runner_ast,
-            fixture_teardowns,
+            fixtures,
             source_modules,
             project_root,
-            resolved,
-            project_requirements,
+            resolved: cargo_resolved,
+            project_requirements: cargo_project_requirements,
+            project_name,
             lock_payload,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
         };
         let arc = Arc::new(prepared);
-        prep_cache.insert(cache_key, Arc::clone(&arc));
+        prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
         arc
     };
 
@@ -2080,7 +2759,7 @@ pub(super) fn run_file_tests_batch(
     for module in &prepared.source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
-    let fixtures = collect_fixture_execution_info(&prepared.ast, &prepared.fixture_teardowns);
+    let fixtures = prepared.fixtures.clone();
     codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
 
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
@@ -2097,9 +2776,15 @@ pub(super) fn run_file_tests_batch(
     };
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
-    generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
+    generator.set_package_name(Some(prepared.project_name.clone()));
+    generator.set_stdlib_features(test_runner_stdlib_features(
+        &prepared.project_requirements.stdlib_features,
+        tests,
+        &fixtures,
+    ));
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
-    generator.set_cargo_policy_flags(common::cargo_command_flags(cargo_policy, &cargo_feature_selection));
+    let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+    generator.set_cargo_policy_flags(cargo_flags.clone());
 
     let gen_err = |msg: String| {
         tests
@@ -2117,14 +2802,15 @@ pub(super) fn run_file_tests_batch(
     generator.set_dependencies(runner_dependencies);
     generator.set_dev_dependencies(Vec::new());
 
-    if prepared.source_modules.is_empty() {
+    let generated_changed = if prepared.source_modules.is_empty() {
         let rust_code = match codegen.try_generate(&prepared.ast) {
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
         let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root, &fixtures);
-        if let Err(e) = generator.generate(&rust_code) {
-            return gen_err(format!("Failed to generate project: {}", e));
+        match generator.generate(&rust_code) {
+            Ok(changed) => changed,
+            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
     } else {
         let module_paths: Vec<Vec<String>> = prepared
@@ -2137,35 +2823,47 @@ pub(super) fn run_file_tests_batch(
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
         let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
-        if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
-            return gen_err(format!("Failed to generate project: {}", e));
+        match generator.generate_nested(&main_code, &rust_modules) {
+            Ok(changed) => changed,
+            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
-    }
+    };
 
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
-    let mut command = Command::new("cargo");
-    command.arg("test");
-    if options.jobs > 1 {
-        command.arg("--jobs");
-        command.arg(options.jobs.to_string());
-    }
-    command.arg("--manifest-path");
-    command.arg(&manifest_path);
-    for flag in common::cargo_command_flags(cargo_policy, &cargo_feature_selection) {
-        command.arg(flag);
-    }
-    // Batched per-file execution shares one process across all generated #[test] fns.
-    // Force deterministic single-thread libtest execution to preserve historical
-    // isolation assumptions for tests that use shared global runtime state.
-    command.arg("--");
-    command.arg("--test-threads=1");
-    if options.no_capture {
-        command.arg("--nocapture");
+    let generated_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let preheat_outcome = match preheat_generated_harness_if_needed(HarnessPreheatRequest {
+        manifest_path: &manifest_path,
+        generated_dir,
+        project_root: &prepared.project_root,
+        shared_target_dir: &shared_target_dir,
+        cargo_flags: &cargo_flags,
+        include_cargo_lock: prepared.lock_payload.is_some(),
+        jobs: options.jobs,
+        timeout: options.timeout,
+        emit_progress: options.emit_progress,
+    }) {
+        Ok(outcome) => outcome,
+        Err(message) => return gen_err(format!("Failed to preheat generated test harness: {message}")),
+    };
+    if options.verbose && options.emit_progress {
+        println!(
+            "preheat phase: {} in {:.2}s (wait {:.2}s, generated changed: {})",
+            preheat_status_label(preheat_outcome.status),
+            preheat_outcome.elapsed.as_secs_f64(),
+            preheat_outcome.waited.as_secs_f64(),
+            generated_changed
+        );
     }
 
-    command.env("CARGO_TARGET_DIR", &shared_target_dir);
-    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
-    command.current_dir(&prepared.project_root);
+    let command = cargo_test_command(
+        &manifest_path,
+        &cargo_flags,
+        options.jobs,
+        &shared_target_dir,
+        &prepared.project_root,
+        false,
+        options.no_capture,
+    );
 
     let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
         Ok(result) => result,
@@ -2296,6 +2994,122 @@ mod tests {
     }
 
     #[test]
+    fn parse_test_preheat_env_defaults_to_enabled() {
+        assert!(parse_test_preheat_env(None));
+        assert!(parse_test_preheat_env(Some("1")));
+        assert!(parse_test_preheat_env(Some("true")));
+        assert!(!parse_test_preheat_env(Some("0")));
+        assert!(!parse_test_preheat_env(Some("false")));
+        assert!(!parse_test_preheat_env(Some(" off ")));
+    }
+
+    fn parsed_module_for_import_context(
+        name: &str,
+        path: &str,
+        source: &str,
+    ) -> Result<ParsedModule, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+        Ok(ParsedModule {
+            name: name.to_string(),
+            path_segments: vec![name.to_string()],
+            file_path: PathBuf::from(path),
+            source: source.to_string(),
+            ast,
+        })
+    }
+
+    #[test]
+    fn test_dependency_inline_imports_keep_source_imports_normal() -> Result<(), Box<dyn std::error::Error>> {
+        let test_module = parsed_module_for_import_context(
+            "test",
+            "tests/test_dataset.incn",
+            "from rust::tokio @ \"1\" import spawn\n",
+        )?;
+        let source_module = parsed_module_for_import_context(
+            "dataset",
+            "src/dataset.incn",
+            "from rust::datafusion @ \"53\" import SessionContext\n",
+        )?;
+
+        let imports = collect_test_dependency_inline_imports(&test_module, &[source_module]);
+        let tokio = imports
+            .iter()
+            .find(|import| import.crate_name == "tokio")
+            .ok_or("expected tokio import")?;
+        let datafusion = imports
+            .iter()
+            .find(|import| import.crate_name == "datafusion")
+            .ok_or("expected datafusion import")?;
+
+        assert!(tokio.is_test_context);
+        assert!(!datafusion.is_test_context);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_harness_preheat_fingerprint_changes_when_source_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_fingerprint_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"preheat_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+
+        let first = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 2 }\n")?;
+        let second = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+
+        assert_ne!(first, second);
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_harness_preheat_fingerprint_includes_cargo_flags() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_flags_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"preheat_flags\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+
+        let base = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+        let locked = compute_generated_harness_preheat_fingerprint(
+            &temp_dir,
+            &["--locked".to_string()],
+            &temp_dir.join("target"),
+            false,
+        )?;
+
+        assert_ne!(base, locked);
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn preheat_lock_guard_removes_lock_on_drop() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_lock_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir)?;
+        let lock_path = temp_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
+
+        let guard = try_acquire_preheat_lock(&lock_path)?
+            .ok_or_else(|| std::io::Error::other("first lock acquisition should win"))?;
+        assert!(lock_path.is_file());
+        assert!(try_acquire_preheat_lock(&lock_path)?.is_none());
+        drop(guard);
+        assert!(!lock_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn inject_main_plain_test() {
         let rust = "fn test_add() { assert_eq!(1 + 1, 2); }";
         let result = inject_test_main(rust, "test_add", None);
@@ -2383,6 +3197,42 @@ mod tests {
     }
 
     #[test]
+    fn collision_free_partition_keeps_compatible_files_together() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "model Order:\n  id: int\n\ndef test_a() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "model Customer:\n  id: int\n\ndef test_b() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_c.incn"),
+                "model Order:\n  id: int\n\ndef test_c() -> None:\n  pass\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_d.incn"),
+                "model Invoice:\n  id: int\n\ndef test_d() -> None:\n  pass\n".to_string(),
+            ),
+        ];
+
+        let groups = partition_collision_free_file_groups(&sources, None);
+
+        assert_eq!(
+            groups,
+            vec![
+                vec![
+                    PathBuf::from("tests/test_a.incn"),
+                    PathBuf::from("tests/test_b.incn"),
+                    PathBuf::from("tests/test_d.incn"),
+                ],
+                vec![PathBuf::from("tests/test_c.incn")],
+            ]
+        );
+    }
+
+    #[test]
     fn prep_cache_key_stable_for_identical_inputs() {
         let cargo = CargoFeatureSelection {
             cargo_features: vec!["serde".to_string()],
@@ -2446,6 +3296,69 @@ mod tests {
                 "web".to_string()
             ]
         );
+    }
+
+    fn test_requirement_dependency(crate_name: &str, features: &[&str]) -> crate::manifest::DependencySpec {
+        crate::manifest::DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some("1".to_string()),
+            features: features.iter().map(|feature| feature.to_string()).collect(),
+            default_features: true,
+            source: crate::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+        .normalized()
+    }
+
+    #[test]
+    fn merge_lock_project_requirements_unions_features_and_dependencies() {
+        let current = ProjectRequirements {
+            stdlib_features: vec!["json".to_string()],
+            dependencies: vec![test_requirement_dependency("serde", &["derive"])],
+        };
+        let lock_entry = ProjectRequirements {
+            stdlib_features: vec!["async".to_string(), "json".to_string()],
+            dependencies: vec![
+                test_requirement_dependency("serde", &["derive"]),
+                test_requirement_dependency("tokio", &["macros"]),
+            ],
+        };
+
+        let merged = match merge_lock_project_requirements(&current, &lock_entry) {
+            Ok(merged) => merged,
+            Err(err) => panic!("expected requirements to merge: {err}"),
+        };
+
+        assert_eq!(merged.stdlib_features, vec!["async".to_string(), "json".to_string()]);
+        assert_eq!(
+            merged
+                .dependencies
+                .iter()
+                .map(|dep| dep.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["serde", "tokio"]
+        );
+    }
+
+    #[test]
+    fn merge_lock_project_requirements_rejects_conflicting_dependencies() {
+        let current = ProjectRequirements {
+            stdlib_features: Vec::new(),
+            dependencies: vec![test_requirement_dependency("tokio", &["time"])],
+        };
+        let lock_entry = ProjectRequirements {
+            stdlib_features: Vec::new(),
+            dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
+        };
+
+        let error = match merge_lock_project_requirements(&current, &lock_entry) {
+            Ok(merged) => panic!("expected conflict, got merged requirements: {merged:?}"),
+            Err(err) => err,
+        };
+
+        assert!(error.contains("tokio"));
+        assert!(error.contains("conflicts"));
     }
 
     #[test]
@@ -2547,6 +3460,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             TestInfo {
                 file_path: PathBuf::from("t.incn"),
                 function_name: "test_a".to_string(),
+                is_async: false,
                 markers: vec![],
                 required_fixtures: vec![],
                 parameter_names: vec![],
@@ -2556,6 +3470,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             TestInfo {
                 file_path: PathBuf::from("t.incn"),
                 function_name: "test_b".to_string(),
+                is_async: false,
                 markers: vec![],
                 required_fixtures: vec![],
                 parameter_names: vec![],
@@ -2570,5 +3485,45 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
         assert!(g.contains("set_current_dir"));
         assert!(g.contains("super::test_a();"));
         assert!(g.contains("super::test_b();"));
+    }
+
+    #[test]
+    fn inject_file_test_harness_wraps_async_tests_and_fixtures() {
+        let rust = "async fn resource() -> i64 { 42 }\nasync fn test_async(resource: i64) {}\n";
+        let tests = vec![TestInfo {
+            file_path: PathBuf::from("t.incn"),
+            function_name: "test_async".to_string(),
+            is_async: true,
+            markers: vec![],
+            required_fixtures: vec!["resource".to_string()],
+            parameter_names: vec!["resource".to_string()],
+            timeout: None,
+            parametrize_call: None,
+        }];
+        let mut fixtures = HashMap::new();
+        fixtures.insert(
+            "resource".to_string(),
+            FixtureExecutionInfo {
+                params: Vec::new(),
+                scope: FixtureScope::Function,
+                has_teardown: true,
+                is_async: true,
+                return_rust_type: Some("i64".to_string()),
+                state_rust_type: Some("i64".to_string()),
+                teardown: Some(YieldFixtureTeardown {
+                    teardown_function: "__incan_fixture_teardown_resource".to_string(),
+                    captures: Vec::new(),
+                    value_ty: Type::Simple("int".to_string()),
+                }),
+            },
+        );
+
+        let generated = inject_file_test_harness(rust, &tests, Path::new("."), &fixtures);
+
+        assert!(generated.contains("__INCAN_ASYNC_RUNTIME"));
+        assert!(generated.contains("__incan_async_block_on(super::resource())"));
+        assert!(generated.contains("__incan_async_block_on(super::test_async(__incan_fixture_value_0_resource))"));
+        assert!(generated.contains("__incan_run_teardown"));
+        assert!(generated.contains("__incan_async_block_on(super::__incan_fixture_teardown_resource())"));
     }
 }

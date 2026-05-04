@@ -15,7 +15,7 @@ validation:
 
 theme:
   name: material
-  logo: assets/incapunk/wordmark_small_001.png
+  logo: /shared/incapunk/wordmark_small_001.png
   highlightjs: false
   pygments_style: default
   pygments_style_dark: native
@@ -78,7 +78,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - stylesheets/incapunk.css
+  - /shared/incapunk/incapunk.css
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -131,7 +131,6 @@ nav:
           - Rust interop: language/how-to/rust_interop.md
           - Rust types (coming from Python): language/how-to/rust_types_for_python_devs.md
       - Reference:
-          - About the language reference: language/reference/index.md
           - Language reference (generated): language/reference/language.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md

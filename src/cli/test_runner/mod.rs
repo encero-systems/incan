@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,7 @@ mod reporter;
 mod types;
 
 pub use discovery::{discover_test_files, discover_tests_and_fixtures};
+pub(crate) use module_graph::collect_source_modules_for_test;
 pub use reporter::{ConsoleReporter, TestReporter};
 pub use types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
@@ -115,6 +116,7 @@ fn expand_parametrized_tests(tests: Vec<TestInfo>) -> Vec<TestInfo> {
                 out.push(TestInfo {
                     file_path: test.file_path.clone(),
                     function_name: test.function_name.clone(),
+                    is_async: test.is_async,
                     markers: non_parametrize_markers,
                     required_fixtures: test.required_fixtures.clone(),
                     parameter_names: test.parameter_names.clone(),
@@ -677,12 +679,14 @@ struct ActiveUnit {
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    prep_cache: &mut HashMap<String, Arc<execution::PreparedTestFile>>,
+    prep_cache: &mut execution::TestPrepCache,
     cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     no_capture: bool,
+    verbose: bool,
+    emit_progress: bool,
     jobs: usize,
 ) -> Vec<(TestInfo, TestResult)> {
     run_file_tests_batch(
@@ -697,6 +701,8 @@ fn run_execution_unit(
             no_capture,
             timeout: unit.timeout,
             jobs,
+            verbose,
+            emit_progress,
         },
     )
 }
@@ -912,9 +918,11 @@ fn run_scheduled_execution_units(
     cargo_all_features: bool,
     stop_on_fail: bool,
     no_capture: bool,
+    verbose: bool,
+    emit_progress: bool,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     if jobs <= 1 {
-        let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
+        let mut prep_cache = execution::TestPrepCache::default();
         let mut completed = Vec::new();
         for unit in &units {
             let results = run_execution_unit(
@@ -925,6 +933,8 @@ fn run_scheduled_execution_units(
                 cargo_no_default_features,
                 cargo_all_features,
                 no_capture,
+                verbose,
+                emit_progress,
                 jobs,
             );
             let failed = batch_has_failure(&results);
@@ -968,7 +978,7 @@ fn run_scheduled_execution_units(
             });
             launched += 1;
             thread::spawn(move || {
-                let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
+                let mut prep_cache = execution::TestPrepCache::default();
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,
@@ -978,6 +988,8 @@ fn run_scheduled_execution_units(
                     cargo_no_default_features,
                     cargo_all_features,
                     no_capture,
+                    verbose,
+                    emit_progress,
                     jobs,
                 );
                 let _ = sender.send((unit_index, results));
@@ -1254,6 +1266,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         cargo_all_features,
         stop_on_fail,
         no_capture,
+        verbose,
+        report_format == TestOutputFormat::Console,
     );
     raw_batch_results.sort_by_key(|(index, _)| *index);
     let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();
@@ -1420,6 +1434,7 @@ mod tests {
         TestInfo {
             file_path: PathBuf::from("test_example.incn"),
             function_name: name.to_string(),
+            is_async: false,
             markers,
             required_fixtures: Vec::new(),
             parameter_names: Vec::new(),

@@ -267,7 +267,7 @@ incan test -k "addition"
 # List collected tests without running them
 incan test --list tests/
 
-# Verbose output (show timing)
+# Verbose output (show timing and generated-harness preheat diagnostics)
 incan test -v
 
 # Stop on first failure
@@ -309,8 +309,12 @@ incan test --jobs 4 tests/
 
 `-k` matches the stable test id shown by `--list`, for example `tests/test_math.incn::test_addition` or `tests/test_math.incn::test_add[1-2-3]`.
 
+When a generated Rust test harness is new or stale, `incan test` preheats it with `cargo test --no-run` before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.
+
 `-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`.
 Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
+
+`--timeout` and `@timeout` apply to generated test batches. They do not configure individual fixtures. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement or external interruption terminates the worker process, remaining fixture teardown is best-effort and may not run.
 
 Conditional markers are evaluated during collection:
 
@@ -428,6 +432,46 @@ def resource() -> int:
 
 The teardown block runs after the test body for function fixtures, after all tests from the source file for module fixtures, and at the end of the worker batch for session fixtures. Teardown runs after assertion failures, can reference setup locals and fixture parameters, and fails the run if teardown itself fails. Timeout termination can still bypass teardown because the worker process may be killed.
 
+### Async Fixtures
+
+Use the same `@fixture` decorator for asynchronous setup. Declare the fixture with `async def`, await setup before `yield`, and await teardown after `yield`:
+
+```incan
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+@fixture(scope="function")
+async def resource() -> int:
+    await sleep_ms(1)
+    yield 42
+    await sleep_ms(1)
+
+async def test_uses_resource(resource: int) -> None:
+    await sleep_ms(1)
+    assert_eq(resource, 42)
+```
+
+Async fixtures must use `yield` exactly once. The yielded value is injected by name just like a synchronous fixture value. Setup before `yield` is awaited before dependents run, and teardown after `yield` is awaited before the runner continues to dependent teardowns or the next case.
+
+Synchronous and asynchronous fixtures can depend on each other in one graph:
+
+```incan
+from std.async import sleep_ms
+from std.testing import fixture
+
+@fixture
+def seed() -> int:
+    return 40
+
+@fixture
+async def resource(seed: int) -> int:
+    await sleep_ms(1)
+    yield seed + 2
+    await sleep_ms(1)
+```
+
+Scopes do not change for async fixtures. A function-scoped async fixture runs per test case, a module-scoped async fixture is cached for the source file inside the worker batch, and a session-scoped async fixture is cached for the worker batch. The runner awaits async setup before any dependent sync or async fixture starts, then tears down in reverse dependency order.
+
 ### Fixture Dependencies
 
 Fixtures can depend on other fixtures:
@@ -529,24 +573,26 @@ def test_insert(database: Database, key: str, value: str) -> None:
     assert_eq(database.get(key), value)
 ```
 
-## Async Tests (Coming Soon)
+Parametrization expands before fixture resolution. In the example above, the runner first creates `test_insert[name-Alice]` and `test_insert[age-30]`, then resolves `database` for each expanded case under the fixture's scope rules. Function-scoped fixtures run once per expanded case; module and session fixtures reuse cached instances when their normal scope permits it.
 
-Support for async test functions and fixtures with Tokio:
+## Async Tests
 
 ```incan
-import std.async
-from std.testing import fixture
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
 
 @fixture
-async def http_server() -> ServerHandle:
-    server = await start_server(port=0)
-    yield server
-    await server.shutdown()
+async def resource() -> int:
+    await sleep_ms(1)
+    yield 42
+    await sleep_ms(1)
 
-async def test_endpoint(http_server: ServerHandle) -> None:
-    response = await fetch(f"http://localhost:{http_server.port}/health")
-    assert_eq(response.status, 200)
+async def test_endpoint(resource: int) -> None:
+    await sleep_ms(1)
+    assert_eq(resource, 42)
 ```
+
+Async tests and async fixtures run on the test runner's async runtime. User code should use ordinary `await`; there is no test-level runtime setup hook and no async-only fixture decorator.
 
 ## Best Practices
 

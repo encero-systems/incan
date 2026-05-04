@@ -111,6 +111,27 @@ def test_not_reached() -> None:
     fail("this should not happen")
 ```
 
+### Async fixtures
+
+Fixtures can be asynchronous when setup or teardown needs `await`:
+
+```incan
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture
+
+@fixture
+async def resource() -> int:
+    await sleep_ms(1)
+    yield 42
+    await sleep_ms(1)
+
+async def test_uses_resource(resource: int) -> None:
+    await sleep_ms(1)
+    assert_eq(resource, 42)
+```
+
+Async fixtures still use `@fixture`; there is no async-only decorator. The runner awaits setup before the test runs and awaits teardown after `yield` when the worker remains alive. Parametrized tests expand first, then fixtures resolve for each expanded case under the usual fixture scopes.
+
 ## What to learn next
 
 That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:
