@@ -635,13 +635,14 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         }
         IrExprKind::ListComp {
             element,
-            variable,
+            pattern,
             iterable,
             filter,
             ..
         } => {
             expr_uses_binding_name(iterable, binding_name)
-                || variable != binding_name
+                || pattern_uses_binding_name(pattern, binding_name)
+                || !pattern_binds_binding_name(pattern, binding_name)
                     && (expr_uses_binding_name(element, binding_name)
                         || filter
                             .as_ref()
@@ -650,13 +651,14 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         IrExprKind::DictComp {
             key,
             value,
-            variable,
+            pattern,
             iterable,
             filter,
             ..
         } => {
             expr_uses_binding_name(iterable, binding_name)
-                || variable != binding_name
+                || pattern_uses_binding_name(pattern, binding_name)
+                || !pattern_binds_binding_name(pattern, binding_name)
                     && (expr_uses_binding_name(key, binding_name)
                         || expr_uses_binding_name(value, binding_name)
                         || filter

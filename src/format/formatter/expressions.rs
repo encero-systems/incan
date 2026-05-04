@@ -333,7 +333,7 @@ impl Formatter {
                 self.writer.write("[");
                 self.format_expr(&comp.expr.node);
                 self.writer.write(" for ");
-                self.writer.write(&comp.var);
+                self.format_pattern(&comp.pattern.node);
                 self.writer.write(" in ");
                 self.format_expr(&comp.iter.node);
                 if let Some(filter) = &comp.filter {
@@ -348,7 +348,7 @@ impl Formatter {
                 self.writer.write(": ");
                 self.format_expr(&comp.value.node);
                 self.writer.write(" for ");
-                self.writer.write(&comp.var);
+                self.format_pattern(&comp.pattern.node);
                 self.writer.write(" in ");
                 self.format_expr(&comp.iter.node);
                 if let Some(filter) = &comp.filter {
