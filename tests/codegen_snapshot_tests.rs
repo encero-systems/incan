@@ -764,6 +764,84 @@ async def search(id: int) -> int:
 }
 
 #[test]
+fn test_web_route_private_nested_module_codegen() {
+    let main_source = r#"
+import std.async
+import api::routes
+from std.web import App
+
+def main() -> None:
+  App.run(host="127.0.0.1", port=0)
+"#;
+    let routes_source = r#"
+import std.async
+from std.web import route, Json
+
+@derive(Serialize)
+model User:
+  id: int
+  name: str
+
+@route("/users/{id}")
+async def list_user(id: int) -> Json[User]:
+  return Json(User(id=id, name="Ada"))
+"#;
+
+    let Ok(main_tokens) = lexer::lex(main_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(main_ast) = parser::parse(&main_tokens) else {
+        panic!("parser failed")
+    };
+    let Ok(routes_tokens) = lexer::lex(routes_source) else {
+        panic!("lexer failed")
+    };
+    let Ok(routes_ast) = parser::parse(&routes_tokens) else {
+        panic!("parser failed")
+    };
+
+    let routes_path = vec!["api".to_string(), "routes".to_string()];
+    let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(false);
+    codegen.add_module_with_path_segments("api_routes", &routes_ast, routes_path.clone());
+    let Ok((main_code, modules)) =
+        codegen.try_generate_multi_file_nested(&main_ast, std::slice::from_ref(&routes_path))
+    else {
+        panic!("codegen must succeed");
+    };
+    let Some(routes_code) = modules.get(&routes_path) else {
+        panic!("routes module should be emitted");
+    };
+    let main_code = normalize_codegen_output(&main_code);
+    let routes_code = normalize_codegen_output(routes_code);
+
+    assert!(
+        routes_code.contains("#[incan_web_macros::route(\"/users/{id}\")]"),
+        "route proc-macro attribute should be retained in dependency module:\n{routes_code}"
+    );
+    assert!(
+        routes_code.contains("struct User"),
+        "private response model should be retained in dependency module:\n{routes_code}"
+    );
+    assert!(
+        !routes_code.contains("pub struct User"),
+        "route response model should not be forced public:\n{routes_code}"
+    );
+    assert!(
+        routes_code.contains("async fn list_user"),
+        "private route handler should be retained in dependency module:\n{routes_code}"
+    );
+    assert!(
+        !routes_code.contains("pub async fn list_user"),
+        "route handler should not be forced public:\n{routes_code}"
+    );
+    assert!(
+        !main_code.contains("api::routes::list_user"),
+        "main module should not call dependency route handler directly:\n{main_code}"
+    );
+}
+
+#[test]
 fn test_async_main_runtime_bootstrap_codegen() {
     let source = r#"
 import std.async
