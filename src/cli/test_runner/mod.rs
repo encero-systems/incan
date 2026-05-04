@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -678,7 +678,7 @@ struct ActiveUnit {
 #[allow(clippy::too_many_arguments)]
 fn run_execution_unit(
     unit: &ExecutionUnit,
-    prep_cache: &mut HashMap<String, Arc<execution::PreparedTestFile>>,
+    prep_cache: &mut execution::TestPrepCache,
     cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
@@ -921,7 +921,7 @@ fn run_scheduled_execution_units(
     emit_progress: bool,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     if jobs <= 1 {
-        let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
+        let mut prep_cache = execution::TestPrepCache::default();
         let mut completed = Vec::new();
         for unit in &units {
             let results = run_execution_unit(
@@ -977,7 +977,7 @@ fn run_scheduled_execution_units(
             });
             launched += 1;
             thread::spawn(move || {
-                let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
+                let mut prep_cache = execution::TestPrepCache::default();
                 let unit_index = unit.index;
                 let results = run_execution_unit(
                     &unit,

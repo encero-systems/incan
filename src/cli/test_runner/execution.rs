@@ -15,8 +15,8 @@ use crate::cli::commands::common::{
     collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
-use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::resolve_dependencies;
+use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
     Program, Spanned, Statement, Type,
@@ -458,6 +458,20 @@ pub(super) struct PreparedTestFile {
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+}
+
+/// Parsed dependency context for the project lock-validation entry point, shared across test batches in one session.
+struct PreparedLockEntry {
+    modules: Vec<ParsedModule>,
+    inline_imports: Vec<InlineRustImport>,
+    project_requirements: ProjectRequirements,
+}
+
+/// Session-local preparation cache for one `incan test` invocation.
+#[derive(Default)]
+pub(super) struct TestPrepCache {
+    prepared_files: HashMap<String, Arc<PreparedTestFile>>,
+    lock_entries: HashMap<String, Arc<PreparedLockEntry>>,
 }
 
 /// Return the generated function name that contains the post-yield teardown body.
@@ -950,6 +964,78 @@ fn merge_rust_inspect_stdlib_features<'a>(
         merged.extend(features.iter().cloned());
     }
     merged.into_iter().collect()
+}
+
+/// Return a stable session-local cache key for a lock-validation entry path.
+fn lock_entry_cache_key(lock_entry_path: &Path) -> String {
+    fs::canonicalize(lock_entry_path)
+        .unwrap_or_else(|_| lock_entry_path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Prepare the parsed lock-validation entry graph once per test session.
+fn prepare_lock_entry(
+    lock_entry_path: &Path,
+    library_manifest_index: &LibraryManifestIndex,
+    prep_cache: &mut TestPrepCache,
+) -> Result<Arc<PreparedLockEntry>, String> {
+    let cache_key = lock_entry_cache_key(lock_entry_path);
+    if let Some(hit) = prep_cache.lock_entries.get(&cache_key) {
+        return Ok(Arc::clone(hit));
+    }
+
+    let lock_entry_arg = lock_entry_path.to_string_lossy().to_string();
+    let modules = common::collect_modules(&lock_entry_arg).map_err(|err| err.message.clone())?;
+    let mut inline_imports = Vec::new();
+    for module in &modules {
+        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+    }
+    let project_requirements =
+        common::collect_project_requirements(&modules, library_manifest_index).map_err(|err| err.message.clone())?;
+
+    let prepared = Arc::new(PreparedLockEntry {
+        modules,
+        inline_imports,
+        project_requirements,
+    });
+    prep_cache.lock_entries.insert(cache_key, Arc::clone(&prepared));
+    Ok(prepared)
+}
+
+/// Merge requirements collected from the current test batch and the project lock-validation entry.
+fn merge_lock_project_requirements(
+    current: &ProjectRequirements,
+    lock_entry: &ProjectRequirements,
+) -> Result<ProjectRequirements, String> {
+    let stdlib_features = current
+        .stdlib_features
+        .iter()
+        .chain(lock_entry.stdlib_features.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut dependencies = current.dependencies.clone();
+    for candidate in &lock_entry.dependencies {
+        if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+            if existing != candidate {
+                return Err(format!(
+                    "dependency requirement `{}` conflicts between test batch and lock entry context",
+                    candidate.crate_name
+                ));
+            }
+            continue;
+        }
+        dependencies.push(candidate.clone());
+    }
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+
+    Ok(ProjectRequirements {
+        stdlib_features,
+        dependencies,
+    })
 }
 
 /// Promote project dev dependencies into ordinary dependencies for generated test-runner crates.
@@ -2082,7 +2168,7 @@ fn preheat_status_label(status: HarnessPreheatStatus) -> &'static str {
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
-    prep_cache: &mut HashMap<String, Arc<PreparedTestFile>>,
+    prep_cache: &mut TestPrepCache,
     cargo_policy: &CargoPolicy,
     cargo_features: &[String],
     cargo_no_default_features: bool,
@@ -2292,7 +2378,7 @@ pub(super) fn run_file_tests_batch(
         cargo_policy,
     );
 
-    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.get(&cache_key) {
+    let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.prepared_files.get(&cache_key) {
         Arc::clone(hit)
     } else {
         // ---- Context: cold prep — inline imports, resolve and merge Cargo deps, lock + rust-inspect workspace ----
@@ -2359,29 +2445,26 @@ pub(super) fn run_file_tests_batch(
         if (cargo_policy.locked || cargo_policy.frozen)
             && let Some(lock_entry_path) = lock_validation_entry_path(&project_root, manifest.as_ref())
         {
-            let lock_entry_arg = lock_entry_path.to_string_lossy().to_string();
-            let lock_entry_modules = match common::collect_modules(&lock_entry_arg) {
-                Ok(modules) => modules,
-                Err(err) => {
+            let lock_entry = match prepare_lock_entry(&lock_entry_path, &library_manifest_index, prep_cache) {
+                Ok(entry) => entry,
+                Err(message) => {
                     return tests
                         .iter()
-                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
                         .collect();
                 }
             };
             let mut lock_inline_imports = inline_imports.clone();
-            for module in &lock_entry_modules {
-                lock_inline_imports.extend(common::collect_inline_rust_imports(module, false));
-            }
-            lock_dependency_modules.extend(lock_entry_modules);
+            lock_inline_imports.extend(lock_entry.inline_imports.iter().cloned());
+            lock_dependency_modules.extend(lock_entry.modules.iter().cloned());
 
             lock_project_requirements =
-                match common::collect_project_requirements(&lock_dependency_modules, &library_manifest_index) {
+                match merge_lock_project_requirements(&project_requirements, &lock_entry.project_requirements) {
                     Ok(requirements) => requirements,
-                    Err(err) => {
+                    Err(message) => {
                         return tests
                             .iter()
-                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
                             .collect();
                     }
                 };
@@ -2448,6 +2531,7 @@ pub(super) fn run_file_tests_batch(
             let mut rust_inspect_requirements = project_requirements.clone();
             rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
                 prep_cache
+                    .prepared_files
                     .values()
                     .map(|prepared| prepared.project_requirements.stdlib_features.as_slice()),
                 &project_requirements.stdlib_features,
@@ -2505,7 +2589,7 @@ pub(super) fn run_file_tests_batch(
             rust_inspect_manifest_dir,
         };
         let arc = Arc::new(prepared);
-        prep_cache.insert(cache_key, Arc::clone(&arc));
+        prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
         arc
     };
 
@@ -3018,6 +3102,63 @@ mod tests {
                 "web".to_string()
             ]
         );
+    }
+
+    fn test_requirement_dependency(crate_name: &str, features: &[&str]) -> crate::manifest::DependencySpec {
+        crate::manifest::DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some("1".to_string()),
+            features: features.iter().map(|feature| feature.to_string()).collect(),
+            default_features: true,
+            source: crate::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+        .normalized()
+    }
+
+    #[test]
+    fn merge_lock_project_requirements_unions_features_and_dependencies() {
+        let current = ProjectRequirements {
+            stdlib_features: vec!["json".to_string()],
+            dependencies: vec![test_requirement_dependency("serde", &["derive"])],
+        };
+        let lock_entry = ProjectRequirements {
+            stdlib_features: vec!["async".to_string(), "json".to_string()],
+            dependencies: vec![
+                test_requirement_dependency("serde", &["derive"]),
+                test_requirement_dependency("tokio", &["macros"]),
+            ],
+        };
+
+        let merged = merge_lock_project_requirements(&current, &lock_entry).expect("requirements should merge");
+
+        assert_eq!(merged.stdlib_features, vec!["async".to_string(), "json".to_string()]);
+        assert_eq!(
+            merged
+                .dependencies
+                .iter()
+                .map(|dep| dep.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["serde", "tokio"]
+        );
+    }
+
+    #[test]
+    fn merge_lock_project_requirements_rejects_conflicting_dependencies() {
+        let current = ProjectRequirements {
+            stdlib_features: Vec::new(),
+            dependencies: vec![test_requirement_dependency("tokio", &["time"])],
+        };
+        let lock_entry = ProjectRequirements {
+            stdlib_features: Vec::new(),
+            dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
+        };
+
+        let error = merge_lock_project_requirements(&current, &lock_entry).expect_err("expected conflict");
+
+        assert!(error.contains("tokio"));
+        assert!(error.contains("conflicts"));
     }
 
     #[test]
