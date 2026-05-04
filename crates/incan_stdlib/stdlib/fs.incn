@@ -202,7 +202,9 @@ pub type Path = newtype str:
 
         Supported modes are `r`, `w`, `a`, `x`, their binary forms, and `+`
         read-write variants. Binary handles reject text-only options. Text
-        handles currently support UTF-8 with strict error handling.
+        handles use UTF-8 with strict error handling by default. When callers
+        provide text options, encoding labels use the WHATWG labels implemented
+        by `encoding_rs`, and `errors` accepts `strict` or `replace`.
         """
         _validate_open_options(self.clone(), mode, buffering, encoding, errors, newline)?
         match _open_file(self.clone(), mode):

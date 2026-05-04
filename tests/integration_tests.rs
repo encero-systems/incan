@@ -2192,6 +2192,14 @@ def run() -> Result[None, IoError]:
         Ok(_) => println("bad")
         Err(err) => println(err.kind)
     println(latin.read_text("utf-8", "replace")? != "")
+    latin_out = root.joinpath("latin-out.txt")
+    latin_out.write_text("€", "windows-1252", "strict", None)?
+    println(latin_out.read_text("windows-1252", "strict")? == "€")
+    latin_handle_out = root.joinpath("latin-handle-out.txt")
+    latin_handle = latin_handle_out.open("w", -1, Some("windows-1252"), Some("strict"), None)?
+    latin_handle.write("€")?
+    latin_handle.flush()?
+    println(latin_handle_out.read_text("windows-1252", "strict")? == "€")
     text_handle = latin.open("r", -1, Some("windows-1252"), Some("strict"), None)?
     println(len(text_handle.read(-1)?) > 0)
     handle = root.joinpath("a.txt").open("rb", 0, None, None, None)?
@@ -2250,6 +2258,8 @@ def main() -> None:
                 "invalid_data",
                 "true",
                 "true",
+                "true",
+                "true",
                 "2",
                 "bravo",
                 "true",
@@ -2260,6 +2270,38 @@ def main() -> None:
             ],
             "unexpected std.fs output:\n{stdout}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_fs_preserves_legacy_file_builtins() -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::env::temp_dir().join(format!("incan_std_fs_legacy_builtin_{}.txt", std::process::id()));
+        let source = format!(
+            r#"
+def main() -> None:
+    match write_file("{path}", "legacy"):
+        Ok(_) => pass
+        Err(err) => println(err.to_string())
+    match read_file("{path}"):
+        Ok(data) => println(data)
+        Err(err) => println(err.to_string())
+"#,
+            path = path.display()
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "legacy file builtins failed after std.fs registration: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "legacy", "unexpected legacy builtin output:\n{stdout}");
+        let _ = std::fs::remove_file(path);
         Ok(())
     }
 

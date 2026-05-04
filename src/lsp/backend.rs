@@ -902,14 +902,14 @@ mod lsp_classmethod_tests {
     use super::{classmethod_cls_detail, classmethod_context_at_offset, identifier_at_offset};
     use crate::frontend::{lexer, parser};
 
-    fn parse_source(source: &str) -> crate::frontend::ast::Program {
-        let tokens = lexer::lex(source).unwrap_or_else(|errors| panic!("lexer failed: {errors:?}"));
+    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&HashMap::new()))
-            .unwrap_or_else(|errors| panic!("parser failed: {errors:?}"))
+            .map_err(|errors| format!("parser failed: {errors:?}"))
     }
 
     #[test]
-    fn classmethod_context_surfaces_cls_receiver_for_lsp() {
+    fn classmethod_context_surfaces_cls_receiver_for_lsp() -> Result<(), String> {
         let source = r#"
 class Box[T with Clone]:
     value: T
@@ -918,21 +918,26 @@ class Box[T with Clone]:
     def make(cls, value: T) -> Self:
         return cls(value=value)
 "#;
-        let ast = parse_source(source);
-        let offset = source.find("cls(value").expect("expected cls call");
+        let ast = parse_source(source)?;
+        let offset = source
+            .find("cls(value")
+            .ok_or_else(|| "expected cls call".to_string())?;
         let aliases = HashMap::new();
 
-        let context = classmethod_context_at_offset(&ast, offset, &aliases).expect("expected classmethod context");
+        let context = classmethod_context_at_offset(&ast, offset, &aliases)
+            .ok_or_else(|| "expected classmethod context".to_string())?;
         assert_eq!(context.owner_type, "Box[T]");
         assert_eq!(classmethod_cls_detail(&context), "cls: type[Box[T]]");
 
-        let (ident, span) = identifier_at_offset(source, offset).expect("expected identifier at cls call");
+        let (ident, span) =
+            identifier_at_offset(source, offset).ok_or_else(|| "expected identifier at cls call".to_string())?;
         assert_eq!(ident, "cls");
         assert_eq!(&source[span.start..span.end], "cls");
+        Ok(())
     }
 
     #[test]
-    fn staticmethod_body_does_not_surface_cls_receiver_for_lsp() {
+    fn staticmethod_body_does_not_surface_cls_receiver_for_lsp() -> Result<(), String> {
         let source = r#"
 class Box[T with Clone]:
     value: T
@@ -941,11 +946,14 @@ class Box[T with Clone]:
     def make(value: T) -> Self:
         return Box(value=value)
 "#;
-        let ast = parse_source(source);
-        let offset = source.find("return Box").expect("expected static factory body");
+        let ast = parse_source(source)?;
+        let offset = source
+            .find("return Box")
+            .ok_or_else(|| "expected static factory body".to_string())?;
         let aliases = HashMap::new();
 
         assert!(classmethod_context_at_offset(&ast, offset, &aliases).is_none());
+        Ok(())
     }
 }
 
@@ -3417,4 +3425,22 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     }
 
     Some(items)
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::stdlib_module_completions;
+
+    #[test]
+    fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
+        let items = stdlib_module_completions("from std.")
+            .ok_or_else(|| "expected stdlib completions for `from std.`".to_string())?;
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == "fs" && item.detail.as_deref() == Some("std.fs module")),
+            "expected std.fs to be exposed through stdlib registry completions: {items:?}"
+        );
+        Ok(())
+    }
 }

@@ -82,7 +82,14 @@ impl<'a> IrEmitter<'a> {
             .map(|(idx, arg)| {
                 let mut emitted = self.emit_expr_for_use(&arg.expr, base_use_site)?;
                 if idx == 0 && method == "take" && matches!(arg.expr.ty, IrType::Int) {
-                    emitted = quote! { (#emitted).try_into().unwrap() };
+                    emitted = quote! {
+                        match u64::try_from(#emitted) {
+                            Ok(__incan_take_count) => __incan_take_count,
+                            Err(_) => incan_stdlib::errors::raise_value_error(
+                                "take() count must be non-negative and fit u64",
+                            ),
+                        }
+                    };
                 }
                 if idx == 0 && method == "by_ref" {
                     emitted = quote! { &mut *#emitted };

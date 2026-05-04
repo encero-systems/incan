@@ -1,6 +1,6 @@
 # RFC 055: `std.fs` — pathlib-shaped filesystem APIs with chunked file I/O
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/286
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -274,7 +274,7 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 - Add typechecker, codegen, runtime, and smoke coverage for path construction, joining, lexical properties, predicates, `try_exists`, directories, whole-file byte/text I/O, open/read/read_exact/write/tell/seek, durability, traversal, metadata, copy/move, tree removal, links, permissions, and failure paths.
 - Update authored user docs: the dedicated `std.fs` reference, file I/O how-to, tutorial examples that already mention `Path`, stdlib reference navigation, and release notes.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / lifecycle
 
@@ -299,8 +299,8 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 
 - [x] Ensure `std.fs` imports resolve through the normal stdlib loader.
 - [x] Ensure emitted Rust uses the stdlib module without hardcoded path special cases.
-- [ ] Ensure LSP completions/hovers discover the new namespace through registry metadata.
-- [ ] Preserve existing `read_file` / `write_file` behavior.
+- [x] Ensure LSP completions/hovers discover the new namespace through registry metadata.
+- [x] Preserve existing `read_file` / `write_file` behavior.
 
 ### Tests
 
