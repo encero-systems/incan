@@ -52,6 +52,30 @@ pub def describe_chain(value: int | str | bool) -> str:
       return "true"
     return "false"
 
+pub def describe_wide_chain(value: int | float | str | bool) -> str:
+  if isinstance(value, bool):
+    return "bool"
+  elif isinstance(value, int):
+    return "int"
+  elif isinstance(value, float):
+    return "float"
+  elif isinstance(value, str):
+    return value.upper()
+  return "unknown"
+
+pub def describe_wide_match(value: int | float | str | bool) -> str:
+  match value:
+    bool(flag) =>
+      if flag:
+        return "bool:true"
+      return "bool:false"
+    int(n) =>
+      return str(n)
+    float(f) =>
+      return str(f)
+    str(s) =>
+      return s.upper()
+
 pub def describe_optional_narrow(value: int | str | None) -> str:
   if isinstance(value, int):
     return "number"

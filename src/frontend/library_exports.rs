@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{
-    ClassDecl, Declaration, EnumDecl, FunctionDecl, ModelDecl, NewtypeDecl, Program, TraitBound, TraitDecl,
+    AliasDecl, ClassDecl, Declaration, EnumDecl, FunctionDecl, ModelDecl, NewtypeDecl, Program, TraitBound, TraitDecl,
     TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
@@ -39,6 +39,7 @@ pub struct CheckedField {
 #[derive(Debug, Clone)]
 pub struct CheckedMethod {
     pub name: String,
+    pub alias_of: Option<String>,
     pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::frontend::ast::Receiver>,
     pub params: Vec<CallableParam>,
@@ -61,6 +62,12 @@ pub struct CheckedTypeAliasExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub target: ResolvedType,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedAliasExport {
+    pub name: String,
+    pub target_path: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +148,7 @@ pub struct CheckedStaticExport {
 #[derive(Debug, Clone)]
 pub enum CheckedExportKind {
     Function(CheckedFunctionExport),
+    Alias(CheckedAliasExport),
     TypeAlias(CheckedTypeAliasExport),
     Model(CheckedModelExport),
     Class(CheckedClassExport),
@@ -157,6 +165,7 @@ pub struct CheckedNamedExport {
     pub kind: CheckedExportKind,
 }
 
+/// Collect checked public exports from one program while preserving alias identity.
 pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     let mut exports = Vec::new();
 
@@ -232,12 +241,29 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                     });
                 }
             }
+            Declaration::Alias(alias) if matches!(alias.visibility, Visibility::Public) => {
+                if let Some(export) = checked_alias_export(alias, checker) {
+                    exports.push(export);
+                }
+            }
             _ => {}
         }
     }
 
     exports.sort_by(|a, b| a.name.cmp(&b.name));
     exports
+}
+
+/// Build a checked public export entry for a module-level alias.
+fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<CheckedNamedExport> {
+    checker.lookup_symbol(alias.name.as_str())?;
+    Some(CheckedNamedExport {
+        name: alias.name.clone(),
+        kind: CheckedExportKind::Alias(CheckedAliasExport {
+            name: alias.name.clone(),
+            target_path: alias.target.segments.clone(),
+        }),
+    })
 }
 
 fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Option<CheckedFunctionExport> {
@@ -534,6 +560,7 @@ fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> 
 fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
     CheckedMethod {
         name: name.to_string(),
+        alias_of: info.alias_of.clone(),
         type_params: info
             .type_params
             .iter()

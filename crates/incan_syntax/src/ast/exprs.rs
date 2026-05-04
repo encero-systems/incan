@@ -340,7 +340,7 @@ pub struct LoopExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListComp {
     pub expr: Spanned<Expr>,
-    pub var: Ident,
+    pub pattern: Spanned<Pattern>,
     pub iter: Spanned<Expr>,
     pub filter: Option<Spanned<Expr>>,
 }
@@ -349,7 +349,7 @@ pub struct ListComp {
 pub struct DictComp {
     pub key: Spanned<Expr>,
     pub value: Spanned<Expr>,
-    pub var: Ident,
+    pub pattern: Spanned<Pattern>,
     pub iter: Spanned<Expr>,
     pub filter: Option<Spanned<Expr>>,
 }

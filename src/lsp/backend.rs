@@ -19,6 +19,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::cli::commands::common::CompilationSession;
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
     build_source_map, collect_inline_rust_imports, collect_project_requirements, collect_rust_inspect_query_paths,
@@ -39,7 +40,7 @@ use crate::frontend::contract_metadata::{
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
-use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
+use crate::frontend::{lexer, parser, typechecker};
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
     TypeParamExport, TypeRef,
@@ -114,57 +115,36 @@ impl IncanLanguageServer {
     async fn analyze_document(&self, uri: &Url, source: &str, version: i32) {
         let mut diagnostics = Vec::new();
 
-        // Step 1: Lex
-        let tokens = match lexer::lex(source) {
-            Ok(tokens) => tokens,
-            Err(errors) => {
-                // Convert all lexer errors to diagnostics
-                for error in &errors {
-                    diagnostics.push(compile_error_to_diagnostic(error, source, uri));
-                }
-                self.client
-                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                    .await;
-                return;
-            }
-        };
-
-        // Step 1.5: Discover manifest and library soft keywords
+        // Step 1: Discover shared compilation context.
         let module_path = uri.to_file_path().ok();
-        let mut declared_crates = HashSet::new();
-        let mut library_imported_vocab = HashMap::new();
-        let mut library_imported_dsl_surfaces = HashMap::new();
-        let mut library_manifest_index = LibraryManifestIndex::default();
-        let mut contract_model_bundles = Vec::new();
-        #[cfg(feature = "rust_inspect")]
-        let mut project_manifest: Option<ProjectManifest> = None;
-        #[cfg(feature = "rust_inspect")]
-        let mut rust_inspect_context: Option<(PathBuf, Vec<String>)> = None;
-        if let Some(path) = &module_path
-            && let Some(start_dir) = path.parent()
-            && let Ok(Some(manifest)) = ProjectManifest::discover(start_dir)
-        {
-            #[cfg(feature = "rust_inspect")]
-            {
-                project_manifest = Some(manifest.clone());
-            }
-            declared_crates = manifest.declared_rust_crate_names();
-            library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
-            library_imported_vocab = library_manifest_index.library_imported_vocab();
-            library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-            match read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths()) {
-                Ok(bundles) => contract_model_bundles = bundles,
+        let compilation_session = if let Some(path) = &module_path {
+            match CompilationSession::discover(path) {
+                Ok(session) => Some(session),
                 Err(error) => {
-                    diagnostics.push(lsp_root_error_diagnostic(format!(
-                        "Invalid checked contract metadata: {error}"
-                    )));
+                    diagnostics.push(lsp_root_error_diagnostic(error.to_string()));
                     self.client
                         .publish_diagnostics(uri.clone(), diagnostics, Some(version))
                         .await;
                     return;
                 }
             }
-        }
+        } else {
+            None
+        };
+        let declared_crates = compilation_session
+            .as_ref()
+            .map(CompilationSession::declared_crate_names)
+            .unwrap_or_default();
+        let library_manifest_index = compilation_session
+            .as_ref()
+            .map(|session| session.library_manifest_index.clone())
+            .unwrap_or_default();
+        #[cfg(feature = "rust_inspect")]
+        let project_manifest = compilation_session
+            .as_ref()
+            .and_then(|session| session.manifest.clone());
+        #[cfg(feature = "rust_inspect")]
+        let mut rust_inspect_context: Option<(PathBuf, Vec<String>)> = None;
 
         // Step 2: Parse
         //
@@ -172,12 +152,11 @@ impl IncanLanguageServer {
         // In particular, `pub from ... import ...` is only accepted when this path resolves under `src/` (RFC 031 /
         // `incan_syntax` parser). If `uri.to_file_path()` fails, `module_path` is omitted and those rules are
         // skipped during parsing (prefer fixing the client URI scheme / workspace roots).
-        let mut ast = match parser::parse_with_context_and_surfaces(
-            &tokens,
-            module_path.as_deref().and_then(|path| path.to_str()),
-            Some(&library_imported_vocab),
-            Some(&library_imported_dsl_surfaces),
-        ) {
+        let ast = match if let (Some(session), Some(path)) = (compilation_session.as_ref(), module_path.as_ref()) {
+            session.parse_source(path, source, false)
+        } else {
+            lexer::lex(source).and_then(|tokens| parser::parse_with_context_and_surfaces(&tokens, None, None, None))
+        } {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
                 for warn in &ast.warnings {
@@ -186,7 +165,6 @@ impl IncanLanguageServer {
                 ast
             }
             Err(errors) => {
-                // Convert all parse errors to diagnostics
                 for error in &errors {
                     diagnostics.push(compile_error_to_diagnostic(error, source, uri));
                 }
@@ -196,21 +174,10 @@ impl IncanLanguageServer {
                 return;
             }
         };
-        if let Err(errors) = vocab_desugar_pass::desugar_program_vocab_blocks(
-            &mut ast,
-            module_path.as_deref().and_then(|p| p.to_str()),
-            &library_manifest_index,
-        ) {
-            for error in &errors {
-                diagnostics.push(compile_error_to_diagnostic(error, source, uri));
-            }
-            self.client
-                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                .await;
-            return;
-        }
         let mut typecheck_ast = ast.clone();
-        if let Err(error) = materialize_contract_models(&mut typecheck_ast, &contract_model_bundles) {
+        if let Some(session) = &compilation_session
+            && let Err(error) = materialize_contract_models(&mut typecheck_ast, &session.contract_model_bundles)
+        {
             diagnostics.push(lsp_root_error_diagnostic(format!(
                 "Invalid checked contract metadata: {error}"
             )));
@@ -221,25 +188,20 @@ impl IncanLanguageServer {
         }
 
         let (deps, mut dep_summary_diags) = self
-            .collect_dependency_modules(
-                uri,
-                &ast,
-                source,
-                Some(&library_imported_vocab),
-                Some(&library_imported_dsl_surfaces),
-                Some(&library_manifest_index),
-            )
+            .collect_dependency_modules(uri, &ast, source, compilation_session.as_ref())
             .await;
         let mut typecheck_deps = deps.clone();
-        for dep in &mut typecheck_deps {
-            if let Err(error) = materialize_contract_models(&mut dep.ast, &contract_model_bundles) {
-                diagnostics.push(lsp_root_error_diagnostic(format!(
-                    "Invalid checked contract metadata: {error}"
-                )));
-                self.client
-                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                    .await;
-                return;
+        if let Some(session) = &compilation_session {
+            for dep in &mut typecheck_deps {
+                if let Err(error) = materialize_contract_models(&mut dep.ast, &session.contract_model_bundles) {
+                    diagnostics.push(lsp_root_error_diagnostic(format!(
+                        "Invalid checked contract metadata: {error}"
+                    )));
+                    self.client
+                        .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                        .await;
+                    return;
+                }
             }
         }
         #[cfg(feature = "rust_inspect")]
@@ -368,9 +330,7 @@ impl IncanLanguageServer {
         uri: &Url,
         ast: &Program,
         entry_source: &str,
-        library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-        library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
-        library_manifest_index: Option<&LibraryManifestIndex>,
+        compilation_session: Option<&CompilationSession>,
     ) -> (Vec<ParsedModule>, Vec<Diagnostic>) {
         let Ok(entry_path) = uri.to_file_path() else {
             return (Vec::new(), Vec::new());
@@ -383,9 +343,10 @@ impl IncanLanguageServer {
         let mut entry_diags: Vec<Diagnostic> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut stack = Vec::new();
+        let source_root = compilation_session.map(|session| session.source_root.as_path());
 
         // Seed stack with direct imports from the entry AST
-        for resolved in resolve_program_source_imports(ast, &entry_base, None) {
+        for resolved in resolve_program_source_imports(ast, &entry_base, source_root) {
             if let SourceModuleImportResolution::Local(module_ref) = resolved.resolution {
                 stack.push((module_ref, resolved.span));
             }
@@ -412,45 +373,14 @@ impl IncanLanguageServer {
                 continue;
             };
 
-            let dep_tokens = match lexer::lex(&dep_source) {
-                Ok(t) => t,
-                Err(errors) => {
-                    // Guardrail: surface dependency lex errors.
-                    if let Some(u) = dep_uri.clone() {
-                        let mut diags = Vec::new();
-                        for e in &errors {
-                            diags.push(compile_error_to_diagnostic(e, &dep_source, &u));
-                        }
-                        let ver = dep_doc.map(|d| d.version);
-                        self.client.publish_diagnostics(u.clone(), diags, ver).await;
-                    }
-
-                    // Summarize in the entry file.
-                    let range = span_to_range(entry_source, import_span.start, import_span.end);
-                    entry_diags.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        code: None,
-                        code_description: None,
-                        source: Some("incan".to_string()),
-                        message: format!(
-                            "Failed to lex dependency '{}'; open that file for details",
-                            canonical.display()
-                        ),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                    });
-                    continue;
-                }
-            };
-            let dep_path_display = canonical.to_string_lossy();
-            let mut dep_ast = match parser::parse_with_context_and_surfaces(
-                &dep_tokens,
-                Some(dep_path_display.as_ref()),
-                library_imported_vocab,
-                library_imported_dsl_surfaces,
-            ) {
+            let dep_ast = match if let Some(session) = compilation_session {
+                session.parse_source(&canonical, &dep_source, false)
+            } else {
+                let dep_path_display = canonical.to_string_lossy();
+                lexer::lex(&dep_source).and_then(|tokens| {
+                    parser::parse_with_context_and_surfaces(&tokens, Some(dep_path_display.as_ref()), None, None)
+                })
+            } {
                 Ok(a) => a,
                 Err(errors) => {
                     // Guardrail: surface dependency parse errors.
@@ -471,7 +401,7 @@ impl IncanLanguageServer {
                         code_description: None,
                         source: Some("incan".to_string()),
                         message: format!(
-                            "Failed to parse dependency '{}'; open that file for details",
+                            "Failed to analyze dependency '{}'; open that file for details",
                             canonical.display()
                         ),
                         related_information: None,
@@ -481,39 +411,6 @@ impl IncanLanguageServer {
                     continue;
                 }
             };
-            if let Some(index) = library_manifest_index
-                && let Err(errors) = vocab_desugar_pass::desugar_program_vocab_blocks(
-                    &mut dep_ast,
-                    Some(dep_path_display.as_ref()),
-                    index,
-                )
-            {
-                if let Some(u) = dep_uri.clone() {
-                    let mut diags = Vec::new();
-                    for error in &errors {
-                        diags.push(compile_error_to_diagnostic(error, &dep_source, &u));
-                    }
-                    let ver = dep_doc.map(|d| d.version);
-                    self.client.publish_diagnostics(u.clone(), diags, ver).await;
-                }
-
-                let range = span_to_range(entry_source, import_span.start, import_span.end);
-                entry_diags.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    code: None,
-                    code_description: None,
-                    source: Some("incan".to_string()),
-                    message: format!(
-                        "Failed to desugar dependency '{}'; open that file for details",
-                        canonical.display()
-                    ),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                });
-                continue;
-            }
 
             // Dependency parsed successfully: clear old dependency diagnostics if any.
             if let Some(u) = dep_uri.clone() {
@@ -523,7 +420,7 @@ impl IncanLanguageServer {
 
             // Queue nested dependencies
             let current_base = canonical.parent().unwrap_or(&entry_base);
-            for resolved in resolve_program_source_imports(&dep_ast, current_base, None) {
+            for resolved in resolve_program_source_imports(&dep_ast, current_base, source_root) {
                 if let SourceModuleImportResolution::Local(nested_ref) = resolved.resolution {
                     stack.push((nested_ref, Span::default()));
                 }

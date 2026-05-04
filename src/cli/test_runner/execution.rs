@@ -217,6 +217,9 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
             Declaration::Trait(decl) => {
                 names.types.insert(decl.name.clone());
             }
+            Declaration::Alias(decl) => {
+                names.values.insert(decl.name.clone());
+            }
             Declaration::TypeAlias(decl) => {
                 names.types.insert(decl.name.clone());
             }

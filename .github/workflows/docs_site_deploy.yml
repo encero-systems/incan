@@ -18,11 +18,11 @@ jobs:
       run:
         working-directory: workspaces/docs-site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -55,4 +55,3 @@ jobs:
           export INCAN_DOCS_BASE_PREFIX="${MINOR}"
           python -m mkdocs build --strict
           mike deploy --push "${MINOR}"
-

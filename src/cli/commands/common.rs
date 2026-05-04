@@ -16,7 +16,9 @@ use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Program, Span};
-use crate::frontend::contract_metadata::{materialize_contract_models, read_project_model_bundles};
+use crate::frontend::contract_metadata::{
+    CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
+};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
@@ -150,6 +152,98 @@ fn split_env_cargo_args(value: Option<&str>) -> Vec<String> {
         .flat_map(str::split_whitespace)
         .map(str::to_string)
         .collect()
+}
+
+/// Shared source-analysis context for CLI commands and the LSP.
+///
+/// This owns the project-level inputs that affect context-sensitive parsing and typechecking so entrypoints do not
+/// independently rediscover manifests, library vocabulary, provider surfaces, or checked contract metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct CompilationSession {
+    #[cfg(feature = "lsp")]
+    pub manifest: Option<ProjectManifest>,
+    pub source_root: PathBuf,
+    pub library_manifest_index: LibraryManifestIndex,
+    pub library_imported_vocab: parser::ImportedLibraryVocab,
+    pub library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
+    pub contract_model_bundles: Vec<CanonicalModelBundle>,
+}
+
+impl CompilationSession {
+    /// Discover project-level compilation context for an entry source path.
+    pub(crate) fn discover(entry_path: &Path) -> CliResult<Self> {
+        let inferred_project_root = resolve_project_root(entry_path);
+        let manifest =
+            ProjectManifest::discover(&inferred_project_root).map_err(|error| CliError::failure(error.to_string()))?;
+        let project_root = manifest
+            .as_ref()
+            .map(|manifest| manifest.project_root().to_path_buf())
+            .unwrap_or(inferred_project_root);
+        let source_root = resolve_source_root(&project_root, manifest.as_ref());
+        let library_manifest_index = manifest
+            .as_ref()
+            .and_then(|manifest| {
+                (!manifest.library_dependencies().is_empty())
+                    .then(|| LibraryManifestIndex::from_project_manifest(manifest))
+            })
+            .unwrap_or_default();
+        let library_imported_vocab = library_manifest_index.library_imported_vocab();
+        let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
+        let contract_model_bundles = manifest
+            .as_ref()
+            .map(|manifest| read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths()))
+            .transpose()
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .unwrap_or_default();
+
+        Ok(Self {
+            #[cfg(feature = "lsp")]
+            manifest,
+            source_root,
+            library_manifest_index,
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+            contract_model_bundles,
+        })
+    }
+
+    /// Return the Rust crate names declared by the project manifest, or an empty set outside a project.
+    #[cfg(feature = "lsp")]
+    pub(crate) fn declared_crate_names(&self) -> HashSet<String> {
+        self.manifest
+            .as_ref()
+            .map(ProjectManifest::declared_rust_crate_names)
+            .unwrap_or_default()
+    }
+
+    /// Lex, parse, vocab-desugar, and optionally materialize checked contract models for one source file.
+    pub(crate) fn parse_source(
+        &self,
+        file_path: &Path,
+        source: &str,
+        materialize_models: bool,
+    ) -> Result<Program, Vec<diagnostics::CompileError>> {
+        let tokens = lexer::lex(source)?;
+        let file_path_display = file_path.to_string_lossy();
+        let mut ast = parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(file_path_display.as_ref()),
+            Some(&self.library_imported_vocab),
+            Some(&self.library_imported_dsl_surfaces),
+        )?;
+        vocab_desugar_pass::desugar_program_vocab_blocks(
+            &mut ast,
+            Some(file_path_display.as_ref()),
+            &self.library_manifest_index,
+        )?;
+        if materialize_models && let Err(error) = materialize_contract_models(&mut ast, &self.contract_model_bundles) {
+            return Err(vec![diagnostics::CompileError::new(
+                format!("Invalid checked contract metadata: {error}"),
+                Span::default(),
+            )]);
+        }
+        Ok(ast)
+    }
 }
 
 /// Collect a unified set of project requirements from source imports and loaded provider manifests.
@@ -797,27 +891,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     };
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
-    let inferred_project_root = resolve_project_root(&path);
-    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let project_root = manifest
-        .as_ref()
-        .map(|manifest| manifest.project_root().to_path_buf())
-        .unwrap_or(inferred_project_root);
-    let source_root = resolve_source_root(&project_root, manifest.as_ref());
-    let library_manifest_index = manifest
-        .as_ref()
-        .and_then(|manifest| {
-            (!manifest.library_dependencies().is_empty()).then(|| LibraryManifestIndex::from_project_manifest(manifest))
-        })
-        .unwrap_or_default();
-    let library_imported_vocab = library_manifest_index.library_imported_vocab();
-    let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-    let contract_model_bundles = manifest
-        .as_ref()
-        .map(|manifest| read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths()))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?
-        .unwrap_or_default();
+    let session = CompilationSession::discover(&path)?;
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
@@ -838,24 +912,11 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         dependency_edges.entry(file_path.clone()).or_default();
 
         let source = read_source(&file_path)?;
-        let tokens = match lexer::lex(&source) {
-            Ok(t) => t,
-            Err(errs) => {
-                let mut msg = String::new();
-                for err in &errs {
-                    msg.push_str(&diagnostics::format_error(&file_path, &source, err));
-                    msg.push('\n');
-                }
-                return Err(CliError::failure(msg.trim_end()));
-            }
-        };
-
-        let mut ast = match parser::parse_with_context_and_surfaces(
-            &tokens,
-            Some(&file_path),
-            Some(&library_imported_vocab),
-            Some(&library_imported_dsl_surfaces),
-        ) {
+        let file_path_obj = Path::new(&file_path);
+        let is_incan_source_stdlib_module = path_segments
+            .first()
+            .is_some_and(|segment| segment == stdlib::INCAN_STD_NAMESPACE);
+        let ast = match session.parse_source(file_path_obj, &source, !is_incan_source_stdlib_module) {
             Ok(a) => {
                 // Surface any non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) immediately,
                 // so they reach the user regardless of which build/run/debug command was invoked.
@@ -873,27 +934,9 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                 return Err(CliError::failure(msg.trim_end()));
             }
         };
-        if let Err(errs) =
-            vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(&file_path), &library_manifest_index)
-        {
-            let mut msg = String::new();
-            for err in &errs {
-                msg.push_str(&diagnostics::format_error(&file_path, &source, err));
-                msg.push('\n');
-            }
-            return Err(CliError::failure(msg.trim_end()));
-        }
-        let file_path_obj = Path::new(&file_path);
-        let is_incan_source_stdlib_module = path_segments
-            .first()
-            .is_some_and(|segment| segment == stdlib::INCAN_STD_NAMESPACE);
-        if !is_incan_source_stdlib_module {
-            materialize_contract_models(&mut ast, &contract_model_bundles)
-                .map_err(|error| CliError::failure(error.to_string()))?;
-        }
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
-        for resolved in resolve_program_source_imports(&ast, current_base, Some(&source_root)) {
+        for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
                     if stdlib::stdlib_stub_path(&module_path).is_none() {
@@ -1436,6 +1479,7 @@ pub(crate) fn typecheck_modules_with_import_graph(
 mod tests {
     use super::*;
     use crate::frontend::typechecker;
+    use crate::library_manifest::{LibraryManifest, VocabExports};
     use std::path::Path;
 
     fn parsed_module_for_test(source: &str) -> Result<ParsedModule, Box<dyn std::error::Error>> {
@@ -1448,6 +1492,65 @@ mod tests {
             source: source.to_string(),
             ast,
         })
+    }
+
+    fn write_minimal_library_artifact(
+        root: &Path,
+        dependency_key: &str,
+        manifest_name: &str,
+        manifest: &LibraryManifest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("src"))?;
+        std::fs::write(
+            artifact_root.join("Cargo.toml"),
+            format!("[package]\nname = \"{manifest_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )?;
+        std::fs::write(artifact_root.join("src/lib.rs"), "")?;
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    #[test]
+    fn compilation_session_parses_with_imported_library_vocab() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
+        )?;
+
+        let mut manifest = LibraryManifest::new("widgets_core", "0.1.0");
+        manifest.vocab = Some(VocabExports {
+            crate_path: "widgets_vocab_companion".to_string(),
+            package_name: "widgets_vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "widgets.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "assert",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: None,
+        });
+        write_minimal_library_artifact(project_root, "widgets", "widgets_core", &manifest)?;
+
+        let main_path = project_root.join("src/main.incn");
+        let source = "import pub::widgets\n\ndef main() -> None:\n  assert true\n";
+        std::fs::write(&main_path, source)?;
+
+        let session = CompilationSession::discover(&main_path)?;
+        session
+            .parse_source(&main_path, source, false)
+            .map_err(|errors| format!("expected session parse to use imported vocab: {errors:?}"))?;
+
+        Ok(())
     }
 
     // ---- resolve_project_root ----

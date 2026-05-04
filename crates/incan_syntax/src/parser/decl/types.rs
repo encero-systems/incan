@@ -51,6 +51,7 @@ impl<'a> Parser<'a> {
         let underlying = self.type_expr()?;
         let mut docstring = None;
         let mut rebindings = Vec::new();
+        let mut method_aliases = Vec::new();
         let mut interop_edges = Vec::new();
         let mut seen_interop_block = false;
 
@@ -97,7 +98,18 @@ impl<'a> Parser<'a> {
                 if self.check(&TokenKind::Ident(String::new()))
                     && self.peek_next().kind.is_operator(OperatorId::Eq)
                 {
-                    rebindings.push(self.rebinding_decl()?);
+                    let alias = self.method_alias_decl()?;
+                    rebindings.push(Spanned::new(
+                        RebindingDecl {
+                            name: alias.node.name.clone(),
+                            target: Spanned::new(
+                                Expr::Ident(alias.node.target.clone()),
+                                alias.span,
+                            ),
+                        },
+                        alias.span,
+                    ));
+                    method_aliases.push(alias);
                     self.skip_newlines();
                     continue;
                 }
@@ -122,21 +134,10 @@ impl<'a> Parser<'a> {
             underlying,
             docstring,
             rebindings,
+            method_aliases,
             interop_edges,
             methods,
         })
-    }
-
-    fn rebinding_decl(&mut self) -> Result<Spanned<RebindingDecl>, CompileError> {
-        let start = self.current_span().start;
-        let name = self.identifier()?;
-        self.expect_op(OperatorId::Eq, "Expected '=' in rebinding declaration")?;
-        let target = self.expression()?;
-        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
-        Ok(Spanned::new(
-            RebindingDecl { name, target },
-            Span::new(start, end),
-        ))
     }
 
     fn interop_edge_decl(&mut self) -> Result<Spanned<InteropEdgeDecl>, CompileError> {

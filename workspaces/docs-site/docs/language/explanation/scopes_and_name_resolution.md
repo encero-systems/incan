@@ -61,6 +61,7 @@ Everything at top level in a file lives in the **module scope**:
 
 - `import` / `from ... import ...` bindings
 - `const` bindings
+- top-level aliases such as `mean = avg`
 - top-level function definitions, models/classes/enums, etc.
 
 For example:
@@ -72,15 +73,32 @@ const PI: float = 3.14159        # module-scope binding
 def area(r: float) -> float:     # module-scope binding (function)
     return PI * r * r            # uses module-scope name
 
+circle_area = area               # module-scope alias
+
 model Circle:                    # module-scope binding (type)
     radius: float
 
 def demo() -> float:
     c = Circle(radius=2.0)
-    return math.sqrt(area(c.radius))  # `Circle`, `math`, `area` resolved from module scope
+    return math.sqrt(circle_area(c.radius))  # `Circle`, `math`, `circle_area` resolved from module scope
 ```
 
-In this example, the names `sqrt`, `PI`, `area`, and `Circle` are all resolved from the module scope.
+In this example, the names `sqrt`, `PI`, `circle_area`, and `Circle` are all resolved from the module scope.
+
+Top-level aliases point at existing module symbols. They are declarations, not general assignment, so values like `x = 1` still belong in `const`, `static`, or function-local code.
+
+Type bodies can also expose another name for an existing same-type method:
+
+```incan
+model Reading:
+    value: int
+    mean = avg
+
+    def avg(self) -> int:
+        return self.value
+```
+
+For the exact alias syntax, supported target kinds, public export rules, and diagnostics, see [Symbol aliases](../reference/symbol_aliases.md).
 
 ### Function / method scope
 

@@ -7,6 +7,16 @@ use incan_semantics_core::SurfaceFeatureKey;
 use super::Formatter;
 
 impl Formatter {
+    /// Return whether a binary operator is a logical chain breakpoint.
+    fn is_logical_binary_op(op: &BinaryOp) -> bool {
+        matches!(op, BinaryOp::And | BinaryOp::Or)
+    }
+
+    /// Return whether an expression starts a logical binary chain.
+    fn is_logical_binary_chain(expr: &Expr) -> bool {
+        matches!(expr, Expr::Binary(_, op, _) if Self::is_logical_binary_op(op))
+    }
+
     fn write_call_arg(&mut self, arg: &CallArg) {
         match arg {
             CallArg::Positional(expr) => self.format_expr(&expr.node),
@@ -49,6 +59,48 @@ impl Formatter {
             self.writer.newline();
         }
         self.writer.dedent();
+    }
+
+    /// Format a parenthesized logical chain inline first, then wrap it if the line overflows.
+    fn format_parenthesized_logical_chain(&mut self, inner: &Expr) {
+        let checkpoint = self.writer.checkpoint();
+        self.writer.write("(");
+        self.format_expr(inner);
+        self.writer.write(")");
+        if self.writer.output_since_contains_newline(checkpoint) || !self.writer.line_length_exceeded() {
+            return;
+        }
+
+        self.writer.restore(checkpoint);
+        self.writer.write("(");
+        self.writer.newline();
+        self.writer.indent();
+        let mut wrote_line = false;
+        self.format_logical_chain_lines(inner, None, &mut wrote_line);
+        self.writer.newline();
+        self.writer.dedent();
+        self.writer.write(")");
+    }
+
+    /// Emit one logical-chain operand per line with leading `and` / `or` operators after the first operand.
+    fn format_logical_chain_lines(&mut self, expr: &Expr, leading_op: Option<&BinaryOp>, wrote_line: &mut bool) {
+        match expr {
+            Expr::Binary(left, op, right) if Self::is_logical_binary_op(op) => {
+                self.format_logical_chain_lines(&left.node, leading_op, wrote_line);
+                self.format_logical_chain_lines(&right.node, Some(op), wrote_line);
+            }
+            _ => {
+                if *wrote_line {
+                    self.writer.newline();
+                }
+                if let Some(op) = leading_op {
+                    self.format_binary_op(op);
+                    self.writer.write(" ");
+                }
+                self.format_expr(expr);
+                *wrote_line = true;
+            }
+        }
     }
 
     /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
@@ -249,9 +301,13 @@ impl Formatter {
                 self.writer.write("}");
             }
             Expr::Paren(inner) => {
-                self.writer.write("(");
-                self.format_expr(&inner.node);
-                self.writer.write(")");
+                if Self::is_logical_binary_chain(&inner.node) {
+                    self.format_parenthesized_logical_chain(&inner.node);
+                } else {
+                    self.writer.write("(");
+                    self.format_expr(&inner.node);
+                    self.writer.write(")");
+                }
             }
             Expr::Constructor(name, args) => {
                 self.writer.write(name);
@@ -277,7 +333,7 @@ impl Formatter {
                 self.writer.write("[");
                 self.format_expr(&comp.expr.node);
                 self.writer.write(" for ");
-                self.writer.write(&comp.var);
+                self.format_pattern(&comp.pattern.node);
                 self.writer.write(" in ");
                 self.format_expr(&comp.iter.node);
                 if let Some(filter) = &comp.filter {
@@ -292,7 +348,7 @@ impl Formatter {
                 self.writer.write(": ");
                 self.format_expr(&comp.value.node);
                 self.writer.write(" for ");
-                self.writer.write(&comp.var);
+                self.format_pattern(&comp.pattern.node);
                 self.writer.write(" in ");
                 self.format_expr(&comp.iter.node);
                 if let Some(filter) = &comp.filter {

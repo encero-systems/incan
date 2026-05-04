@@ -16,10 +16,11 @@ jobs:
       run:
         working-directory: editors/vscode
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
+          package-manager-cache: false
       - name: Install dependencies
         run: npm ci
       - name: Compile extension
@@ -27,6 +28,6 @@ jobs:
       - name: Package VSIX
         run: npx @vscode/vsce package
       - name: Upload VSIX to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: editors/vscode/*.vsix

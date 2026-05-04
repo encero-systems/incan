@@ -1526,7 +1526,7 @@ impl<'a> Parser<'a> {
             && self.match_token(&TokenKind::Keyword(KeywordId::For))
         {
             self.skip_newlines();
-            let var = self.identifier()?;
+            let pattern = self.for_binding_pattern()?;
             self.skip_newlines();
             self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
             self.skip_newlines();
@@ -1547,7 +1547,7 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(
                 Expr::ListComp(Box::new(ListComp {
                     expr: first_expr.clone(),
-                    var,
+                    pattern,
                     iter,
                     filter,
                 })),
@@ -1624,7 +1624,7 @@ impl<'a> Parser<'a> {
             // Check for comprehension
             if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
                 self.skip_newlines();
-                let var = self.identifier()?;
+                let pattern = self.for_binding_pattern()?;
                 self.skip_newlines();
                 self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
                 self.skip_newlines();
@@ -1646,7 +1646,7 @@ impl<'a> Parser<'a> {
                     Expr::DictComp(Box::new(DictComp {
                         key: first,
                         value: first_value,
-                        var,
+                        pattern,
                         iter,
                         filter,
                     })),

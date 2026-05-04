@@ -21,6 +21,20 @@ impl Formatter {
         }
     }
 
+    /// Format same-type method aliases in their declaration form.
+    fn format_method_aliases(&mut self, aliases: &[Spanned<MethodAliasDecl>]) {
+        for alias in aliases {
+            self.writer.write(&alias.node.name);
+            self.writer.write(" = ");
+            if alias.node.explicit_marker {
+                self.writer.write("alias ");
+            }
+            self.writer.write(&alias.node.target);
+            self.writer.newline();
+        }
+    }
+
+    /// Format one top-level or inline-test declaration.
     pub(super) fn format_declaration(&mut self, decl: &Declaration) {
         match decl {
             Declaration::Import(import) => self.format_import(import),
@@ -29,6 +43,7 @@ impl Formatter {
             Declaration::Model(model) => self.format_model(model),
             Declaration::Class(class) => self.format_class(class),
             Declaration::Trait(tr) => self.format_trait(tr),
+            Declaration::Alias(alias) => self.format_alias(alias),
             Declaration::TypeAlias(alias) => self.format_type_alias(alias),
             Declaration::Newtype(nt) => self.format_newtype(nt),
             Declaration::Enum(en) => self.format_enum(en),
@@ -285,6 +300,7 @@ impl Formatter {
 
     // ---- Models, classes, traits ----
 
+    /// Format a model declaration, including field and method alias members.
     fn format_model(&mut self, model: &ModelDecl) {
         for dec in &model.decorators {
             self.format_decorator(&dec.node);
@@ -318,7 +334,7 @@ impl Formatter {
 
         if let Some(docstring) = &model.docstring {
             self.format_docstring(docstring);
-            if !model.fields.is_empty() || !model.methods.is_empty() {
+            if !model.fields.is_empty() || !model.method_aliases.is_empty() || !model.methods.is_empty() {
                 self.writer.newline();
             }
         }
@@ -327,10 +343,14 @@ impl Formatter {
         for field in &model.fields {
             self.format_field(&field.node);
         }
+        self.format_method_aliases(&model.method_aliases);
+        if !model.method_aliases.is_empty() && !model.methods.is_empty() {
+            self.writer.newline();
+        }
 
-        self.format_methods_with_spacing(&model.methods, has_fields);
+        self.format_methods_with_spacing(&model.methods, has_fields || !model.method_aliases.is_empty());
 
-        if model.fields.is_empty() && model.methods.is_empty() {
+        if model.fields.is_empty() && model.method_aliases.is_empty() && model.methods.is_empty() {
             if model.docstring.is_some() {
                 self.writer.newline();
             }
@@ -340,6 +360,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a class declaration, including field and method alias members.
     fn format_class(&mut self, class: &ClassDecl) {
         for dec in &class.decorators {
             self.format_decorator(&dec.node);
@@ -380,7 +401,7 @@ impl Formatter {
 
         if let Some(docstring) = &class.docstring {
             self.format_docstring(docstring);
-            if !class.fields.is_empty() || !class.methods.is_empty() {
+            if !class.fields.is_empty() || !class.method_aliases.is_empty() || !class.methods.is_empty() {
                 self.writer.newline();
             }
         }
@@ -389,10 +410,14 @@ impl Formatter {
         for field in &class.fields {
             self.format_field(&field.node);
         }
+        self.format_method_aliases(&class.method_aliases);
+        if !class.method_aliases.is_empty() && !class.methods.is_empty() {
+            self.writer.newline();
+        }
 
-        self.format_methods_with_spacing(&class.methods, has_fields);
+        self.format_methods_with_spacing(&class.methods, has_fields || !class.method_aliases.is_empty());
 
-        if class.fields.is_empty() && class.methods.is_empty() {
+        if class.fields.is_empty() && class.method_aliases.is_empty() && class.methods.is_empty() {
             if class.docstring.is_some() {
                 self.writer.newline();
             }
@@ -402,6 +427,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a trait declaration, including same-trait method aliases.
     fn format_trait(&mut self, tr: &TraitDecl) {
         for dec in &tr.decorators {
             self.format_decorator(&dec.node);
@@ -425,14 +451,19 @@ impl Formatter {
 
         if let Some(docstring) = &tr.docstring {
             self.format_docstring(docstring);
-            if !tr.methods.is_empty() {
+            if !tr.method_aliases.is_empty() || !tr.methods.is_empty() {
                 self.writer.newline();
             }
         }
 
-        self.format_methods_with_spacing(&tr.methods, false);
+        self.format_method_aliases(&tr.method_aliases);
+        if !tr.method_aliases.is_empty() && !tr.methods.is_empty() {
+            self.writer.newline();
+        }
 
-        if tr.methods.is_empty() {
+        self.format_methods_with_spacing(&tr.methods, !tr.method_aliases.is_empty());
+
+        if tr.method_aliases.is_empty() && tr.methods.is_empty() {
             if tr.docstring.is_some() {
                 self.writer.newline();
             }
@@ -523,6 +554,18 @@ impl Formatter {
         }
     }
 
+    /// Format a module-level symbol alias declaration.
+    fn format_alias(&mut self, alias: &AliasDecl) {
+        self.write_visibility(alias.visibility);
+        self.writer.write(&alias.name);
+        self.writer.write(" = ");
+        if alias.explicit_marker {
+            self.writer.write("alias ");
+        }
+        self.writer.write(&alias.target.segments.join("."));
+        self.writer.newline();
+    }
+
     fn format_type_alias(&mut self, alias: &TypeAliasDecl) {
         self.write_visibility(alias.visibility);
         self.writer.write("type ");
@@ -535,6 +578,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format a newtype or rusttype declaration, including method aliases.
     fn format_newtype(&mut self, nt: &NewtypeDecl) {
         for dec in &nt.decorators {
             self.format_decorator(&dec.node);
@@ -553,6 +597,7 @@ impl Formatter {
 
         let has_body = nt.docstring.is_some()
             || !nt.rebindings.is_empty()
+            || !nt.method_aliases.is_empty()
             || !nt.interop_edges.is_empty()
             || !nt.methods.is_empty();
         if !has_body {
@@ -565,7 +610,11 @@ impl Formatter {
 
         if let Some(docstring) = &nt.docstring {
             self.format_docstring(docstring);
-            if !nt.rebindings.is_empty() || !nt.interop_edges.is_empty() || !nt.methods.is_empty() {
+            if !nt.rebindings.is_empty()
+                || !nt.method_aliases.is_empty()
+                || !nt.interop_edges.is_empty()
+                || !nt.methods.is_empty()
+            {
                 self.writer.newline();
             }
         }
@@ -576,7 +625,10 @@ impl Formatter {
             self.format_expr(&rebinding.node.target.node);
             self.writer.newline();
         }
-        if !nt.rebindings.is_empty() && (!nt.interop_edges.is_empty() || !nt.methods.is_empty()) {
+        self.format_method_aliases(&nt.method_aliases);
+        if (!nt.rebindings.is_empty() || !nt.method_aliases.is_empty())
+            && (!nt.interop_edges.is_empty() || !nt.methods.is_empty())
+        {
             self.writer.newline();
         }
 
@@ -603,7 +655,10 @@ impl Formatter {
             }
         }
 
-        self.format_methods_with_spacing(&nt.methods, !nt.rebindings.is_empty() || !nt.interop_edges.is_empty());
+        self.format_methods_with_spacing(
+            &nt.methods,
+            !nt.rebindings.is_empty() || !nt.method_aliases.is_empty() || !nt.interop_edges.is_empty(),
+        );
 
         self.writer.dedent();
     }
