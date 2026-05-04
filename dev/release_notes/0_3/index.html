@@ -4584,6 +4584,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfc-004-async-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 004 async fixtures
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4790,6 +4799,11 @@ the raw representation for value enums.</p>
 <p>Parallel execution is now runner-level and resource-aware. <code>--jobs N</code> runs generated worker batches concurrently while each batch still executes through single-threaded libtest. <code>@resource("name")</code> prevents overlapping batches that share a resource key, and <code>@serial</code> forces exclusive execution. Session fixtures are cached once per worker batch, so <code>--jobs 1</code> can reuse a session fixture across compatible collected files, while higher job counts keep one session instance per worker.</p>
 <p>Reporting is also CI-ready. <code>--format json</code> emits JSON Lines records with <code>schema_version: "incan.test.v1"</code>, <code>--junit &lt;path&gt;</code> writes JUnit XML, <code>--durations N</code> reports slow tests, <code>--shuffle --seed N</code> gives reproducible randomized order, <code>--run-xfail</code> treats expected failures as ordinary tests, and <code>--nocapture</code> opts into printing child output for passing tests. Timeout-killed workers can still bypass teardown, so timeout teardown remains best-effort.</p>
 <p>See also: <a href="../../language/how-to/testing_stdlib/">Testing in Incan</a>, <a href="../../tooling/how-to/testing/">Tooling: Testing</a>, <a href="../../language/reference/stdlib/testing/">std.testing reference</a>, <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a>, <a href="/dev/RFCs/closed/implemented/019_runner_testing">RFC 019</a>.</p>
+<h3 id="rfc-004-async-fixtures">RFC 004 async fixtures<a class="headerlink" href="#rfc-004-async-fixtures" title="Permanent link">&para;</a></h3>
+<p><code>@fixture</code> now works on <code>async def</code> fixture functions. Async fixtures use the same decorator as synchronous fixtures, use <code>yield</code> exactly once, await setup before dependents run, and await teardown after <code>yield</code> before the runner continues through reverse dependency teardown.</p>
+<p>Mixed sync and async fixture graphs compose under function, module, and session scopes. Parametrized tests still expand before fixture resolution, so function-scoped async fixtures run per expanded case while module and session fixtures reuse values according to their existing scope boundaries.</p>
+<p>Timeout behavior stays runner-level. <code>incan test --timeout</code> and <code>@timeout(...)</code> from <code>std.testing</code> apply to generated test batches; there is no per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary failures and panics while the worker remains alive, but timeout-enforced worker termination can still bypass remaining cleanup.</p>
+<p>See also: <a href="../../language/how-to/testing_stdlib/">Testing in Incan</a>, <a href="../../tooling/how-to/testing/">Tooling: Testing</a>, <a href="../../language/reference/stdlib/testing/">std.testing reference</a>, <a href="../../RFCs/closed/implemented/004_async_fixtures/">RFC 004</a>.</p>
 <h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
 <p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that have landed for <code>0.3</code>, grouped roughly by theme rather than by the order work happened to land.</p>
 <h3 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h3>
@@ -4834,6 +4848,7 @@ the raw representation for value enums.</p>
 <li><strong>Tooling/CI</strong>: Stable Ubuntu, macOS, and MSRV test gates now use sccache-backed nextest slice partitions while preserving the aggregate CI check names, and the release smoke gate uses a dedicated release-profile target cache to reduce duplicated compiler work without dropping broad coverage (#451).</li>
 <li><strong>Tooling/Test runner</strong>: RFC 019 expands <code>incan test</code> with explicit <code>@test</code> discovery, stable test ids for <code>-k</code> and <code>--list</code>, JSON Lines reports with <code>schema_version: "incan.test.v1"</code>, JUnit XML output, duration reporting, deterministic shuffle/seed support, <code>--run-xfail</code>, conftest inheritance for conventional tests, inline <code>module tests:</code> execution, parametrization, fixtures, conditional markers, timeouts, output capture controls, and worker scheduling with <code>--jobs</code>, <code>@resource</code>, and <code>@serial</code> (#77, RFC 019).</li>
 <li><strong>Tooling/Test runner</strong>: RFC 019 fixture lifecycles now run through worker-batch harnesses, including compatible cross-file session fixture reuse with <code>--jobs 1</code>, per-worker session reuse with <code>--jobs N</code>, module/session teardown timing, and captured <code>yield</code> fixture teardown locals (#77, RFC 019).</li>
+<li><strong>Tooling/Test runner</strong>: RFC 004 async fixtures now use the existing <code>@fixture</code> decorator on <code>async def</code>, await setup before dependents run, await post-<code>yield</code> teardown, compose with synchronous fixtures under function/module/session scopes, and resolve after parametrized test expansion while keeping timeout policy at the test-batch level (#78, RFC 004).</li>
 <li><strong>Tooling/Test runner</strong>: Worker batches now fall back to per-file harnesses when multiple source files define colliding top-level Rust item names. Compatible files still batch together for session fixture reuse, while projects with repeated helper/model names avoid generated Rust duplicate-definition failures.</li>
 <li><strong>Tooling/Test runner</strong>: <code>incan test</code> now preheats stale generated Cargo harnesses with <code>cargo test --no-run</code>, fingerprints successful preheat state next to each generated harness, and uses a one-writer lock so concurrent CLI/LSP-style runs do not stampede Cargo (#272).</li>
 <li><strong>Tooling/Test runner</strong>: <code>incan lock</code> and implicit first-use lock generation now preheat non-trivial dependency graphs with <code>cargo test --no-run</code> into the same debug target domain used by generated test harnesses, then stamp the dependency preheat fingerprint so unchanged relocks stay cheap (#272).</li>
@@ -4874,6 +4889,7 @@ the raw representation for value enums.</p>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Async fixtures: <a href="../../RFCs/closed/implemented/004_async_fixtures/">RFC 004</a></li>
 <li>Hatch-like tooling and project lifecycle CLI: <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li>Testing language primitives: <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a></li>

@@ -3357,6 +3357,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#async-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async Fixtures
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixture-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       Fixture Dependencies
@@ -3413,9 +3422,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#async-tests-coming-soon" class="md-nav__link">
+  <a href="#async-tests" class="md-nav__link">
     <span class="md-ellipsis">
-      Async Tests (Coming Soon)
+      Async Tests
     </span>
   </a>
   
@@ -4864,6 +4873,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#async-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async Fixtures
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixture-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       Fixture Dependencies
@@ -4920,9 +4938,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#async-tests-coming-soon" class="md-nav__link">
+  <a href="#async-tests" class="md-nav__link">
     <span class="md-ellipsis">
-      Async Tests (Coming Soon)
+      Async Tests
     </span>
   </a>
   
@@ -5215,6 +5233,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <p>When a generated Rust test harness is new or stale, <code>incan test</code> preheats it with <code>cargo test --no-run</code> before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.</p>
 <p><code>-m</code> matches marker names from decorators such as <code>@slow</code> and <code>@mark("smoke")</code>, plus default marks from <code>TEST_MARKS</code>.
 Use <code>TEST_MARKERS</code> with <code>--strict-markers</code> to make unknown marker names a collection error.</p>
+<p><code>--timeout</code> and <code>@timeout</code> apply to generated test batches. They do not configure individual fixtures. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement or external interruption terminates the worker process, remaining fixture teardown is best-effort and may not run.</p>
 <p>Conditional markers are evaluated during collection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">feature</span><span class="p">,</span> <span class="n">platform</span><span class="p">,</span> <span class="n">skipif</span><span class="p">,</span> <span class="n">xfailif</span>
 
@@ -5315,6 +5334,37 @@ ___________<span class="w"> </span>test_division<span class="w"> </span>________
     <span class="n">cleanup_resource</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
 </code></pre></div>
 <p>The teardown block runs after the test body for function fixtures, after all tests from the source file for module fixtures, and at the end of the worker batch for session fixtures. Teardown runs after assertion failures, can reference setup locals and fixture parameters, and fails the run if teardown itself fails. Timeout termination can still bypass teardown because the worker process may be killed.</p>
+<h3 id="async-fixtures">Async Fixtures<a class="headerlink" href="#async-fixtures" title="Permanent link">&para;</a></h3>
+<p>Use the same <code>@fixture</code> decorator for asynchronous setup. Declare the fixture with <code>async def</code>, await setup before <code>yield</code>, and await teardown after <code>yield</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">fixture</span>
+
+<span class="nd">@fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;function&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">42</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_resource</span><span class="p">(</span><span class="n">resource</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">resource</span><span class="p">,</span> <span class="mi">42</span><span class="p">)</span>
+</code></pre></div>
+<p>Async fixtures must use <code>yield</code> exactly once. The yielded value is injected by name just like a synchronous fixture value. Setup before <code>yield</code> is awaited before dependents run, and teardown after <code>yield</code> is awaited before the runner continues to dependent teardowns or the next case.</p>
+<p>Synchronous and asynchronous fixtures can depend on each other in one graph:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+
+<span class="nd">@fixture</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">seed</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">40</span>
+
+<span class="nd">@fixture</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">(</span><span class="n">seed</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="n">seed</span> <span class="o">+</span> <span class="mi">2</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<p>Scopes do not change for async fixtures. A function-scoped async fixture runs per test case, a module-scoped async fixture is cached for the source file inside the worker batch, and a session-scoped async fixture is cached for the worker batch. The runner awaits async setup before any dependent sync or async fixture starts, then tears down in reverse dependency order.</p>
 <h3 id="fixture-dependencies">Fixture Dependencies<a class="headerlink" href="#fixture-dependencies" title="Permanent link">&para;</a></h3>
 <p>Fixtures can depend on other fixtures:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@fixture</span>
@@ -5391,21 +5441,22 @@ test_math.incn::test_add<span class="o">[</span><span class="m">100</span>-200-3
     <span class="n">database</span><span class="o">.</span><span class="nb">insert</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">database</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="n">value</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="async-tests-coming-soon">Async Tests (Coming Soon)<a class="headerlink" href="#async-tests-coming-soon" title="Permanent link">&para;</a></h2>
-<p>Support for async test functions and fixtures with Tokio:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+<p>Parametrization expands before fixture resolution. In the example above, the runner first creates <code>test_insert[name-Alice]</code> and <code>test_insert[age-30]</code>, then resolves <code>database</code> for each expanded case under the fixture's scope rules. Function-scoped fixtures run once per expanded case; module and session fixtures reuse cached instances when their normal scope permits it.</p>
+<h2 id="async-tests">Async Tests<a class="headerlink" href="#async-tests" title="Permanent link">&para;</a></h2>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">fixture</span>
 
 <span class="nd">@fixture</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">http_server</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">ServerHandle</span><span class="p">:</span>
-    <span class="n">server</span> <span class="o">=</span> <span class="k">await</span> <span class="n">start_server</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-    <span class="k">yield</span> <span class="n">server</span>
-    <span class="k">await</span> <span class="n">server</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">42</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint</span><span class="p">(</span><span class="n">http_server</span><span class="p">:</span> <span class="nc">ServerHandle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;http://localhost:</span><span class="si">{</span><span class="n">http_server</span><span class="o">.</span><span class="n">port</span><span class="si">}</span><span class="s2">/health&quot;</span><span class="p">)</span>
-    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="p">,</span> <span class="mi">200</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_endpoint</span><span class="p">(</span><span class="n">resource</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">resource</span><span class="p">,</span> <span class="mi">42</span><span class="p">)</span>
 </code></pre></div>
+<p>Async tests and async fixtures run on the test runner's async runtime. User code should use ordinary <code>await</code>; there is no test-level runtime setup hook and no async-only fixture decorator.</p>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>One assertion per test</strong> - Makes failures easier to diagnose</li>

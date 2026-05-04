@@ -968,6 +968,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#async-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async fixtures
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4613,6 +4622,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#async-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Async fixtures
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4728,6 +4746,22 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">test_not_reached</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">fail</span><span class="p">(</span><span class="s2">&quot;this should not happen&quot;</span><span class="p">)</span>
 </code></pre></div>
+<h3 id="async-fixtures">Async fixtures<a class="headerlink" href="#async-fixtures" title="Permanent link">&para;</a></h3>
+<p>Fixtures can be asynchronous when setup or teardown needs <code>await</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">fixture</span>
+
+<span class="nd">@fixture</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">42</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_uses_resource</span><span class="p">(</span><span class="n">resource</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="n">resource</span><span class="p">,</span> <span class="mi">42</span><span class="p">)</span>
+</code></pre></div>
+<p>Async fixtures still use <code>@fixture</code>; there is no async-only decorator. The runner awaits setup before the test runs and awaits teardown after <code>yield</code> when the worker remains alive. Parametrized tests expand first, then fixtures resolve for each expanded case under the usual fixture scopes.</p>
 <h2 id="what-to-learn-next">What to learn next<a class="headerlink" href="#what-to-learn-next" title="Permanent link">&para;</a></h2>
 <p>That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:</p>
 <ul>

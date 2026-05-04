@@ -4949,6 +4949,7 @@
 <p>Runs the test alone against all other scheduled units.</p>
 <h3 id="timeoutduration-str"><code>@timeout(duration: str)</code><a class="headerlink" href="#timeoutduration-str" title="Permanent link">&para;</a></h3>
 <p>Overrides the timeout for the generated test batch that contains this test. Durations use strings such as <code>"250ms"</code>, <code>"5s"</code>, or <code>"2m"</code>.</p>
+<p><code>@timeout</code> is test-batch policy, not fixture policy. Fixtures do not have a separate per-fixture timeout decorator or argument. A timeout is reported for the affected generated batch if setup, the test body, or teardown exceeds the deadline; if timeout enforcement terminates the worker process, remaining teardown is best-effort and may be bypassed.</p>
 <h2 id="assert_raises"><code>assert_raises</code><a class="headerlink" href="#assert_raises" title="Permanent link">&para;</a></h2>
 <p><code>std.testing.assert_raises[E](block, msg = "")</code> asserts that a zero-argument callable raises or panics with the runtime error kind <code>E</code>.</p>
 <p>The compiler also lowers <code>assert call() raises ErrorType[, msg]</code> to the same runtime check. Panic payloads match either the exact error kind name (for example <code>ValueError</code>) or the standard <code>Kind: message</code> prefix.</p>
@@ -4974,6 +4975,26 @@
 <li><code>@fixture(scope="session")</code>: cached once per worker batch. With <code>--jobs 1</code>, one session fixture instance can be shared across compatible collected files; with <code>--jobs N</code>, each worker gets its own instance.</li>
 </ul>
 <p>Fixtures may use one top-level <code>yield</code> statement. Statements before <code>yield</code> are setup, the yielded value is injected, and statements after <code>yield</code> run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.</p>
+<p>Async fixtures use the same <code>@fixture</code> decorator:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
+
+<span class="nd">@fixture</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">42</span>
+    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+<p>Async fixture contract:</p>
+<ul>
+<li>Async fixtures are declared with <code>async def</code>; there is no separate async fixture decorator.</li>
+<li>Async fixtures use <code>yield</code> exactly once. The yielded value is injected into dependent tests and fixtures.</li>
+<li>Setup before <code>yield</code> is awaited before dependent fixtures or tests run.</li>
+<li>Teardown after <code>yield</code> is awaited before the runner continues to the next dependent teardown.</li>
+<li>Synchronous and asynchronous fixtures compose in the same dependency graph under function, module, and session scopes.</li>
+<li>Parametrized tests expand into separate cases before fixture resolution. Function-scoped fixtures resolve per expanded case; module and session fixtures keep their normal cache boundaries.</li>
+<li>Teardown order is reverse dependency order. If an async fixture depends on a sync fixture, or a sync fixture depends on an async fixture, the runner still tears down dependents before dependencies.</li>
+</ul>
 
 
 
