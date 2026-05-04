@@ -219,6 +219,10 @@ pub enum IrExprKind {
         iterable: Box<IrExpr>,
         filter: Option<Box<IrExpr>>,
     },
+    Generator {
+        element: Box<IrExpr>,
+        clauses: Vec<IrGeneratorClause>,
+    },
 
     // List literal
     List(Vec<IrListEntry>),
@@ -312,6 +316,12 @@ pub enum IrExprKind {
 
     // serde_json::from_str(s) - contains the target type name
     SerdeFromJson(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum IrGeneratorClause {
+    For { pattern: Pattern, iterable: Box<IrExpr> },
+    If(IrExpr),
 }
 
 /// One lowered entry in a list literal.

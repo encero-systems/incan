@@ -40,6 +40,9 @@ pub const RFC_004: RfcId = "RFC 004";
 /// RFC 005 — Rust interop (`rust::...` imports).
 pub const RFC_005: RfcId = "RFC 005";
 
+/// RFC 006 — Python-style generators.
+pub const RFC_006: RfcId = "RFC 006";
+
 /// RFC 008 — const bindings (`const NAME = ...`).
 pub const RFC_008: RfcId = "RFC 008";
 
@@ -98,6 +101,8 @@ impl RFC {
     pub const _004: RfcId = RFC_004;
     /// RFC 005 — Rust interop (`rust::...` imports).
     pub const _005: RfcId = RFC_005;
+    /// RFC 006 — Python-style generators.
+    pub const _006: RfcId = RFC_006;
     /// RFC 008 — const bindings (`const NAME = ...`).
     pub const _008: RfcId = RFC_008;
     /// RFC 009 — sized integers & builtin type registry (builtin type methods; frozen containers).

@@ -235,6 +235,12 @@ impl Formatter {
                 }
                 self.writer.dedent();
             }
+            Expr::Generator(generator) => {
+                self.writer.write("(");
+                self.format_expr(&generator.expr.node);
+                self.format_comprehension_clauses(&generator.clauses);
+                self.writer.write(")");
+            }
             Expr::Closure(params, body) => {
                 self.writer.write("(");
                 self.format_params(params);
@@ -332,14 +338,7 @@ impl Formatter {
             Expr::ListComp(comp) => {
                 self.writer.write("[");
                 self.format_expr(&comp.expr.node);
-                self.writer.write(" for ");
-                self.format_pattern(&comp.pattern.node);
-                self.writer.write(" in ");
-                self.format_expr(&comp.iter.node);
-                if let Some(filter) = &comp.filter {
-                    self.writer.write(" if ");
-                    self.format_expr(&filter.node);
-                }
+                self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("]");
             }
             Expr::DictComp(comp) => {
@@ -347,14 +346,7 @@ impl Formatter {
                 self.format_expr(&comp.key.node);
                 self.writer.write(": ");
                 self.format_expr(&comp.value.node);
-                self.writer.write(" for ");
-                self.format_pattern(&comp.pattern.node);
-                self.writer.write(" in ");
-                self.format_expr(&comp.iter.node);
-                if let Some(filter) = &comp.filter {
-                    self.writer.write(" if ");
-                    self.format_expr(&filter.node);
-                }
+                self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("}");
             }
             Expr::Yield(inner) => {
@@ -377,6 +369,24 @@ impl Formatter {
     }
 
     // ---- Literals ----
+
+    /// Write comprehension clauses in canonical source order.
+    fn format_comprehension_clauses(&mut self, clauses: &[ComprehensionClause]) {
+        for clause in clauses {
+            match clause {
+                ComprehensionClause::For { pattern, iter } => {
+                    self.writer.write(" for ");
+                    self.format_pattern(&pattern.node);
+                    self.writer.write(" in ");
+                    self.format_expr(&iter.node);
+                }
+                ComprehensionClause::If(condition) => {
+                    self.writer.write(" if ");
+                    self.format_expr(&condition.node);
+                }
+            }
+        }
+    }
 
     fn format_literal(&mut self, lit: &Literal) {
         match lit {

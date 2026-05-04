@@ -53,6 +53,8 @@ pub enum Expr {
     ListComp(Box<ListComp>),
     /// Dict comprehension: `{k: v for x in iter if cond}`
     DictComp(Box<DictComp>),
+    /// Generator expression: `(expr for x in iter if cond)`
+    Generator(Box<GeneratorExpr>),
     /// Closure: `(x, y) => expr` (a lot like python's lambda)
     Closure(Vec<Spanned<Param>>, Box<Spanned<Expr>>),
     /// Tuple: `(a, b)`
@@ -339,17 +341,53 @@ pub struct LoopExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListComp {
+    /// Element expression produced for each accepted binding.
     pub expr: Spanned<Expr>,
+    /// First `for` binding retained for existing downstream comprehension lowering.
     pub pattern: Spanned<Pattern>,
+    /// First `for` iterable retained for existing downstream comprehension lowering.
     pub iter: Spanned<Expr>,
+    /// First trailing `if` filter retained for existing downstream comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictComp {
+    /// Key expression produced for each accepted binding.
     pub key: Spanned<Expr>,
+    /// Value expression produced for each accepted binding.
     pub value: Spanned<Expr>,
+    /// First `for` binding retained for existing downstream comprehension lowering.
     pub pattern: Spanned<Pattern>,
+    /// First `for` iterable retained for existing downstream comprehension lowering.
     pub iter: Spanned<Expr>,
+    /// First trailing `if` filter retained for existing downstream comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
+}
+
+/// Generator-expression payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorExpr {
+    /// Expression yielded by the generator for each accepted binding.
+    pub expr: Spanned<Expr>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
+}
+
+/// One clause in a comprehension-like expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComprehensionClause {
+    /// `for pattern in iter`
+    For {
+        /// Binding pattern introduced by the clause.
+        pattern: Spanned<Pattern>,
+        /// Iterable source consumed by the clause.
+        iter: Spanned<Expr>,
+    },
+    /// `if condition`
+    If(Spanned<Expr>),
 }

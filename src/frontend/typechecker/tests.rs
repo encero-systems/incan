@@ -8059,6 +8059,171 @@ def main() -> None:
 }
 
 #[test]
+fn test_rfc006_generator_function_yields_iterates_and_collects() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep(value: int) -> bool:
+  return value > 0
+
+def numbers() -> Generator[int]:
+  yield 1
+  yield 2
+  return
+
+def main() -> List[int]:
+  mut total = 0
+  for item in numbers():
+    total = total + item
+  return numbers().map(double).filter(keep).take(2).collect()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_satisfies_iterable_and_iterator_traits() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def numbers() -> Generator[int]:
+  yield 1
+
+def accept_iterable(values: Iterable[int]) -> None:
+  pass
+
+def accept_iterator(values: Iterator[int]) -> None:
+  pass
+
+def main() -> None:
+  accept_iterable(numbers())
+  accept_iterator(numbers())
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_yield_must_match_element_type() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield "nope"
+"#;
+
+    let errs = check_str_err(source, "expected generator yield type mismatch");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'int', found 'str'")),
+        "expected generator yield type mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_requires_reachable_yield() {
+    let source = r#"
+def broken() -> Generator[int]:
+  return
+"#;
+
+    let errs = check_str_err(source, "expected missing generator yield diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("must contain at least one `yield value`")),
+        "expected missing generator yield diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_yield_outside_generator_is_rejected() {
+    let source = r#"
+def broken() -> int:
+  yield 1
+  return 1
+"#;
+
+    let errs = check_str_err(source, "expected ordinary yield rejection");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("`yield` is only valid in generator functions or fixtures")),
+        "expected yield context diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_return_value_is_rejected() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield 1
+  return 2
+"#;
+
+    let errs = check_str_err(source, "expected generator return-value rejection");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Generator functions cannot use `return value`")),
+        "expected generator return-value diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_helpers_validate_arguments() {
+    let source = r#"
+def stringify(value: int) -> str:
+  return f"{value}"
+
+def keep_str(value: str) -> bool:
+  return true
+
+def numbers() -> Generator[int]:
+  yield 1
+
+def main() -> None:
+  mapped = numbers().map(1)
+  filtered = numbers().filter(stringify)
+  wrong_input = numbers().filter(keep_str)
+  limited = numbers().take("2")
+"#;
+
+    let errs = check_str_err(source, "expected generator helper argument diagnostics");
+    for expected in [
+        "(int) -> _",
+        "expected 'bool', found 'str'",
+        "expected 'str', found 'int'",
+        "expected 'int', found 'str'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc006_generator_expression_infers_element_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def positives(xs: List[int], ys: List[int]) -> Generator[int]:
+  return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_expression_filter_must_be_bool() {
+    let source = r#"
+def broken(xs: List[int]) -> Generator[int]:
+  return (x for x in xs if x)
+"#;
+
+    let errs = check_str_err(source, "expected generator expression filter diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'bool', found 'int'")),
+        "expected generator expression filter diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
 fn test_rfc068_option_and_result_are_not_truthy() {
     let source = r#"
 def maybe_value() -> Option[int]:

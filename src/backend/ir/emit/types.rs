@@ -122,6 +122,7 @@ impl<'a> IrEmitter<'a> {
                     Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),
                     Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_stdlib::frozen::FrozenSet }),
                     Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_stdlib::frozen::FrozenDict }),
+                    Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
                     _ => None,
                 };
                 let n = Self::emit_path_ident(name);

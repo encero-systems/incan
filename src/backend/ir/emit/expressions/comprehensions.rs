@@ -7,14 +7,91 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::super::expr::{BuiltinFn, IrExprKind, Pattern, TypedExpr};
+use super::super::super::expr::{BuiltinFn, IrExprKind, IrGeneratorClause, Pattern, TypedExpr};
 use super::super::super::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
     plan_list_comprehension_iteration,
 };
+use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit a lazy RFC 006 generator expression.
+    pub(in super::super) fn emit_generator_expr(
+        &self,
+        element: &TypedExpr,
+        clauses: &[IrGeneratorClause],
+    ) -> Result<TokenStream, EmitError> {
+        let chain = self.emit_generator_chain(element, clauses)?;
+        Ok(quote! { incan_stdlib::iter::Generator::new(#chain) })
+    }
+
+    /// Recursively emit source-ordered generator `for` / `if` clauses as lazy iterator adapters.
+    fn emit_generator_chain(
+        &self,
+        element: &TypedExpr,
+        clauses: &[IrGeneratorClause],
+    ) -> Result<TokenStream, EmitError> {
+        let Some((head, tail)) = clauses.split_first() else {
+            let elem = self.emit_expr(element)?;
+            return Ok(quote! { std::iter::once(#elem) });
+        };
+
+        match head {
+            IrGeneratorClause::For { pattern, iterable } => {
+                let pattern_tokens = self.emit_pattern(pattern);
+                let iter = self.emit_generator_iterable(iterable)?;
+                let body = self.emit_generator_chain(element, tail)?;
+                Ok(quote! {
+                    (#iter).flat_map(move |#pattern_tokens| {
+                        incan_stdlib::iter::Generator::new(#body)
+                    })
+                })
+            }
+            IrGeneratorClause::If(condition) => {
+                let condition_tokens = self.emit_expr(condition)?;
+                let body = self.emit_generator_chain(element, tail)?;
+                Ok(quote! {
+                    if #condition_tokens {
+                        incan_stdlib::iter::Generator::new(#body)
+                    } else {
+                        incan_stdlib::iter::Generator::new(std::iter::empty())
+                    }
+                })
+            }
+        }
+    }
+
+    /// Emit the owned iterator expression consumed by one generator `for` clause.
+    fn emit_generator_iterable(&self, iterable: &TypedExpr) -> Result<TokenStream, EmitError> {
+        match &iterable.kind {
+            IrExprKind::BuiltinCall {
+                func: BuiltinFn::Enumerate,
+                args,
+            } => {
+                let iter = if let Some(arg) = args.first() {
+                    let arg_tokens = self.emit_expr(arg)?;
+                    quote! { (#arg_tokens).clone().into_iter().enumerate().map(|(idx, value)| (idx as i64, value)) }
+                } else {
+                    quote! { std::iter::empty::<(i64, ())>() }
+                };
+                Ok(iter)
+            }
+            _ if self.is_range_iterable(iterable) || Self::is_generator_iterable(iterable) => self.emit_expr(iterable),
+            _ => {
+                let iter = self.emit_expr(iterable)?;
+                Ok(quote! { (#iter).clone().into_iter() })
+            }
+        }
+    }
+
+    /// Return whether an iterable expression already yields owned generator items.
+    fn is_generator_iterable(iterable: &TypedExpr) -> bool {
+        matches!(&iterable.ty, IrType::NamedGeneric(name, _)
+            if incan_core::lang::types::collections::from_str(name.as_str())
+                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
+    }
+
     /// Emit a list comprehension.
     ///
     /// Converts `[expr for var in iter if cond]` to Rust iterator chain:

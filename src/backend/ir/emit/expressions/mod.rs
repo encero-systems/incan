@@ -613,6 +613,7 @@ impl<'a> IrEmitter<'a> {
                 iterable,
                 filter,
             } => self.emit_dict_comp(key, value, pattern, iterable, filter.as_deref()),
+            IrExprKind::Generator { element, clauses } => self.emit_generator_expr(element, clauses),
 
             IrExprKind::List(items) => {
                 let item_target_ty = match &expr.ty {

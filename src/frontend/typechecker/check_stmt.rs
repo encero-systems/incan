@@ -715,6 +715,14 @@ impl TypeChecker {
     }
 
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
+        if matches!(self.current_yield_context, super::YieldContext::Generator { .. }) {
+            if let Some(expr) = expr {
+                self.check_expr(expr);
+                self.errors.push(errors::generator_return_value_not_supported(span));
+            }
+            return;
+        }
+
         let return_ty = if let Some(e) = expr {
             let expected_return_ty = self.symbols.current_return_type().cloned();
             self.check_expr_with_expected(e, expected_return_ty.as_ref())
@@ -1343,6 +1351,7 @@ impl TypeChecker {
                         // For tuple iteration, return first element type (simplified)
                         args[0].clone()
                     }
+                    Some(CollectionTypeId::Generator) if !args.is_empty() => args[0].clone(),
                     _ => ResolvedType::Unknown,
                 }
             }

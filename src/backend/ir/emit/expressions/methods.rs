@@ -215,6 +215,12 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
+            let predicate = self.emit_expr(&args[0].expr)?;
+            return Ok(quote! {
+                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+            });
+        }
         let method_turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -471,5 +477,12 @@ impl<'a> IrEmitter<'a> {
         let type_ident = format_ident!("{}", type_name);
         let m = format_ident!("{}", variant);
         Ok(quote! { #type_ident::#m(#(#arg_tokens),*) })
+    }
+
+    /// Return whether a method receiver is the RFC 006 runtime generator wrapper.
+    fn is_generator_receiver(receiver: &TypedExpr) -> bool {
+        matches!(&receiver.ty, IrType::NamedGeneric(name, _)
+            if incan_core::lang::types::collections::from_str(name.as_str())
+                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
     }
 }

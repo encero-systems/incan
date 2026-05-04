@@ -838,6 +838,7 @@ impl AstLowering {
             }
 
             // ---- Comprehensions (delegated to comprehensions submodule) ----
+            ast::Expr::Generator(generator) => self.lower_generator_expr(generator)?,
             ast::Expr::ListComp(comp) => self.lower_list_comp(comp)?,
             ast::Expr::DictComp(comp) => self.lower_dict_comp(comp)?,
 

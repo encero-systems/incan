@@ -77,6 +77,7 @@ use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_t
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::stringlike::StringLikeId;
 
@@ -107,6 +108,17 @@ pub(crate) struct LoopContext {
     pub break_types: Vec<(ResolvedType, Span)>,
 }
 
+/// Declaration context that determines how `yield` expressions are interpreted.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum YieldContext {
+    /// `yield` is not valid in the current body.
+    Disallowed,
+    /// `yield` belongs to `std.testing.fixture` lifecycle semantics.
+    Fixture,
+    /// `yield value` produces one item of the active generator's element type.
+    Generator { element_ty: ResolvedType },
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub(crate) symbols: SymbolTable,
@@ -120,6 +132,8 @@ pub struct TypeChecker {
     pub(crate) mutable_bindings: HashSet<String>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
+    /// Active declaration-level interpretation for `yield` expressions.
+    pub(crate) current_yield_context: YieldContext,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
     /// Stack of active loop contexts, innermost last.
@@ -223,6 +237,7 @@ impl TypeChecker {
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
             current_return_error_type: None,
+            current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
             loop_stack: Vec::new(),
             current_trait_requires: None,
@@ -1367,6 +1382,19 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
             }
+            Expr::Generator(generator) => {
+                self.collect_static_dependencies_from_expr(&generator.expr.node, deps, visiting_functions);
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_dependencies_from_expr(&iter.node, deps, visiting_functions);
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_dependencies_from_expr(&condition.node, deps, visiting_functions);
+                        }
+                    }
+                }
+            }
             Expr::ListComp(list_comp) => {
                 self.collect_static_dependencies_from_expr(&list_comp.expr.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_expr(&list_comp.iter.node, deps, visiting_functions);
@@ -1625,6 +1653,31 @@ impl TypeChecker {
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
+                }
+            }
+            Expr::Generator(generator) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &generator.expr,
+                    current_static,
+                    visiting_functions,
+                );
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                iter,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                condition,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                    }
                 }
             }
             Expr::ListComp(list_comp) => {
@@ -2633,6 +2686,15 @@ impl TypeChecker {
                     return false;
                 };
                 self.types_compatible(actual, inner)
+            }
+            (ResolvedType::Generic(name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator)
+                    && expected_args.len() == 1
+                    && (trait_name == builtin_traits::as_str(TraitId::Iterable)
+                        || trait_name == builtin_traits::as_str(TraitId::Iterator)
+                        || trait_name == builtin_traits::as_str(TraitId::IntoIterator)) =>
+            {
+                actual_args.len() == 1 && self.types_compatible(&actual_args[0], &expected_args[0])
             }
 
             // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----

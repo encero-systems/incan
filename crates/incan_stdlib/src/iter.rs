@@ -4,6 +4,146 @@
 
 use crate::errors::raise;
 use incan_core::errors::IncanError;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::thread;
+
+/// Runtime representation for RFC 006 lazy generator values.
+///
+/// The compiler can lower generator functions and generator expressions to this wrapper once the frontend provides
+/// typed generator bodies. The wrapper intentionally owns a boxed iterator so emitted code has one stable concrete
+/// return type for `Generator[T]` without leaking the Rust adapter chain that produced it.
+pub struct Generator<T> {
+    iter: Box<dyn Iterator<Item = T>>,
+}
+
+impl<T> Generator<T> {
+    /// Create a generator from an owned Rust iterator.
+    ///
+    /// The iterator must be `'static` because the generated `Generator[T]` value is allowed to escape the local
+    /// expression where it was created. Backend lowering should move or clone captured inputs into the iterator chain
+    /// before calling this constructor.
+    #[must_use]
+    pub fn new<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = T> + 'static,
+    {
+        Self { iter: Box::new(iter) }
+    }
+
+    /// Create a generator from compiler-emitted yield code.
+    #[must_use]
+    pub fn spawn<F>(f: F) -> Self
+    where
+        T: Send + 'static,
+        F: FnOnce(GeneratorYield<T>) + Send + 'static,
+    {
+        Self::new(SpawnedGenerator {
+            producer: Some(Box::new(f)),
+            receiver: None,
+        })
+    }
+
+    /// Lazily transform each yielded value.
+    #[must_use]
+    pub fn map<U, F>(self, f: F) -> Generator<U>
+    where
+        T: 'static,
+        U: 'static,
+        F: FnMut(T) -> U + 'static,
+    {
+        Generator::new(self.iter.map(f))
+    }
+
+    /// Lazily keep yielded values accepted by `predicate`.
+    #[must_use]
+    pub fn filter<F>(self, predicate: F) -> Self
+    where
+        T: 'static,
+        F: FnMut(&T) -> bool + 'static,
+    {
+        Generator::new(self.iter.filter(predicate))
+    }
+
+    /// Lazily stop after at most `count` yielded values.
+    ///
+    /// Negative counts behave like Python slicing limits that cannot admit any item.
+    #[must_use]
+    pub fn take(self, count: i64) -> Self
+    where
+        T: 'static,
+    {
+        let limit = match usize::try_from(count) {
+            Ok(limit) => limit,
+            Err(_) if count < 0 => 0,
+            Err(_) => usize::MAX,
+        };
+        Generator::new(self.iter.take(limit))
+    }
+
+    /// Materialize the remaining yielded values into an owned list.
+    pub fn collect(self) -> Vec<T> {
+        self.iter.collect()
+    }
+}
+
+/// Iterator adapter that starts compiler-emitted generator bodies on first consumption.
+struct SpawnedGenerator<T> {
+    producer: Option<Box<dyn FnOnce(GeneratorYield<T>) + Send>>,
+    receiver: Option<Receiver<T>>,
+}
+
+impl<T> SpawnedGenerator<T>
+where
+    T: Send + 'static,
+{
+    /// Start the producer thread once the consumer asks for the first item.
+    fn ensure_started(&mut self) {
+        if self.receiver.is_some() {
+            return;
+        }
+
+        let Some(producer) = self.producer.take() else {
+            return;
+        };
+        let (sender, receiver) = sync_channel(0);
+        thread::spawn(move || producer(GeneratorYield { sender }));
+        self.receiver = Some(receiver);
+    }
+}
+
+impl<T> Iterator for SpawnedGenerator<T>
+where
+    T: Send + 'static,
+{
+    type Item = T;
+
+    /// Start the producer if needed and receive the next yielded item.
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ensure_started();
+        self.receiver.as_ref().and_then(|receiver| receiver.recv().ok())
+    }
+}
+
+/// Yield handle passed into compiler-emitted generator bodies.
+pub struct GeneratorYield<T> {
+    sender: SyncSender<T>,
+}
+
+impl<T> GeneratorYield<T> {
+    /// Suspend the producer until the consumer is ready for the next value.
+    pub fn yield_value(&self, value: T) {
+        let _ = self.sender.send(value);
+    }
+}
+
+impl<T> Iterator for Generator<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
 
 /// A Python-like `range(start, end, step)` iterator over `i64`.
 #[derive(Debug, Clone)]
@@ -70,5 +210,53 @@ mod tests {
     #[should_panic(expected = "ValueError: range() arg 3 must not be zero")]
     fn range_zero_step_panics_with_value_error() {
         let _ = range(0, 5, 0);
+    }
+
+    #[test]
+    fn generator_helpers_are_lazy_and_chainable() {
+        let values = Generator::new(0..)
+            .map(|value| value * 2)
+            .filter(|value| value % 3 == 0)
+            .take(4)
+            .collect();
+
+        assert_eq!(values, vec![0, 6, 12, 18]);
+    }
+
+    #[test]
+    fn generator_take_negative_count_yields_empty_list() {
+        let values = Generator::new(0..5).take(-1).collect();
+
+        assert_eq!(values, Vec::<i32>::new());
+    }
+
+    #[test]
+    fn generator_spawn_yields_in_order() {
+        let values = Generator::spawn(|yielder| {
+            yielder.yield_value(1);
+            yielder.yield_value(2);
+        })
+        .collect();
+
+        assert_eq!(values, vec![1, 2]);
+    }
+
+    #[test]
+    fn generator_spawn_defers_body_until_first_next() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let mut values = Generator::spawn(move |yielder| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            yielder.yield_value(1);
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(values.next(), Some(1));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

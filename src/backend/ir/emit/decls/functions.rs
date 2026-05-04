@@ -10,7 +10,9 @@ use quote::{format_ident, quote};
 use incan_core::lang::conventions;
 
 use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
-use super::super::super::expr::{IrCallArg, IrDictEntry, IrExprKind, IrListEntry, MatchArm, Pattern};
+use super::super::super::expr::{
+    IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern,
+};
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
@@ -152,6 +154,20 @@ impl<'a> IrEmitter<'a> {
                         eprintln!("{error}");
                         std::process::exit(1);
                     }
+                }
+            });
+        }
+
+        if func.is_generator {
+            let ret_ty = self.emit_type(&func.return_type);
+            return Ok(quote! {
+                #(#lint_allows)*
+                #(#rust_attrs)*
+                #vis fn #name #generics (#(#params),*) -> #ret_ty {
+                    #static_init_stmt
+                    incan_stdlib::iter::Generator::spawn(move |__incan_yield| {
+                        #(#body_stmts)*
+                    })
                 }
             });
         }
@@ -751,7 +767,9 @@ impl<'a> IrEmitter<'a> {
         used_names: &mut HashSet<String>,
     ) {
         match &stmt.kind {
-            IrStmtKind::Expr(expr) => Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names),
+            IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => {
+                Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+            }
             IrStmtKind::Let { name, value, .. } => {
                 Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
                 shadowed_names.insert(name.clone());
@@ -976,6 +994,21 @@ impl<'a> IrEmitter<'a> {
                 if let Some(expr) = filter {
                     Self::collect_expr_used_names(expr, param_names, &comp_shadowed, used_names);
                 }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                let mut generator_shadowed = shadowed_names.clone();
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { pattern, iterable } => {
+                            Self::collect_expr_used_names(iterable, param_names, &generator_shadowed, used_names);
+                            Self::shadow_pattern_bindings(pattern, &mut generator_shadowed);
+                        }
+                        IrGeneratorClause::If(condition) => {
+                            Self::collect_expr_used_names(condition, param_names, &generator_shadowed, used_names);
+                        }
+                    }
+                }
+                Self::collect_expr_used_names(element, param_names, &generator_shadowed, used_names);
             }
             IrExprKind::List(entries) => {
                 for entry in entries {

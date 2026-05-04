@@ -5,11 +5,39 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::symbols::*;
-use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
+use crate::frontend::typechecker::helpers::{dict_ty, generator_ty, list_ty};
 
 use super::TypeChecker;
 
 impl TypeChecker {
+    /// Type-check a generator expression and return `Generator[T]`.
+    pub(in crate::frontend::typechecker::check_expr) fn check_generator_expr(
+        &mut self,
+        generator: &GeneratorExpr,
+        _span: Span,
+    ) -> ResolvedType {
+        self.symbols.enter_scope(ScopeKind::Block);
+
+        for clause in &generator.clauses {
+            match clause {
+                ComprehensionClause::For { pattern, iter } => {
+                    let iter_ty = self.check_expr(iter);
+                    let elem_ty = self.infer_iterator_element_type_from_expr(iter, &iter_ty);
+                    self.define_for_pattern_bindings(pattern, &elem_ty);
+                }
+                ComprehensionClause::If(condition) => {
+                    let cond_ty = self.check_expr(condition);
+                    self.validate_truthiness_condition(&cond_ty, condition.span);
+                }
+            }
+        }
+
+        let result_elem_ty = self.check_expr(&generator.expr);
+        self.symbols.exit_scope();
+
+        generator_ty(result_elem_ty)
+    }
+
     /// Type-check a list comprehension and return `List[T]`.
     pub(in crate::frontend::typechecker::check_expr) fn check_list_comp(
         &mut self,
@@ -17,7 +45,7 @@ impl TypeChecker {
         _span: Span,
     ) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
-        let elem_ty = self.infer_iterator_element_type(&iter_ty);
+        let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
@@ -39,7 +67,7 @@ impl TypeChecker {
         _span: Span,
     ) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
-        let elem_ty = self.infer_iterator_element_type(&iter_ty);
+        let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
