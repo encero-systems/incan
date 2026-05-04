@@ -168,7 +168,7 @@ def write_temp_payload(tmp_dir: Path, data: bytes) -> Result[Path, IoError]:
     return Ok(path)
 ```
 
-`std.tempfile.SpooledTempFile` is a follow-up API for RFC 010. It should compose with `std.fs` paths and file handles instead of being folded into `std.fs`.
+`std.tempfile.SpooledTemporaryFile` is a follow-up API for RFC 010. It should compose with `std.fs` paths and file handles instead of being folded into `std.fs`.
 
 ## See Also
 

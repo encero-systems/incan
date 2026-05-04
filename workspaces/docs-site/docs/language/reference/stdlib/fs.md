@@ -8,6 +8,8 @@ from std.fs import DirEntry, DiskUsage, File, IoError, OpenOptions, Path, PathSt
 
 The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, and a human-readable `message()`.
 
+Current `std.fs` support follows the repository's Unix-like host target: macOS, Linux, and Windows through WSL. Native Windows filesystem semantics are not yet part of this reference contract.
+
 ## Path
 
 | API | Returns | Description |
@@ -123,4 +125,4 @@ Builder methods are `read`, `write`, `append`, `truncate`, `create`, and `create
 
 `std.tempfile` owns temporary location creation and cleanup. Once a temporary path exists, use `std.fs` for path joins, reads, writes, opens, metadata, copy/move, and cleanup.
 
-`std.tempfile.SpooledTempFile` remains a follow-up API for RFC 010 rather than part of `std.fs`.
+`std.tempfile.SpooledTemporaryFile` remains a follow-up API for RFC 010 rather than part of `std.fs`.
