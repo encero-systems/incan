@@ -5172,7 +5172,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <span class="c1"># List collected tests without running them</span>
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--list<span class="w"> </span>tests/
 
-<span class="c1"># Verbose output (show timing)</span>
+<span class="c1"># Verbose output (show timing and generated-harness preheat diagnostics)</span>
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-v
 
 <span class="c1"># Stop on first failure</span>
@@ -5212,6 +5212,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--jobs<span class="w"> </span><span class="m">4</span><span class="w"> </span>tests/
 </code></pre></div>
 <p><code>-k</code> matches the stable test id shown by <code>--list</code>, for example <code>tests/test_math.incn::test_addition</code> or <code>tests/test_math.incn::test_add[1-2-3]</code>.</p>
+<p>When a generated Rust test harness is new or stale, <code>incan test</code> preheats it with <code>cargo test --no-run</code> before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.</p>
 <p><code>-m</code> matches marker names from decorators such as <code>@slow</code> and <code>@mark("smoke")</code>, plus default marks from <code>TEST_MARKS</code>.
 Use <code>TEST_MARKERS</code> with <code>--strict-markers</code> to make unknown marker names a collection error.</p>
 <p>Conditional markers are evaluated during collection:</p>
