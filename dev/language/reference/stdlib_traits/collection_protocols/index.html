@@ -4581,6 +4581,7 @@
 
 <h1 id="collection-protocols-reference">Collection protocols (Reference)<a class="headerlink" href="#collection-protocols-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents stdlib traits that model Python-like collection behavior.</p>
+<p>Dunder hooks are the implementation methods. Explicit trait adoption names the capability when a bound, diagnostic, or reference page needs stable vocabulary.</p>
 <h2 id="contains-membership">Contains (membership)<a class="headerlink" href="#contains-membership" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Syntax</strong>: <code>item in collection</code> / <code>item not in collection</code></li>
@@ -4613,6 +4614,7 @@
 <li><strong>Hook</strong>: <code>__bool__(self) -&gt; bool</code></li>
 <li><strong>Trait</strong>: <code>Bool</code></li>
 </ul>
+<p><code>Bool</code> is available for types whose domain has a clear truth value. It should not replace explicit checks for optionality, errors, emptiness, or named state. Prefer patterns such as <code>value is Some(x)</code>, <code>result is Ok(x)</code>, <code>len(items) &gt; 0</code>, <code>name != ""</code>, or <code>connection.is_open</code> when those are what the code actually means.</p>
 
 
 

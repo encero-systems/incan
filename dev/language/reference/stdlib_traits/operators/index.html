@@ -2102,9 +2102,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#indexing-hooks-in-the-operator-vocabulary" class="md-nav__link">
+  <a href="#indexing-hooks" class="md-nav__link">
     <span class="md-ellipsis">
-      Indexing hooks in the operator vocabulary
+      Indexing hooks
     </span>
   </a>
   
@@ -4571,9 +4571,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#indexing-hooks-in-the-operator-vocabulary" class="md-nav__link">
+  <a href="#indexing-hooks" class="md-nav__link">
     <span class="md-ellipsis">
-      Indexing hooks in the operator vocabulary
+      Indexing hooks
     </span>
   </a>
   
@@ -4619,7 +4619,7 @@
 <p>This page documents stdlib traits that describe operator behavior for custom types.</p>
 <p>Operator traits are capability contracts. Dunder methods are the implementation hooks that satisfy those contracts.</p>
 <p>The surface follows a split model: dunder methods are the implementation surface, while traits are the nominal capability vocabulary.</p>
-<p>A type may also define a dunder hook directly. When a dunder-only implementation matches a standard operator protocol, the compiler may expose the corresponding trait view for generic reasoning.</p>
+<p>A type may define a compatible dunder hook directly for syntax. Use explicit trait adoption when you want a named capability for bounds, documentation, or diagnostics.</p>
 <h2 id="binary-arithmetic">Binary arithmetic<a class="headerlink" href="#binary-arithmetic" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4742,8 +4742,8 @@
 </tr>
 </tbody>
 </table>
-<h2 id="indexing-hooks-in-the-operator-vocabulary">Indexing hooks in the operator vocabulary<a class="headerlink" href="#indexing-hooks-in-the-operator-vocabulary" title="Permanent link">&para;</a></h2>
-<p>Indexing dunders are part of the operator protocol vocabulary:</p>
+<h2 id="indexing-hooks">Indexing hooks<a class="headerlink" href="#indexing-hooks" title="Permanent link">&para;</a></h2>
+<p>Indexing uses the canonical <code>std.traits.indexing</code> names. <code>GetItem</code> and <code>SetItem</code> remain compatibility/operator aliases for the same hooks; do not use them as a second source of truth in new docs or bounds.</p>
 <table>
 <thead>
 <tr>
@@ -4755,17 +4755,17 @@
 <tbody>
 <tr>
 <td><code>obj[key]</code></td>
-<td><code>GetItem[Key, Output]</code></td>
+<td><code>Index[Key, Output]</code></td>
 <td><code>__getitem__(self, key: Key) -&gt; Output</code></td>
 </tr>
 <tr>
 <td><code>obj[key] = value</code></td>
-<td><code>SetItem[Key, Value]</code></td>
+<td><code>IndexMut[Key, Value]</code></td>
 <td><code>__setitem__(self, key: Key, value: Value) -&gt; None</code></td>
 </tr>
 </tbody>
 </table>
-<p>The existing <code>std.traits.indexing</code> module still exposes <code>Index[K, V]</code>, <code>IndexMut[K, V]</code>, and <code>Sliceable[T]</code> for the older indexing-specific vocabulary. See <a href="../indexing_and_slicing/">Indexing and slicing</a>.</p>
+<p>See <a href="../indexing_and_slicing/">Indexing and slicing</a> for the indexing-specific reference.</p>
 <h2 id="compound-assignment">Compound assignment<a class="headerlink" href="#compound-assignment" title="Permanent link">&para;</a></h2>
 <p>Current compound assignment syntax covers <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code>.</p>
 <p>Compound assignment first resolves an explicit in-place operator hook when present, then falls back to ordinary binary operator assignment.</p>

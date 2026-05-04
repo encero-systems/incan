@@ -4531,6 +4531,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-068-protocol-hooks-for-core-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 068 protocol hooks for core syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#duckborrowing-and-ownership-aware-codegen" class="md-nav__link">
     <span class="md-ellipsis">
       Duckborrowing and ownership-aware codegen
@@ -4747,6 +4756,9 @@ the raw representation for value enums.</p>
 <h3 id="rfc-028-trait-based-operator-overloading">RFC 028 trait-based operator overloading<a class="headerlink" href="#rfc-028-trait-based-operator-overloading" title="Permanent link">&para;</a></h3>
 <p><code>std.traits.ops</code> now exposes the RFC 028 operator protocol vocabulary for custom types. The basic arithmetic traits are joined by floor division, power, shifts, bitwise operators, matrix multiplication, pipe operators, unary inversion, indexing hooks, and explicit in-place compound-assignment traits for the supported <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code> syntax.</p>
 <p>Operator traits are nominal capability contracts for generic code. Dunder methods such as <code>__add__</code>, <code>__floordiv__</code>, <code>__rshift__</code>, <code>__matmul__</code>, and <code>__getitem__</code> are the implementation hooks that satisfy those contracts. Compound assignment first checks for the explicit in-place hook such as <code>__iadd__</code>; if none exists, it falls back to ordinary binary operator assignment.</p>
+<h3 id="rfc-068-protocol-hooks-for-core-syntax">RFC 068 protocol hooks for core syntax<a class="headerlink" href="#rfc-068-protocol-hooks-for-core-syntax" title="Permanent link">&para;</a></h3>
+<p>Core syntax now resolves through static protocol hooks for user-defined types. Custom types can participate in truthiness, <code>len(...)</code>, membership, iteration, indexing, indexed assignment, and callable-object invocation by defining compatible hooks such as <code>__bool__</code>, <code>__len__</code>, <code>__contains__</code>, <code>__iter__</code>, <code>__next__</code>, <code>__getitem__</code>, <code>__setitem__</code>, and <code>__call__</code>.</p>
+<p>The hook surface remains statically checked. Dunder methods are implementation hooks, while traits such as <code>Bool</code>, <code>Len</code>, <code>Contains</code>, <code>Iterable</code>, <code>Iterator</code>, <code>Index</code>, <code>IndexMut</code>, and fixed-arity callable traits are the nominal capability vocabulary for explicit adoption, bounds, docs, and diagnostics. <code>Option</code> and <code>Result</code> remain intentionally non-truthy; use explicit pattern checks for optionality and fallibility.</p>
 <h3 id="duckborrowing-and-ownership-aware-codegen">Duckborrowing and ownership-aware codegen<a class="headerlink" href="#duckborrowing-and-ownership-aware-codegen" title="Permanent link">&para;</a></h3>
 <p>The backend now routes more generated-Rust ownership decisions through a centralized "duckborrowing" planner. This strengthens the compiler's ability to choose moves, borrows, mutable borrows, owned string materialization, <code>.into()</code>, and necessary <code>.clone()</code> calls at typed use sites instead of relying on scattered emitter-local fixes.</p>
 <p>Practically, this reduces the need for users and library authors to add ownership-shaping workarounds such as <code>.clone()</code>, <code>.as_ref()</code>, <code>str(...)</code>, or <code>.into()</code> in ordinary Incan code just to satisfy generated Rust. The planner now covers more call arguments, collection and tuple literals, assignments, returns, match scrutinees, string lookup probes, tuple unpacking, and Rust interop boundaries.</p>
@@ -4801,6 +4813,7 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Runtime</strong>: Generated Rust now routes the in-scope panic-backed collection and JSON extraction paths, plus proc-macro decorator misuse stubs, through named stdlib helpers instead of open-coded fallback or <code>panic!</code> shims. The narrow checked-newtype construction panic remains tracked separately (#351).</li>
 <li><strong>Compiler/Typechecker</strong>: Unsupported trait-typed local annotations now produce an Incan diagnostic instead of reaching Rust codegen as invalid bare trait local types (#462).</li>
 <li><strong>Language/Compiler</strong>: Enums can now declare methods and associated functions after their variants and adopt traits with <code>with</code>, bringing enum-owned behavior and trait protocol participation into parity with models and classes (#334, RFC 050).</li>
+<li><strong>Language/Compiler</strong>: Core syntax now uses statically checked protocol hooks for user-defined truthiness, length, membership, iteration, indexing, indexed assignment, and callable-object invocation (#86, RFC 068).</li>
 </ul>
 <h3 id="tooling-and-formatter">Tooling and formatter<a class="headerlink" href="#tooling-and-formatter" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4871,6 +4884,7 @@ the raw representation for value enums.</p>
 <li>Enum methods and enum trait adoption: <a href="/dev/RFCs/closed/implemented/050_enum_methods_and_trait_adoption">RFC 050</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
+<li>Protocol hooks for core syntax: <a href="/dev/RFCs/closed/implemented/068_protocol_hooks_for_core_language_syntax">RFC 068</a></li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 

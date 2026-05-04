@@ -4563,6 +4563,7 @@
 
 <h1 id="indexing-and-slicing-reference">Indexing and slicing (Reference)<a class="headerlink" href="#indexing-and-slicing-reference" title="Permanent link">&para;</a></h1>
 <p>This page documents stdlib traits for <code>obj[key]</code>, <code>obj[key] = value</code>, and slicing.</p>
+<p><code>Index</code> and <code>IndexMut</code> are the canonical trait names for indexed read and write capabilities. The <code>GetItem</code> and <code>SetItem</code> names in <code>std.traits.ops</code> are compatibility/operator aliases for the same hooks.</p>
 <h2 id="index-read">Index (read)<a class="headerlink" href="#index-read" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Syntax</strong>: <code>obj[key]</code></li>
@@ -4583,7 +4584,7 @@
 <span class="n">column</span> <span class="o">=</span> <span class="n">table</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>  <span class="c1"># Index[str, str]</span>
 <span class="n">first</span> <span class="o">=</span> <span class="n">table</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>        <span class="c1"># Index[int, str]</span>
 </code></pre></div>
-<p>If two <code>__getitem__</code> methods are backed by different instantiations of the same <code>Index</code> trait family, the compiler selects the method from the key expression type. This is not general method overloading: same-name hooks from unrelated trait families are rejected unless a future language feature adds explicit qualification or aliasing.</p>
+<p>When explicit adoption uses multiple <code>Index</code> instantiations, the key expression type identifies the intended indexed access shape. This is not general method overloading: same-name hooks from unrelated trait families are rejected unless a future language feature adds explicit qualification or aliasing.</p>
 <h2 id="indexmut-write">IndexMut (write)<a class="headerlink" href="#indexmut-write" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Syntax</strong>: <code>obj[key] = value</code></li>

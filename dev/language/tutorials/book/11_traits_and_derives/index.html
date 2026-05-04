@@ -906,6 +906,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#protocol-traits-and-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Protocol traits and hooks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#trait-hierarchies-with-with" class="md-nav__link">
     <span class="md-ellipsis">
       Trait hierarchies with with
@@ -4608,6 +4617,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#protocol-traits-and-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Protocol traits and hooks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#trait-hierarchies-with-with" class="md-nav__link">
     <span class="md-ellipsis">
       Trait hierarchies with with
@@ -4702,7 +4720,7 @@ value.</p>
 <h2 id="traits-shared-contracts">Traits: shared contracts<a class="headerlink" href="#traits-shared-contracts" title="Permanent link">&para;</a></h2>
 <p>Traits let you define a shared contract. In a trait, a method can either:</p>
 <ul>
-<li>Use <code>...</code> to mean “implementers must provide this” (required methds)</li>
+<li>Use <code>...</code> to mean “implementers must provide this” (required methods)</li>
 <li>Provide a default implementation (Rust-like default methods)</li>
 </ul>
 <p>Traits are always abstract in Incan. That means two things:</p>
@@ -4715,6 +4733,21 @@ value.</p>
 <p><strong>Traits</strong> are like a typed interface (represented in Python by a <code>Protocol</code> or <code>abc.ABC</code>): “anything that implements
 these methods can be treated as this capability”.</p>
 </div>
+<h3 id="protocol-traits-and-hooks">Protocol traits and hooks<a class="headerlink" href="#protocol-traits-and-hooks" title="Permanent link">&para;</a></h3>
+<p>Some traits are tied to ordinary syntax. The trait is the named capability, and the dunder method is the implementation hook:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.collection</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Bool</span><span class="p">,</span> <span class="nc">Len</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.indexing</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Index</span>
+
+<span class="k">model</span> <span class="nc">Bucket</span> <span class="k">with</span> <span class="nc">Len</span><span class="p">,</span> <span class="nc">Index</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">index</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="p">[</span><span class="nb">index</span><span class="p">]</span>
+</code></pre></div>
+<p><code>len(bucket)</code> uses <code>__len__</code>, and <code>bucket[0]</code> uses <code>__getitem__</code>. Use these hooks when syntax is the clearest expression of the type's behavior. Prefer explicit checks for optionality, fallibility, emptiness, and named state: <code>value is Some(x)</code>, <code>result is Ok(x)</code>, <code>len(items) &gt; 0</code>, or <code>connection.is_open</code>.</p>
 <h3 id="trait-hierarchies-with-with">Trait hierarchies with <code>with</code><a class="headerlink" href="#trait-hierarchies-with-with" title="Permanent link">&para;</a></h3>
 <p>Traits can also refine other traits:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>

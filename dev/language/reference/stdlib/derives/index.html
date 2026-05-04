@@ -4663,6 +4663,7 @@ Import these traits when you want to adopt them explicitly or refer to them in a
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.comparison</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Eq</span><span class="p">,</span> <span class="kt">Ord</span><span class="p">,</span> <span class="kt">Hash</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.copying</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Clone</span><span class="p">,</span> <span class="kt">Copy</span><span class="p">,</span> <span class="kt">Default</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.string</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Debug</span><span class="p">,</span> <span class="kt">Display</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.collection</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Contains</span><span class="p">,</span> <span class="nc">Bool</span><span class="p">,</span> <span class="nc">Len</span><span class="p">,</span> <span class="nc">Iterable</span><span class="p">,</span> <span class="nc">Iterator</span>
 </code></pre></div>
 <h2 id="surface-model">Surface model<a class="headerlink" href="#surface-model" title="Permanent link">&para;</a></h2>
 <p>Traits under <code>std.derives.*</code> describe capabilities such as equality, ordering, copying, and display formatting.</p>
@@ -4704,7 +4705,8 @@ Import these traits when you want to adopt them explicitly or refer to them in a
 <li><code>Iterable[T]</code></li>
 <li><code>Iterator[T]</code></li>
 </ul>
-<p>Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.</p>
+<p>Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.
+<code>Bool</code> is available, but prefer explicit checks for <code>Option</code>, <code>Result</code>, emptiness, and named boolean state when that is the behavior you mean.</p>
 
 
 
