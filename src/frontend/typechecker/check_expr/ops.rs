@@ -14,7 +14,7 @@
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{ResolvedType, TypeInfo};
-use crate::frontend::typechecker::ResolvedOperatorKind;
+use crate::frontend::typechecker::{ProtocolIterationInfo, ResolvedOperatorKind};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::{NumericTy, result_numeric_type};
@@ -458,6 +458,11 @@ impl TypeChecker {
                     }
                 }
 
+                if self.is_user_operator_receiver(&right_ty) {
+                    let _ = self.resolve_contains_dunder(&right_ty, left, &left_ty, span);
+                    return ResolvedType::Bool;
+                }
+
                 // Fallback: keep previous permissive behavior but note mismatch.
                 self.errors.push(errors::type_mismatch(
                     "supported membership (str, list, set, dict)",
@@ -561,6 +566,173 @@ impl TypeChecker {
         self.type_info
             .record_resolved_operator_call(span, method, ResolvedOperatorKind::Index);
         Some(ret)
+    }
+
+    /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed.
+    pub(in crate::frontend::typechecker) fn validate_truthiness_condition(
+        &mut self,
+        cond_ty: &ResolvedType,
+        span: Span,
+    ) {
+        if self.types_compatible(cond_ty, &ResolvedType::Bool) || matches!(cond_ty, ResolvedType::Unknown) {
+            return;
+        }
+        if cond_ty.is_option() || cond_ty.is_result() {
+            self.errors
+                .push(errors::type_mismatch("bool", &cond_ty.to_string(), span));
+            return;
+        }
+
+        if self.is_user_operator_receiver(cond_ty) {
+            let method = "__bool__";
+            let args: Vec<CallArg> = Vec::new();
+            let arg_types: Vec<ResolvedType> = Vec::new();
+            match self.resolve_operator_dunder(cond_ty, method, &args, &arg_types, span, Some(&ResolvedType::Bool)) {
+                Some(ret) => {
+                    if !self.types_compatible(&ret, &ResolvedType::Bool) {
+                        self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
+                        return;
+                    }
+                    self.type_info
+                        .record_resolved_operator_call(span, method, ResolvedOperatorKind::Truthiness);
+                }
+                None => self
+                    .errors
+                    .push(errors::missing_method(&cond_ty.to_string(), method, span)),
+            }
+            return;
+        }
+
+        self.errors
+            .push(errors::type_mismatch("bool", &cond_ty.to_string(), span));
+    }
+
+    /// Resolve `len(x)` for a user-defined receiver through `__len__(self) -> int`.
+    pub(in crate::frontend::typechecker) fn resolve_len_dunder(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let method = "__len__";
+        let args: Vec<CallArg> = Vec::new();
+        let arg_types: Vec<ResolvedType> = Vec::new();
+        let ret = self.resolve_operator_dunder(receiver_ty, method, &args, &arg_types, span, Some(&ResolvedType::Int));
+        match ret {
+            Some(ret) => {
+                if !self.types_compatible(&ret, &ResolvedType::Int) {
+                    self.errors.push(errors::type_mismatch("int", &ret.to_string(), span));
+                    return Some(ResolvedType::Unknown);
+                }
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Len);
+                Some(ResolvedType::Int)
+            }
+            None => {
+                self.errors
+                    .push(errors::missing_method(&receiver_ty.to_string(), method, span));
+                None
+            }
+        }
+    }
+
+    /// Resolve `item in receiver` for a user-defined receiver through `__contains__(self, item) -> bool`.
+    pub(in crate::frontend::typechecker) fn resolve_contains_dunder(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        item: &Spanned<Expr>,
+        item_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let method = "__contains__";
+        let args = vec![CallArg::Positional(item.clone())];
+        let arg_types = vec![item_ty.clone()];
+        let ret = self.resolve_operator_dunder(receiver_ty, method, &args, &arg_types, span, Some(&ResolvedType::Bool));
+        match ret {
+            Some(ret) => {
+                if !self.types_compatible(&ret, &ResolvedType::Bool) {
+                    self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
+                    return Some(ResolvedType::Unknown);
+                }
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Contains);
+                Some(ResolvedType::Bool)
+            }
+            None => {
+                self.errors
+                    .push(errors::missing_method(&receiver_ty.to_string(), method, span));
+                None
+            }
+        }
+    }
+
+    /// Resolve `receiver(...)` for callable user-defined objects through `__call__`.
+    pub(in crate::frontend::typechecker) fn resolve_call_dunder(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let method = "__call__";
+        let ret = self.resolve_operator_dunder(receiver_ty, method, args, arg_types, span, None);
+        match ret {
+            Some(ret) => {
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Call);
+                Some(ret)
+            }
+            None => {
+                self.errors
+                    .push(errors::missing_method(&receiver_ty.to_string(), method, span));
+                None
+            }
+        }
+    }
+
+    /// Resolve custom `for` iteration through `__iter__(self)` and `iterator.__next__() -> Option[T]`.
+    pub(in crate::frontend::typechecker) fn resolve_iteration_protocol(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let iter_method = "__iter__";
+        let next_method = "__next__";
+        let args: Vec<CallArg> = Vec::new();
+        let arg_types: Vec<ResolvedType> = Vec::new();
+        let iterator_ty = match self.resolve_operator_dunder(receiver_ty, iter_method, &args, &arg_types, span, None) {
+            Some(iterator_ty) => iterator_ty,
+            None => {
+                self.errors
+                    .push(errors::missing_method(&receiver_ty.to_string(), iter_method, span));
+                return None;
+            }
+        };
+
+        let next_ret = match self.resolve_operator_dunder(&iterator_ty, next_method, &args, &arg_types, span, None) {
+            Some(next_ret) => next_ret,
+            None => {
+                self.errors
+                    .push(errors::missing_method(&iterator_ty.to_string(), next_method, span));
+                return None;
+            }
+        };
+
+        let Some(item_ty) = next_ret.option_inner_type().cloned() else {
+            self.errors
+                .push(errors::type_mismatch("Option[_]", &next_ret.to_string(), span));
+            return Some(ResolvedType::Unknown);
+        };
+
+        self.type_info.record_protocol_iteration(
+            span,
+            ProtocolIterationInfo {
+                iter_method: iter_method.to_string(),
+                iterator_type: iterator_ty,
+                next_method: next_method.to_string(),
+                item_type: item_ty.clone(),
+            },
+        );
+        Some(item_ty)
     }
 
     /// Resolve a user-defined index assignment (`base[index] = value`) through `__setitem__`, if available.
@@ -748,9 +920,10 @@ impl TypeChecker {
     /// Return whether a type can participate in user-defined operator dispatch.
     pub(in crate::frontend::typechecker) fn is_user_operator_receiver(&self, ty: &ResolvedType) -> bool {
         match ty {
-            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
-                self.lookup_semantic_type_info(name).is_some()
-            }
+            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => matches!(
+                self.lookup_semantic_type_info(name),
+                Some(TypeInfo::Class(_) | TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+            ),
             _ => self.is_generic_placeholder_type(ty),
         }
     }

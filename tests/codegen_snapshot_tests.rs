@@ -833,6 +833,68 @@ fn test_user_defined_operators_codegen() {
 }
 
 #[test]
+fn test_rfc068_protocol_hooks_lower_to_method_calls() {
+    let source = r#"
+model Flag:
+  ready: bool
+
+  def __bool__(self) -> bool:
+    return self.ready
+
+model Bag:
+  size: int
+
+  def __len__(self) -> int:
+    return self.size
+
+  def __contains__(self, item: int) -> bool:
+    return item == self.size
+
+model CallableBox:
+  seed: int
+
+  def __call__(self, value: int) -> int:
+    return self.seed + value
+
+model CounterIter:
+  def __next__(self) -> Option[int]:
+    return None
+
+model Counter:
+  def __iter__(self) -> CounterIter:
+    return CounterIter()
+
+def main() -> None:
+  flag = Flag(ready=true)
+  bag = Bag(size=3)
+  callable = CallableBox(seed=4)
+  if flag:
+    pass
+  n = len(bag)
+  present = 3 in bag
+  called = callable(5)
+  for item in Counter():
+    seen = item
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    for expected in [
+        "flag.__bool__()",
+        "bag.__len__()",
+        "bag.__contains__(3)",
+        "callable.__call__(5)",
+        "Counter{}.__iter__()",
+        ".__next__()",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "expected generated protocol hook call {expected}; generated:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
 fn test_mixed_numeric_codegen() {
     let source = load_test_file("mixed_numeric");
     let rust_code = generate_rust(&source);

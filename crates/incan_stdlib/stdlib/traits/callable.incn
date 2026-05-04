@@ -1,7 +1,11 @@
 """
-Callable trait for objects that can be called like functions
-Python equivalent: __call__
+Callable traits for objects that can be called like functions
+Hook family: __call__
 Rust equivalent: Fn, FnMut, FnOnce traits
+
+The callable traits are nominal capability names for fixed-arity
+__call__ hooks. Use explicit adoption when generic bounds, docs, or
+diagnostics need a named callable-object capability.
 """
 
 

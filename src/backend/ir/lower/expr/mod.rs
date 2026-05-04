@@ -26,6 +26,33 @@ use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
+    pub(in crate::backend::ir::lower) fn lower_condition_expr(
+        &mut self,
+        expr: &Spanned<ast::Expr>,
+    ) -> Result<TypedExpr, LoweringError> {
+        let receiver = self.lower_expr_spanned(expr)?;
+        if let Some(resolved_operator) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_operator_call(expr.span).cloned())
+            && resolved_operator.kind == ResolvedOperatorKind::Truthiness
+        {
+            return Ok(TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: resolved_operator.method,
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    callable_signature: self.callable_signature_for_call_span(expr.span),
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Bool,
+            ));
+        }
+        Ok(receiver)
+    }
+
     /// Return the element type carried by a lowered list spread operand.
     fn lowered_list_spread_element_type(ty: &IrType) -> Option<IrType> {
         match ty {
@@ -236,6 +263,37 @@ impl AstLowering {
                         },
                         result_ty,
                     )
+                } else if let Some(resolved_operator) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_operator_call(expr_span).cloned())
+                    && resolved_operator.kind == ResolvedOperatorKind::Contains
+                {
+                    let item = self.lower_expr_spanned(l)?;
+                    let receiver = self.lower_expr_spanned(r)?;
+                    let contains_call = IrExprKind::MethodCall {
+                        receiver: Box::new(receiver),
+                        method: resolved_operator.method,
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: item,
+                        }],
+                        callable_signature: self.callable_signature_for_call_span(expr_span),
+                        arg_policy: MethodCallArgPolicy::Default,
+                    };
+                    if matches!(op, ast::BinaryOp::NotIn) {
+                        (
+                            IrExprKind::UnaryOp {
+                                op: UnaryOp::Not,
+                                operand: Box::new(IrExpr::new(contains_call, IrType::Bool)),
+                            },
+                            IrType::Bool,
+                        )
+                    } else {
+                        (contains_call, IrType::Bool)
+                    }
                 } else {
                     // Special handling for `in` and `not in` operators
                     // - `x in collection` → builtin-aware `collection.contains(x)`
@@ -571,7 +629,7 @@ impl AstLowering {
 
             // ---- If expressions ----
             ast::Expr::If(i) => {
-                let cond = self.lower_expr_spanned(&i.condition)?;
+                let cond = self.lower_condition_expr(&i.condition)?;
                 let then_stmts = self.lower_statements(&i.then_body)?;
                 let then_expr = TypedExpr::new(
                     IrExprKind::Block {
