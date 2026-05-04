@@ -1,0 +1,293 @@
+"""
+Temporary files and directories.
+
+`std.tempfile` owns temporary-resource lifecycle: creation, automatic cleanup, and explicit persistence. Use
+`NamedTemporaryFile.try_new()` or `TemporaryDirectory.try_new()` when a program needs a real filesystem path that should
+be removed when the wrapper is dropped. Use `try_new_with(...)` when the caller needs a naming prefix, suffix, or parent
+directory.
+
+The returned paths are ordinary `std.fs.Path` values. Read, write, open, copy, move, and metadata operations stay on
+`std.fs`; tempfile handles only decide when the backing filesystem entry should stop being temporary.
+
+Example:
+
+```incan
+temp = NamedTemporaryFile.try_new()?
+temp.path().write_text("payload", encoding="utf-8", errors="strict", newline=None)?
+publish(temp.path())
+```
+
+Direct class construction remains ordinary infallible value construction and is not the resource-acquisition API.
+"""
+
+from rust::std::cell import RefCell
+from rust::std::io import Error as RustIoError
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::tempfile @ "3" import Builder, NamedTempFile as RustNamedTemporaryFile, TempDir as RustTemporaryDirectory
+from std.fs import IoError, Path
+
+
+pub class NamedTemporaryFile:
+    """
+    Owning handle for a named temporary file.
+
+    The file exists at a visible filesystem path while this wrapper is live. Dropping a non-persisted wrapper removes
+    the file. Call `path()` to hand the location to `std.fs` APIs, and call `persist()` when the caller intentionally
+    wants the file to survive the wrapper.
+
+    Use `NamedTemporaryFile.try_new()` or `NamedTemporaryFile.try_new_with(...)` to create live values. Direct
+    construction is reserved for the generated stdlib implementation.
+
+    Example:
+
+    ```incan
+    temp = NamedTemporaryFile.try_new()?
+    temp.path().write_text("draft", encoding="utf-8", errors="strict", newline=None)?
+    upload(temp.path())
+    ```
+    """
+
+    handle: Rc[RefCell[Option[RustNamedTemporaryFile]]]
+    persisted_path: Rc[RefCell[Option[Path]]]
+
+    @staticmethod
+    def try_new() -> Result[NamedTemporaryFile, IoError]:
+        """
+        Create a named temporary file with host defaults.
+
+        Returns:
+            `Ok(NamedTemporaryFile)` for a live temporary file in the host default temporary directory, or
+            `Err(IoError)` when the host cannot create it.
+
+        Example:
+            `NamedTemporaryFile.try_new()?` creates a file under the host default temporary directory.
+        """
+        return NamedTemporaryFile.try_new_with("", "", None)
+
+    @staticmethod
+    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[NamedTemporaryFile, IoError]:
+        """
+        Create a named temporary file with configured naming.
+
+        Args:
+            prefix: Filename prefix requested from the host temporary-file builder.
+            suffix: Filename suffix requested from the host temporary-file builder.
+            dir: Parent directory for the temporary file, or `None` for the host default temporary directory.
+
+        Returns:
+            `Ok(NamedTemporaryFile)` for a live temporary file, or `Err(IoError)` with `dir` as the error path when
+            creation fails before a concrete file path exists.
+
+        Example:
+
+        ```incan
+        temp = NamedTemporaryFile.try_new_with("report-", ".txt", Some(Path("build/tmp")))?
+        ```
+        """
+        error_path = _parent_path(dir)
+        mut builder = Builder.new()
+        rust_prefix = RustString.from(prefix)
+        rust_suffix = RustString.from(suffix)
+        builder.prefix(rust_prefix.as_str())
+        builder.suffix(rust_suffix.as_str())
+        match _dir_to_string(dir):
+            Some(parent) => return _named_temporary_file_from_result(error_path, builder.tempfile_in(parent))
+            None => return _named_temporary_file_from_result(error_path, builder.tempfile())
+
+    def path(self) -> Path:
+        """
+        Return the current filesystem path.
+
+        Returns:
+            A `Path` that can be used with `std.fs` APIs. After `persist()`, this returns the persisted path. For a
+            wrapper that has lost its live handle without a persisted path, this returns `Path("")`.
+
+        Example:
+            `temp.path().write_bytes(data)?` writes through the ordinary `std.fs.Path` API.
+        """
+        match self.handle.borrow().as_ref():
+            Some(file) => return Path(file.path().to_string_lossy().into_owned())
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return path.clone()
+                    None => return Path("")
+
+    def persist(self) -> Result[Path, IoError]:
+        """
+        Keep the file at its current path and disable automatic deletion.
+
+        Returns:
+            `Ok(Path)` for the now-ordinary filesystem path. Repeated calls return the same persisted path. If the host
+            reports an error while keeping the file, this returns `Err(IoError)` for the last known temporary path.
+
+        Example:
+
+        ```incan
+        saved = temp.persist()?
+        println(f"kept {saved}")
+        ```
+        """
+        path = self.path()
+        mut handle = self.handle.borrow_mut()
+        match handle.take():
+            Some(file) =>
+                match file.keep():
+                    Ok(kept) =>
+                        persisted = Path(kept.1.to_string_lossy().into_owned())
+                        self.persisted_path.replace(Some(persisted.clone()))
+                        return Ok(persisted)
+                    Err(err) =>
+                        return Err(_io_error(path, err.error.to_string()))
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return Ok(path.clone())
+                    None => return Err(_io_error(Path("."), "temporary file is no longer live"))
+
+
+pub class TemporaryDirectory:
+    """
+    Owning handle for a temporary directory tree.
+
+    The directory exists at a visible filesystem path while this wrapper is live. Dropping a non-persisted wrapper
+    removes the directory tree recursively. Call `path()` to create files under it with `std.fs.Path`, and call
+    `persist()` when the caller intentionally wants the whole tree to survive the wrapper.
+
+    Use `TemporaryDirectory.try_new()` or `TemporaryDirectory.try_new_with(...)` to create live values. Direct
+    construction is reserved for the generated stdlib implementation.
+
+    Example:
+
+    ```incan
+    workspace = TemporaryDirectory.try_new()?
+    (workspace.path() / "artifact.txt").write_text("ready", encoding="utf-8", errors="strict", newline=None)?
+    ```
+    """
+
+    handle: Rc[RefCell[Option[RustTemporaryDirectory]]]
+    persisted_path: Rc[RefCell[Option[Path]]]
+
+    @staticmethod
+    def try_new() -> Result[TemporaryDirectory, IoError]:
+        """
+        Create a temporary directory with host defaults.
+
+        Returns:
+            `Ok(TemporaryDirectory)` for a live temporary directory in the host default temporary location, or
+            `Err(IoError)` when the host cannot create it.
+
+        Example:
+            `TemporaryDirectory.try_new()?` creates an empty scratch directory in the host default temporary location.
+        """
+        return TemporaryDirectory.try_new_with("", "", None)
+
+    @staticmethod
+    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[TemporaryDirectory, IoError]:
+        """
+        Create a temporary directory with configured naming.
+
+        Args:
+            prefix: Directory-name prefix requested from the host temporary-directory builder.
+            suffix: Directory-name suffix requested from the host temporary-directory builder.
+            dir: Parent directory for the temporary directory, or `None` for the host default temporary location.
+
+        Returns:
+            `Ok(TemporaryDirectory)` for a live temporary directory, or `Err(IoError)` with `dir` as the error path when
+            creation fails before a concrete directory path exists.
+
+        Example:
+
+        ```incan
+        workspace = TemporaryDirectory.try_new_with("stage-", "", Some(Path("build/tmp")))?
+        ```
+        """
+        error_path = _parent_path(dir)
+        mut builder = Builder.new()
+        rust_prefix = RustString.from(prefix)
+        rust_suffix = RustString.from(suffix)
+        builder.prefix(rust_prefix.as_str())
+        builder.suffix(rust_suffix.as_str())
+        match _dir_to_string(dir):
+            Some(parent) => return _temporary_directory_from_result(error_path, builder.tempdir_in(parent))
+            None => return _temporary_directory_from_result(error_path, builder.tempdir())
+
+    def path(self) -> Path:
+        """
+        Return the current filesystem path.
+
+        Returns:
+            A `Path` for the live temporary directory. After `persist()`, this returns the persisted path. For a wrapper
+            that has lost its live handle without a persisted path, this returns `Path("")`.
+
+        Example:
+            `directory.path() / "output.json"` builds a child path with the ordinary `Path` slash operator.
+        """
+        match self.handle.borrow().as_ref():
+            Some(directory) => return Path(directory.path().to_string_lossy().into_owned())
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return path.clone()
+                    None => return Path("")
+
+    def persist(self) -> Result[Path, IoError]:
+        """
+        Keep the directory tree at its current path and disable automatic deletion.
+
+        Returns:
+            `Ok(Path)` for the now-ordinary directory path. Repeated calls return the same persisted path.
+
+        Example:
+
+        ```incan
+        output_dir = directory.persist()?
+        println(f"kept {output_dir}")
+        ```
+        """
+        mut handle = self.handle.borrow_mut()
+        match handle.take():
+            Some(directory) =>
+                persisted = Path(directory.keep().to_string_lossy().into_owned())
+                self.persisted_path.replace(Some(persisted.clone()))
+                return Ok(persisted)
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return Ok(path.clone())
+                    None => return Err(_io_error(Path("."), "temporary directory is no longer live"))
+
+
+def _named_temporary_file_from_result(path: Path, result: Result[RustNamedTemporaryFile, RustIoError]) -> Result[NamedTemporaryFile, IoError]:
+    match result:
+        Ok(file) => return Ok(
+            NamedTemporaryFile(
+                handle=Rc.new(RefCell.new(Some(file))),
+                persisted_path=Rc.new(RefCell.new(None)),
+            ),
+        )
+        Err(detail) => return Err(_io_error(path, detail.to_string()))
+
+
+def _temporary_directory_from_result(path: Path, result: Result[RustTemporaryDirectory, RustIoError]) -> Result[TemporaryDirectory, IoError]:
+    match result:
+        Ok(directory) => return Ok(
+            TemporaryDirectory(
+                handle=Rc.new(RefCell.new(Some(directory))),
+                persisted_path=Rc.new(RefCell.new(None)),
+            ),
+        )
+        Err(detail) => return Err(_io_error(path, detail.to_string()))
+
+
+def _dir_to_string(dir: Option[Path]) -> Option[str]:
+    match dir:
+        Some(path) => return Some(path.0)
+        None => return None
+
+
+def _parent_path(dir: Option[Path]) -> Path:
+    match _dir_to_string(dir):
+        Some(value) => return Path(value)
+        None => return Path(".")
+
+
+def _io_error(path: Path, detail: str) -> IoError:
+    return IoError(path=path, kind="io_error", detail=detail)

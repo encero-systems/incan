@@ -149,6 +149,7 @@ nav:
               - std.async: language/reference/stdlib/async.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.fs: language/reference/stdlib/fs.md
+              - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.traits.*: language/reference/stdlib/traits.md
               - std.testing: language/reference/stdlib/testing.md

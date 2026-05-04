@@ -161,16 +161,27 @@ Temporary location creation belongs to `std.tempfile`; ordinary operations on th
 
 ```incan
 from std.fs import IoError, Path
+from std.tempfile import NamedTemporaryFile, TemporaryDirectory
 
-def write_temp_payload(tmp_dir: Path, data: bytes) -> Result[Path, IoError]:
-    path = tmp_dir.joinpath("payload.bin")
+def write_temp_payload(data: bytes) -> Result[Path, IoError]:
+    temp = NamedTemporaryFile.try_new_with("payload-", ".bin", None)?
+    path = temp.path()
     path.write_bytes(data)?
     return Ok(path)
+
+def build_workspace() -> Result[Path, IoError]:
+    workspace = TemporaryDirectory.try_new_with("incan-build-", "", None)?
+    artifact = workspace.path() / "artifact.txt"
+    artifact.write_text("ready", "utf-8", "strict", None)?
+    return workspace.persist()
 ```
+
+Temporary wrappers delete their live paths when the wrapper is dropped. Call `persist()` when the caller should keep the path after the wrapper leaves scope. `NamedTemporaryFile.try_new()` and `TemporaryDirectory.try_new()` are fallible because they reserve real filesystem entries; use `try_new_with(prefix, suffix, dir)` when naming or parent placement matters.
 
 `std.tempfile.SpooledTemporaryFile` is a follow-up API for RFC 010. It should compose with `std.fs` paths and file handles instead of being folded into `std.fs`.
 
 ## See Also
 
 - [std.fs reference](../reference/stdlib/fs.md)
+- [std.tempfile reference](../reference/stdlib/tempfile.md)
 - [Error handling](../explanation/error_handling.md)

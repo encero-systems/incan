@@ -1,0 +1,18 @@
+from std.fs import Path
+from std.tempfile import NamedTemporaryFile, TemporaryDirectory
+
+
+def consume_file(file: NamedTemporaryFile) -> None:
+    return
+
+
+def consume_dir(directory: TemporaryDirectory) -> None:
+    return
+
+
+def consume_path(path: Path) -> None:
+    return
+
+
+def main() -> None:
+    println("std.tempfile import codegen")

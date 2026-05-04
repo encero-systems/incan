@@ -9,6 +9,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.async`](async.md) (curated)
 - [`std.derives.*`](derives.md) (curated)
 - [`std.fs`](fs.md) (curated)
+- [`std.tempfile`](tempfile.md) (curated)
 - [`std.reflection`](reflection.md) (curated)
 - [`std.traits.*`](traits.md) (curated)
 - [`std.testing`](testing.md) (curated)
