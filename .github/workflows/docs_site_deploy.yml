@@ -46,37 +46,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Prepare shared Incapunk theme
-        run: |
-          set -euo pipefail
-
-          git -C "$GITHUB_WORKSPACE" fetch origin main
-          git -C "$GITHUB_WORKSPACE" checkout origin/main -- workspaces/docs-site/docs/shared/incapunk
-
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("mkdocs.yml")
-          lines = path.read_text().splitlines()
-
-          if "  logo: /shared/incapunk/wordmark_small_001.png" not in lines:
-              for index, line in enumerate(lines):
-                  if line == "  name: material":
-                      lines.insert(index + 1, "  logo: /shared/incapunk/wordmark_small_001.png")
-                      break
-
-          if "  - /shared/incapunk/incapunk.css" not in lines:
-              for index, line in enumerate(lines):
-                  if line == "extra_css:":
-                      insert_at = index + 1
-                      while insert_at < len(lines) and lines[insert_at].startswith("  - "):
-                          insert_at += 1
-                      lines.insert(insert_at, "  - /shared/incapunk/incapunk.css")
-                      break
-
-          path.write_text("\n".join(lines) + "\n")
-          PY
-
       - name: Publish shared docs assets
         run: |
           set -euo pipefail
