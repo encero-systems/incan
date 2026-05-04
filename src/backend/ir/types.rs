@@ -40,6 +40,7 @@ pub enum IrType {
     Int,
     Float,
     String,
+    Bytes,
     /// &'static str (for compile-time string constants)
     StaticStr,
     /// &'static [u8] (for compile-time byte string constants)
@@ -153,6 +154,7 @@ impl IrType {
             IrType::Int => "int".to_string(),
             IrType::Float => "float".to_string(),
             IrType::String => "str".to_string(),
+            IrType::Bytes => "bytes".to_string(),
             IrType::StaticStr | IrType::StrRef | IrType::FrozenStr => "str".to_string(),
             IrType::StaticBytes | IrType::FrozenBytes => "bytes".to_string(),
             IrType::List(elem) => format!("list[{}]", elem.incan_name()),
@@ -198,6 +200,7 @@ impl IrType {
             IrType::Int => "i64".to_string(),
             IrType::Float => "f64".to_string(),
             IrType::String => "String".to_string(),
+            IrType::Bytes => "Vec<u8>".to_string(),
             IrType::StaticStr => "&'static str".to_string(),
             IrType::StaticBytes => "&'static [u8]".to_string(),
             IrType::FrozenStr => "FrozenStr".to_string(),

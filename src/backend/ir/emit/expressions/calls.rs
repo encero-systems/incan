@@ -138,7 +138,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a concrete payload argument for a `Union[...]` parameter as the generated enum variant.
-    fn emit_union_payload_arg(
+    pub(super) fn emit_union_payload_arg(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,

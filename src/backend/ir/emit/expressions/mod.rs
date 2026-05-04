@@ -354,6 +354,28 @@ impl<'a> IrEmitter<'a> {
         Ok(plan.apply(emitted))
     }
 
+    fn type_is_result_like(ty: &IrType) -> bool {
+        match ty {
+            IrType::Result(_, _) => true,
+            IrType::NamedGeneric(name, args) if args.len() == 2 => {
+                name == "Result" || name == "std::result::Result" || name.ends_with("::Result")
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
+        if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
+            return self.emit_expr(scrutinee);
+        }
+        self.emit_expr_for_use(
+            scrutinee,
+            ValueUseSite::MatchScrutinee {
+                target_ty: Some(&scrutinee.ty),
+            },
+        )
+    }
+
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
     ///
     /// This covers Incan type names, enum variants, module placeholders, and external Rust imports.
@@ -505,7 +527,11 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::String(s) => Ok(quote! { #s }),
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
-                Ok(lit.to_token_stream())
+                if matches!(expr.ty, IrType::StaticBytes | IrType::FrozenBytes) {
+                    Ok(lit.to_token_stream())
+                } else {
+                    Ok(quote! { #lit.to_vec() })
+                }
             }
 
             IrExprKind::Var {
@@ -692,12 +718,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Match { scrutinee, arms } => {
-                let s = self.emit_expr_for_use(
-                    scrutinee,
-                    ValueUseSite::MatchScrutinee {
-                        target_ty: Some(&scrutinee.ty),
-                    },
-                )?;
+                let s = self.emit_match_scrutinee(scrutinee)?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {

@@ -910,6 +910,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         ) {
             return false;
         }
+        if matches!(receiver.ty, IrType::Unknown) {
+            return true;
+        }
         let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
             return false;
         };
@@ -961,6 +964,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1022,6 +1026,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr

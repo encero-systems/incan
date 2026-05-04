@@ -120,6 +120,13 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// List public type signatures in a stdlib module.
+    pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key).map(|data| data.types.clone()).unwrap_or_default()
+    }
+
     /// Look up a specific const binding in a stdlib module.
     pub fn lookup_constant(&mut self, module_path: &[String], const_name: &str) -> Option<VariableInfo> {
         self.ensure_loaded(module_path);
@@ -1193,6 +1200,54 @@ pub enum Token with Convert[int], Convert[float]:
         // Unknown function returns None.
         let unknown = cache.lookup_function(&path, "nonexistent_function");
         assert!(unknown.is_none(), "should not find unknown function");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_fs_path_lookup_uses_ast_cache_not_web_surface_type() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::std::path import PathBuf as RustPathBuf
+from rust::std::fs import File as RustFile
+
+pub type Path = rusttype RustPathBuf:
+  """Filesystem path wrapper."""
+
+pub type File = rusttype RustFile:
+  """Filesystem file handle wrapper."""
+"#;
+        let tokens = crate::frontend::lexer::lex(source)
+            .map_err(|errs| format!("synthetic std.fs source should lex: {errs:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens)
+            .map_err(|errs| format!("synthetic std.fs source should parse: {errs:?}"))?;
+        let module_data = StdlibModuleData {
+            functions: extract_function_signatures(&program),
+            traits: extract_trait_signatures(&program),
+            types: extract_type_signatures(&program),
+            constants: extract_const_signatures(&program),
+            function_meta: extract_function_meta(&program),
+            trait_meta: extract_trait_meta(&program),
+        };
+        let mut cache = StdlibAstCache::new();
+        cache.cache.insert("std.fs".to_string(), module_data);
+        let path = vec!["std".to_string(), "fs".to_string()];
+        let fs_path = cache
+            .lookup_type(&path, "Path")
+            .ok_or("std.fs Path should resolve through StdlibAstCache::lookup_type")?;
+        match fs_path {
+            TypeInfo::Newtype(info) => {
+                assert!(info.is_rusttype);
+                assert_eq!(
+                    info.underlying,
+                    ResolvedType::RustPath("std::path::PathBuf".to_string())
+                );
+            }
+            other => return Err(format!("std.fs Path should be an AST-loaded rusttype, got {other:?}").into()),
+        }
+        assert!(
+            cache.lookup_type(&path, "File").is_some(),
+            "std.fs File should resolve through the same AST cache path"
+        );
 
         Ok(())
     }

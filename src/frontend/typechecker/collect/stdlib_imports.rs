@@ -121,6 +121,19 @@ impl TypeChecker {
                     None
                 };
 
+                if is_known_stdlib_with_stub {
+                    for (type_name, type_info) in self.stdlib_cache.list_types(&module.segments) {
+                        if self.symbols.lookup(&type_name).is_none() {
+                            self.symbols.define(Symbol {
+                                name: type_name,
+                                kind: SymbolKind::Type(type_info),
+                                span,
+                                scope: 0,
+                            });
+                        }
+                    }
+                }
+
                 // For each item in `from module import item1, item2, ...`
                 // create a symbol as if it were `import module::item`
                 for item in items {
@@ -1294,10 +1307,11 @@ impl TypeChecker {
     /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
     fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
+        let mut trait_methods = HashSet::new();
         if let Some(metadata) = &info.metadata
             && let RustItemKind::Trait(trait_info) = &metadata.kind
         {
-            let methods: HashSet<String> = trait_info
+            trait_methods = trait_info
                 .items
                 .iter()
                 .filter_map(|item| match item {
@@ -1305,11 +1319,44 @@ impl TypeChecker {
                     RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => None,
                 })
                 .collect();
-            if !methods.is_empty() {
-                self.type_info.rust_trait_import_methods.insert(name.clone(), methods);
-            }
+        }
+        if trait_methods.is_empty() {
+            trait_methods.extend(
+                Self::known_rust_trait_methods(info.path.as_str())
+                    .iter()
+                    .map(|method| (*method).to_string()),
+            );
+        }
+        if !trait_methods.is_empty() {
+            self.type_info
+                .rust_trait_import_methods
+                .insert(name.clone(), trait_methods);
         }
         self.define_rust_import_symbol(name, info, span);
+    }
+
+    /// Return fallback trait method names for Rust traits when rustdoc metadata is unavailable.
+    fn known_rust_trait_methods(path: &str) -> &'static [&'static str] {
+        match path {
+            "std::io::Read" => &[
+                "read",
+                "read_to_end",
+                "read_to_string",
+                "read_exact",
+                "read_buf",
+                "read_buf_exact",
+                "bytes",
+                "chain",
+                "take",
+            ],
+            "std::io::Write" => &["write", "write_all", "write_fmt", "flush"],
+            "std::io::Seek" => &["seek", "rewind", "stream_position", "seek_relative"],
+            "std::os::unix::fs::MetadataExt" => &[
+                "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize",
+                "blocks",
+            ],
+            _ => &[],
+        }
     }
 
     /// Define a symbol for a Rust crate import, skipping if a real definition exists.

@@ -1166,6 +1166,7 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::Int
         | IrType::Float
         | IrType::String
+        | IrType::Bytes
         | IrType::StaticStr
         | IrType::StaticBytes
         | IrType::FrozenStr
@@ -1830,6 +1831,7 @@ fn add_bounds_from_type(
         | IrType::Int
         | IrType::Float
         | IrType::String
+        | IrType::Bytes
         | IrType::StaticStr
         | IrType::StaticBytes
         | IrType::FrozenStr

@@ -847,6 +847,21 @@ fn test_std_math_codegen() {
 }
 
 #[test]
+fn test_std_fs_import_codegen() {
+    let source = load_test_file("std_fs_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.fs Path import should emit through the generated stdlib fs module; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.fs Path must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_fs_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);

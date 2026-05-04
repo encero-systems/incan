@@ -77,6 +77,7 @@ impl<'a> IrEmitter<'a> {
             IrType::Int => quote! { i64 },
             IrType::Float => quote! { f64 },
             IrType::String => quote! { String },
+            IrType::Bytes => quote! { Vec<u8> },
             IrType::StaticStr => quote! { &'static str },
             IrType::StaticBytes => quote! { &'static [u8] },
             IrType::FrozenStr => quote! { incan_stdlib::frozen::FrozenStr },

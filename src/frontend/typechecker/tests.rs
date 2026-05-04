@@ -7157,6 +7157,19 @@ fn test_known_stdlib_async_prelude_is_accepted() {
 }
 
 #[test]
+fn test_known_stdlib_fs_module_is_accepted() {
+    let source = "from std.fs import Path, File\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.fs should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     let source = "from std.f64.consts import PI\n";
     let Err(errs) = check_str(source) else {
@@ -7171,6 +7184,11 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     assert!(
         err.hints.iter().any(|h| h.contains("std.derives")),
         "Expected hint to include std.derives; hints: {:?}",
+        err.hints
+    );
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.fs")),
+        "Expected hint to include std.fs; hints: {:?}",
         err.hints
     );
     assert!(

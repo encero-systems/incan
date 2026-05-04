@@ -2153,6 +2153,121 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_fs_compile_and_run_path_file_and_tree_operations() -> Result<(), Box<dyn std::error::Error>> {
+        let base = std::env::temp_dir().join(format!("incan_std_fs_integration_{}", std::process::id()));
+        let root = base.join("root");
+        let copied = base.join("copy");
+        let moved = base.join("moved");
+        let source = format!(
+            r#"
+from std.fs import IoError, Path
+
+def run() -> Result[None, IoError]:
+    root = Path("{root}")
+    copied = Path("{copied}")
+    moved = Path("{moved}")
+    if moved.exists():
+        moved.remove_tree()?
+    if copied.exists():
+        copied.remove_tree()?
+    if root.exists():
+        root.remove_tree()?
+    root.mkdir(True, True)?
+    root.joinpath("a.txt").write_text("alpha", "utf-8", "strict", None)?
+    root.joinpath("c.md").write_text("charlie", "utf-8", "strict", None)?
+    root.joinpath("sub").mkdir(True, True)?
+    root.joinpath("sub").joinpath("b.txt").write_text("bravo", "utf-8", "strict", None)?
+    println(len(root.glob("*.txt")?))
+    println(len(root.rglob("*.txt")?))
+    println(len(root.rglob("sub/[ab].txt")?))
+    match root.joinpath("a.txt").open("r", -1, Some("latin1"), None, None):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    handle = root.joinpath("a.txt").open("rb", 0, None, None, None)?
+    chunk = handle.read_exact(2)?
+    println(len(chunk))
+    root.copy(copied, True, True)?
+    copied_text = copied.joinpath("sub").joinpath("b.txt").read_text("utf-8", "strict")?
+    println(copied_text)
+    copied.move(moved)?
+    println(moved.joinpath("a.txt").exists())
+    stat = moved.joinpath("a.txt").stat()?
+    println(stat.modified_unix()? > 0)
+    usage = moved.disk_usage()?
+    println(usage.total > 0 and usage.free > 0)
+    moved.remove_tree()?
+    root.remove_tree()?
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            root = root.display(),
+            copied = copied.display(),
+            moved = moved.display()
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.fs smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["1", "2", "1", "invalid_input", "2", "bravo", "true", "true", "true"],
+            "unexpected std.fs output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    mut seen = False
+    match read_dir(RustPath.new(".")):
+        Ok(entries) =>
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+        Err(err) => println(err.to_string())
+    println(seen)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "rust Result non-Clone match regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["true"], "unexpected output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

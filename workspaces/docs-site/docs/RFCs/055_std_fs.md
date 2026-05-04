@@ -1,6 +1,6 @@
 # RFC 055: `std.fs` — pathlib-shaped filesystem APIs with chunked file I/O
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-04-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -18,7 +18,7 @@
 
 ## Summary
 
-This RFC introduces `std.fs` as Incan's path-centric filesystem module. The compatibility target for the core path surface is CPython 3.14 `pathlib.Path`, while Incan also exposes a small set of explicit filesystem extensions inspired by Rust's `std::fs` where `pathlib` is intentionally incomplete. The module should be broad enough that users can stay inside `std.fs.Path` for ordinary filesystem work, including copy and move operations, without needing a separate `os`- or `shutil`-shaped layer. The initial contract is not limited to whole-file helpers: `std.fs` must also provide chunked binary file I/O through `Path.open(...)` and a `File` surface with bounded reads, writes, seeking, and durability operations so large files do not require loading the entire payload into memory.
+This RFC introduces `std.fs` as Incan's path-centric filesystem module. The compatibility target for the core path surface is CPython 3.14 `pathlib.Path`, while Incan also exposes explicit filesystem extensions inspired by Rust's `std::fs` where `pathlib` is intentionally incomplete. The module should be broad enough that users can stay inside `std.fs.Path` for ordinary filesystem work, including metadata, traversal, copy, move, linking, cleanup, and disk-usage operations, without needing a separate `os`- or `shutil`-shaped layer. The contract is not limited to whole-file helpers: `std.fs` must also provide chunked file I/O through `Path.open(...)` and a `File` surface with bounded reads, writes, seeking, and durability operations so large files do not require loading the entire payload into memory.
 
 ## Motivation
 
@@ -35,7 +35,6 @@ Incan already exposes minimal whole-file builtins for the common text case, but 
 ## Non-Goals
 
 - Defining async filesystem APIs in this RFC.
-- Delivering every committed `std.fs` capability in a single PR or release. The spec is end-to-end; implementation may still land in phases.
 - Standardizing in-memory byte cursors here; that belongs to RFC 056 (`std.io`).
 - Mirroring Rust's `std::fs` names one-to-one; Rust remains the implementation substrate, not the tutorial vocabulary.
 - Introducing a parallel `std.os` or `std.shutil` module for common path-owned chores unless a later RFC shows that `std.fs` is the wrong home.
@@ -79,13 +78,13 @@ The mental model is simple: `Path` owns path-based operations; `File` owns open-
 - The standard library must expose `std.fs` for path-based filesystem work.
 - `std.fs.Path` should follow CPython 3.14 `pathlib.Path` for method spelling and behavior when that surface already exists there.
 - When Incan exposes capabilities that are outside `pathlib` proper, the docs must describe them as explicit Incan extensions rather than implying they are standard `pathlib` behavior.
-- The initial extension set includes `try_exists`, `copy`, `copy_into`, `move`, `move_into`, `remove_tree`, `scandir`, `disk_usage`, `OpenOptions`, `File.sync`, and `File.sync_data`.
+- The extension set includes `try_exists`, `copy`, `copy_into`, `move`, `move_into`, `remove_tree`, `scandir`, `disk_usage`, `OpenOptions`, `File.sync`, and `File.sync_data`.
 - CPython 3.14 compatibility is a baseline, not a wholesale import rule: Incan should adopt the pieces that strengthen a coherent path-centric filesystem module, not every adjacent helper automatically.
 - Implementations may use Rust `std::fs`, `std::io`, and related crates internally, but user-visible semantics are defined by this RFC and stdlib docs, not by Rust's type names.
 
-### Required capabilities (initial contract)
+### Required capabilities
 
-The first `std.fs` release must provide the following baseline:
+`std.fs` must provide the following baseline:
 
 - `Path(path: str | Path) -> Path`.
 - Path joining via `/` and/or `joinpath(...)`.
@@ -145,64 +144,56 @@ Copy, move, and tree-removal behavior is also normative:
 - `remove_tree()` must fail if `self` is a symbolic link, including a symlink to a directory; it must never recurse into a symlink target.
 - `remove_tree()` must remove entries bottom-up so non-empty directories are not removed before their children.
 
-### Pathlib alignment roadmap
-
-The path-centric API is approved as a staged roadmap under this one RFC so follow-on `std.fs` work does not need a new design record for every additional `pathlib` method.
-
-| Tier | Intent | Capabilities |
-| --- | --- | --- |
-| **A — Initial contract** | Must ship with the first `std.fs` release. | Construction from `str`; joining; `parent` / `name` / `suffix` / `stem`; `exists` / `is_file` / `is_dir` / `is_symlink`; `try_exists`; `mkdir`; `read_bytes` / `write_bytes`; `open(...)`; `File.read` / `read_exact` / `write` / `tell` / `seek` / `sync` / `sync_data`. |
-| **B — Everyday pathlib** | Should land in near-term releases without a new RFC. | `read_text` / `write_text`; `unlink`; `rmdir`; `rename`; `replace`; `iterdir`; `glob`; `rglob`; `resolve`; `absolute`; `stat`; `lstat`; `Path.cwd()`; `Path.home()`; `copy`; `copy_into`; `move`; `move_into`; `disk_usage`; `OpenOptions`; `remove_tree`; `scandir`; `DirEntry`; `flush`; `fsync`. |
-| **C — Host-sensitive edges** | May trail later or require a follow-on RFC if semantics become too platform-specific. | `chmod`; `chown`; `touch`; `symlink_to`; `hardlink_to`; `samefile`; `is_mount`; `expanduser`; `walk`; `owner`; `group`; other permission or host-sensitive edges. |
-
-### Expected API shape (skeletal)
+### Expected API shape
 
 This subsection names the user-visible spellings. It is not an implementation plan.
 
 #### `Path`
 
-- `Path(path: str | Path) -> Path` — **[A]**.
-- `/` and `joinpath(...)` for path composition — **[A]**.
-- `parent() -> Path`, `name() -> str`, `suffix() -> str`, `stem() -> str` — **[A]**.
-- `exists() -> bool`, `is_file() -> bool`, `is_dir() -> bool`, `is_symlink() -> bool` — **[A]**.
-- `try_exists() -> Result[bool, E]` — **[A]** explicit Incan extension.
-- `mkdir(...) -> Result[(), E]` — **[A]**.
-- `read_bytes() -> Result[bytes, E]`, `write_bytes(data: bytes) -> Result[(), E]` — **[A]**.
-- `open(mode: str = "r", buffering: int = -1, encoding: str | None = None, errors: str | None = None, newline: str | None = None) -> Result[File, E]` — **[A]**. Supports the full Python-style mode family defined above.
-- `read_text(encoding: str = "utf-8", errors: str = "strict") -> Result[str, E]`, `write_text(data: str, encoding: str = "utf-8", errors: str = "strict", newline: str | None = "\n") -> Result[(), E]` — **[B]**.
-- `iterdir() -> Result[Iterator[Path], E]`, `glob(pattern: str) -> Result[Iterator[Path], E]`, `rglob(pattern: str) -> Result[Iterator[Path], E]` — **[B]**.
-- `stat(...) -> Result[PathStat, E]`, `lstat() -> Result[PathStat, E]` — **[B]**.
-- `copy(target: Path | str, follow_symlinks: bool = True, preserve_metadata: bool = False) -> Result[Path, E]` — **[B]**. Copies a file or directory tree to `target` and returns the new path. With `preserve_metadata=False`, only file data and directory structure are guaranteed; with `preserve_metadata=True`, metadata preservation is attempted where supported and documented.
-- `copy_into(target_dir: Path | str, follow_symlinks: bool = True, preserve_metadata: bool = False) -> Result[Path, E]` — **[B]**. Copies this path into an existing target directory and returns the copied path.
-- `move(target: Path | str) -> Result[Path, E]`, `move_into(target_dir: Path | str) -> Result[Path, E]` — **[B]**. Path-centric move operations following CPython 3.14 naming. Same-filesystem moves should use rename/replace-class semantics; cross-filesystem moves must behave as copy-then-delete.
-- `disk_usage() -> Result[DiskUsage, E]` — **[B]** explicit Incan extension returning at least `total`, `used`, and `free` in bytes for the filesystem containing this path.
-- `remove_tree() -> Result[(), E]` — **[B]** explicit Incan extension for directory trees only. It must fail on regular files and symlinks rather than silently treating them as trees.
-- `scandir() -> Result[Iterator[DirEntry], E]` — **[B]** explicit Incan extension.
-- `chown(user: str | int | None = None, group: str | int | None = None, follow_symlinks: bool = True) -> Result[(), E]` — **[C]** host-sensitive ownership change where the platform supports it.
+- `Path(path: str | Path) -> Path`.
+- `/` and `joinpath(...)` for path composition.
+- `parent() -> Path`, `name() -> str`, `suffix() -> str`, `stem() -> str`.
+- `exists() -> bool`, `is_file() -> bool`, `is_dir() -> bool`, `is_symlink() -> bool`.
+- `try_exists() -> Result[bool, E]` as an explicit Incan extension.
+- `mkdir(parents: bool, exist_ok: bool) -> Result[(), E]`.
+- `read_bytes() -> Result[bytes, E]`, `write_bytes(data: bytes) -> Result[(), E]`.
+- `read_text(encoding: str, errors: str) -> Result[str, E]`, `write_text(data: str, encoding: str, errors: str, newline: str | None) -> Result[(), E]`.
+- `open(mode: str, buffering: int, encoding: str | None, errors: str | None, newline: str | None) -> Result[File, E]`. Supports the full Python-style mode family defined above.
+- `iterdir() -> Result[list[Path], E]`, `glob(pattern: str) -> Result[list[Path], E]`, `rglob(pattern: str) -> Result[list[Path], E]`.
+- `stat() -> Result[PathStat, E]`, `lstat() -> Result[PathStat, E]`.
+- `copy(target: Path | str, follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, E]`. Copies a file or directory tree to `target` and returns the new path. With `preserve_metadata=False`, only file data and directory structure are guaranteed; with `preserve_metadata=True`, metadata preservation is attempted where supported and documented.
+- `copy_into(target_dir: Path | str, follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, E]`. Copies this path into an existing target directory and returns the copied path.
+- `move(target: Path | str) -> Result[Path, E]`, `move_into(target_dir: Path | str) -> Result[Path, E]`. Path-centric move operations following CPython 3.14 naming. Same-filesystem moves should use rename/replace-class semantics; cross-filesystem moves must behave as copy-then-delete.
+- `rename(target: Path | str) -> Result[Path, E]`, `replace(target: Path | str) -> Result[Path, E]`.
+- `unlink() -> Result[(), E]`, `rmdir() -> Result[(), E]`, `remove_tree() -> Result[(), E]`.
+- `resolve() -> Result[Path, E]`, `absolute() -> Result[Path, E]`, `Path.cwd() -> Result[Path, E]`, `Path.home() -> Result[Path, E]`.
+- `disk_usage() -> Result[DiskUsage, E]` as an explicit Incan extension returning at least `total`, `used`, and `free` in bytes for the filesystem containing this path.
+- `scandir() -> Result[list[DirEntry], E]` as an explicit Incan extension.
+- `touch(exist_ok: bool) -> Result[(), E]`, `chmod(readonly: bool) -> Result[(), E]`, `symlink_to(target: Path | str) -> Result[(), E]`, `hardlink_to(target: Path | str) -> Result[(), E]`, `samefile(other: Path | str) -> Result[bool, E]`, `is_mount() -> Result[bool, E]`, `expanduser() -> Result[Path, E]`.
 
 #### `OpenOptions`
 
-- `OpenOptions.new() -> OpenOptions` — **[B]**.
-- `read(v: bool) -> OpenOptions`, `write(v: bool) -> OpenOptions`, `append(v: bool) -> OpenOptions`, `truncate(v: bool) -> OpenOptions` — **[B]**.
-- `create(v: bool) -> OpenOptions`, `create_new(v: bool) -> OpenOptions` — **[B]**.
-- `open(path: Path | str) -> Result[File, E]` — **[B]**.
+- `OpenOptions.new() -> OpenOptions`.
+- `read(v: bool) -> OpenOptions`, `write(v: bool) -> OpenOptions`, `append(v: bool) -> OpenOptions`, `truncate(v: bool) -> OpenOptions`.
+- `create(v: bool) -> OpenOptions`, `create_new(v: bool) -> OpenOptions`.
+- `open(path: Path | str) -> Result[File, E]`.
 
 #### `File`
 
-- `read(size: int = -1) -> Result[bytes | str, E]` — **[A]**. Return type depends on whether the file was opened in binary or text mode.
-- `read_exact(size: int) -> Result[bytes, E]` — **[A]**.
-- `write(data: bytes | str) -> Result[int, E]` — **[A]**. Accepted data type depends on whether the file was opened in binary or text mode.
-- `tell() -> Result[int, E]`, `seek(offset: int, whence: int = 0) -> Result[int, E]` — **[A]**.
-- `sync() -> Result[(), E]` — **[A]** explicit durability primitive.
-- `fsync() -> Result[(), E]` — **[B]** alias of `sync()` with identical semantics.
-- `sync_data() -> Result[(), E]` — **[A]** explicit durability primitive that may omit non-essential metadata writes.
-- `flush() -> Result[(), E]` — **[B]**. Flushes user-space buffers but does not imply durable persistence.
+- `read(size: int) -> Result[str, E]`, `read_bytes(size: int) -> Result[bytes, E]`.
+- `read_exact(size: int) -> Result[bytes, E]`.
+- `write(data: str) -> Result[int, E]`, `write_bytes(data: bytes) -> Result[int, E]`.
+- `tell() -> Result[int, E]`, `seek(offset: int, whence: int) -> Result[int, E]`.
+- `sync() -> Result[(), E]` as an explicit durability primitive.
+- `fsync() -> Result[(), E]` as an alias of `sync()` with identical semantics.
+- `sync_data() -> Result[(), E]` as an explicit durability primitive that may omit non-essential metadata writes.
+- `flush() -> Result[(), E]`. Flushes user-space buffers but does not imply durable persistence.
 
 #### `DirEntry`
 
-- `path() -> Path`, `file_name() -> str` — **[B]**.
-- `is_file(...) -> bool`, `is_dir(...) -> bool`, `is_symlink() -> bool` — **[B]**.
-- `metadata() -> Result[PathStat, E]` — **[B]**.
+- `path: Path`, `file_name() -> str`.
+- `is_file() -> bool`, `is_dir() -> bool`, `is_symlink() -> bool`.
+- `metadata() -> Result[PathStat, E]`.
 
 ### Errors and compatibility
 
@@ -214,7 +205,7 @@ This subsection names the user-visible spellings. It is not an implementation pl
 
 ### Why chunked file I/O belongs in `std.fs`
 
-Large-file chunking is a filesystem concern before it is an in-memory parsing concern. A program that wants to hash, upload, transcode, or scan a multi-gigabyte file must be able to open that file and consume bounded reads without routing through `read_bytes()`. That is why `Path.open(...)` and a minimal `File` contract are part of the initial `std.fs` approval unit rather than a deferred convenience.
+Large-file chunking is a filesystem concern before it is an in-memory parsing concern. A program that wants to hash, upload, transcode, or scan a multi-gigabyte file must be able to open that file and consume bounded reads without routing through `read_bytes()`. That is why `Path.open(...)` and a `File` contract are part of the `std.fs` approval unit rather than a deferred convenience.
 
 ### CPython baseline plus explicit Incan extensions
 
@@ -248,7 +239,7 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 
 ## Alternatives considered
 
-1. **Whole-file helpers only** — smaller initial surface, but it does not solve large-file chunking and would leave serious workloads on `rust::`.
+1. **Whole-file helpers only** — smaller surface, but it does not solve large-file chunking and would leave serious workloads on `rust::`.
 2. **Keep `std.fs` and `std.io` in one RFC** — rejected because filesystem review and in-memory byte-cursor review are separable approval units.
 3. **Rust-shaped public API** — accurate to the backing implementation, but a worse tutorial and documentation story for Incan users.
 4. **Separate `std.os` / `std.shutil` style modules** — rejected for now because ordinary path-owned chores should stay path-centric in Incan.
@@ -262,7 +253,7 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 
 ## Implementation architecture
 
-*(Non-normative.)* A practical first delivery implements `Path`, `File`, and related helpers as normal Incan stdlib code that uses `rust::` interop to reach `std::fs`, `std::io`, and associated path and file primitives. Large Rust-only wrappers should be reserved for narrow host boundaries rather than used as the default substitute for writing ordinary stdlib logic in Incan.
+*(Non-normative.)* The public `Path`, `File`, `OpenOptions`, metadata, directory-entry, disk-usage, and error types should be normal Incan stdlib code. Rust-backed helpers are the host boundary for `std::fs`, `std::io`, and platform filesystem calls; they should not replace the authored Incan API shape.
 
 ## Layers affected
 
@@ -272,11 +263,69 @@ Authors may still use `rust::std::fs` and `rust::std::io` for capabilities this 
 - **LSP / tooling**: completions and hovers for `std.fs` members.
 - **Tests / docs-site**: API docs and examples must cover both whole-file and chunked large-file workflows.
 
+## Implementation Plan
+
+- Register `std.fs` in the stdlib namespace metadata and keep it distinct from existing names such as `std.web.Path`.
+- Add the authored `std.fs` `.incn` surface for `Path`, `File`, `OpenOptions`, `DirEntry`, `PathStat`, `DiskUsage`, and `IoError`.
+- Add narrow Rust host-boundary helpers for path construction, lexical operations, filesystem predicates, directory operations, whole-file byte/text I/O, file open modes, file reads/writes, seeking, durability, metadata, traversal, copy/move, links, permissions, and disk usage.
+- Ensure `from std.fs import Path, File` resolves through the normal stdlib loader without ad hoc compiler special cases.
+- Ensure methods and operators on `Path`, `File`, and related stdlib types lower and emit through the RFC 023 stdlib path.
+- Preserve existing `read_file` / `write_file` behavior while making `std.fs.Path` the documented default for new code.
+- Add typechecker, codegen, runtime, and smoke coverage for path construction, joining, lexical properties, predicates, `try_exists`, directories, whole-file byte/text I/O, open/read/read_exact/write/tell/seek, durability, traversal, metadata, copy/move, tree removal, links, permissions, and failure paths.
+- Update authored user docs: the dedicated `std.fs` reference, file I/O how-to, tutorial examples that already mention `Path`, stdlib reference navigation, and release notes.
+
+## Progress Checklist
+
+### Spec / lifecycle
+
+- [x] Confirm RFC 055 is the blocking prerequisite for RFC 010's filesystem `Path` contract.
+- [x] Establish implementation scope as the complete RFC 055 `std.fs` contract.
+
+### Stdlib / runtime
+
+- [x] Register `std.fs` in the stdlib namespace metadata.
+- [x] Add the authored `std.fs` `.incn` declarations.
+- [x] Add runtime-backed `Path` construction and lexical path helpers.
+- [x] Add path joining support.
+- [x] Add `exists`, `is_file`, `is_dir`, `is_symlink`, and `try_exists`.
+- [x] Add `mkdir` with parent/exist-ok behavior.
+- [x] Add whole-file byte and text helpers.
+- [x] Add `Path.open(...)` mode handling.
+- [x] Add `File.read`, `read_bytes`, `read_exact`, `write`, `write_bytes`, `tell`, `seek`, `flush`, `sync`, `fsync`, and `sync_data`.
+- [x] Add traversal, metadata, copy/move, tree removal, link, permission, and disk-usage helpers.
+- [x] Add filesystem error modeling sufficient for examples and diagnostics.
+
+### Compiler / tooling
+
+- [x] Ensure `std.fs` imports resolve through the normal stdlib loader.
+- [x] Ensure emitted Rust uses the stdlib module without hardcoded path special cases.
+- [ ] Ensure LSP completions/hovers discover the new namespace through registry metadata.
+- [ ] Preserve existing `read_file` / `write_file` behavior.
+
+### Tests
+
+- [x] Add typechecker tests for importing `Path` and `File`.
+- [x] Add codegen/snapshot coverage for `std.fs` imports.
+- [x] Add runtime tests for path construction, joining, lexical properties, predicates, and `try_exists`.
+- [x] Add runtime tests for directory creation and cleanup.
+- [x] Add runtime tests for whole-file byte and text I/O.
+- [x] Add runtime tests for open/read/read_exact/write/tell/seek behavior.
+- [x] Add runtime tests for durability method availability.
+- [x] Add failure-path coverage for missing files, exact-read EOF, and exclusive create.
+
+### Docs
+
+- [x] Update the file I/O reference with the implemented `std.fs` surface.
+- [x] Update the file I/O how-to with whole-file vs chunked guidance.
+- [x] Update tutorials that already mention `Path` so they import and use `std.fs` truthfully.
+- [x] Add `std.fs` to the standard-library reference index and navigation if the docs structure requires it.
+- [x] Add release notes for the shipped surface.
+
 ## Design Decisions
 
 - `std.fs.Path` is the canonical filesystem model. Existing builtins such as `read_file` and `write_file` may remain for compatibility, but new APIs, documentation, and examples should prefer `Path`.
 - Construction uses direct calls such as `Path("config.toml")`, not `Path.new(...)`.
-- `Path.open(...)` commits to the full Python-style mode-string family. Delivery may still be phased, but the spec is not intentionally partial.
+- `Path.open(...)` commits to the full Python-style mode-string family.
 - `Path` remains the single path object for both files and directories. Opening a path yields `File`; there is no parallel `Folder` abstraction.
 - Durability is explicit. Successful writes and object drop do not imply crash-safe persistence; callers use `sync()` or `sync_data()` when they need persistence guarantees. `fsync()` exists as an alias of `sync()`.
 - Text I/O defaults are `utf-8`, `strict`, and `"\n"` output, with override parameters for interoperability and migration work.

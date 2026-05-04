@@ -345,10 +345,12 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
     (has_serialize, has_deserialize)
 }
 
+/// Add serde derives to generated newtypes when the current program needs serde support.
 fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
     use super::decl::IrDeclKind;
     use super::types::IrType;
 
+    /// Return whether a newtype inner type can safely receive derived serde support.
     fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
         match ty {
             IrType::Unit
@@ -356,6 +358,7 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr

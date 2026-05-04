@@ -158,6 +158,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "fs",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "rust",
         feature: None,
         extra_crate_deps: &[],
@@ -292,6 +299,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     }
 
@@ -320,6 +328,10 @@ mod tests {
             stdlib_stub_path(&segs(&["std", "async", "prelude"])),
             Some("stdlib/async/prelude.incn".to_string())
         );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "fs"])),
+            Some("stdlib/fs.incn".to_string())
+        );
     }
 
     #[test]
@@ -336,6 +348,7 @@ mod tests {
         let hint = known_stdlib_modules_for_hint();
         assert!(hint.windows(2).all(|w| w[0] <= w[1]));
         assert!(hint.contains(&"std.derives".to_string()));
+        assert!(hint.contains(&"std.fs".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
         assert!(hint.contains(&"std.rust".to_string()));
@@ -345,11 +358,14 @@ mod tests {
     fn stdlib_registry_keeps_phase_023_metadata() {
         let async_ns = find_namespace("async");
         let reflection_ns = find_namespace("reflection");
+        let fs_ns = find_namespace("fs");
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(fs_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
         assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(
             math_ns

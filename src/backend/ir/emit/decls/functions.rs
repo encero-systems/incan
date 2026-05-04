@@ -54,7 +54,7 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_function(func);
         }
 
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let is_main = func.name == conventions::ENTRYPOINT_NAME;
         let mutated_params = self.collect_mutated_params(func);
         let used_names = Self::collect_function_used_names(func);
@@ -325,7 +325,7 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_method(func);
         }
 
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
         let used_names = Self::collect_function_used_names(func);
@@ -555,7 +555,7 @@ impl<'a> IrEmitter<'a> {
         &self,
         func: &super::super::super::decl::IrFunction,
     ) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let used_names = Self::collect_function_used_names(func);
 
         let params: Vec<TokenStream> = func

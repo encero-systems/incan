@@ -198,6 +198,8 @@ pub enum ConversionContext {
     Assignment,
     /// Return value from a function
     ReturnValue,
+    /// Value consumed by a generated Rust `match` scrutinee.
+    MatchScrutinee,
 }
 
 /// Result of conversion analysis
@@ -539,6 +541,16 @@ fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&I
     }
 }
 
+fn is_result_like_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Result(_, _) => true,
+        IrType::NamedGeneric(name, args) if args.len() == 2 => {
+            name == "Result" || name == "std::result::Result" || name.ends_with("::Result")
+        }
+        _ => false,
+    }
+}
+
 /// Whether a field projection must clone instead of moving directly from its parent object.
 ///
 /// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
@@ -753,6 +765,22 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Field access returns borrowed data from the parent object; clone to satisfy owned return semantics.
                 (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
                 // Other cases: as-is
+                _ => Conversion::None,
+            }
+        }
+
+        ConversionContext::MatchScrutinee => {
+            // Rust `match` can consume its scrutinee. Preserve existing Incan-owned value semantics by cloning
+            // ordinary non-Copy locals when needed, but do not force `.clone()` onto Rust Result values whose Ok/Err
+            // payloads may be non-Clone (`std::fs::DirEntry`, `std::io::Error`, ...).
+            match (&expr.kind, &expr.ty) {
+                (IrExprKind::Var { .. }, IrType::Unknown) => Conversion::None,
+                (IrExprKind::Var { .. }, ty) if is_result_like_type(ty) => Conversion::None,
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
                 _ => Conversion::None,
             }
         }
