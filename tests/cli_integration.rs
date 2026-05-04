@@ -169,6 +169,46 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+#[test]
+fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("preheat_helper");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"preheat_helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(helper_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_lock_preheat_project",
+        r#"
+[rust-dependencies.preheat_helper]
+path = "preheat_helper"
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+
+    assert_success(&output, "incan lock with dependency preheat");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("preheating Cargo dependencies for generated test harnesses"),
+        "lock should explain dependency preheat work, got:\n{stderr}"
+    );
+    assert!(
+        tmp.path()
+            .join("target/incan_lock/.incan_dependency_preheat_fingerprint")
+            .is_file(),
+        "dependency preheat should write a fingerprint stamp"
+    );
+    Ok(())
+}
+
 fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let lock_path = root.join("incan.lock");
     let original = fs::read_to_string(&lock_path)?;

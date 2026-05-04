@@ -2705,7 +2705,8 @@ mod tests {
         fs::create_dir_all(&temp_dir)?;
         let lock_path = temp_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
 
-        let guard = try_acquire_preheat_lock(&lock_path)?.expect("first lock acquisition should win");
+        let guard = try_acquire_preheat_lock(&lock_path)?
+            .ok_or_else(|| std::io::Error::other("first lock acquisition should win"))?;
         assert!(lock_path.is_file());
         assert!(try_acquire_preheat_lock(&lock_path)?.is_none());
         drop(guard);

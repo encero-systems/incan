@@ -196,7 +196,7 @@ Dependency flags (same as `build`):
 
 Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
-Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat.
+Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing `incan.lock`, so the next harness run can reuse dependency artifacts instead of discovering a subzero Cargo graph on the hot path.
 
 Examples:
 
