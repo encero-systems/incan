@@ -683,6 +683,8 @@ fn run_execution_unit(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     no_capture: bool,
+    verbose: bool,
+    emit_progress: bool,
     jobs: usize,
 ) -> Vec<(TestInfo, TestResult)> {
     run_file_tests_batch(
@@ -697,6 +699,8 @@ fn run_execution_unit(
             no_capture,
             timeout: unit.timeout,
             jobs,
+            verbose,
+            emit_progress,
         },
     )
 }
@@ -912,6 +916,8 @@ fn run_scheduled_execution_units(
     cargo_all_features: bool,
     stop_on_fail: bool,
     no_capture: bool,
+    verbose: bool,
+    emit_progress: bool,
 ) -> Vec<(usize, Vec<(TestInfo, TestResult)>)> {
     if jobs <= 1 {
         let mut prep_cache: HashMap<String, Arc<execution::PreparedTestFile>> = HashMap::new();
@@ -925,6 +931,8 @@ fn run_scheduled_execution_units(
                 cargo_no_default_features,
                 cargo_all_features,
                 no_capture,
+                verbose,
+                emit_progress,
                 jobs,
             );
             let failed = batch_has_failure(&results);
@@ -978,6 +986,8 @@ fn run_scheduled_execution_units(
                     cargo_no_default_features,
                     cargo_all_features,
                     no_capture,
+                    verbose,
+                    emit_progress,
                     jobs,
                 );
                 let _ = sender.send((unit_index, results));
@@ -1254,6 +1264,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         cargo_all_features,
         stop_on_fail,
         no_capture,
+        verbose,
+        report_format == TestOutputFormat::Console,
     );
     raw_batch_results.sort_by_key(|(index, _)| *index);
     let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();

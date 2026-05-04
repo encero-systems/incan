@@ -4252,6 +4252,49 @@ def test_two() -> None:
     }
 
     #[test]
+    fn e2e_generated_harness_preheat_is_fingerprinted() {
+        let dir = write_test_project(
+            "test_preheat.incn",
+            r#"
+from std.testing import assert_eq
+
+def test_preheat() -> None:
+    assert_eq(1, 1)
+"#,
+        );
+
+        let first = run_incan_test_with_args(&dir, &["-v"]);
+        let first_stdout = String::from_utf8_lossy(&first.stdout);
+        let first_stderr = String::from_utf8_lossy(&first.stderr);
+        assert!(
+            first.status.success(),
+            "expected first preheat run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            first_stdout,
+            first_stderr,
+        );
+        assert!(
+            first_stdout.contains("preheat phase: ran"),
+            "expected first run to preheat stale harness.\nstdout:\n{}",
+            first_stdout,
+        );
+
+        let second = run_incan_test_with_args(&dir, &["-v"]);
+        let second_stdout = String::from_utf8_lossy(&second.stdout);
+        let second_stderr = String::from_utf8_lossy(&second.stderr);
+        assert!(
+            second.status.success(),
+            "expected second preheat run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            second_stdout,
+            second_stderr,
+        );
+        assert!(
+            second_stdout.contains("preheat phase: up-to-date"),
+            "expected second run to reuse preheated harness.\nstdout:\n{}",
+            second_stdout,
+        );
+    }
+
+    #[test]
     fn e2e_cross_file_batch_falls_back_when_top_level_names_collide() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "test_a.incn",

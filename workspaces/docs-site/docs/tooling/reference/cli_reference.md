@@ -171,7 +171,7 @@ Test runner flags:
 | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `-k <KEYWORD>`                   | Filter tests by stable test id substring                                                                 |
 | `-m <EXPR>` / `--markers <EXPR>` | Filter tests by marker expression (`and`, `or`, `not`, parentheses)                                      |
-| `-v`                             | Verbose output (include timing)                                                                          |
+| `-v`                             | Verbose output, including per-test timing and generated-harness preheat diagnostics                       |
 | `-x`                             | Stop on first failure                                                                                    |
 | `--slow`                         | Include slow tests (marked `@slow`)                                                                      |
 | `--strict-markers`               | Reject unknown marker names during collection unless registered in `TEST_MARKERS`                        |
@@ -191,6 +191,8 @@ Test runner flags:
 Dependency flags (same as `build`):
 
 - `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+
+Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat.
 
 Examples:
 

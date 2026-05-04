@@ -117,6 +117,8 @@ for reproducible builds.
 If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created
 automatically on first build.
 
+For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state.
+
 ### Strict mode for CI
 
 Use `--locked` or `--frozen` to enforce that the lock file exists and is up to date. Use `--offline` when Cargo must fail instead of touching the network:

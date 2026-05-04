@@ -1,9 +1,11 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::cli::commands;
@@ -39,10 +41,26 @@ pub(super) struct TestExecutionOptions {
     pub no_capture: bool,
     pub timeout: Option<Duration>,
     pub jobs: usize,
+    pub verbose: bool,
+    pub emit_progress: bool,
 }
+
+const TEST_HARNESS_PREHEAT_FINGERPRINT_FILE: &str = ".incan_preheat_fingerprint";
+const TEST_HARNESS_PREHEAT_LOCK_FILE: &str = ".incan_preheat.lock";
+const TEST_HARNESS_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 
 fn parse_isolated_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
+}
+
+/// Return whether generated test-harness preheat should run for the supplied environment value.
+fn parse_test_preheat_env(raw: Option<&str>) -> bool {
+    !matches!(raw.map(str::trim), Some("0" | "false" | "no" | "off"))
+}
+
+/// Return whether generated test-harness preheat is enabled for this process.
+fn test_preheat_enabled() -> bool {
+    parse_test_preheat_env(std::env::var("INCAN_TEST_PREHEAT").ok().as_deref())
 }
 
 /// Return a runner-only AST where RFC 018 inline test-module declarations are emitted as ordinary module declarations.
@@ -1706,6 +1724,323 @@ fn run_command_with_timeout(mut command: Command, timeout: Option<Duration>) -> 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HarnessPreheatStatus {
+    Disabled,
+    UpToDate,
+    Ran,
+    ReusedAfterWait,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HarnessPreheatOutcome {
+    status: HarnessPreheatStatus,
+    elapsed: Duration,
+    waited: Duration,
+}
+
+struct HarnessPreheatRequest<'a> {
+    manifest_path: &'a Path,
+    generated_dir: &'a Path,
+    project_root: &'a Path,
+    shared_target_dir: &'a Path,
+    cargo_flags: &'a [String],
+    include_cargo_lock: bool,
+    jobs: usize,
+    timeout: Option<Duration>,
+    emit_progress: bool,
+}
+
+struct PreheatLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for PreheatLockGuard {
+    /// Remove the cooperative preheat lock file when this writer leaves the critical section.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Return the age after which an abandoned preheat lock may be reclaimed.
+fn stale_preheat_lock_after() -> Duration {
+    std::env::var("INCAN_TEST_PREHEAT_STALE_LOCK_SECS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(TEST_HARNESS_PREHEAT_STALE_LOCK_SECS))
+}
+
+/// Return whether the recorded preheat fingerprint matches the generated harness inputs.
+fn preheat_stamp_matches(stamp_path: &Path, fingerprint: &str) -> bool {
+    fs::read_to_string(stamp_path)
+        .map(|existing| existing.trim() == fingerprint)
+        .unwrap_or(false)
+}
+
+/// Try to become the single preheat writer for one generated harness.
+fn try_acquire_preheat_lock(lock_path: &Path) -> io::Result<Option<PreheatLockGuard>> {
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(lock_path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "pid={}", std::process::id());
+            Ok(Some(PreheatLockGuard {
+                path: lock_path.to_path_buf(),
+            }))
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Return whether an existing cooperative preheat lock is old enough to discard.
+fn preheat_lock_is_stale(lock_path: &Path, stale_after: Duration) -> bool {
+    let Ok(metadata) = fs::metadata(lock_path) else {
+        return false;
+    };
+    let Ok(modified) = metadata.modified() else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= stale_after)
+}
+
+/// Add one generated harness input file to the preheat fingerprint.
+fn hash_preheat_file(hasher: &mut Sha256, base: &Path, path: &Path) -> io::Result<()> {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    hasher.update(relative.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(fs::read(path)?);
+    hasher.update(b"\0");
+    Ok(())
+}
+
+/// Collect generated Rust source files that define one harness fingerprint.
+fn collect_preheat_source_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_preheat_source_files(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Compute the fingerprint that determines whether `cargo test --no-run` must be repeated for a harness.
+fn compute_generated_harness_preheat_fingerprint(
+    generated_dir: &Path,
+    cargo_flags: &[String],
+    shared_target_dir: &Path,
+    include_cargo_lock: bool,
+) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan_test_harness_preheat/1\0");
+    hasher.update(shared_target_dir.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    for flag in cargo_flags {
+        hasher.update(flag.as_bytes());
+        hasher.update(b"\0");
+    }
+    hash_preheat_file(&mut hasher, generated_dir, &generated_dir.join("Cargo.toml"))?;
+    if include_cargo_lock {
+        let file_name = "Cargo.lock";
+        let path = generated_dir.join(file_name);
+        if path.is_file() {
+            hash_preheat_file(&mut hasher, generated_dir, &path)?;
+        } else {
+            hasher.update(file_name.as_bytes());
+            hasher.update(b":absent\0");
+        }
+    }
+    let mut source_files = Vec::new();
+    collect_preheat_source_files(&generated_dir.join("src"), &mut source_files)?;
+    source_files.sort();
+    for file in source_files {
+        hash_preheat_file(&mut hasher, generated_dir, &file)?;
+    }
+    Ok(format!(
+        "{}{}",
+        TEST_HARNESS_PREHEAT_FINGERPRINT_FILE,
+        hex::encode(hasher.finalize())
+    ))
+}
+
+/// Build the Cargo command used by both harness preheat and actual harness execution.
+fn cargo_test_command(
+    manifest_path: &Path,
+    cargo_flags: &[String],
+    jobs: usize,
+    shared_target_dir: &Path,
+    project_root: &Path,
+    no_run: bool,
+    no_capture: bool,
+) -> Command {
+    let mut command = Command::new("cargo");
+    command.arg("test");
+    if no_run {
+        command.arg("--no-run");
+    }
+    if jobs > 1 {
+        command.arg("--jobs");
+        command.arg(jobs.to_string());
+    }
+    command.arg("--manifest-path");
+    command.arg(manifest_path);
+    for flag in cargo_flags {
+        command.arg(flag);
+    }
+    if !no_run {
+        // Batched per-file execution shares one process across all generated #[test] fns.
+        // Force deterministic single-thread libtest execution to preserve historical
+        // isolation assumptions for tests that use shared global runtime state.
+        command.arg("--");
+        command.arg("--test-threads=1");
+        if no_capture {
+            command.arg("--nocapture");
+        }
+    }
+    command.env("CARGO_TARGET_DIR", shared_target_dir);
+    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
+    command.current_dir(project_root);
+    command
+}
+
+/// Run `cargo test --no-run` for one generated harness and return its elapsed time.
+fn run_generated_harness_preheat(request: &HarnessPreheatRequest<'_>) -> Result<Duration, String> {
+    let start = Instant::now();
+    let command = cargo_test_command(
+        request.manifest_path,
+        request.cargo_flags,
+        request.jobs,
+        request.shared_target_dir,
+        request.project_root,
+        true,
+        false,
+    );
+    let (output, timed_out) = run_command_with_timeout(command, request.timeout)
+        .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
+    if timed_out {
+        let timeout = request
+            .timeout
+            .map(|timeout| format!("{:.3}s", timeout.as_secs_f64()))
+            .unwrap_or_else(|| "configured timeout".to_string());
+        return Err(format!("cargo test --no-run timed out after {timeout}"));
+    }
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cargo test --no-run failed:\n{stdout}\n{stderr}"));
+    }
+    Ok(start.elapsed())
+}
+
+/// Preheat one generated harness if its recorded fingerprint is missing or stale.
+fn preheat_generated_harness_if_needed(request: HarnessPreheatRequest<'_>) -> Result<HarnessPreheatOutcome, String> {
+    let start = Instant::now();
+    if !test_preheat_enabled() {
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::Disabled,
+            elapsed: start.elapsed(),
+            waited: Duration::ZERO,
+        });
+    }
+
+    let fingerprint = compute_generated_harness_preheat_fingerprint(
+        request.generated_dir,
+        request.cargo_flags,
+        request.shared_target_dir,
+        request.include_cargo_lock,
+    )
+    .map_err(|err| format!("failed to fingerprint generated test harness: {err}"))?;
+    let stamp_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_FINGERPRINT_FILE);
+    if preheat_stamp_matches(&stamp_path, &fingerprint) {
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::UpToDate,
+            elapsed: start.elapsed(),
+            waited: Duration::ZERO,
+        });
+    }
+
+    if request.emit_progress {
+        println!(
+            "preheating generated Rust test harness {}",
+            request.generated_dir.display()
+        );
+        let _ = io::stdout().flush();
+    }
+
+    let lock_path = request.generated_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
+    let stale_after = stale_preheat_lock_after();
+    let wait_start = Instant::now();
+    let mut announced_wait = false;
+    let lock = loop {
+        if preheat_stamp_matches(&stamp_path, &fingerprint) {
+            let waited = wait_start.elapsed();
+            return Ok(HarnessPreheatOutcome {
+                status: HarnessPreheatStatus::ReusedAfterWait,
+                elapsed: start.elapsed(),
+                waited,
+            });
+        }
+
+        match try_acquire_preheat_lock(&lock_path) {
+            Ok(Some(lock)) => break lock,
+            Ok(None) => {
+                if preheat_lock_is_stale(&lock_path, stale_after) {
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                if request.emit_progress && !announced_wait && wait_start.elapsed() >= Duration::from_secs(1) {
+                    println!("waiting for another incan test preheat to finish");
+                    let _ = io::stdout().flush();
+                    announced_wait = true;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(err) => return Err(format!("failed to acquire preheat lock {}: {err}", lock_path.display())),
+        }
+    };
+
+    if preheat_stamp_matches(&stamp_path, &fingerprint) {
+        drop(lock);
+        return Ok(HarnessPreheatOutcome {
+            status: HarnessPreheatStatus::UpToDate,
+            elapsed: start.elapsed(),
+            waited: wait_start.elapsed(),
+        });
+    }
+
+    run_generated_harness_preheat(&request)?;
+    fs::write(&stamp_path, &fingerprint)
+        .map_err(|err| format!("failed to write preheat fingerprint {}: {err}", stamp_path.display()))?;
+    drop(lock);
+
+    Ok(HarnessPreheatOutcome {
+        status: HarnessPreheatStatus::Ran,
+        elapsed: start.elapsed(),
+        waited: wait_start.elapsed(),
+    })
+}
+
+/// Return the stable diagnostic label for a preheat outcome.
+fn preheat_status_label(status: HarnessPreheatStatus) -> &'static str {
+    match status {
+        HarnessPreheatStatus::Disabled => "disabled",
+        HarnessPreheatStatus::UpToDate => "up-to-date",
+        HarnessPreheatStatus::Ran => "ran",
+        HarnessPreheatStatus::ReusedAfterWait => "reused-after-wait",
+    }
+}
+
 /// Run every collected test in `tests` that lives in the same `.incn` file with **one** `cargo test` invocation (#271).
 ///
 /// Returns an empty vector when `tests` is empty. Otherwise every entry must share the same [`TestInfo::file_path`].
@@ -2099,7 +2434,8 @@ pub(super) fn run_file_tests_batch(
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_stdlib_features(prepared.project_requirements.stdlib_features.clone());
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
-    generator.set_cargo_policy_flags(common::cargo_command_flags(cargo_policy, &cargo_feature_selection));
+    let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+    generator.set_cargo_policy_flags(cargo_flags.clone());
 
     let gen_err = |msg: String| {
         tests
@@ -2117,14 +2453,15 @@ pub(super) fn run_file_tests_batch(
     generator.set_dependencies(runner_dependencies);
     generator.set_dev_dependencies(Vec::new());
 
-    if prepared.source_modules.is_empty() {
+    let generated_changed = if prepared.source_modules.is_empty() {
         let rust_code = match codegen.try_generate(&prepared.ast) {
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
         let rust_code = inject_file_test_harness(&rust_code, tests, &prepared.project_root, &fixtures);
-        if let Err(e) = generator.generate(&rust_code) {
-            return gen_err(format!("Failed to generate project: {}", e));
+        match generator.generate(&rust_code) {
+            Ok(changed) => changed,
+            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
     } else {
         let module_paths: Vec<Vec<String>> = prepared
@@ -2137,35 +2474,47 @@ pub(super) fn run_file_tests_batch(
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
         };
         let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
-        if let Err(e) = generator.generate_nested(&main_code, &rust_modules) {
-            return gen_err(format!("Failed to generate project: {}", e));
+        match generator.generate_nested(&main_code, &rust_modules) {
+            Ok(changed) => changed,
+            Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
-    }
+    };
 
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
-    let mut command = Command::new("cargo");
-    command.arg("test");
-    if options.jobs > 1 {
-        command.arg("--jobs");
-        command.arg(options.jobs.to_string());
-    }
-    command.arg("--manifest-path");
-    command.arg(&manifest_path);
-    for flag in common::cargo_command_flags(cargo_policy, &cargo_feature_selection) {
-        command.arg(flag);
-    }
-    // Batched per-file execution shares one process across all generated #[test] fns.
-    // Force deterministic single-thread libtest execution to preserve historical
-    // isolation assumptions for tests that use shared global runtime state.
-    command.arg("--");
-    command.arg("--test-threads=1");
-    if options.no_capture {
-        command.arg("--nocapture");
+    let generated_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let preheat_outcome = match preheat_generated_harness_if_needed(HarnessPreheatRequest {
+        manifest_path: &manifest_path,
+        generated_dir,
+        project_root: &prepared.project_root,
+        shared_target_dir: &shared_target_dir,
+        cargo_flags: &cargo_flags,
+        include_cargo_lock: prepared.lock_payload.is_some(),
+        jobs: options.jobs,
+        timeout: options.timeout,
+        emit_progress: options.emit_progress,
+    }) {
+        Ok(outcome) => outcome,
+        Err(message) => return gen_err(format!("Failed to preheat generated test harness: {message}")),
+    };
+    if options.verbose && options.emit_progress {
+        println!(
+            "preheat phase: {} in {:.2}s (wait {:.2}s, generated changed: {})",
+            preheat_status_label(preheat_outcome.status),
+            preheat_outcome.elapsed.as_secs_f64(),
+            preheat_outcome.waited.as_secs_f64(),
+            generated_changed
+        );
     }
 
-    command.env("CARGO_TARGET_DIR", &shared_target_dir);
-    // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
-    command.current_dir(&prepared.project_root);
+    let command = cargo_test_command(
+        &manifest_path,
+        &cargo_flags,
+        options.jobs,
+        &shared_target_dir,
+        &prepared.project_root,
+        false,
+        options.no_capture,
+    );
 
     let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
         Ok(result) => result,
@@ -2293,6 +2642,77 @@ mod tests {
         assert!(!parse_isolated_target_env(Some("false")));
         assert!(!parse_isolated_target_env(Some("off")));
         assert!(!parse_isolated_target_env(Some("")));
+    }
+
+    #[test]
+    fn parse_test_preheat_env_defaults_to_enabled() {
+        assert!(parse_test_preheat_env(None));
+        assert!(parse_test_preheat_env(Some("1")));
+        assert!(parse_test_preheat_env(Some("true")));
+        assert!(!parse_test_preheat_env(Some("0")));
+        assert!(!parse_test_preheat_env(Some("false")));
+        assert!(!parse_test_preheat_env(Some(" off ")));
+    }
+
+    #[test]
+    fn generated_harness_preheat_fingerprint_changes_when_source_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_fingerprint_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"preheat_test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+
+        let first = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 2 }\n")?;
+        let second = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+
+        assert_ne!(first, second);
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_harness_preheat_fingerprint_includes_cargo_flags() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_flags_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"preheat_flags\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(temp_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+
+        let base = compute_generated_harness_preheat_fingerprint(&temp_dir, &[], &temp_dir.join("target"), false)?;
+        let locked = compute_generated_harness_preheat_fingerprint(
+            &temp_dir,
+            &["--locked".to_string()],
+            &temp_dir.join("target"),
+            false,
+        )?;
+
+        assert_ne!(base, locked);
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn preheat_lock_guard_removes_lock_on_drop() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_preheat_lock_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir)?;
+        let lock_path = temp_dir.join(TEST_HARNESS_PREHEAT_LOCK_FILE);
+
+        let guard = try_acquire_preheat_lock(&lock_path)?.expect("first lock acquisition should win");
+        assert!(lock_path.is_file());
+        assert!(try_acquire_preheat_lock(&lock_path)?.is_none());
+        drop(guard);
+        assert!(!lock_path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 
     #[test]

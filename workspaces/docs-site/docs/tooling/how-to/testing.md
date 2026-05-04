@@ -267,7 +267,7 @@ incan test -k "addition"
 # List collected tests without running them
 incan test --list tests/
 
-# Verbose output (show timing)
+# Verbose output (show timing and generated-harness preheat diagnostics)
 incan test -v
 
 # Stop on first failure
@@ -308,6 +308,8 @@ incan test --jobs 4 tests/
 ```
 
 `-k` matches the stable test id shown by `--list`, for example `tests/test_math.incn::test_addition` or `tests/test_math.incn::test_add[1-2-3]`.
+
+When a generated Rust test harness is new or stale, `incan test` preheats it with `cargo test --no-run` before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.
 
 `-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`.
 Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
