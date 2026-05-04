@@ -27,10 +27,10 @@ If no target is provided, infer it from the current branch, current worktree pat
 
 - **Merge first.** Do not remove branches, remote refs, or worktrees until the PR is confirmed merged into its base branch.
 - **Inventory first.** List candidate branches, worktrees, untracked files, and agent artifacts before removing anything.
-- **Preserve user work.** Never delete a dirty worktree, branch with unmerged commits, or untracked files that are not clearly task-owned or explicitly declared disposable by the user.
+- **Preserve user work.** Never delete a dirty worktree, ambiguous branch with unmerged commits, or untracked files that are not clearly task-owned or explicitly declared disposable by the user.
 - **Use git-safe deletion.** Prefer `git worktree remove`, `git branch -d`, and `git push origin --delete <branch>` over filesystem deletion.
 - **No broad destructive cleanup.** Do not use `git reset --hard`, `rm -rf`, or `git clean -fd` as a default cleanup tool.
-- **No force unless explicit.** `git branch -D`, forced worktree removal, and deleting ambiguous assets require direct user confirmation or an unambiguous closeout instruction that task-owned scratch worktrees should go.
+- **No force unless explicit or GitHub-merged.** `git branch -D`, forced worktree removal, and deleting ambiguous assets require direct user confirmation or an unambiguous closeout instruction that task-owned scratch worktrees should go. The exception is the exact PR head branch for a PR that GitHub reports as merged; if `git branch -d` refuses because the PR was squash-merged or rebase-merged, delete that exact local branch with `git branch -D` after its worktrees are removed.
 - **Do not delete the active worktree.** If the current directory is the worktree being removed, switch command context to the main repository or another safe parent first.
 - **Respect unrelated dirt.** Existing dirty files in the main repo or unrelated worktrees are blockers for those paths only; report them, do not "fix" them.
 - **Ralph worker worktrees are scratch assets.** After the orchestrator PR is merged, task-owned worker worktrees created for that implementation are disposable when the user asks to close out the task. Dirty status in those worker slices should trigger an inventory and confirmation path, not a permanent stop.
@@ -77,7 +77,9 @@ git fetch origin <base-branch> <target-branch>
 git merge-base --is-ancestor <target-branch> origin/<base-branch>
 ```
 
-If the PR is open, closed-unmerged, unknown, or the branch is not an ancestor of the base branch, stop after reporting status. Do not clean up.
+GitHub merged status is authoritative for PR closeout when the target branch exactly matches the PR head branch. If GitHub reports the PR as merged but `merge-base --is-ancestor` fails, treat the branch as squash-merged or rebase-merged: record that ancestry did not prove the merge, then continue cleanup for the exact PR head branch only.
+
+If the PR is open, closed-unmerged, unknown, or there is no reliable merged PR metadata and the branch is not an ancestor of the base branch, stop after reporting status. Do not clean up.
 
 ### Step 3: Sync the base branch
 
@@ -149,7 +151,13 @@ Delete the remote topic branch only when it is the PR head branch and the PR is 
 git push origin --delete <target-branch>
 ```
 
-If branch deletion reports unmerged commits, stop and report the exact git output. Do not use `-D` unless the user explicitly confirms that those commits are disposable.
+If `git branch -d` reports unmerged commits, check whether the branch is the exact head branch of a PR that GitHub reports as merged. If yes, treat it as squash/rebase-merged and delete the local branch with:
+
+```bash
+git branch -D <target-branch>
+```
+
+Do not use this exception for branches inferred only from names, branches without reliable merged PR metadata, branches that do not match the PR head, or branches still checked out in any worktree. In those cases, stop and report the exact git output unless the user explicitly confirms the commits are disposable.
 
 For confirmed disposable worker branches whose worktrees were force-removed as scratch assets, delete with:
 
@@ -211,7 +219,7 @@ Stop and ask or report status when:
 
 - the PR is not merged,
 - the PR cannot be identified confidently,
-- the branch is not merged into the base branch,
+- the branch is not merged into the base branch and no reliable GitHub merged-PR metadata confirms it as the exact PR head branch,
 - a candidate user-owned or unrelated worktree is dirty,
 - local `gh` auth is invalid and no other reliable PR status source is available,
 - the candidate branch name does not match the PR head branch,
