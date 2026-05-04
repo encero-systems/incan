@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 009: Sized numeric types and builtin type registry - Incan Documentation</title>
+        <title>RFC 009: Numeric type system and builtin type registry - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-009-sized-numeric-types-and-builtin-type-registry" class="md-skip">
+        <a href="#rfc-009-numeric-type-system-and-builtin-type-registry" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 009: Sized numeric types and builtin type registry
+              RFC 009: Numeric type system and builtin type registry
             
           </span>
         </div>
@@ -4495,18 +4495,45 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#aliases-remain" class="md-nav__link">
+  <a href="#aliases-remain-ergonomic" class="md-nav__link">
     <span class="md-ellipsis">
-      Aliases remain
+      Aliases remain ergonomic
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#explicit-conversions" class="md-nav__link">
+  <a href="#data-oriented-spellings-map-to-canonical-types" class="md-nav__link">
     <span class="md-ellipsis">
-      Explicit conversions
+      Data-oriented spellings map to canonical types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decimal-values-are-schema-stable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decimal values are schema-stable
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-policy-is-explicit-when-data-can-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conversion policy is explicit when data can change
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-interop-stays-ergonomic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop stays ergonomic
     </span>
   </a>
   
@@ -4528,9 +4555,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added-types" class="md-nav__link">
+  <a href="#canonical-numeric-types" class="md-nav__link">
     <span class="md-ellipsis">
-      Added types
+      Canonical numeric types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#numeric-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numeric aliases
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserved-numeric-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reserved numeric names
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decimal-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decimal semantics
     </span>
   </a>
   
@@ -4558,6 +4612,24 @@
   <a href="#overflow-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       Overflow behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Indexing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-interop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop
     </span>
   </a>
   
@@ -4647,9 +4719,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -4673,7 +4745,7 @@
   
 
 
-<h1 id="rfc-009-sized-numeric-types-and-builtin-type-registry">RFC 009: Sized numeric types and builtin type registry<a class="headerlink" href="#rfc-009-sized-numeric-types-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-009-numeric-type-system-and-builtin-type-registry">RFC 009: Numeric type system and builtin type registry<a class="headerlink" href="#rfc-009-numeric-type-system-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2024-12-11</li>
@@ -4685,31 +4757,36 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces explicit sized numeric types such as <code>i8</code>, <code>u16</code>, <code>f32</code>, and <code>usize</code>, together with a centralized builtin-type registry. The coupling is intentional: once Incan exposes a broader builtin numeric surface, the language needs one canonical vocabulary source for builtin spellings, methods, and typing behavior rather than a growing set of scattered compiler special cases.</p>
+<p>This RFC introduces Incan's explicit numeric type system: exact-width signed and unsigned integers, exact-width binary floats, fixed-precision decimals, analytics-oriented aliases, and a centralized builtin-type registry. The coupling is intentional: once Incan exposes a broader numeric surface, the language needs one canonical vocabulary source for builtin spellings, aliases, literal suffixes, bounds, conversion behavior, interop metadata, and user-facing diagnostics rather than a growing set of scattered compiler special cases.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and
-<code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is
-too blunt for several real cases:</p>
+<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and <code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is too blunt for several real cases:</p>
 <ul>
 <li>Rust interop and FFI frequently require exact-width numeric types.</li>
 <li>Binary protocols and file formats encode fixed-width fields.</li>
 <li>Memory-sensitive workloads benefit from smaller element types.</li>
 <li>Bit manipulation and hardware-facing work depend on explicit widths.</li>
+<li>Data and analytics workloads need schema-stable decimal values instead of binary floating-point approximations.</li>
+<li>Query-plan and columnar-data interop benefit from names that map cleanly to Substrait- and Arrow-shaped numeric schemas.</li>
 </ul>
-<p>The RFC also addresses a second problem that appears immediately once sized types arrive: builtin numeric behavior is currently too easy to define piecemeal. If each new builtin type adds methods, coercions, and surface spellings through disconnected compiler logic, the language contract will drift. The builtin registry is therefore not incidental implementation detail in this RFC; it is the mechanism that keeps the expanded numeric surface coherent.</p>
+<p>The RFC also addresses a second problem that appears immediately once this surface arrives: builtin numeric behavior is currently too easy to define piecemeal. If each new builtin type adds methods, coercions, and surface spellings through disconnected compiler logic, the language contract will drift. The builtin registry is therefore not incidental implementation detail in this RFC; it is the mechanism that keeps the expanded numeric surface coherent.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add exact-width signed integers, unsigned integers, and sized floats to the language surface.</li>
+<li>Add exact-width signed integers, unsigned integers, sized floats, and fixed-precision decimals to the language surface.</li>
 <li>Preserve <code>int</code> and <code>float</code> as ergonomic aliases for general-purpose code.</li>
-<li>Require explicit conversion where precision or sign can change.</li>
+<li>Add data- and analytics-oriented aliases where the alias maps to an existing canonical numeric type without changing semantics.</li>
+<li>Require explicit conversion where precision, scale, sign, or width can change in a lossy way.</li>
+<li>Allow ergonomic lossless conversion and contextual numeric adaptation at explicit Rust interop boundaries.</li>
 <li>Make builtin numeric vocabulary come from a single language-owned registry rather than repeated string matching.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Arbitrary-precision integers in this RFC.</li>
+<li>Unbounded arbitrary-precision decimals in this RFC.</li>
 <li>SIMD/vector numeric types in this RFC.</li>
 <li>Implicit numeric widening and narrowing rules beyond what this document explicitly allows.</li>
-<li>Freezing the entire builtin-method catalog for every future builtin type.</li>
+<li>Making <code>usize</code> the ordinary user-facing indexing type for lists, strings, and slices.</li>
+<li>Adding <code>char</code> or Unicode scalar semantics.</li>
+<li>Freezing every future builtin numeric method.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="explicit-widths-when-they-matter">Explicit widths when they matter<a class="headerlink" href="#explicit-widths-when-they-matter" title="Permanent link">&para;</a></h3>
@@ -4718,23 +4795,45 @@ too blunt for several real cases:</p>
 <span class="n">sample_rate</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">44_100</span><span class="kt">i32</span>
 </code></pre></div>
 <p>Authors continue using <code>int</code> and <code>float</code> for ordinary code, but they can opt into explicit widths when interop, protocols, or memory layout demand it.</p>
-<h3 id="aliases-remain">Aliases remain<a class="headerlink" href="#aliases-remain" title="Permanent link">&para;</a></h3>
+<h3 id="aliases-remain-ergonomic">Aliases remain ergonomic<a class="headerlink" href="#aliases-remain-ergonomic" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span>
 <span class="n">precise_count</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">42</span>
 
 <span class="n">ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14</span>
 <span class="n">precise_ratio</span><span class="p">:</span> <span class="kt">f64</span> <span class="o">=</span> <span class="mf">3.14</span>
 </code></pre></div>
-<p><code>int</code> and <code>float</code> remain the default ergonomic spellings; <code>i64</code> and <code>f64</code> are the exact-width forms.</p>
-<h3 id="explicit-conversions">Explicit conversions<a class="headerlink" href="#explicit-conversions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">big</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">1000</span>
-<span class="n">small</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">big</span> <span class="k">as</span> <span class="n">i16</span>
-<span class="n">safe</span><span class="p">:</span> <span class="n">i16</span> <span class="o">=</span> <span class="n">i16</span><span class="o">.</span><span class="n">try_from</span><span class="p">(</span><span class="n">big</span><span class="p">)</span><span class="o">?</span>
+<p><code>int</code> and <code>float</code> remain the default ergonomic spellings; <code>i64</code> and <code>f64</code> are the exact-width canonical forms.</p>
+<h3 id="data-oriented-spellings-map-to-canonical-types">Data-oriented spellings map to canonical types<a class="headerlink" href="#data-oriented-spellings-map-to-canonical-types" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">kind</span><span class="p">:</span> <span class="n">byte</span> <span class="o">=</span> <span class="mi">255</span><span class="n">u8</span>
+<span class="n">warehouse_id</span><span class="p">:</span> <span class="n">long</span> <span class="o">=</span> <span class="mi">9_223_372_036_854_775_000</span><span class="kt">i64</span>
+<span class="n">score</span><span class="p">:</span> <span class="n">double</span> <span class="o">=</span> <span class="mf">0.992</span>
+<span class="n">embedding_component</span><span class="p">:</span> <span class="n">fp32</span> <span class="o">=</span> <span class="mf">0.125</span><span class="kt">f32</span>
 </code></pre></div>
-<p>The language should not silently narrow or reinterpret numbers in ways that are easy to miss.</p>
+<p>These spellings are aliases, not separate numeric semantics. Diagnostics and reflection may preserve the authored spelling where useful, but type identity normalizes to the canonical numeric type.</p>
+<h3 id="decimal-values-are-schema-stable">Decimal values are schema-stable<a class="headerlink" href="#decimal-values-are-schema-stable" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">price</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">19.99</span><span class="n">d</span>
+<span class="n">tax_rate</span><span class="p">:</span> <span class="n">numeric</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0825</span><span class="n">d</span>
+</code></pre></div>
+<p><code>decimal[P, S]</code> represents a fixed-precision decimal value with precision <code>P</code> and scale <code>S</code>. <code>numeric[P, S]</code> is an alias for <code>decimal[P, S]</code>. A bare <code>decimal</code> spelling is intentionally not introduced by this RFC because analytics schemas should not hide precision and scale behind a default.</p>
+<h3 id="conversion-policy-is-explicit-when-data-can-change">Conversion policy is explicit when data can change<a class="headerlink" href="#conversion-policy-is-explicit-when-data-can-change" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mi">240</span><span class="n">u8</span>
+<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span><span class="o">.</span><span class="n">resize</span><span class="p">()</span>
+
+<span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="n">maybe_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">try_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span><span class="o">?</span>
+<span class="n">wrapped_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">wrapping_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span>
+<span class="n">clamped_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">saturating_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span>
+</code></pre></div>
+<p>Lossless upsizing may use <code>resize()</code> when the target type is known from context. Downsizings, sign changes, decimal scale changes, and binary-float/decimal conversions must use an explicit policy.</p>
+<h3 id="rust-interop-stays-ergonomic">Rust interop stays ergonomic<a class="headerlink" href="#rust-interop-stays-ergonomic" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">devices</span> <span class="kn">import</span><span class="w"> </span><span class="nn">configure_port</span>
+
+<span class="n">configure_port</span><span class="p">(</span><span class="mi">8080</span><span class="p">)</span>
+</code></pre></div>
+<p>When an explicit Rust boundary expects a numeric type such as <code>u16</code>, the compiler may adapt a numeric literal or provably lossless value to the boundary type. The compiler must not use Rust interop as a back door for arbitrary lossy conversions; if a conversion may fail or lose information, diagnostics should suggest <code>try_resize</code>, <code>wrapping_resize</code>, <code>saturating_resize</code>, or a more specific helper.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="added-types">Added types<a class="headerlink" href="#added-types" title="Permanent link">&para;</a></h3>
-<p>The language adds these builtin numeric spellings:</p>
+<h3 id="canonical-numeric-types">Canonical numeric types<a class="headerlink" href="#canonical-numeric-types" title="Permanent link">&para;</a></h3>
+<p>The language adds these canonical builtin numeric spellings:</p>
 <table>
 <thead>
 <tr>
@@ -4753,59 +4852,166 @@ too blunt for several real cases:</p>
 </tr>
 <tr>
 <td><code>f32</code>, <code>f64</code></td>
-<td>Fixed-width floating-point values</td>
+<td>Fixed-width binary floating-point values</td>
 </tr>
 <tr>
 <td><code>isize</code>, <code>usize</code></td>
 <td>Pointer-sized signed and unsigned integers</td>
 </tr>
+<tr>
+<td><code>decimal[P, S]</code></td>
+<td>Fixed-precision decimal with scale <code>S</code></td>
+</tr>
 </tbody>
 </table>
 <p><code>int</code> remains an alias for <code>i64</code>. <code>float</code> remains an alias for <code>f64</code>.</p>
+<h3 id="numeric-aliases">Numeric aliases<a class="headerlink" href="#numeric-aliases" title="Permanent link">&para;</a></h3>
+<p>The builtin registry must recognize these aliases:</p>
+<table>
+<thead>
+<tr>
+<th>Alias</th>
+<th>Canonical type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>byte</code></td>
+<td><code>u8</code></td>
+<td>Binary/data-oriented byte spelling</td>
+</tr>
+<tr>
+<td><code>short</code></td>
+<td><code>i16</code></td>
+<td>Common small signed integer spelling</td>
+</tr>
+<tr>
+<td><code>smallint</code></td>
+<td><code>i16</code></td>
+<td>SQL/data-system spelling</td>
+</tr>
+<tr>
+<td><code>integer</code></td>
+<td><code>i32</code></td>
+<td>SQL/data-system spelling; distinct from Incan's <code>int</code> alias</td>
+</tr>
+<tr>
+<td><code>long</code></td>
+<td><code>i64</code></td>
+<td>Common large signed integer spelling</td>
+</tr>
+<tr>
+<td><code>real</code></td>
+<td><code>f32</code></td>
+<td>SQL/data-system single-precision spelling</td>
+</tr>
+<tr>
+<td><code>double</code></td>
+<td><code>f64</code></td>
+<td>Data-system double-precision spelling</td>
+</tr>
+<tr>
+<td><code>fp32</code></td>
+<td><code>f32</code></td>
+<td>Substrait-style spelling</td>
+</tr>
+<tr>
+<td><code>fp64</code></td>
+<td><code>f64</code></td>
+<td>Substrait-style spelling</td>
+</tr>
+<tr>
+<td><code>numeric[P, S]</code></td>
+<td><code>decimal[P, S]</code></td>
+<td>Fixed-precision decimal alias</td>
+</tr>
+<tr>
+<td><code>decimal128[P, S]</code></td>
+<td><code>decimal[P, S]</code></td>
+<td>Explicit 128-bit decimal storage spelling</td>
+</tr>
+</tbody>
+</table>
+<p>Aliases must not create separate runtime or typechecker identities. Diagnostics may mention the authored alias when that improves clarity, but canonical type identity uses the right-hand side of the table.</p>
+<h3 id="reserved-numeric-names">Reserved numeric names<a class="headerlink" href="#reserved-numeric-names" title="Permanent link">&para;</a></h3>
+<p>The builtin registry must reserve these names so later features can use them without compatibility traps:</p>
+<ul>
+<li><code>bigint</code>, for future arbitrary-precision integer semantics.</li>
+<li>Bare <code>decimal</code>, for a future decision about whether Incan should provide a default decimal precision and scale.</li>
+<li>Bare <code>numeric</code>, for the same reason as bare <code>decimal</code>.</li>
+</ul>
+<h3 id="decimal-semantics">Decimal semantics<a class="headerlink" href="#decimal-semantics" title="Permanent link">&para;</a></h3>
+<p><code>decimal[P, S]</code> is a fixed-precision decimal type. <code>P</code> is the maximum number of significant decimal digits. <code>S</code> is the number of digits after the decimal point. This RFC requires <code>0 &lt;= S &lt;= P</code> and <code>P &lt;= 38</code> for the required implementation surface.</p>
+<p>The required decimal storage model is a signed 128-bit scaled integer. <code>decimal128[P, S]</code> is therefore an explicit alias for <code>decimal[P, S]</code>. A follow-up RFC may add <code>decimal256[P, S]</code> for higher precision, but this RFC does not require it.</p>
+<p>Decimal literals use the suffix <code>d</code>, as in <code>19.99d</code>, so source code can distinguish decimal literals from binary float literals.</p>
 <h3 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation
-or inference context requires a different numeric type.</li>
-<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation
-or inference context requires a different float type.</li>
-<li>Suffixed literals such as <code>42u16</code>, <code>7i8</code>, and <code>3.14f32</code> must construct the explicitly named type.</li>
+<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation or inference context requires a different numeric type.</li>
+<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation or inference context requires a different float type.</li>
+<li>Suffixed integer literals such as <code>42u16</code> and <code>7i8</code> must construct the explicitly named type.</li>
+<li>Suffixed float literals such as <code>3.14f32</code> must construct the explicitly named type.</li>
+<li>Decimal literals such as <code>19.99d</code> must construct a decimal type from surrounding annotation or inference context.</li>
 <li>Out-of-range suffixed literals are compile-time errors.</li>
+<li>Decimal literals that exceed the target precision or scale are compile-time errors when the target is statically known.</li>
 </ul>
 <h3 id="arithmetic-and-conversions">Arithmetic and conversions<a class="headerlink" href="#arithmetic-and-conversions" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Same-type arithmetic yields the same type.</li>
-<li>Mixed-width arithmetic requires an explicit conversion.</li>
-<li>Narrowing or sign-changing conversions must be explicit.</li>
-<li>Widening conversions may be provided as named constructors or helpers, but
-this RFC does not permit silent widening in ordinary arithmetic expressions.</li>
+<li>Same-type integer arithmetic yields the same type.</li>
+<li>Same-type binary-float arithmetic yields the same type.</li>
+<li>Same-type decimal arithmetic preserves decimal semantics but may require operator-specific precision and scale rules. This RFC requires those rules to be registry-owned before implementation begins.</li>
+<li>Mixed-width integer arithmetic requires an explicit conversion unless a surrounding context admits only a lossless conversion and the compiler can prove it.</li>
+<li>Narrowing, sign-changing, precision-losing, scale-losing, and binary-float/decimal conversions must be explicit.</li>
+<li>Lossless upsizing may use <code>resize()</code> when the target type is known from context.</li>
+<li>Potentially lossy resizing must use <code>try_resize[T]()</code>, <code>wrapping_resize[T]()</code>, or <code>saturating_resize[T]()</code> depending on the intended behavior.</li>
 </ul>
 <h3 id="overflow-behavior">Overflow behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
-<p>Sized integers follow Rust's overflow behavior:</p>
+<p>Sized integers follow Rust's ordinary overflow behavior for generated Rust:</p>
 <ul>
 <li>debug builds trap on overflow;</li>
 <li>release builds wrap unless the program uses explicit checked, saturating, or wrapping operations.</li>
 </ul>
-<p>The language surface may expose helpers such as <code>checked_add</code>, <code>wrapping_add</code>, and <code>saturating_add</code> on applicable numeric types.</p>
+<p>The required integer helper families are:</p>
+<ul>
+<li><code>checked_add</code>, <code>checked_sub</code>, <code>checked_mul</code>, and <code>checked_pow</code>;</li>
+<li><code>wrapping_add</code>, <code>wrapping_sub</code>, <code>wrapping_mul</code>, and <code>wrapping_pow</code>;</li>
+<li><code>saturating_add</code>, <code>saturating_sub</code>, <code>saturating_mul</code>, and <code>saturating_pow</code>.</li>
+</ul>
+<p>The builtin registry must record which numeric families support each helper. A follow-up RFC may expand the helper catalog, but these families are part of this RFC's required surface.</p>
+<h3 id="indexing">Indexing<a class="headerlink" href="#indexing" title="Permanent link">&para;</a></h3>
+<p>Ordinary list, string, tuple, bytes, and slice indexing remains Incan-shaped and signed. <code>usize</code> is not required at ordinary indexing call sites. Lowering and runtime helpers may normalize signed indices to Rust <code>usize</code> internally after applying Incan indexing semantics such as negative-index handling.</p>
+<p>APIs that explicitly traffic in capacities, offsets, Rust interop, or columnar layout metadata may use <code>usize</code> or another exact-width integer directly.</p>
+<h3 id="rust-interop">Rust interop<a class="headerlink" href="#rust-interop" title="Permanent link">&para;</a></h3>
+<p>Exact-width numeric types are exact-lowering types at Rust boundaries. <code>i32</code> maps to Rust <code>i32</code>, <code>u16</code> maps to Rust <code>u16</code>, <code>f32</code> maps to Rust <code>f32</code>, and so on. <code>decimal[P, S]</code> maps to the runtime decimal representation associated with that precision and scale.</p>
+<p>The compiler may insert contextual numeric adaptation at explicit Rust boundaries only when the conversion is exact or provably lossless. Examples include an in-range integer literal passed to a Rust function expecting <code>u16</code>, or an <code>i16</code> value passed to a Rust function expecting <code>i64</code>. It must reject or require explicit conversion for downsize, sign-changing, decimal scale-changing, decimal/binary-float, or otherwise lossy cases.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-the-coupling-is-intentional">Why the coupling is intentional<a class="headerlink" href="#why-the-coupling-is-intentional" title="Permanent link">&para;</a></h3>
-<p>This RFC deliberately couples sized numeric types with a builtin registry because the registry is part of getting the language surface right. Without it, the feature would immediately push more builtin names, methods, and coercion rules into scattered compiler branches, which would make the spec harder to reason about and the implementation easier to drift.</p>
+<p>This RFC deliberately couples the numeric type system with a builtin registry because the registry is part of getting the language surface right. Without it, the feature would immediately push more builtin names, methods, bounds, literal suffixes, aliases, and coercion rules into scattered compiler branches, which would make the spec harder to reason about and the implementation easier to drift.</p>
 <p>The important point is the contract, not the file layout: builtin behavior should come from one coherent vocabulary source instead of repeated hardcoded matches.</p>
 <h3 id="registry-first-builtin-vocabulary">Registry-first builtin vocabulary<a class="headerlink" href="#registry-first-builtin-vocabulary" title="Permanent link">&para;</a></h3>
 <p>The implementation therefore needs a language-owned builtin registry that defines:</p>
 <ul>
-<li>builtin type spellings;</li>
+<li>canonical builtin type spellings;</li>
+<li>aliases;</li>
+<li>literal suffixes;</li>
+<li>integer signedness and bit width;</li>
+<li>binary-float precision;</li>
+<li>decimal precision, scale, and storage width;</li>
+<li>numeric bounds;</li>
 <li>builtin method vocabulary;</li>
-<li>stable metadata needed for typing, docs, and diagnostics.</li>
+<li>resize/conversion policy;</li>
+<li>Rust interop mapping;</li>
+<li>stable metadata needed for docs, diagnostics, and analytics/schema interop.</li>
 </ul>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Rust interop benefits directly because exact-width types can map to exact-width Rust signatures.</li>
+<li>Rust interop benefits directly because exact-width types can map to exact-width Rust signatures without widening <code>int</code> into an implicit conversion catch-all.</li>
 <li>Existing <code>int</code> and <code>float</code> code keeps working unchanged.</li>
-<li>Container indexing becomes more important once <code>usize</code> exists, but this RFC
-does not silently settle every indexing coercion rule yet.</li>
+<li>Container indexing remains ordinary Incan indexing rather than forcing <code>usize</code> into normal user code.</li>
+<li>Future data/analytics features can map numeric schemas through the registry instead of inventing per-feature vocabulary.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>The feature is additive. Existing programs using <code>int</code> and <code>float</code> continue to compile. New code can opt into explicit widths incrementally.</p>
+<p>The feature is additive at the user surface. Existing programs using <code>int</code> and <code>float</code> continue to compile. Existing uses of <code>i32</code>, <code>i64</code>, <code>f32</code>, and <code>f64</code> that were previously accepted as aliases must be audited during implementation because this RFC makes those spellings distinct exact-width types rather than aliases for <code>int</code> or <code>float</code>.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Expose exact widths only through Rust interop</strong></li>
@@ -4816,46 +5022,62 @@ does not silently settle every indexing coercion rule yet.</li>
 <p><strong>Python-style arbitrary-precision <code>int</code> only</strong></p>
 </li>
 <li>
-<p>That improves some numeric ergonomics, but it does not solve fixed-width
-     interop, protocol parsing, or explicit layout control.</p>
+<p>That improves some numeric ergonomics, but it does not solve fixed-width interop, protocol parsing, explicit layout control, or columnar schema mapping.</p>
 </li>
 <li>
 <p><strong>Wrapper types only</strong></p>
 </li>
 <li>
-<p>Still requires real underlying fixed-width types, so it does not remove the core problem.</p>
+<p>Still requires real underlying fixed-width and decimal types, so it does not remove the core problem.</p>
 </li>
 <li>
-<p><strong>C-style numeric names</strong></p>
+<p><strong>C-style numeric names only</strong></p>
 </li>
-<li>Less explicit and often platform-dependent in ways that this RFC is trying to avoid.</li>
+<li>
+<p>Less explicit and often platform-dependent in ways that this RFC is trying to avoid.</p>
+</li>
+<li>
+<p><strong>No aliases</strong></p>
+</li>
+<li>
+<p>Canonical Rust-shaped spellings are clear, but data and analytics users routinely encounter SQL-, Arrow-, and Substrait-shaped numeric names. Registry-owned aliases give those users a familiar entry point without creating additional type identities.</p>
+</li>
+<li>
+<p><strong>Bare <code>decimal</code> with a default precision and scale</strong></p>
+</li>
+<li>This is ergonomic but hides schema decisions. In a data-oriented language, decimal precision and scale are part of the contract, so this RFC requires explicit <code>decimal[P, S]</code> and reserves bare <code>decimal</code> for a future decision.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>More builtin numeric types increase the language surface and the testing matrix.</li>
+<li>Decimal support raises the implementation bar because parser, typechecker, lowering, runtime, docs, and interop need precision/scale-aware behavior.</li>
 <li><code>isize</code> and <code>usize</code> expose target-dependent widths, which slightly weakens the otherwise explicit story.</li>
-<li>The registry requirement raises the implementation bar, but that is
-preferable to baking in more ad hoc builtin behavior.</li>
+<li>Aliases can confuse users if diagnostics do not normalize clearly to canonical types.</li>
+<li>The registry requirement raises the implementation bar, but that is preferable to baking in more ad hoc builtin behavior.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Lexer / parser</strong>: must recognize the added type names and suffixed numeric literals.</li>
-<li><strong>Typechecker</strong>: must model exact-width numeric types, enforce explicit
-conversions, and diagnose out-of-range literals.</li>
-<li><strong>Lowering / emission</strong>: must preserve exact widths when lowering to backend
-representations.</li>
-<li><strong>Builtin surface registry</strong>: must own the canonical spelling and method vocabulary for builtin numeric types.</li>
-<li><strong>Docs / tooling</strong>: should surface width-specific help, conversions, and overflow behavior consistently.</li>
+<li><strong>Lexer / parser</strong>: must recognize added type names, aliases, parameterized decimal types, suffixed numeric literals, and decimal literals.</li>
+<li><strong>Typechecker</strong>: must model exact-width numeric types, decimal precision/scale, alias normalization, explicit conversion policy, contextual interop adaptation, and out-of-range literal diagnostics.</li>
+<li><strong>Lowering / emission</strong>: must preserve exact widths and decimal metadata when lowering to backend representations.</li>
+<li><strong>Runtime / stdlib</strong>: must provide required decimal representation and numeric helper families.</li>
+<li><strong>Builtin surface registry</strong>: must own canonical spelling, aliases, literal suffixes, bounds, method vocabulary, conversion policy, and interop/schema metadata for builtin numeric types.</li>
+<li><strong>Formatter / LSP</strong>: should preserve authored spellings where useful while exposing canonical type information and diagnostics.</li>
+<li><strong>Docs / tooling</strong>: should surface width-specific help, aliases, conversions, decimal precision/scale, and overflow behavior consistently.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>What is the exact rule for container indexing: explicit <code>as usize</code>, a
-targeted compiler coercion in indexing position, or something else?</li>
-<li>Should <code>char</code> join this RFC, or remain a separate feature with its own semantics?</li>
-<li>Which sized-type helper methods are language promises in v1, and which
-remain stdlib conveniences that can evolve separately?</li>
-</ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>int</code> remains an alias for <code>i64</code>; <code>float</code> remains an alias for <code>f64</code>.</li>
+<li>The exact-width integer and binary-float spellings are distinct canonical numeric types, not aliases for <code>int</code> or <code>float</code>.</li>
+<li>Data-oriented aliases are included only when they map to an existing canonical numeric type without changing semantics.</li>
+<li><code>bigint</code>, bare <code>decimal</code>, and bare <code>numeric</code> are reserved for future features rather than claimed as aliases in this RFC.</li>
+<li><code>decimal[P, S]</code> and <code>numeric[P, S]</code> are in scope as fixed-precision decimal types backed by a 128-bit scaled integer for the required implementation surface.</li>
+<li><code>char</code> is out of scope because this RFC is about numerics, not Unicode scalar or string semantics.</li>
+<li>Ordinary indexing remains signed and Incan-shaped; users should not need <code>usize</code> for normal list, tuple, string, bytes, or slice indexing.</li>
+<li>Lossless upsizing can be ergonomic through <code>resize()</code> when the target type is known. Downsize, sign-changing, precision-losing, scale-losing, and binary-float/decimal conversions require explicit policy.</li>
+<li>Explicit Rust interop boundaries may perform exact or provably lossless numeric adaptation for good DX, but they must not silently perform lossy conversion.</li>
+<li>The builtin registry is the source of truth for numeric vocabulary, aliases, bounds, methods, conversions, diagnostics, docs metadata, and interop/schema mappings.</li>
+</ul>
 
 
 
