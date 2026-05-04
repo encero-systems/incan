@@ -179,6 +179,7 @@ fn method_info_from_decl(
         return_type,
         is_async: method.node.is_async(),
         has_body: method.node.body.is_some(),
+        alias_of: None,
     }
 }
 
@@ -215,15 +216,45 @@ pub(super) fn collect_methods_from_overloads(
         .collect()
 }
 
-/// Collect methods from method declarations into a `HashMap`.
-pub(super) fn collect_methods(
-    methods: &[Spanned<MethodDecl>],
-    checker: &mut TypeChecker,
-    owner_name: Option<&str>,
-    owner_type_params: &[TypeParam],
-) -> HashMap<String, MethodInfo> {
-    let overloads = collect_method_overloads(methods, checker, owner_name, owner_type_params);
-    collect_methods_from_overloads(&overloads)
+/// Project same-type method aliases onto the target method metadata.
+fn apply_method_aliases(
+    aliases: &[Spanned<MethodAliasDecl>],
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+) -> HashMap<String, String> {
+    let mut method_aliases = HashMap::new();
+    for alias in aliases {
+        let target = alias.node.target.clone();
+        method_aliases.insert(alias.node.name.clone(), target.clone());
+
+        if let Some(target_overloads) = overloads.get(&target).cloned() {
+            let alias_overloads: Vec<_> = target_overloads
+                .into_iter()
+                .map(|mut info| {
+                    info.alias_of = Some(target.clone());
+                    info
+                })
+                .collect();
+            if let Some(last) = alias_overloads.last().cloned() {
+                methods.insert(alias.node.name.clone(), last);
+            }
+            overloads.insert(alias.node.name.clone(), alias_overloads);
+        } else if let Some(mut info) = methods.get(&target).cloned() {
+            info.alias_of = Some(target.clone());
+            methods.insert(alias.node.name.clone(), info.clone());
+            overloads.insert(alias.node.name.clone(), vec![info]);
+        }
+    }
+    method_aliases
+}
+
+/// Collect same-type method alias metadata into method maps and alias maps.
+pub(super) fn collect_method_aliases(
+    aliases: &[Spanned<MethodAliasDecl>],
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+) -> HashMap<String, String> {
+    apply_method_aliases(aliases, methods, overloads)
 }
 
 /// Insert a compiler-injected method into both the legacy method map and overload groups.
@@ -286,6 +317,7 @@ pub(super) fn inject_json_methods(
                 return_type: ResolvedType::Str,
                 is_async: false,
                 has_body: true,
+                alias_of: None,
             },
         );
     }
@@ -309,6 +341,7 @@ pub(super) fn inject_json_methods(
                 ),
                 is_async: false,
                 has_body: true,
+                alias_of: None,
             },
         );
     }
@@ -371,6 +404,7 @@ pub(super) fn inject_validate_methods(
             return_type,
             is_async: false,
             has_body: true,
+            alias_of: None,
         },
     );
 }

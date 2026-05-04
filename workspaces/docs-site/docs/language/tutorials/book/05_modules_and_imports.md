@@ -45,6 +45,28 @@ Prefix a declaration with `pub` to **export** it so other modules can import it.
 
 For more detail on `pub` (including how it affects `model`/`class` fields), see: [Models & Classes](../../explanation/models_and_classes/index.md).
 
+### Exporting an alternate name
+
+Use a symbol alias when a module should expose another name for the same callable or type:
+
+```incan
+# strings.incn
+pub def shout(s: str) -> str:
+    return s.strip().upper()
+
+pub yell = shout
+```
+
+```incan
+# main.incn
+from strings import yell
+
+def main() -> None:
+    println(yell("  hello  "))
+```
+
+`yell` is an alias of `shout`, not a copied function body. The target must already be a supported declaration, and a public alias must target a public symbol. For the full contract, see [Symbol aliases](../../reference/symbol_aliases.md).
+
 ## Import styles
 
 Incan supports two styles you can mix:

@@ -602,17 +602,17 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::ListComp {
                 element,
-                variable,
+                pattern,
                 iterable,
                 filter,
-            } => self.emit_list_comp(element, variable, iterable, filter.as_deref()),
+            } => self.emit_list_comp(element, pattern, iterable, filter.as_deref()),
             IrExprKind::DictComp {
                 key,
                 value,
-                variable,
+                pattern,
                 iterable,
                 filter,
-            } => self.emit_dict_comp(key, value, variable, iterable, filter.as_deref()),
+            } => self.emit_dict_comp(key, value, pattern, iterable, filter.as_deref()),
 
             IrExprKind::List(items) => {
                 let item_target_ty = match &expr.ty {

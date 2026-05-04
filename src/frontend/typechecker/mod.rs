@@ -2405,6 +2405,136 @@ impl TypeChecker {
         resolve_type(&ty.node, &self.symbols)
     }
 
+    /// Validate alias relationships that need declaration-level context before symbol collection flattens aliases.
+    fn validate_alias_declarations(&mut self, program: &Program) {
+        let mut public_decls = HashMap::new();
+        let mut alias_targets = HashMap::new();
+
+        for decl in &program.declarations {
+            if let Some(name) = declaration_name(decl) {
+                public_decls.insert(name.to_string(), is_public_decl(decl));
+            }
+        }
+
+        for decl in &program.declarations {
+            match &decl.node {
+                Declaration::Alias(alias) => {
+                    if let [target] = alias.target.segments.as_slice() {
+                        alias_targets.insert(alias.name.clone(), (target.clone(), decl.span));
+                        if matches!(alias.visibility, Visibility::Public)
+                            && public_decls.get(target).is_some_and(|is_public| !*is_public)
+                        {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "Public alias '{}' targets private symbol '{}'",
+                                    alias.name,
+                                    alias.target.segments.join(".")
+                                ),
+                                decl.span,
+                            ));
+                        }
+                    }
+                }
+                Declaration::Model(model) => {
+                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods)
+                }
+                Declaration::Class(class) => {
+                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods)
+                }
+                Declaration::Trait(tr) => {
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
+                }
+                Declaration::Newtype(nt) => {
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                }
+                _ => {}
+            }
+        }
+
+        self.validate_top_level_alias_cycles(&alias_targets);
+    }
+
+    /// Reject direct and indirect cycles between top-level aliases.
+    fn validate_top_level_alias_cycles(&mut self, alias_targets: &HashMap<String, (String, Span)>) {
+        let mut reported = HashSet::new();
+        for (name, (_, span)) in alias_targets {
+            let mut path = Vec::new();
+            let mut current = name.clone();
+            while let Some((target, _)) = alias_targets.get(&current) {
+                if let Some(cycle_start) = path.iter().position(|seen| seen == &current) {
+                    let mut cycle = path[cycle_start..].to_vec();
+                    cycle.push(current.clone());
+                    let key = cycle.join(" -> ");
+                    if reported.insert(key.clone()) {
+                        self.errors
+                            .push(CompileError::type_error(format!("Alias cycle detected: {key}"), *span));
+                    }
+                    break;
+                }
+                path.push(current);
+                current = target.clone();
+            }
+        }
+    }
+
+    /// Validate same-type method alias names and targets for one method-bearing declaration.
+    fn validate_method_alias_declarations(
+        &mut self,
+        owner: &str,
+        aliases: &[Spanned<MethodAliasDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let mut alias_targets = HashMap::new();
+        let mut alias_names = HashSet::new();
+
+        for alias in aliases {
+            if !alias_names.insert(alias.node.name.as_str()) || method_names.contains(alias.node.name.as_str()) {
+                self.errors.push(CompileError::type_error(
+                    format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
+                    alias.span,
+                ));
+            }
+            if !method_names.contains(alias.node.target.as_str()) {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Method alias '{}.{}' targets unknown method '{}'",
+                        owner, alias.node.name, alias.node.target
+                    ),
+                    alias.span,
+                ));
+            }
+            alias_targets.insert(alias.node.name.clone(), (alias.node.target.clone(), alias.span));
+        }
+
+        self.validate_method_alias_cycles(owner, &alias_targets);
+    }
+
+    /// Reject direct and indirect cycles between method aliases on one owner type.
+    fn validate_method_alias_cycles(&mut self, owner: &str, alias_targets: &HashMap<String, (String, Span)>) {
+        let mut reported = HashSet::new();
+        for (name, (_, span)) in alias_targets {
+            let mut path = Vec::new();
+            let mut current = name.clone();
+            while let Some((target, _)) = alias_targets.get(&current) {
+                if let Some(cycle_start) = path.iter().position(|seen| seen == &current) {
+                    let mut cycle = path[cycle_start..].to_vec();
+                    cycle.push(current.clone());
+                    let key = cycle.join(" -> ");
+                    if reported.insert(key.clone()) {
+                        self.errors.push(CompileError::type_error(
+                            format!("Method alias cycle detected on '{owner}': {key}"),
+                            *span,
+                        ));
+                    }
+                    break;
+                }
+                path.push(current);
+                current = target.clone();
+            }
+        }
+    }
+
     /// Check a program and return errors if any.
     ///
     /// Runs the two-pass type-checking algorithm:
@@ -2442,6 +2572,7 @@ impl TypeChecker {
         self.transitive_pub_types.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
+        self.validate_alias_declarations(program);
 
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.
@@ -2449,9 +2580,16 @@ impl TypeChecker {
             self.resolve_pending_trait_supertraits();
         }
 
-        // First pass: collect type declarations
+        // First pass: collect concrete declarations, then aliases after their possible targets are available.
         for decl in &program.declarations {
-            self.collect_declaration(decl);
+            if !matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &program.declarations {
+            if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
         }
 
         self.resolve_pending_trait_supertraits();
@@ -2498,7 +2636,12 @@ impl TypeChecker {
     pub fn import_module(&mut self, module_ast: &Program, _module_name: &str) {
         // Collect only public declarations from the imported module.
         for decl in &module_ast.declarations {
-            if is_public_decl(decl) {
+            if is_public_decl(decl) && !matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &module_ast.declarations {
+            if is_public_decl(decl) && matches!(decl.node, Declaration::Alias(_)) {
                 self.collect_declaration(decl);
             }
         }
@@ -2510,7 +2653,14 @@ impl TypeChecker {
     /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
     pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
         for decl in &module_ast.declarations {
-            self.collect_declaration(decl);
+            if !matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &module_ast.declarations {
+            if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
         }
     }
 
@@ -2548,6 +2698,7 @@ impl TypeChecker {
                         fields: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
+                        method_aliases: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
@@ -2565,6 +2716,7 @@ impl TypeChecker {
                         fields: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
+                        method_aliases: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,
@@ -2576,6 +2728,7 @@ impl TypeChecker {
                     kind: SymbolKind::Trait(TraitInfo {
                         type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         methods: HashMap::new(),
+                        method_aliases: HashMap::new(),
                         requires: Vec::new(),
                         supertraits: Vec::new(),
                     }),
@@ -2600,6 +2753,7 @@ impl TypeChecker {
                         has_interop: !nt.interop_edges.is_empty(),
                         underlying: ResolvedType::Unknown,
                         method_rebindings: HashMap::new(),
+                        method_aliases: HashMap::new(),
                         methods: HashMap::new(),
                     })),
                     span: decl.span,
@@ -2981,6 +3135,7 @@ impl Default for TypeChecker {
     }
 }
 
+/// Return whether a declaration participates in public module import collection.
 fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
     match &decl.node {
         Declaration::Const(c) => matches!(c.visibility, Visibility::Public),
@@ -2988,11 +3143,29 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
         Declaration::Model(m) => matches!(m.visibility, Visibility::Public),
         Declaration::Class(c) => matches!(c.visibility, Visibility::Public),
         Declaration::Enum(e) => matches!(e.visibility, Visibility::Public),
+        Declaration::Alias(a) => matches!(a.visibility, Visibility::Public),
         Declaration::TypeAlias(a) => matches!(a.visibility, Visibility::Public),
         Declaration::Newtype(n) => matches!(n.visibility, Visibility::Public),
         Declaration::Trait(t) => matches!(t.visibility, Visibility::Public),
         Declaration::Function(f) => matches!(f.visibility, Visibility::Public),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => false,
+    }
+}
+
+/// Return the root symbol name declared by a declaration, when it has one.
+fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
+    match &decl.node {
+        Declaration::Const(c) => Some(c.name.as_str()),
+        Declaration::Static(s) => Some(s.name.as_str()),
+        Declaration::Model(m) => Some(m.name.as_str()),
+        Declaration::Class(c) => Some(c.name.as_str()),
+        Declaration::Enum(e) => Some(e.name.as_str()),
+        Declaration::Alias(a) => Some(a.name.as_str()),
+        Declaration::TypeAlias(a) => Some(a.name.as_str()),
+        Declaration::Newtype(n) => Some(n.name.as_str()),
+        Declaration::Trait(t) => Some(t.name.as_str()),
+        Declaration::Function(f) => Some(f.name.as_str()),
+        Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
     }
 }
 

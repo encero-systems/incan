@@ -265,6 +265,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         analyzer.analysis.public_types.insert(name.clone());
                     }
                 }
+                IrDeclKind::SymbolAlias { name, visibility, .. } => {
+                    analyzer.declarations_by_name.insert(name.clone(), decl);
+                    let _ = visibility;
+                }
                 IrDeclKind::Const { name, .. } | IrDeclKind::Static { name, .. } => {
                     analyzer.declarations_by_name.insert(name.clone(), decl);
                 }
@@ -336,6 +340,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 {
                     analyzer.mark_reachable_item(name);
                 }
+                IrDeclKind::SymbolAlias { name, visibility, .. }
+                    if preserve_public_items && !matches!(visibility, Visibility::Private) =>
+                {
+                    analyzer.mark_reachable_item(name);
+                }
                 IrDeclKind::Const { name, visibility, .. }
                     if preserve_public_items && !matches!(visibility, Visibility::Private) =>
                 {
@@ -349,6 +358,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 | IrDeclKind::Enum(_)
                 | IrDeclKind::Trait(_)
                 | IrDeclKind::TypeAlias { .. }
+                | IrDeclKind::SymbolAlias { .. }
                 | IrDeclKind::Const { .. } => {}
             }
         }
@@ -425,6 +435,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrDeclKind::TypeAlias { type_params, ty, .. } => {
                 self.scan_type_params(type_params);
                 self.scan_type(ty);
+            }
+            IrDeclKind::SymbolAlias { target_path, .. } => {
+                if let [target] = target_path.as_slice() {
+                    self.mark_reachable_item(target);
+                }
             }
             IrDeclKind::Const { ty, value, .. } | IrDeclKind::Static { ty, value, .. } => {
                 self.scan_type(ty);
@@ -1287,7 +1302,8 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
-            IrDeclKind::Enum(_) | IrDeclKind::Trait(_) | IrDeclKind::Import { .. } => {}
+            IrDeclKind::Enum(_) | IrDeclKind::Trait(_) | IrDeclKind::Import { .. } | IrDeclKind::SymbolAlias { .. } => {
+            }
             IrDeclKind::TypeAlias { ty, interop_edges, .. } => {
                 Self::collect_union_types_from_type(ty, out);
                 for edge in interop_edges {
@@ -1553,6 +1569,7 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Enum(e) => self.should_emit_decl_name(&e.name, &e.visibility),
             IrDeclKind::Trait(trait_decl) => self.should_emit_decl_name(&trait_decl.name, &trait_decl.visibility),
             IrDeclKind::TypeAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
+            IrDeclKind::SymbolAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Const { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Static { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Import { .. } => true,

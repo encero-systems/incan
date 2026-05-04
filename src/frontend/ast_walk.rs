@@ -61,7 +61,7 @@ where
     F: FnMut(&Expr) -> bool,
 {
     match &decl.node {
-        Declaration::Import(_) | Declaration::TypeAlias(_) | Declaration::Docstring(_) => false,
+        Declaration::Import(_) | Declaration::Alias(_) | Declaration::TypeAlias(_) | Declaration::Docstring(_) => false,
         Declaration::Const(c) => expr_has(&c.value.node, pred),
         Declaration::Static(s) => expr_has(&s.value.node, pred),
         Declaration::Model(m) => {

@@ -57,6 +57,7 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | With | `with` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Extends | `extends` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Pub | `pub` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Alias | `alias` |  | Contextual | - | Definition | Modifier | RFC 083 | 0.3 | Stable |
 | Import | `import` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
 | From | `from` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
 | As | `as` |  | Hard | - | Import | Modifier | RFC 000 | 0.1 | Stable |

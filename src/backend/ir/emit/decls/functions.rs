@@ -947,14 +947,14 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::ListComp {
                 element,
-                variable,
+                pattern,
                 iterable,
                 filter,
                 ..
             } => {
                 Self::collect_expr_used_names(iterable, param_names, shadowed_names, used_names);
                 let mut comp_shadowed = shadowed_names.clone();
-                comp_shadowed.insert(variable.clone());
+                Self::shadow_pattern_bindings(pattern, &mut comp_shadowed);
                 Self::collect_expr_used_names(element, param_names, &comp_shadowed, used_names);
                 if let Some(expr) = filter {
                     Self::collect_expr_used_names(expr, param_names, &comp_shadowed, used_names);
@@ -963,14 +963,14 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::DictComp {
                 key,
                 value,
-                variable,
+                pattern,
                 iterable,
                 filter,
                 ..
             } => {
                 Self::collect_expr_used_names(iterable, param_names, shadowed_names, used_names);
                 let mut comp_shadowed = shadowed_names.clone();
-                comp_shadowed.insert(variable.clone());
+                Self::shadow_pattern_bindings(pattern, &mut comp_shadowed);
                 Self::collect_expr_used_names(key, param_names, &comp_shadowed, used_names);
                 Self::collect_expr_used_names(value, param_names, &comp_shadowed, used_names);
                 if let Some(expr) = filter {

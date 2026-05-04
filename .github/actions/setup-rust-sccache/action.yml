@@ -1,0 +1,17 @@
+name: Setup Rust sccache
+description: Install sccache and configure Cargo/Rust jobs to use a local compiler cache.
+inputs:
+  version:
+    description: sccache release version to install.
+    required: false
+    default: v0.14.0
+runs:
+  using: composite
+  steps:
+    - uses: mozilla-actions/sccache-action@v0.0.10
+      with:
+        version: ${{ inputs.version }}
+    - name: Configure Rust sccache
+      shell: bash
+      run: |
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"

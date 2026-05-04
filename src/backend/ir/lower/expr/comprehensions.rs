@@ -14,7 +14,7 @@ impl AstLowering {
         comp: &ast::ListComp,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         let iter_expr = self.lower_expr_spanned(&comp.iter)?;
-        let var_name = comp.var.clone();
+        let pattern = self.lower_pattern(&comp.pattern.node);
 
         // Build the filter predicate if present
         self.non_linear_context_depth += 1;
@@ -36,7 +36,7 @@ impl AstLowering {
         Ok((
             IrExprKind::ListComp {
                 element: Box::new(map_expr),
-                variable: var_name,
+                pattern: Box::new(pattern),
                 iterable: Box::new(iter_expr),
                 filter: filter_tokens,
             },
@@ -50,7 +50,7 @@ impl AstLowering {
         comp: &ast::DictComp,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         let iter_expr = self.lower_expr_spanned(&comp.iter)?;
-        let var_name = comp.var.clone();
+        let pattern = self.lower_pattern(&comp.pattern.node);
 
         self.non_linear_context_depth += 1;
         let filter_tokens_result: Result<Option<Box<TypedExpr>>, LoweringError> = if let Some(filter) = &comp.filter {
@@ -73,7 +73,7 @@ impl AstLowering {
             IrExprKind::DictComp {
                 key: Box::new(key_expr),
                 value: Box::new(value_expr),
-                variable: var_name,
+                pattern: Box::new(pattern),
                 iterable: Box::new(iter_expr),
                 filter: filter_tokens,
             },

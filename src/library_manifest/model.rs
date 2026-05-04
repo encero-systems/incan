@@ -10,9 +10,9 @@ use super::{DslSurface, LIBRARY_MANIFEST_FORMAT, VocabKeywordRegistration, Vocab
 use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
-    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedFunctionExport,
-    CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport, CheckedTraitExport,
-    CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
+    CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind,
+    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport,
+    CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 
@@ -64,6 +64,7 @@ pub struct LibraryManifest {
 /// Public library exports grouped by declaration kind.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LibraryExports {
+    pub aliases: Vec<AliasExport>,
     pub models: Vec<ModelExport>,
     pub classes: Vec<ClassExport>,
     pub functions: Vec<FunctionExport>,
@@ -73,6 +74,13 @@ pub struct LibraryExports {
     pub newtypes: Vec<NewtypeExport>,
     pub consts: Vec<ConstExport>,
     pub statics: Vec<StaticExport>,
+}
+
+/// Exported declaration-level alias metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AliasExport {
+    pub name: String,
+    pub target_path: Vec<String>,
 }
 
 /// RFC 048 metadata persisted into `.incnlib`.
@@ -208,6 +216,8 @@ pub enum ReceiverExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodExport {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_of: Option<String>,
     pub type_params: Vec<TypeParamExport>,
     /// Receiver requirement when the method is invoked on a type instance.
     pub receiver: Option<ReceiverExport>,
@@ -455,6 +465,7 @@ impl LibraryManifest {
 }
 
 impl LibraryExports {
+    /// Build manifest exports from checked frontend exports.
     fn from_checked_exports(exports: &[CheckedNamedExport]) -> Self {
         let mut model = Self::default();
 
@@ -462,6 +473,9 @@ impl LibraryExports {
             match &export.kind {
                 CheckedExportKind::Function(function_export) => {
                     model.functions.push(function_export_from_checked(function_export));
+                }
+                CheckedExportKind::Alias(alias_export) => {
+                    model.aliases.push(alias_export_from_checked(alias_export));
                 }
                 CheckedExportKind::TypeAlias(type_alias_export) => {
                     model
@@ -496,8 +510,10 @@ impl LibraryExports {
         model
     }
 
+    /// Sort every export group by stable public name.
     fn sort_deterministically(&mut self) {
         self.models.sort_by(|left, right| left.name.cmp(&right.name));
+        self.aliases.sort_by(|left, right| left.name.cmp(&right.name));
         self.classes.sort_by(|left, right| left.name.cmp(&right.name));
         self.functions.sort_by(|left, right| left.name.cmp(&right.name));
         self.traits.sort_by(|left, right| left.name.cmp(&right.name));
@@ -506,6 +522,14 @@ impl LibraryExports {
         self.newtypes.sort_by(|left, right| left.name.cmp(&right.name));
         self.consts.sort_by(|left, right| left.name.cmp(&right.name));
         self.statics.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+}
+
+/// Convert checked alias metadata into manifest alias metadata.
+fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
+    AliasExport {
+        name: export.name.clone(),
+        target_path: export.target_path.clone(),
     }
 }
 
@@ -552,9 +576,11 @@ fn receiver_from_checked(receiver: Option<crate::frontend::ast::Receiver>) -> Op
     })
 }
 
+/// Convert checked method metadata into manifest method metadata.
 fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
+        alias_of: method.alias_of.clone(),
         type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
         params: params_from_checked(&method.params),

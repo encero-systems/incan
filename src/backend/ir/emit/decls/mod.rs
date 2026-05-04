@@ -69,6 +69,25 @@ impl<'a> IrEmitter<'a> {
                     #vis type #name_ident #generics = #ty_tokens;
                 })
             }
+            IrDeclKind::SymbolAlias {
+                visibility,
+                name,
+                target_path,
+            } => {
+                let vis = self.emit_visibility(visibility);
+                let name_ident = format_ident!("{}", name);
+                let target_segments = target_path
+                    .iter()
+                    .map(|segment| {
+                        let ident = format_ident!("{}", segment);
+                        quote! { #ident }
+                    })
+                    .collect::<Vec<_>>();
+                let target = join_path_tokens(&target_segments);
+                Ok(quote! {
+                    #vis use #target as #name_ident;
+                })
+            }
             IrDeclKind::Const {
                 visibility,
                 name,

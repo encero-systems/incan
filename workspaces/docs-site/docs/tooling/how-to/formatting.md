@@ -42,6 +42,7 @@ In particular, the current formatter contract includes:
 
 - `4`-space indentation
 - a `120`-character line-length target
+- best-effort wrapping for long parenthesized logical expression chains at `and` / `or` breakpoints
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
 - comment placement that remains same-scope and structure-aware
@@ -88,6 +89,20 @@ Default settings:
 
 The same formatting behavior applies through both `incan fmt` and the library formatter API.
 `FormatConfig` controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.
+
+## Logical Expression Chains
+
+When a parenthesized logical expression chain exceeds the configured line-length target, `incan fmt` may split the chain onto multiple lines with the `and` / `or` operators leading each continuation line:
+
+```incan
+return (
+    item.kind_name == "filter"
+    and item.predicate_kind_name == "bool_literal"
+    and item.source_name == "rewritten_prism_node"
+)
+```
+
+Short parenthesized logical expressions remain inline.
 
 ## Limitations
 
