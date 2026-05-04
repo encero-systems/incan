@@ -68,6 +68,17 @@ impl<'a> IrEmitter<'a> {
         callable_signature: Option<&FunctionSignature>,
         base_use_site: ValueUseSite<'_>,
     ) -> Result<Vec<TokenStream>, EmitError> {
+        let receiver_signature = self.method_signature_for_receiver(&receiver.ty, method);
+        let callable_signature = match (callable_signature, receiver_signature) {
+            (Some(call_sig), Some(method_sig))
+                if call_sig.params.iter().all(|param| param.default.is_none())
+                    && method_sig.params.iter().any(|param| param.default.is_some()) =>
+            {
+                Some(method_sig)
+            }
+            (Some(call_sig), _) => Some(call_sig),
+            (None, method_sig) => method_sig,
+        };
         if let Some(sig) = callable_signature
             && sig
                 .params
@@ -77,11 +88,61 @@ impl<'a> IrEmitter<'a> {
             return self.emit_rest_aware_call_args(receiver, args, sig);
         }
 
-        args.iter()
+        let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature {
+            if args.iter().any(|arg| arg.name.is_some()) {
+                let mut positional: Vec<TypedExpr> = Vec::new();
+                let mut named: std::collections::HashMap<&str, TypedExpr> = std::collections::HashMap::new();
+                for arg in args {
+                    if let Some(name) = arg.name.as_deref() {
+                        named.insert(name, arg.expr.clone());
+                    } else {
+                        positional.push(arg.expr.clone());
+                    }
+                }
+
+                let mut pos_idx = 0usize;
+                let mut out = Vec::new();
+                for param in &sig.params {
+                    if let Some(value) = named.get(param.name.as_str()) {
+                        out.push((value.clone(), false));
+                    } else if pos_idx < positional.len() {
+                        out.push((positional[pos_idx].clone(), false));
+                        pos_idx += 1;
+                    } else if let Some(default_arg) = &param.default {
+                        out.push((default_arg.clone(), true));
+                    }
+                }
+                out
+            } else {
+                let mut out: Vec<(TypedExpr, bool)> = args.iter().map(|arg| (arg.expr.clone(), false)).collect();
+                for param in sig.params.iter().skip(out.len()) {
+                    if let Some(default_arg) = &param.default {
+                        out.push((default_arg.clone(), true));
+                    } else {
+                        break;
+                    }
+                }
+                out
+            }
+        } else {
+            args.iter().map(|arg| (arg.expr.clone(), false)).collect()
+        };
+
+        ordered_args
+            .iter()
             .enumerate()
-            .map(|(idx, arg)| {
-                let mut emitted = self.emit_expr_for_use(&arg.expr, base_use_site)?;
-                if idx == 0 && method == "take" && matches!(arg.expr.ty, IrType::Int) {
+            .map(|(idx, (arg, from_default))| {
+                let previous_qualify = if *from_default {
+                    Some(self.qualify_internal_canonical_paths.replace(true))
+                } else {
+                    None
+                };
+                let emitted = self.emit_expr_for_use(arg, base_use_site);
+                if let Some(previous) = previous_qualify {
+                    self.qualify_internal_canonical_paths.replace(previous);
+                }
+                let mut emitted = emitted?;
+                if idx == 0 && method == "take" && matches!(arg.ty, IrType::Int) {
                     emitted = quote! {
                         match u64::try_from(#emitted) {
                             Ok(__incan_take_count) => __incan_take_count,
@@ -97,34 +158,33 @@ impl<'a> IrEmitter<'a> {
                 if idx == 0
                     && Self::receiver_type_for_method_dispatch(&receiver.ty).nominal_type_name() == Some("Path")
                     && Self::method_first_arg_is_path_or_str_union(method)
-                    && let Some(wrapped) =
-                        self.emit_union_payload_arg(&arg.expr, &Self::path_or_str_union_type(), None)?
+                    && let Some(wrapped) = self.emit_union_payload_arg(arg, &Self::path_or_str_union_type(), None)?
                 {
                     return Ok(wrapped);
                 }
                 let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
-                    if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.expr.ty) {
+                    if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
                         emitted = quote! { &mut #emitted };
-                    } else if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.expr.ty) {
+                    } else if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
                         emitted = quote! { &#emitted };
                     }
                     return Ok(emitted);
                 };
-                if let Some(wrapped) = self.emit_union_payload_arg(&arg.expr, &param.ty, None)? {
+                if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.expr.ty) {
+                if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
                     return Ok(quote! { &mut #emitted });
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.expr.ty) {
+                if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
                     return Ok(quote! { &#emitted });
                 }
                 match &param.ty {
-                    IrType::Ref(_) => match &arg.expr.ty {
+                    IrType::Ref(_) => match &arg.ty {
                         IrType::Ref(_) | IrType::RefMut(_) => {}
                         _ => emitted = quote! { &#emitted },
                     },
-                    IrType::RefMut(_) => match &arg.expr.ty {
+                    IrType::RefMut(_) => match &arg.ty {
                         IrType::Ref(_) | IrType::RefMut(_) => {}
                         _ => emitted = quote! { &mut #emitted },
                     },

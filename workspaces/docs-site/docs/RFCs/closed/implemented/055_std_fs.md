@@ -173,7 +173,7 @@ This subsection names the user-visible spellings. It is not an implementation pl
 
 #### `OpenOptions`
 
-- `OpenOptions.new() -> OpenOptions`.
+- `OpenOptions() -> OpenOptions`.
 - `read(v: bool) -> OpenOptions`, `write(v: bool) -> OpenOptions`, `append(v: bool) -> OpenOptions`, `truncate(v: bool) -> OpenOptions`.
 - `create(v: bool) -> OpenOptions`, `create_new(v: bool) -> OpenOptions`.
 - `open(path: Path | str) -> Result[File, E]`.

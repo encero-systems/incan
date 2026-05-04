@@ -553,6 +553,25 @@ fn is_result_like_type(ty: &IrType) -> bool {
     }
 }
 
+/// Whether a value type came from Rust interop and can reasonably cross an Incan `str` boundary via `ToString`.
+///
+/// Lowering maps `ResolvedType::RustPath` to `IrType::Struct(path)`, so the stable signal left in IR is a Rust-style
+/// path. Keep this narrower than "any struct" so user-defined Incan structs do not silently stringify at ordinary
+/// `str` parameters.
+fn is_rust_path_value_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.contains("::"),
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_rust_path_value_type(inner),
+        _ => false,
+    }
+}
+
+/// Whether a Rust interop value should be stringified for an Incan `str` target.
+fn rust_value_needs_stringification(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    matches!(target_ty, Some(IrType::String))
+        && (matches!(expr.ty, IrType::Unknown) || is_rust_path_value_type(&expr.ty))
+}
+
 /// Whether a field projection must clone instead of moving directly from its parent object.
 ///
 /// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
@@ -629,6 +648,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
                 // boundaries.
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // Rust interop values that cross into an Incan `str` parameter should use Rust's Display/ToString
+                // boundary. This keeps callers from spelling `.to_string()` manually when matching on Rust errors.
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -665,6 +687,7 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Const `str` values remain owned `str` at the Incan surface even inside return-context calls.
                 (_, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -967,6 +990,66 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_rust_path_value_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("std::io::Error".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust interop values passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_unknown_rust_payload_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust-inspected unknown payloads passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_local_struct_to_string_param_does_not_stringify_implicitly() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Clone,
+            "only Rust-path values should receive implicit ToString conversion for str parameters"
+        );
     }
 
     #[test]

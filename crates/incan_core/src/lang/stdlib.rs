@@ -249,7 +249,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         name: "fs",
         feature: None,
         extra_crate_deps: &[],
-        submodules: &[],
+        submodules: &["path", "file", "metadata", "glob", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {
@@ -437,7 +437,11 @@ mod tests {
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "fs"])),
-            Some("stdlib/fs.incn".to_string())
+            Some("stdlib/fs/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "fs", "path"])),
+            Some("stdlib/fs/path.incn".to_string())
         );
     }
 
@@ -522,7 +526,7 @@ mod tests {
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(fs_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
         assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
         assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(

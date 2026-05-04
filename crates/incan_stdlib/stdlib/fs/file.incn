@@ -1,0 +1,654 @@
+from rust::std::cell import RefCell
+from rust::std::fs import File as RustFile, OpenOptions as RustOpenOptions
+from rust::std::io import Read, Seek, SeekFrom, Write
+from rust::std::path import Path as RustPath
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::encoding_rs @ "0.8" import Encoding
+from std.fs.path import Path, IoError, _as_path, _io_error
+
+
+pub class File:
+    """
+    Open file handle returned by `Path.open()` or `OpenOptions.open()`.
+
+    Reads and writes operate at the handle cursor. Use bounded reads for large files, `flush()` to push buffered writes
+    to the host handle, and `sync()` or `sync_data()` when durability matters.
+
+    Example:
+
+    ```incan
+    file = Path("events.log").open("a")?
+    file.write("started\n")?
+    file.flush()?
+    ```
+    """
+
+    pub path: Path
+    pub mode: str
+    pub handle: Rc[RefCell[RustFile]]
+    pub encoding: Option[str]
+    pub errors: Option[str]
+    pub newline: Option[str]
+
+    def read(self, size: int) -> Result[str, IoError]:
+        """
+        Read text from the current cursor.
+
+        Args:
+            size: Maximum bytes to read before decoding. Use a negative value to read through EOF.
+
+        Returns:
+            Decoded text, or `Err(IoError)` for I/O or decoding failures.
+        """
+        data = self.read_bytes(size)?
+        encoding = _option_or_str(self.encoding, "utf-8")
+        errors = _option_or_str(self.errors, "strict")
+        return _decode_text(self.path, data, encoding, errors)
+
+    def read_bytes(self, size: int) -> Result[bytes, IoError]:
+        """
+        Read bytes from the current cursor.
+
+        Args:
+            size: Maximum bytes to read. Use a negative value to read through EOF.
+
+        Returns:
+            Bytes read from the file, or `Err(IoError)`.
+        """
+        mut buf: bytes = b""
+        mut file = self.handle.borrow_mut()
+        if size < 0:
+            match file.read_to_end(buf):
+                Ok(_) => return Ok(buf)
+                Err(err) => return Err(_io_error(self.path, err))
+        match Read.by_ref(file).take(size).read_to_end(buf):
+            Ok(_) => return Ok(buf)
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def read_exact(self, size: int) -> Result[bytes, IoError]:
+        """
+        Read exactly `size` bytes.
+
+        Args:
+            size: Number of bytes required.
+
+        Returns:
+            Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the file ends early.
+        """
+        chunk = self.read_bytes(size)?
+        if len(chunk) != size:
+            return Err(
+                IoError(path=self.path, kind="unexpected_eof", detail="file ended before read_exact size"),
+            )
+        return Ok(chunk)
+
+    def write(self, data: str) -> Result[int, IoError]:
+        """
+        Write text at the current cursor.
+
+        Args:
+            data: Text to encode and write.
+
+        Returns:
+            Number of characters accepted for writing, or `Err(IoError)`.
+        """
+        mut out = data
+        if let Some(line_ending) = self.newline:
+            out = out.replace("\n", line_ending)
+        mut file = self.handle.borrow_mut()
+        encoding = _option_or_str(self.encoding, "utf-8")
+        errors = _option_or_str(self.errors, "strict")
+        bytes_out = _encode_text(self.path, out, encoding, errors)?
+        match file.write_all(bytes_out):
+            Ok(_) => return Ok(len(out))
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def write_bytes(self, data: bytes) -> Result[int, IoError]:
+        """
+        Write bytes at the current cursor.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            Number of bytes accepted for writing, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+        match file.write_all(data):
+            Ok(_) => return Ok(len(data))
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def tell(self) -> Result[int, IoError]:
+        """
+        Return the current byte offset.
+
+        Returns:
+            Current stream position in bytes, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+        match file.stream_position():
+            Ok(pos) => return Ok(int(pos))
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def seek(self, offset: int, whence: int) -> Result[int, IoError]:
+        """
+        Move the file cursor and return the new byte offset.
+
+        `whence=0` seeks to an absolute offset, `whence=1` seeks relative to the current cursor, and any other value
+        seeks relative to the end.
+
+        Args:
+            offset: Byte offset interpreted relative to `whence`.
+            whence: `0` for start, `1` for current position, any other value for end.
+
+        Returns:
+            New byte offset after seeking, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+
+        # Absolute seeks reuse Rust's current-position primitive after computing the delta from the current cursor.
+        if whence == 0:
+            match file.stream_position():
+                Ok(pos) =>
+                    delta = offset - int(pos)
+                    match file.seek(SeekFrom.Current(delta)):
+                        Ok(new_pos) => return Ok(int(new_pos))
+                        Err(err) => return Err(_io_error(self.path, err))
+                Err(err) => return Err(_io_error(self.path, err))
+
+        # Current-position and end-relative seeks map directly to host seek modes.
+        elif whence == 1:
+            match file.seek(SeekFrom.Current(offset)):
+                Ok(new_pos) => return Ok(int(new_pos))
+                Err(err) => return Err(_io_error(self.path, err))
+        else:
+            match file.seek(SeekFrom.End(offset)):
+                Ok(new_pos) => return Ok(int(new_pos))
+                Err(err) => return Err(_io_error(self.path, err))
+
+    def flush(self) -> Result[None, IoError]:
+        """
+        Flush buffered writes from the handle.
+
+        Returns:
+            `Ok(None)` after flushing, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+        match file.flush():
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def sync(self) -> Result[None, IoError]:
+        """
+        Synchronize file data and metadata to durable storage.
+
+        Returns:
+            `Ok(None)` after the host completes the sync request, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+        match file.sync_all():
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def fsync(self) -> Result[None, IoError]:
+        """
+        Synchronize file data and metadata to durable storage.
+
+        Returns:
+            The result of `sync()`.
+        """
+        return self.sync()
+
+    def sync_data(self) -> Result[None, IoError]:
+        """
+        Synchronize file data without requiring all metadata.
+
+        Returns:
+            `Ok(None)` after the host completes the data sync request, or `Err(IoError)`.
+        """
+        mut file = self.handle.borrow_mut()
+        match file.sync_data():
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self.path, err))
+
+
+pub class OpenOptions:
+    """
+    Builder for explicit file-open flags.
+
+    Use `OpenOptions` when mode strings are too compact or a caller needs to set read, write, append, create, truncate,
+    and exclusive-create behavior directly before opening a path.
+
+    Example:
+
+    ```incan
+    file = OpenOptions().read(true).write(true).create(true).open(Path("state.db"))?
+    file.write_bytes(b"ok")?
+    ```
+    """
+
+    pub readable: bool = false
+    pub writable: bool = false
+    pub appendable: bool = false
+    pub truncating: bool = false
+    pub creating: bool = false
+    pub creating_new: bool = false
+
+    def read(mut self, value: bool) -> OpenOptions:
+        """
+        Set read access.
+
+        Args:
+            value: Whether the opened handle may read.
+
+        Returns:
+            The updated builder.
+        """
+        self.readable = value
+        return self
+
+    def write(mut self, value: bool) -> OpenOptions:
+        """
+        Set write access.
+
+        Args:
+            value: Whether the opened handle may write.
+
+        Returns:
+            The updated builder.
+        """
+        self.writable = value
+        return self
+
+    def append(mut self, value: bool) -> OpenOptions:
+        """
+        Set append mode.
+
+        Args:
+            value: Whether writes append to the end of the file.
+
+        Returns:
+            The updated builder.
+        """
+        self.appendable = value
+        return self
+
+    def truncate(mut self, value: bool) -> OpenOptions:
+        """
+        Set truncate-on-open behavior.
+
+        Args:
+            value: Whether opening truncates the file to zero length.
+
+        Returns:
+            The updated builder.
+        """
+        self.truncating = value
+        return self
+
+    def create(mut self, value: bool) -> OpenOptions:
+        """
+        Set create-if-missing behavior.
+
+        Args:
+            value: Whether opening creates the file when it is missing.
+
+        Returns:
+            The updated builder.
+        """
+        self.creating = value
+        return self
+
+    def create_new(mut self, value: bool) -> OpenOptions:
+        """
+        Set exclusive creation behavior.
+
+        Args:
+            value: Whether opening must create a new file and fail if it already exists.
+
+        Returns:
+            The updated builder.
+        """
+        self.creating_new = value
+        return self
+
+    def open(self, path: Union[Path, str]) -> Result[File, IoError]:
+        """
+        Open a path with these flags.
+
+        Args:
+            path: Path to open.
+
+        Returns:
+            A live `File` handle, or `Err(IoError)` if the flag combination or host open fails.
+        """
+        p = _as_path(path)
+        mode = _mode_from_flags(self.readable, self.writable, self.appendable, self.truncating, self.creating_new)
+
+        mut opts = RustOpenOptions.new()
+        opts.read(self.readable)
+        opts.write(self.writable)
+        opts.append(self.appendable)
+        opts.truncate(self.truncating)
+        opts.create(self.creating)
+        opts.create_new(self.creating_new)
+
+        match opts.open(RustPath.new(p.0)):
+            Ok(handle) =>
+                return Ok(
+                    File(path=p, mode=mode, handle=Rc.new(RefCell.new(handle)), encoding=None, errors=None, newline=None),
+                )
+            Err(err) => return Err(_io_error(p, err))
+
+
+pub enum OpenFileMode(str):
+    """
+    String-backed text file modes accepted by `Path.open()`.
+
+    The enum names expose the behavior behind compact mode strings while preserving the exact string value used by the
+    file APIs. Binary modes are accepted by inserting `b` before the optional `+`, for example `rb` or `wb+`.
+
+    Example:
+
+    ```incan
+    mode = OpenFileMode.ReadWriteTruncate
+    file = Path("events.log").open(mode.value())?
+    ```
+    """
+
+    ReadOnly = "r"
+    WriteTruncate = "w"
+    Append = "a"
+    ExclusiveCreate = "x"
+    ReadWrite = "r+"
+    ReadWriteTruncate = "w+"
+    ReadAppend = "a+"
+    ReadExclusiveCreate = "x+"
+
+
+pub def _validate_open_options(
+    path: Path,
+    mode: str,
+    buffering: int,
+    encoding: Option[str],
+    errors: Option[str],
+    newline: Option[str],
+) -> Result[None, IoError]:
+    """
+    Validate `Path.open()` mode and text/binary options before touching the host.
+
+    Args:
+        path: Path used for error context.
+        mode: User-provided mode string.
+        buffering: Buffering selector accepted by `Path.open()`.
+        encoding: Optional text encoding label.
+        errors: Optional text error strategy.
+        newline: Optional text newline replacement.
+
+    Returns:
+        `Ok(None)` when the option set is coherent, or `Err(IoError)` with kind `invalid_input`.
+    """
+    if buffering != -1 and buffering != 0:
+        return Err(
+            IoError(
+                path=path,
+                kind="invalid_input",
+                detail="std.fs open currently supports default buffering (-1) or unbuffered binary mode (0)",
+            ),
+        )
+    if buffering == 0 and not _is_binary_open_file_mode(mode):
+        return Err(IoError(path=path, kind="invalid_input", detail="unbuffered std.fs open requires binary mode"))
+    if _is_binary_open_file_mode(mode):
+        if let Some(_) = encoding:
+            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept encoding"))
+        if let Some(_) = errors:
+            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept errors"))
+        if let Some(_) = newline:
+            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept newline"))
+        return Ok(None)
+    if let Some(value) = encoding:
+        _validate_text_encoding(path, value)?
+    if let Some(value) = errors:
+        _validate_text_errors(path, value)?
+    return Ok(None)
+
+
+def _validate_text_encoding(path: Path, encoding: str) -> Result[None, IoError]:
+    """
+    Check that `encoding_rs` recognizes a text encoding label.
+
+    Args:
+        path: Path used for error context.
+        encoding: User-provided encoding label.
+
+    Returns:
+        `Ok(None)` for a known label, or `Err(IoError)` with kind `invalid_input`.
+    """
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(_) => return Ok(None)
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
+    """
+    Check that a text error strategy is supported.
+
+    Args:
+        path: Path used for error context.
+        errors: User-provided text error strategy.
+
+    Returns:
+        `Ok(None)` for `strict` or `replace`, otherwise `Err(IoError)`.
+    """
+    if errors == "strict" or errors == "replace":
+        return Ok(None)
+    return Err(IoError(path=path, kind="invalid_input", detail="std.fs text errors must be strict or replace"))
+
+
+pub def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Result[str, IoError]:
+    """
+    Decode bytes with std.fs text rules.
+
+    Args:
+        path: Path used for error context.
+        data: Raw bytes to decode.
+        encoding: Encoding label accepted by `encoding_rs`.
+        errors: `strict` to reject malformed data, or `replace` to accept replacement characters.
+
+    Returns:
+        Decoded text with CRLF/CR normalized to LF, or `Err(IoError)`.
+    """
+    _validate_text_errors(path, errors)?
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(enc) =>
+            decoded = enc.decode(data)
+            if decoded.2 and errors == "strict":
+                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be decoded as {encoding}"))
+            return Ok(_normalize_newlines(decoded.0.to_string()))
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+pub def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Result[bytes, IoError]:
+    """
+    Encode text with std.fs text rules.
+
+    Args:
+        path: Path used for error context.
+        data: Text to encode.
+        encoding: Encoding label accepted by `encoding_rs`.
+        errors: `strict` to reject unmappable text, or `replace` to accept replacement bytes.
+
+    Returns:
+        Encoded bytes, or `Err(IoError)`.
+    """
+    _validate_text_errors(path, errors)?
+    label = RustString.from(encoding).into_bytes()
+    match Encoding.for_label(label):
+        Some(enc) =>
+            encoded = enc.encode(data)
+            if encoded.2 and errors == "strict":
+                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be encoded as {encoding}"))
+            return Ok(encoded.0.to_vec())
+        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+
+
+def _option_or_str(value: Option[str], fallback: str) -> str:
+    """
+    Return an optional string or its fallback.
+
+    Args:
+        value: Optional string value.
+        fallback: Default value used when `value` is `None`.
+
+    Returns:
+        The contained string or `fallback`.
+    """
+    match value:
+        Some(inner) => return inner
+        None => return fallback
+
+
+def _normalize_newlines(data: str) -> str:
+    """
+    Normalize CRLF and CR line endings to LF.
+
+    Args:
+        data: Text to normalize.
+
+    Returns:
+        Text with all line endings represented as `\n`.
+    """
+    return data.replace("\r\n", "\n").replace("\r", "\n")
+
+
+pub def _open_file(path: Path, mode: str) -> Result[RustFile, IoError]:
+    """
+    Open a host file using a std.fs mode string.
+
+    Args:
+        path: Path to open.
+        mode: User-provided mode string.
+
+    Returns:
+        Host file handle, or `Err(IoError)` when the mode or host open fails.
+    """
+    mode_spec = _open_file_mode(path, mode)?
+    opts = _open_file_options(mode_spec)
+    match opts.open(RustPath.new(path.0)):
+        Ok(handle) => return Ok(handle)
+        Err(err) => return Err(_io_error(path, err))
+
+
+def _open_file_mode(path: Path, mode: str) -> Result[OpenFileMode, IoError]:
+    """
+    Convert a mode string into its text-mode enum value.
+
+    Args:
+        path: Path used for error context.
+        mode: Text or binary mode string.
+
+    Returns:
+        Canonical text mode enum, or `Err(IoError)` for unknown modes.
+    """
+    if let Some(spec) = OpenFileMode.from_value(_canonical_open_file_mode(mode)):
+        return Ok(spec)
+    return Err(IoError(path=path, kind="invalid_input", detail=f"invalid file mode: {mode}"))
+
+
+def _canonical_open_file_mode(mode: str) -> str:
+    """
+    Remove a legal binary marker from an otherwise valid mode string.
+
+    Args:
+        mode: Text or binary mode string.
+
+    Returns:
+        Canonical text-mode spelling.
+    """
+    if mode.endswith("b+"):
+        return f"{mode[0:len(mode) - 2]}+"
+    if mode.endswith("b"):
+        return mode[0:len(mode) - 1]
+    return mode
+
+
+def _is_binary_open_file_mode(mode: str) -> bool:
+    """
+    Return whether a mode string requests binary I/O.
+
+    Args:
+        mode: Mode string passed to `Path.open()`.
+
+    Returns:
+        `true` when `b` appears in a supported binary position.
+    """
+    return mode.endswith("b") or mode.endswith("b+")
+
+
+def _open_file_options(mode: OpenFileMode) -> RustOpenOptions:
+    """
+    Build Rust open options for one canonical text mode.
+
+    Args:
+        mode: Canonical open mode.
+
+    Returns:
+        Configured Rust `OpenOptions`.
+    """
+    mut opts = RustOpenOptions.new()
+    match mode:
+        OpenFileMode.ReadOnly => opts.read(true)
+        OpenFileMode.WriteTruncate => opts.write(true).create(true).truncate(true)
+        OpenFileMode.Append => opts.append(true).create(true)
+        OpenFileMode.ExclusiveCreate => opts.write(true).create_new(true)
+        OpenFileMode.ReadWrite => opts.read(true).write(true)
+        OpenFileMode.ReadWriteTruncate => opts.read(true).write(true).create(true).truncate(true)
+        OpenFileMode.ReadAppend => opts.read(true).append(true).create(true)
+        OpenFileMode.ReadExclusiveCreate => opts.read(true).write(true).create_new(true)
+    return opts
+
+
+def _mode_from_flags(readable: bool, writable: bool, appendable: bool, truncating: bool, creating_new: bool) -> str:
+    """
+    Render `OpenOptions` flags as a compact std.fs mode string.
+
+    Args:
+        readable: Whether the handle can read.
+        writable: Whether the handle can write.
+        appendable: Whether writes append.
+        truncating: Whether opening truncates.
+        creating_new: Whether opening requires exclusive creation.
+
+    Returns:
+        Mode string used for the resulting `File.mode`.
+    """
+    if appendable:
+        return _plus_mode("a", readable)
+    if creating_new:
+        return _plus_mode("x", readable)
+    if truncating:
+        return _plus_mode("w", readable)
+    if writable and readable:
+        return "r+"
+    if writable:
+        return "w"
+    return "r"
+
+
+def _plus_mode(base: str, readable: bool) -> str:
+    """
+    Add `+` to a base mode when read access is enabled.
+
+    Args:
+        base: Base mode such as `a`, `w`, or `x`.
+        readable: Whether the mode also allows reads.
+
+    Returns:
+        `base` or `base+`.
+    """
+    if readable:
+        return f"{base}+"
+    return base

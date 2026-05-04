@@ -59,6 +59,8 @@ impl TypeChecker {
             &mut type_bindings,
             call_span,
         );
+        self.type_info
+            .record_call_site_callable_params(call_span, &params_with_explicit);
         self.emit_explicit_bound_errors(
             func_name,
             &info.type_param_bounds,
