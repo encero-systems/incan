@@ -309,7 +309,10 @@ impl AstLowering {
                     IrType::Tuple(args.iter().map(|t| self.lower_resolved_type(t)).collect())
                 }
                 GenericBaseKind::Collection(
-                    CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                    CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Generator,
                 ) => {
                     // Normalize to canonical spelling from incan_core.
                     let Some(id) = collections::from_str(name.as_str()) else {
@@ -417,7 +420,10 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Tuple) => IrType::Tuple(lowered_params),
                     GenericBaseKind::Collection(
-                        CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                        CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::FrozenDict
+                        | CollectionTypeId::Generator,
                     ) => {
                         let Some(id) = collections::from_str(base.as_str()) else {
                             return IrType::NamedGeneric(base.clone(), lowered_params);

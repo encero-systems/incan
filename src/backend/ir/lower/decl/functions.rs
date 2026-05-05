@@ -1,11 +1,35 @@
 //! Function declaration lowering.
 
 use super::super::super::Mutability;
-use super::super::super::decl::{FunctionParam, IrFunction};
+use super::super::super::decl::{FunctionParam, IrFunction, IrTraitBound, IrTraitBoundOrigin};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
+use incan_core::lang::types::collections::{self, CollectionTypeId};
+
+/// Return whether a lowered callable return type is the canonical `Generator[...]` wrapper.
+fn return_type_is_generator(ty: &IrType) -> bool {
+    matches!(ty, IrType::NamedGeneric(name, _)
+        if collections::from_str(name.as_str()) == Some(CollectionTypeId::Generator))
+}
+
+/// Return whether a function body contains a source `yield` expression.
+fn body_contains_yield(body: &[ast::Spanned<ast::Statement>]) -> bool {
+    body.iter().any(|stmt| match &stmt.node {
+        ast::Statement::Expr(expr) | ast::Statement::Return(Some(expr)) => matches!(expr.node, ast::Expr::Yield(_)),
+        ast::Statement::If(stmt) => {
+            body_contains_yield(&stmt.then_body)
+                || stmt.elif_branches.iter().any(|(_, body)| body_contains_yield(body))
+                || stmt.else_body.as_ref().is_some_and(|body| body_contains_yield(body))
+        }
+        ast::Statement::Loop(stmt) => body_contains_yield(&stmt.body),
+        ast::Statement::While(stmt) => body_contains_yield(&stmt.body),
+        ast::Statement::For(stmt) => body_contains_yield(&stmt.body),
+        ast::Statement::VocabBlock(stmt) => body_contains_yield(&stmt.body),
+        _ => false,
+    })
+}
 
 impl AstLowering {
     /// Lower a function declaration.
@@ -69,6 +93,7 @@ impl AstLowering {
             .collect();
 
         let return_type = self.lower_callable_return_type(&f.return_type.node, Some(&type_param_names));
+        let is_generator = return_type_is_generator(&return_type) && body_contains_yield(&f.body);
         let body = self.lower_statements(&f.body)?;
         self.pop_scope();
 
@@ -79,6 +104,22 @@ impl AstLowering {
 
         let mut all_type_params = Self::lower_type_params(&f.type_params);
         all_type_params.extend(hidden_type_params);
+        if is_generator {
+            for type_param in &mut all_type_params {
+                for trait_path in ["Send", "Static"] {
+                    if !type_param.bounds.iter().any(|bound| {
+                        bound.origin == IrTraitBoundOrigin::RustCapability && bound.trait_path == trait_path
+                    }) {
+                        type_param.bounds.push(IrTraitBound {
+                            trait_path: trait_path.to_string(),
+                            type_args: Vec::new(),
+                            assoc_types: Vec::new(),
+                            origin: IrTraitBoundOrigin::RustCapability,
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(IrFunction {
             name: f.name.clone(),
@@ -86,6 +127,7 @@ impl AstLowering {
             return_type,
             body,
             is_async: f.is_async(),
+            is_generator,
             visibility: Self::map_visibility(f.visibility),
             type_params: all_type_params,
             is_extern,

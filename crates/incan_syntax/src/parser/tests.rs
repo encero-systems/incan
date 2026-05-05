@@ -2745,6 +2745,99 @@ def main() -> int:
         Ok(())
     }
 
+    #[test]
+    fn test_parse_generator_expression_full_clause_shape() -> Result<(), Vec<CompileError>> {
+        let source = "def run(xs: list[int], ys: list[int]) -> Generator[int]:\n  return (x * y for x in xs if x > 0 for y in ys if y > x)\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        assert_eq!(generator.clauses.len(), 4);
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected first for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("x".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "xs"));
+        assert!(matches!(generator.clauses[1], ComprehensionClause::If(_)));
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[2] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected second for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("y".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "ys"));
+        assert!(matches!(generator.clauses[3], ComprehensionClause::If(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_expression_tuple_unpack_binding() -> Result<(), Vec<CompileError>> {
+        let source = "def names(xs: list[str]) -> Generator[str]:\n  return (name for idx, name in enumerate(xs))\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        let ComprehensionClause::For { pattern, .. } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        let Pattern::Tuple(items) = &pattern.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected tuple binding pattern".to_string(),
+                pattern.span,
+            )]);
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_function_yield_compatibility() -> Result<(), Vec<CompileError>> {
+        let source = "def count() -> Generator[int]:\n  yield 1\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        if !matches!(
+            &function.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Yield(Some(_)))
+        ) {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected yield expression statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        Ok(())
+    }
+
     // ========================================================================
     // Enum diagnostic tests (#113)
     // ========================================================================

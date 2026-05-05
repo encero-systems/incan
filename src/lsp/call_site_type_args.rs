@@ -202,6 +202,12 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             None
         }
         Expr::Loop(loop_expr) => call_site_types_in_stmts(&loop_expr.body, offset),
+        Expr::Generator(generator) => call_site_type_in_expr(&generator.expr, offset).or_else(|| {
+            generator.clauses.iter().find_map(|clause| match clause {
+                crate::frontend::ast::ComprehensionClause::For { iter, .. } => call_site_type_in_expr(iter, offset),
+                crate::frontend::ast::ComprehensionClause::If(condition) => call_site_type_in_expr(condition, offset),
+            })
+        }),
         Expr::ListComp(boxed) => call_site_type_in_expr(&boxed.expr, offset)
             .or_else(|| call_site_type_in_expr(&boxed.iter, offset))
             .or_else(|| boxed.filter.as_ref().and_then(|e| call_site_type_in_expr(e, offset))),

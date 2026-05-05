@@ -70,6 +70,23 @@ def main() -> None:
     println(f"counts={counts:?}")
 ```
 
+Use a generator when the pipeline should stay lazy until it is consumed:
+
+```incan
+def main() -> None:
+    values = (x * 2 for x in [1, 2, 3, 4] if x > 1).take(2).collect()
+    println(values[0])
+    println(values[1])
+```
+
+Generator functions can also yield values one at a time:
+
+```incan
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+```
+
 ## Try it
 
 1. Read a list of names, normalize (`strip().lower()`), and print them.
@@ -96,12 +113,14 @@ def main() -> None:
         # 3) Deduplicate + print counts (set iteration order is not guaranteed)
         unique = set(normalized)
         for name in unique:
-            println(f"{name}: {name_counts.get(name).unwrap()}")
+            count = name_counts.get(name).unwrap_or(0)
+            println(f"{name}: {count}")
     ```
 
 ## Where to learn more
 
 - Strings and slicing: [Strings](../../reference/strings.md)
+- Generators: [Use generators for lazy pipelines](../../how-to/generators.md)
 - Control flow overview: [Control flow](../../explanation/control_flow.md)
 
 ## Next

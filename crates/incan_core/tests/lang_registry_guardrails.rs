@@ -220,7 +220,7 @@ fn types_spellings_unique_and_resolvable() {
 
     assert_registry_round_trip(RegistryRoundTrip {
         label: "collection",
-        expected_len: 9,
+        expected_len: 10,
         items: collections::COLLECTION_TYPES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -248,7 +248,7 @@ fn derives_spellings_unique_and_resolvable() {
 fn traits_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "trait",
-        expected_len: 16,
+        expected_len: 17,
         items: traits::TRAITS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -405,6 +405,7 @@ fn no_builtin_trait_string_literals_in_compiler_layers() {
         "Iterator",
         "IntoIterator",
         "Error",
+        "Iterable",
     ];
 
     let hits = find_string_literals(&files, &trait_literals);

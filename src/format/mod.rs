@@ -354,6 +354,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
+        let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+  return (x*y for x in xs if x>0 for y in ys if y>x)
+"#;
+        let expected = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
         let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
   mat=a@b

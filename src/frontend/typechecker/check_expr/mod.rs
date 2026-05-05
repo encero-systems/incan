@@ -130,6 +130,7 @@ impl TypeChecker {
             Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),
             Expr::If(if_expr) => self.check_if_expr(if_expr, expr.span),
             Expr::Loop(loop_expr) => self.check_loop_expr(loop_expr, None, expr.span),
+            Expr::Generator(generator) => self.check_generator_expr(generator, expr.span),
             Expr::ListComp(comp) => self.check_list_comp(comp, expr.span),
             Expr::DictComp(comp) => self.check_dict_comp(comp, expr.span),
             Expr::Closure(params, body) => self.check_closure(params, body, expr.span),
@@ -148,11 +149,36 @@ impl TypeChecker {
                 ResolvedType::Str
             }
             Expr::Yield(inner) => {
-                // Yield returns the type of its inner expression, or Unit
-                if let Some(inner) = inner {
-                    self.check_expr(inner)
-                } else {
-                    ResolvedType::Unit
+                let context = self.current_yield_context.clone();
+                match context {
+                    super::YieldContext::Disallowed => {
+                        let yield_ty = inner
+                            .as_ref()
+                            .map(|inner| self.check_expr(inner))
+                            .unwrap_or(ResolvedType::Unit);
+                        self.errors.push(errors::yield_outside_generator(expr.span));
+                        yield_ty
+                    }
+                    super::YieldContext::Fixture => inner
+                        .as_ref()
+                        .map(|inner| self.check_expr(inner))
+                        .unwrap_or(ResolvedType::Unit),
+                    super::YieldContext::Generator { element_ty } => {
+                        if let Some(inner) = inner {
+                            let yield_ty = self.check_expr_with_expected(inner, Some(&element_ty));
+                            if !self.types_compatible(&yield_ty, &element_ty) {
+                                self.errors.push(errors::type_mismatch(
+                                    &element_ty.to_string(),
+                                    &yield_ty.to_string(),
+                                    inner.span,
+                                ));
+                            }
+                            yield_ty
+                        } else {
+                            self.errors.push(errors::generator_yield_requires_value(expr.span));
+                            ResolvedType::Unknown
+                        }
+                    }
                 }
             }
             Expr::Range {

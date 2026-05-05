@@ -390,6 +390,36 @@ pub fn async_fixture_yield_requires_value(name: &str, span: Span) -> CompileErro
         .with_hint("Use `yield value` so dependents receive the fixture value")
 }
 
+/// A `yield` expression appeared outside a generator function or fixture declaration.
+pub fn yield_outside_generator(span: Span) -> CompileError {
+    CompileError::type_error(
+        "`yield` is only valid in generator functions or fixtures".to_string(),
+        span,
+    )
+    .with_hint("Declare the enclosing function as returning `Generator[T]`, or use a fixture declaration")
+}
+
+/// A function declared `Generator[T]` but did not contain a yield expression.
+pub fn generator_requires_yield(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Generator function '{name}' must contain at least one `yield value`"),
+        span,
+    )
+    .with_hint("Add `yield value` for the declared `Generator[T]` element type")
+}
+
+/// A generator used bare `yield`, which cannot produce the declared element type.
+pub fn generator_yield_requires_value(span: Span) -> CompileError {
+    CompileError::type_error("Generator `yield` must include a value".to_string(), span)
+        .with_hint("Use `yield value` so the generator can produce its declared element type")
+}
+
+/// A generator attempted to return a final value, which RFC 006 does not support.
+pub fn generator_return_value_not_supported(span: Span) -> CompileError {
+    CompileError::type_error("Generator functions cannot use `return value`".to_string(), span)
+        .with_hint("Use bare `return` to terminate iteration early")
+}
+
 pub fn try_on_non_result(found: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Cannot use '?' on type '{}' - expected Result[T, E]", found),

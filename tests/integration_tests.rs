@@ -2862,6 +2862,171 @@ def main() -> None:
     }
 
     #[test]
+    fn test_generator_expression_runs_lazily_with_source_ordered_clauses() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    xs = [1, 2, 3]
+    ys = [2, 3, 4]
+    values = (x * y for x in xs if x > 1 for y in ys if y > x).collect()
+    println(values[0])
+    println(values[1])
+    println(values[2])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator expression regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["6", "8", "12"], "unexpected generator output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_helper_chain_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def triple(x: int) -> int:
+    return x * 3
+
+def big(x: int) -> bool:
+    return x > 6
+
+def main() -> None:
+    xs = [1, 2, 3, 4, 5]
+    values = (x for x in xs).map(triple).filter(big).take(2).collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator helper regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["9", "12"], "unexpected generator helper output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+def main() -> None:
+    values = numbers().collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1", "2"], "unexpected generator function output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_body_starts_on_first_consumption() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    println("started")
+    yield 1
+
+def main() -> None:
+    values = numbers()
+    println("after construction")
+    items = values.collect()
+    println(items[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator laziness regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["after construction", "started", "1"],
+            "generator body should not run until first consumption:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def singleton[T](value: T) -> Generator[T]:
+    yield value
+
+def main() -> None:
+    values = singleton[int](3).collect()
+    println(values[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generic generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["3"], "unexpected generic generator output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_clone_self_struct_field_reads_do_not_move_out_of_borrowed_self() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

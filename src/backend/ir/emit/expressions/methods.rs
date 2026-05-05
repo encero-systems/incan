@@ -142,7 +142,11 @@ impl<'a> IrEmitter<'a> {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
-                if idx == 0 && method == "take" && matches!(arg.ty, IrType::Int) {
+                if idx == 0
+                    && method == "take"
+                    && matches!(arg.ty, IrType::Int)
+                    && !Self::is_generator_receiver(receiver)
+                {
                     emitted = quote! {
                         match u64::try_from(#emitted) {
                             Ok(__incan_take_count) => __incan_take_count,
@@ -397,6 +401,12 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
+            let predicate = self.emit_expr(&args[0].expr)?;
+            return Ok(quote! {
+                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+            });
+        }
         let method_turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -629,5 +639,12 @@ impl<'a> IrEmitter<'a> {
         let type_ident = format_ident!("{}", type_name);
         let m = format_ident!("{}", variant);
         Ok(quote! { #type_ident::#m(#(#arg_tokens),*) })
+    }
+
+    /// Return whether a method receiver is the RFC 006 runtime generator wrapper.
+    fn is_generator_receiver(receiver: &TypedExpr) -> bool {
+        matches!(&receiver.ty, IrType::NamedGeneric(name, _)
+            if incan_core::lang::types::collections::from_str(name.as_str())
+                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
     }
 }

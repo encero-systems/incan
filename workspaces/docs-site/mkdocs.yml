@@ -121,6 +121,7 @@ nav:
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
+          - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
@@ -134,6 +135,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
+          - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
@@ -175,6 +177,7 @@ nav:
           - Control flow: language/explanation/control_flow.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
+          - Generators: language/explanation/generators.md
           - Module static storage: language/explanation/static_storage.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
