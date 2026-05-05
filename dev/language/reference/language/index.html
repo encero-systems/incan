@@ -996,6 +996,8 @@
       
         
       
+        
+      
     
     
       
@@ -1185,6 +1187,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2802,6 +2825,8 @@
       
         
       
+        
+      
     
     
       
@@ -3007,6 +3032,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3152,7 +3198,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -3168,14 +3214,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -7552,21 +7598,129 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </thead>
 <tbody>
 <tr>
-<td>Int</td>
-<td><code>int</code></td>
-<td><code>i64</code>, <code>i32</code></td>
-<td>Builtin signed integer type.</td>
-<td>RFC 000</td>
-<td>0.1</td>
+<td>I8</td>
+<td><code>i8</code></td>
+<td></td>
+<td>Signed 8-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
 <td>Stable</td>
 </tr>
 <tr>
-<td>Float</td>
-<td><code>float</code></td>
-<td><code>f64</code>, <code>f32</code></td>
-<td>Builtin floating-point type.</td>
-<td>RFC 000</td>
-<td>0.1</td>
+<td>I16</td>
+<td><code>i16</code></td>
+<td><code>short</code>, <code>smallint</code></td>
+<td>Signed 16-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>I32</td>
+<td><code>i32</code></td>
+<td><code>integer</code></td>
+<td>Signed 32-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>I64</td>
+<td><code>i64</code></td>
+<td><code>int</code>, <code>bigint</code>, <code>long</code></td>
+<td>Signed 64-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>I128</td>
+<td><code>i128</code></td>
+<td><code>hugeint</code></td>
+<td>Signed 128-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>U8</td>
+<td><code>u8</code></td>
+<td><code>byte</code></td>
+<td>Unsigned 8-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>U16</td>
+<td><code>u16</code></td>
+<td></td>
+<td>Unsigned 16-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>U32</td>
+<td><code>u32</code></td>
+<td></td>
+<td>Unsigned 32-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>U64</td>
+<td><code>u64</code></td>
+<td></td>
+<td>Unsigned 64-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>U128</td>
+<td><code>u128</code></td>
+<td></td>
+<td>Unsigned 128-bit integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>F32</td>
+<td><code>f32</code></td>
+<td><code>real</code>, <code>fp32</code></td>
+<td>32-bit binary floating-point type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>F64</td>
+<td><code>f64</code></td>
+<td><code>float</code>, <code>double</code>, <code>fp64</code></td>
+<td>64-bit binary floating-point type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ISize</td>
+<td><code>isize</code></td>
+<td></td>
+<td>Pointer-sized signed integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>USize</td>
+<td><code>usize</code></td>
+<td></td>
+<td>Pointer-sized unsigned integer type.</td>
+<td>RFC 009</td>
+<td>0.3</td>
 <td>Stable</td>
 </tr>
 <tr>

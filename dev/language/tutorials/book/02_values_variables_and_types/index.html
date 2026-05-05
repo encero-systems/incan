@@ -1085,6 +1085,8 @@
       
         
       
+        
+      
     
     
       
@@ -1274,6 +1276,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2462,6 +2485,8 @@
       
         
       
+        
+      
     
     
       
@@ -2667,6 +2692,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -2812,7 +2858,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -2828,14 +2874,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4718,11 +4764,13 @@
 <h2 id="basic-values">Basic values<a class="headerlink" href="#basic-values" title="Permanent link">&para;</a></h2>
 <p>Common built-in types:</p>
 <ul>
-<li><code>int</code> (integers)</li>
-<li><code>float</code> (floating point)</li>
+<li><code>int</code> (ordinary integers)</li>
+<li><code>float</code> (ordinary binary floating point)</li>
 <li><code>bool</code> (<code>true</code> / <code>false</code>)</li>
 <li><code>str</code> (strings)</li>
 </ul>
+<p>Incan also has exact numeric types for data and Rust interop boundaries, such as <code>i32</code>, <code>u64</code>, <code>usize</code>, <code>f32</code>, and <code>f64</code>, plus fixed-scale decimal types such as <code>decimal[10, 2]</code>. You usually do not need those in beginner code, but they matter when another system owns the width or precision.</p>
+<p>For the full rules, see <a href="../../../how-to/choosing_numeric_types/">Choosing numeric types</a>, <a href="../../../reference/numeric_semantics/">Numeric semantics</a>, and <a href="../../../explanation/numeric_types/">Why numeric types work this way</a>.</p>
 <h2 id="variables">Variables<a class="headerlink" href="#variables" title="Permanent link">&para;</a></h2>
 <p>Assign a value to a name:</p>
 <div class="admonition tip">

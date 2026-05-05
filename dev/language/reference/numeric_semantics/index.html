@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#numeric-semantics" class="md-skip">
+        <a href="#numeric-semantics-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -996,6 +996,8 @@
       
         
       
+        
+      
     
     
       
@@ -1185,6 +1187,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -1666,244 +1689,118 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#table-of-contents" class="md-nav__link">
+  <a href="#numeric-type-families" class="md-nav__link">
     <span class="md-ellipsis">
-      Table of contents
+      Numeric type families
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#supported-numeric-types" class="md-nav__link">
+  <a href="#canonical-type-table" class="md-nav__link">
     <span class="md-ellipsis">
-      Supported numeric types
+      Canonical type table
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#numeric-promotion-rules" class="md-nav__link">
+  <a href="#aliases" class="md-nav__link">
     <span class="md-ellipsis">
-      Numeric promotion rules
+      Aliases
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#operator-semantics" class="md-nav__link">
+  <a href="#literal-typing" class="md-nav__link">
     <span class="md-ellipsis">
-      Operator semantics
+      Literal typing
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Operator semantics">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decimal-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decimal types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assignment-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assignment compatibility
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resizing-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resizing methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-interop-numeric-adaptation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop numeric adaptation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-result-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Operator result types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operator result types">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#true-division" class="md-nav__link">
+  <a href="#division" class="md-nav__link">
     <span class="md-ellipsis">
-      / (true division)
+      Division
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="/ (true division)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (/)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (/)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
           <li class="md-nav__item">
   <a href="#floor-division" class="md-nav__link">
     <span class="md-ellipsis">
-      // (floor division)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="// (floor division)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (//)
+      Floor division
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#examples_1" class="md-nav__link">
+  <a href="#modulo" class="md-nav__link">
     <span class="md-ellipsis">
-      Examples (//)
+      Modulo
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#panics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Panics (//)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#modulo-remainder" class="md-nav__link">
-    <span class="md-ellipsis">
-      % (modulo / remainder)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="% (modulo / remainder)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (%)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (%)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#panics_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Panics (%)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
           <li class="md-nav__item">
   <a href="#power" class="md-nav__link">
     <span class="md-ellipsis">
-      ** (power)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="** (power)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (**)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (**)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Notes
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      Comparisons (==, !=, &lt;, &lt;=, &gt;, &gt;=)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Comparisons (==, !=, <, <=, >, >=)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (comparisons)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compound-assignments" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compound assignments
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Compound assignments">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-compound-assignments" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (compound assignments)
+      Power
     </span>
   </a>
   
@@ -1915,26 +1812,29 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#nan-infinity" class="md-nav__link">
+  <a href="#compound-assignment" class="md-nav__link">
     <span class="md-ellipsis">
-      NaN / Infinity
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="NaN / Infinity">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-naninf" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (NaN/Inf)
+      Compound assignment
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
+      
+        <li class="md-nav__item">
+  <a href="#nan-and-infinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      NaN and infinity
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current limitations
+    </span>
+  </a>
   
 </li>
       
@@ -2688,6 +2588,8 @@
       
         
       
+        
+      
     
     
       
@@ -2893,6 +2795,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3038,7 +2961,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -3054,14 +2977,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4876,244 +4799,118 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#table-of-contents" class="md-nav__link">
+  <a href="#numeric-type-families" class="md-nav__link">
     <span class="md-ellipsis">
-      Table of contents
+      Numeric type families
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#supported-numeric-types" class="md-nav__link">
+  <a href="#canonical-type-table" class="md-nav__link">
     <span class="md-ellipsis">
-      Supported numeric types
+      Canonical type table
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#numeric-promotion-rules" class="md-nav__link">
+  <a href="#aliases" class="md-nav__link">
     <span class="md-ellipsis">
-      Numeric promotion rules
+      Aliases
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#operator-semantics" class="md-nav__link">
+  <a href="#literal-typing" class="md-nav__link">
     <span class="md-ellipsis">
-      Operator semantics
+      Literal typing
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Operator semantics">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decimal-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decimal types
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assignment-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      Assignment compatibility
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resizing-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resizing methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-interop-numeric-adaptation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop numeric adaptation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-result-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Operator result types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operator result types">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#true-division" class="md-nav__link">
+  <a href="#division" class="md-nav__link">
     <span class="md-ellipsis">
-      / (true division)
+      Division
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="/ (true division)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (/)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (/)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
           <li class="md-nav__item">
   <a href="#floor-division" class="md-nav__link">
     <span class="md-ellipsis">
-      // (floor division)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="// (floor division)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (//)
+      Floor division
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#examples_1" class="md-nav__link">
+  <a href="#modulo" class="md-nav__link">
     <span class="md-ellipsis">
-      Examples (//)
+      Modulo
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#panics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Panics (//)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#modulo-remainder" class="md-nav__link">
-    <span class="md-ellipsis">
-      % (modulo / remainder)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="% (modulo / remainder)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (%)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (%)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#panics_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Panics (%)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
           <li class="md-nav__item">
   <a href="#power" class="md-nav__link">
     <span class="md-ellipsis">
-      ** (power)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="** (power)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#returns_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      Returns (**)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#examples_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (**)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Notes
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      Comparisons (==, !=, &lt;, &lt;=, &gt;, &gt;=)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Comparisons (==, !=, <, <=, >, >=)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-comparisons" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (comparisons)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compound-assignments" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compound assignments
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Compound assignments">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-compound-assignments" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (compound assignments)
+      Power
     </span>
   </a>
   
@@ -5125,26 +4922,29 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#nan-infinity" class="md-nav__link">
+  <a href="#compound-assignment" class="md-nav__link">
     <span class="md-ellipsis">
-      NaN / Infinity
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="NaN / Infinity">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#examples-naninf" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples (NaN/Inf)
+      Compound assignment
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
+      
+        <li class="md-nav__item">
+  <a href="#nan-and-infinity" class="md-nav__link">
+    <span class="md-ellipsis">
+      NaN and infinity
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current limitations
+    </span>
+  </a>
   
 </li>
       
@@ -5166,219 +4966,553 @@
   
 
 
-<h1 id="numeric-semantics">Numeric semantics<a class="headerlink" href="#numeric-semantics" title="Permanent link">&para;</a></h1>
-<p>This page documents the numeric rules Incan implements today (typing + runtime behavior).</p>
-<p>Incan is <strong>statically typed</strong>, so numeric operations affect <strong>expression types and codegen</strong>, not “the type of a variable
-over time”.</p>
-<div class="admonition note">
-<p class="admonition-title">Notes if you’re coming from Python</p>
-<p>Incan’s numeric intent is often Python-like, but some behavior differs because:</p>
-<ul>
-<li>Incan is statically typed (no implicit “variable becomes float later”).</li>
-<li>Runtime behavior is produced by generated Rust + <code>incan_stdlib</code> (so IEEE float edge cases apply).</li>
-</ul>
-</div>
-<div class="admonition note">
-<p class="admonition-title">Notes if you’re coming from Rust</p>
-<p>Some operators intentionally follow Python-style semantics (not Rust’s), notably floor division (<code>//</code>) and modulo (<code>%</code>)
-for negative numbers.</p>
-</div>
-<h2 id="table-of-contents">Table of contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<h1 id="numeric-semantics-reference">Numeric semantics (reference)<a class="headerlink" href="#numeric-semantics-reference" title="Permanent link">&para;</a></h1>
+<p>This is the reference for Incan numeric type spellings, literal checking, assignment compatibility, explicit resizing, Rust interop adaptation, and numeric operator result types.</p>
+<p>For task-oriented guidance, see <a href="../../how-to/choosing_numeric_types/">Choosing numeric types</a>. For the design rationale, see <a href="../../explanation/numeric_types/">Why numeric types work this way</a>.</p>
+<h2 id="numeric-type-families">Numeric type families<a class="headerlink" href="#numeric-type-families" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Section</th>
-<th>What it covers</th>
+<th>Family</th>
+<th>Canonical types</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><a href="#supported-numeric-types">Supported numeric types</a></td>
-<td><code>int</code>/<code>float</code> and their current Rust representations</td>
+<td>Signed integers</td>
+<td><code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code></td>
+<td>Exact-width signed integers.</td>
 </tr>
 <tr>
-<td><a href="#numeric-promotion-rules">Numeric promotion rules</a></td>
-<td>When expressions promote to <code>float</code></td>
+<td>Unsigned integers</td>
+<td><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code></td>
+<td>Exact-width unsigned integers.</td>
 </tr>
 <tr>
-<td><a href="#operator-semantics">Operator semantics</a></td>
-<td><code>/</code>, <code>//</code>, <code>%</code>, <code>**</code>, comparisons</td>
+<td>Pointer-sized integers</td>
+<td><code>isize</code>, <code>usize</code></td>
+<td>Platform-sized Rust integer types.</td>
 </tr>
 <tr>
-<td><a href="#compound-assignments">Compound assignments</a></td>
-<td><code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code> typing rules</td>
+<td>Binary floats</td>
+<td><code>f32</code>, <code>f64</code></td>
+<td>IEEE binary floating-point types in generated Rust.</td>
 </tr>
 <tr>
-<td><a href="#nan-infinity">NaN / Infinity</a></td>
-<td>IEEE behavior and current limitations</td>
+<td>Decimal values</td>
+<td><code>decimal[p, s]</code>, <code>numeric[p, s]</code>, <code>decimal128[p, s]</code></td>
+<td>Fixed-precision decimal types with precision and scale parameters.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="supported-numeric-types">Supported numeric types<a class="headerlink" href="#supported-numeric-types" title="Permanent link">&para;</a></h2>
-<p>Today, the compiler uses these Rust representations:</p>
-<ul>
-<li><code>int</code>: currently compiled as Rust <code>i64</code>.</li>
-<li><code>float</code>: currently compiled as Rust <code>f64</code>.</li>
-</ul>
-<h2 id="numeric-promotion-rules">Numeric promotion rules<a class="headerlink" href="#numeric-promotion-rules" title="Permanent link">&para;</a></h2>
-<p>In expressions, operands may be promoted to <code>float</code>:</p>
-<ul>
-<li>For arithmetic ops, if either operand is <code>float</code>, the operation is performed in <code>float</code>
-  (with some operator-specific rules below).</li>
-<li>For mixed comparisons (<code>int</code> vs <code>float</code>), operands are promoted to <code>float</code> for
-  comparison.</li>
-</ul>
-<p>Promotion affects expression typing and generated code, not variable types.</p>
-<h2 id="operator-semantics">Operator semantics<a class="headerlink" href="#operator-semantics" title="Permanent link">&para;</a></h2>
-<h3 id="true-division"><code>/</code> (true division)<a class="headerlink" href="#true-division" title="Permanent link">&para;</a></h3>
-<p>Division is <strong>always <code>float</code></strong>, even for <code>int / int</code>.</p>
-<h4 id="returns">Returns (<code>/</code>)<a class="headerlink" href="#returns" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>float</code></li>
-</ul>
-<h4 id="examples">Examples (<code>/</code>)<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="mi">1</span> <span class="o">/</span> <span class="mi">2</span>      <span class="c1"># 0.5</span>
-<span class="mi">4</span> <span class="o">/</span> <span class="mi">2</span>      <span class="c1"># 2.0</span>
-<span class="mf">7.0</span> <span class="o">/</span> <span class="mi">2</span>    <span class="c1"># 3.5</span>
-<span class="mi">7</span> <span class="o">/</span> <span class="mf">2.0</span>    <span class="c1"># 3.5</span>
+<h2 id="canonical-type-table">Canonical type table<a class="headerlink" href="#canonical-type-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Incan type</th>
+<th>Rust representation</th>
+<th>Value range or shape</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>i8</code></td>
+<td><code>i8</code></td>
+<td>-128 to 127</td>
+</tr>
+<tr>
+<td><code>i16</code></td>
+<td><code>i16</code></td>
+<td>-32,768 to 32,767</td>
+</tr>
+<tr>
+<td><code>i32</code></td>
+<td><code>i32</code></td>
+<td>-2,147,483,648 to 2,147,483,647</td>
+</tr>
+<tr>
+<td><code>i64</code></td>
+<td><code>i64</code></td>
+<td>-9,223,372,036,854,775,808 to 9,223,372,036,854,775,807</td>
+</tr>
+<tr>
+<td><code>i128</code></td>
+<td><code>i128</code></td>
+<td>-2^127 to 2^127 - 1</td>
+</tr>
+<tr>
+<td><code>u8</code></td>
+<td><code>u8</code></td>
+<td>0 to 255</td>
+</tr>
+<tr>
+<td><code>u16</code></td>
+<td><code>u16</code></td>
+<td>0 to 65,535</td>
+</tr>
+<tr>
+<td><code>u32</code></td>
+<td><code>u32</code></td>
+<td>0 to 4,294,967,295</td>
+</tr>
+<tr>
+<td><code>u64</code></td>
+<td><code>u64</code></td>
+<td>0 to 18,446,744,073,709,551,615</td>
+</tr>
+<tr>
+<td><code>u128</code></td>
+<td><code>u128</code></td>
+<td>0 to 2^128 - 1</td>
+</tr>
+<tr>
+<td><code>isize</code></td>
+<td><code>isize</code></td>
+<td>Platform-sized signed integer</td>
+</tr>
+<tr>
+<td><code>usize</code></td>
+<td><code>usize</code></td>
+<td>Platform-sized unsigned integer</td>
+</tr>
+<tr>
+<td><code>f32</code></td>
+<td><code>f32</code></td>
+<td>32-bit IEEE binary float</td>
+</tr>
+<tr>
+<td><code>f64</code></td>
+<td><code>f64</code></td>
+<td>64-bit IEEE binary float</td>
+</tr>
+<tr>
+<td><code>decimal[p, s]</code></td>
+<td><code>incan_stdlib::num::Decimal128</code></td>
+<td>Base-10 fixed-scale value with precision <code>p</code> and scale <code>s</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="aliases">Aliases<a class="headerlink" href="#aliases" title="Permanent link">&para;</a></h2>
+<p>Aliases resolve to canonical types. They do not introduce distinct nominal types.</p>
+<table>
+<thead>
+<tr>
+<th>Alias</th>
+<th>Canonical type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>byte</code></td>
+<td><code>u8</code></td>
+</tr>
+<tr>
+<td><code>short</code></td>
+<td><code>i16</code></td>
+</tr>
+<tr>
+<td><code>smallint</code></td>
+<td><code>i16</code></td>
+</tr>
+<tr>
+<td><code>integer</code></td>
+<td><code>i32</code></td>
+</tr>
+<tr>
+<td><code>int</code></td>
+<td><code>i64</code></td>
+</tr>
+<tr>
+<td><code>bigint</code></td>
+<td><code>i64</code></td>
+</tr>
+<tr>
+<td><code>long</code></td>
+<td><code>i64</code></td>
+</tr>
+<tr>
+<td><code>hugeint</code></td>
+<td><code>i128</code></td>
+</tr>
+<tr>
+<td><code>real</code></td>
+<td><code>f32</code></td>
+</tr>
+<tr>
+<td><code>fp32</code></td>
+<td><code>f32</code></td>
+</tr>
+<tr>
+<td><code>float</code></td>
+<td><code>f64</code></td>
+</tr>
+<tr>
+<td><code>double</code></td>
+<td><code>f64</code></td>
+</tr>
+<tr>
+<td><code>fp64</code></td>
+<td><code>f64</code></td>
+</tr>
+<tr>
+<td><code>numeric[p, s]</code></td>
+<td><code>decimal[p, s]</code></td>
+</tr>
+<tr>
+<td><code>decimal128[p, s]</code></td>
+<td><code>decimal[p, s]</code> using the current 128-bit scaled runtime representation</td>
+</tr>
+</tbody>
+</table>
+<p>Example:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">x</span><span class="p">:</span> <span class="kt">integer</span> <span class="o">=</span> <span class="mi">10</span>
+<span class="n">y</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="n">x</span>
+<span class="n">z</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">y</span>
 </code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Python comparison</p>
-<p>Python raises <code>ZeroDivisionError</code> for division by zero. Incan currently <strong>panics at runtime</strong> with a
-<code>ZeroDivisionError: float division by zero</code>-style message.</p>
-</div>
-<h3 id="floor-division"><code>//</code> (floor division)<a class="headerlink" href="#floor-division" title="Permanent link">&para;</a></h3>
-<p>Floor division rounds toward <strong>negative infinity</strong>.</p>
-<h4 id="returns_1">Returns (<code>//</code>)<a class="headerlink" href="#returns_1" title="Permanent link">&para;</a></h4>
+<h2 id="literal-typing">Literal typing<a class="headerlink" href="#literal-typing" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Literal form</th>
+<th>Default type without stronger context</th>
+<th>Contextual checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>42</code></td>
+<td><code>int</code></td>
+<td>Checked against the target integer range when assigned to or passed as an exact-width integer.</td>
+</tr>
+<tr>
+<td><code>1_000_000</code></td>
+<td><code>int</code></td>
+<td>Separators do not affect the value.</td>
+</tr>
+<tr>
+<td><code>0.5</code></td>
+<td><code>float</code></td>
+<td>Checked as <code>f32</code> when the expected type is <code>f32</code>.</td>
+</tr>
+<tr>
+<td><code>19.99d</code></td>
+<td>Requires a decimal expected type</td>
+<td>Checked against the expected decimal precision and scale.</td>
+</tr>
+</tbody>
+</table>
+<p>Integer literals are checked against concrete integer targets:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">ok</span><span class="p">:</span> <span class="kt">u8</span> <span class="o">=</span> <span class="mi">255</span>
+<span class="n">bad</span><span class="p">:</span> <span class="kt">u8</span> <span class="o">=</span> <span class="mi">256</span>
+<span class="n">also_bad</span><span class="p">:</span> <span class="kt">usize</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+</code></pre></div>
+<p>Float literals assigned to <code>f32</code> must be representable as finite <code>f32</code> values.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">ratio</span><span class="p">:</span> <span class="kt">f32</span> <span class="o">=</span> <span class="mf">0.5</span>
+</code></pre></div>
+<h2 id="decimal-types">Decimal types<a class="headerlink" href="#decimal-types" title="Permanent link">&para;</a></h2>
+<p>Decimal types require two integer type arguments:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">price</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">19.99</span><span class="n">d</span>
+<span class="n">amount</span><span class="p">:</span> <span class="n">numeric</span><span class="p">[</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1000.2500</span><span class="n">d</span>
+</code></pre></div>
+<p>Rules:</p>
 <ul>
-<li><code>int</code> if both operands are <code>int</code></li>
-<li>otherwise <code>float</code></li>
+<li><code>p</code> is precision and must be between <code>1</code> and <code>38</code>.</li>
+<li><code>s</code> is scale and must be between <code>0</code> and <code>p</code>.</li>
+<li><code>decimal</code>, <code>numeric</code>, and <code>decimal128</code> require exactly two integer type arguments.</li>
+<li>Bare <code>decimal</code>, bare <code>numeric</code>, and bare <code>decimal128</code> are not value types.</li>
+<li>Decimal literals use a trailing lowercase <code>d</code>.</li>
+<li>Decimal literals do not use exponent notation.</li>
+<li>Decimal literals must fit the target precision and scale.</li>
 </ul>
-<h4 id="examples_1">Examples (<code>//</code>)<a class="headerlink" href="#examples_1" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="mi">7</span> <span class="o">//</span> <span class="mi">3</span>        <span class="c1"># 2</span>
-<span class="o">-</span><span class="mi">7</span> <span class="o">//</span> <span class="mi">3</span>       <span class="c1"># -3</span>
-<span class="mi">7</span> <span class="o">//</span> <span class="o">-</span><span class="mi">3</span>       <span class="c1"># -3</span>
-<span class="o">-</span><span class="mi">7</span> <span class="o">//</span> <span class="o">-</span><span class="mi">3</span>      <span class="c1"># 2</span>
+<p>The integer digit count must fit <code>p - s</code>, and the fractional digit count must fit <code>s</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">ok_money</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">12345678.90</span><span class="n">d</span>
+<span class="n">ok_whole</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">12345</span><span class="n">d</span>
+<span class="n">too_precise</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.234</span><span class="n">d</span>
+<span class="n">too_large</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">7</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">123456.78</span><span class="n">d</span>
+<span class="n">missing_shape</span><span class="p">:</span> <span class="n">decimal</span> <span class="o">=</span> <span class="mf">1.00</span><span class="n">d</span>
+</code></pre></div>
+<p>Decimal arithmetic is not defined by the language yet. The implemented decimal surface covers syntax, type checking, literal validation, formatting, Rust emission, display, and runtime representation.</p>
+<h2 id="assignment-compatibility">Assignment compatibility<a class="headerlink" href="#assignment-compatibility" title="Permanent link">&para;</a></h2>
+<p>Implicit numeric assignment is allowed when the conversion is exact or provably lossless.</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Target</th>
+<th>Implicit?</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>i8</code></td>
+<td><code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>int</code></td>
+<td>Yes</td>
+<td>Every <code>i8</code> value fits the target.</td>
+</tr>
+<tr>
+<td><code>i32</code></td>
+<td><code>i64</code>, <code>i128</code>, <code>int</code></td>
+<td>Yes</td>
+<td>Every <code>i32</code> value fits the target.</td>
+</tr>
+<tr>
+<td><code>u8</code></td>
+<td><code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>int</code></td>
+<td>Yes</td>
+<td>Every <code>u8</code> value fits the target.</td>
+</tr>
+<tr>
+<td><code>u16</code></td>
+<td><code>u32</code>, <code>u64</code>, <code>u128</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>int</code></td>
+<td>Yes</td>
+<td>Every <code>u16</code> value fits the target.</td>
+</tr>
+<tr>
+<td><code>u32</code></td>
+<td><code>u64</code>, <code>u128</code>, <code>i64</code>, <code>i128</code>, <code>int</code></td>
+<td>Yes</td>
+<td>Every <code>u32</code> value fits the target.</td>
+</tr>
+<tr>
+<td><code>f32</code></td>
+<td><code>f64</code>, <code>float</code></td>
+<td>Yes</td>
+<td>The represented <code>f32</code> value can be represented as <code>f64</code>.</td>
+</tr>
+<tr>
+<td><code>i64</code>, <code>int</code></td>
+<td><code>i32</code></td>
+<td>No</td>
+<td>Values may be outside <code>i32</code>.</td>
+</tr>
+<tr>
+<td><code>i16</code></td>
+<td><code>u16</code></td>
+<td>No</td>
+<td>Negative values do not fit <code>u16</code>.</td>
+</tr>
+<tr>
+<td><code>f64</code>, <code>float</code></td>
+<td><code>f32</code></td>
+<td>No</td>
+<td>Values may not be representable as <code>f32</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">120</span>
+<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span>
+<span class="n">huge</span><span class="p">:</span> <span class="kt">i128</span> <span class="o">=</span> <span class="n">wide</span>
 
-<span class="mf">7.0</span> <span class="o">//</span> <span class="mi">3</span>      <span class="c1"># 2.0</span>
-<span class="o">-</span><span class="mf">7.0</span> <span class="o">//</span> <span class="mi">3</span>     <span class="c1"># -3.0</span>
-<span class="mi">7</span> <span class="o">//</span> <span class="mf">3.0</span>      <span class="c1"># 2.0</span>
-</code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Rust comparison</p>
-<p>Rust integer division (<code>/</code>) truncates toward zero. Incan <code>//</code> is floor division (toward <span class="arithmatex">\( -\infty \)</span>).</p>
-</div>
-<h4 id="panics">Panics (<code>//</code>)<a class="headerlink" href="#panics" title="Permanent link">&para;</a></h4>
-<ul>
-<li>Panics on zero divisor with <code>ZeroDivisionError: float division by zero</code>.</li>
-</ul>
-<h3 id="modulo-remainder"><code>%</code> (modulo / remainder)<a class="headerlink" href="#modulo-remainder" title="Permanent link">&para;</a></h3>
-<p>Modulo uses Python remainder semantics.<br />
-The remainder has the <strong>sign of the divisor</strong> and satisfies the following equation:</p>
-<div class="arithmatex">\[
-a = \left\lfloor \frac{a}{b} \right\rfloor b + (a \bmod b)
-\]</div>
-<blockquote>
-<p>In Incan operator notation: <code>a == (a // b) * b + (a % b)</code></p>
-</blockquote>
-<h4 id="returns_2">Returns (<code>%</code>)<a class="headerlink" href="#returns_2" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>int</code> if both operands are <code>int</code></li>
-<li>otherwise <code>float</code></li>
-</ul>
-<h4 id="examples_2">Examples (<code>%</code>)<a class="headerlink" href="#examples_2" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="mi">7</span> <span class="o">%</span> <span class="mi">3</span>         <span class="c1"># 1</span>
-<span class="o">-</span><span class="mi">7</span> <span class="o">%</span> <span class="mi">3</span>        <span class="c1"># 2      (Rust would give -1)</span>
-<span class="mi">7</span> <span class="o">%</span> <span class="o">-</span><span class="mi">3</span>        <span class="c1"># -2     (Rust would give 1)</span>
-<span class="o">-</span><span class="mi">7</span> <span class="o">%</span> <span class="o">-</span><span class="mi">3</span>       <span class="c1"># -1</span>
+<span class="n">bits</span><span class="p">:</span> <span class="kt">u8</span> <span class="o">=</span> <span class="mi">200</span>
+<span class="n">more_bits</span><span class="p">:</span> <span class="kt">u16</span> <span class="o">=</span> <span class="n">bits</span>
 
-<span class="mf">7.0</span> <span class="o">%</span> <span class="mf">3.0</span>     <span class="c1"># 1.0</span>
-<span class="o">-</span><span class="mf">7.0</span> <span class="o">%</span> <span class="mf">3.0</span>    <span class="c1"># 2.0</span>
-<span class="mf">7.0</span> <span class="o">%</span> <span class="o">-</span><span class="mf">3.0</span>    <span class="c1"># -2.0</span>
+<span class="n">single</span><span class="p">:</span> <span class="kt">f32</span> <span class="o">=</span> <span class="mf">1.25</span>
+<span class="kt">double</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">single</span>
 </code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Rust comparison</p>
-<p>Rust’s <code>%</code> is a remainder operator with truncating division, so negative cases differ from Incan.</p>
-</div>
-<h4 id="panics_1">Panics (<code>%</code>)<a class="headerlink" href="#panics_1" title="Permanent link">&para;</a></h4>
-<ul>
-<li>Panics on zero divisor with <code>ZeroDivisionError: float division by zero</code>.</li>
-</ul>
-<h3 id="power"><code>**</code> (power)<a class="headerlink" href="#power" title="Permanent link">&para;</a></h3>
-<p>Power is mostly Python-like, with one deliberate typing rule to keep codegen efficient:</p>
-<ul>
-<li><code>int ** int</code> returns <code>int</code> <strong>only</strong> when the exponent is a <strong>non-negative <code>int</code>
-  literal</strong>.</li>
-<li>In all other cases, the result is <code>float</code>.</li>
-</ul>
-<h4 id="returns_3">Returns (<code>**</code>)<a class="headerlink" href="#returns_3" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>int</code> only for <code>int ** &lt;non-negative int literal&gt;</code></li>
-<li>otherwise <code>float</code></li>
-</ul>
-<h4 id="examples_3">Examples (<code>**</code>)<a class="headerlink" href="#examples_3" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="mi">2</span> <span class="o">**</span> <span class="mi">3</span>        <span class="c1"># 8        (int)</span>
-<span class="mi">2</span> <span class="o">**</span> <span class="mi">0</span>        <span class="c1"># 1        (int)</span>
-<span class="mi">2</span> <span class="o">**</span> <span class="o">-</span><span class="mi">1</span>       <span class="c1"># 0.5      (float)</span>
+<p>Integer-to-float assignment is not currently an implicit assignment conversion.</p>
+<h2 id="resizing-methods">Resizing methods<a class="headerlink" href="#resizing-methods" title="Permanent link">&para;</a></h2>
+<p>Resize methods are contextual: the target type comes from the surrounding expected type.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Return type</th>
+<th>Compile-time rule</th>
+<th>Runtime behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resize()</code></td>
+<td>Target type</td>
+<td>Only accepted for exact or provably lossless conversion.</td>
+<td>No data loss.</td>
+</tr>
+<tr>
+<td><code>try_resize()</code></td>
+<td><code>Option[target]</code></td>
+<td>Integer targets only.</td>
+<td><code>Some(value)</code> if the value fits; <code>None</code> otherwise.</td>
+</tr>
+<tr>
+<td><code>wrapping_resize()</code></td>
+<td>Target type</td>
+<td>Integer targets only.</td>
+<td>Rust-style integer cast wrapping or truncation.</td>
+</tr>
+<tr>
+<td><code>saturating_resize()</code></td>
+<td>Target type</td>
+<td>Integer targets only.</td>
+<td>Clamps to the target integer minimum or maximum.</td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">120</span>
+<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span><span class="o">.</span><span class="n">resize</span><span class="p">()</span>
+
+<span class="n">incoming</span><span class="p">:</span> <span class="kt">i16</span> <span class="o">=</span> <span class="mi">240</span>
+<span class="n">maybe</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">i8</span><span class="p">]</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">try_resize</span><span class="p">()</span>
+<span class="n">wrapped</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">wrapping_resize</span><span class="p">()</span>
+<span class="n">capped</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">saturating_resize</span><span class="p">()</span>
+</code></pre></div>
+<p><code>resize()</code> is not a forced cast:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">240</span>
+<span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">wide</span><span class="o">.</span><span class="n">resize</span><span class="p">()</span>
+</code></pre></div>
+<p>The last example is rejected because not every <code>int</code> value fits <code>i8</code>.</p>
+<h2 id="rust-interop-numeric-adaptation">Rust interop numeric adaptation<a class="headerlink" href="#rust-interop-numeric-adaptation" title="Permanent link">&para;</a></h2>
+<p>Rust interop accepts exact primitive matches and provably lossless primitive widening. Narrowing is rejected.</p>
+<table>
+<thead>
+<tr>
+<th>Incan source</th>
+<th>Rust target</th>
+<th>Accepted?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>i32</code></td>
+<td><code>i32</code></td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>i32</code></td>
+<td><code>i64</code></td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>int</code> / <code>i64</code></td>
+<td><code>i32</code></td>
+<td>No</td>
+</tr>
+<tr>
+<td><code>u8</code></td>
+<td><code>i16</code></td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>i16</code></td>
+<td><code>u16</code></td>
+<td>No</td>
+</tr>
+<tr>
+<td><code>f32</code></td>
+<td><code>f64</code></td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>float</code> / <code>f64</code></td>
+<td><code>f32</code></td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>If a Rust API requires a narrowing conversion, apply an explicit resize policy before the call.</p>
+<h2 id="operator-result-types">Operator result types<a class="headerlink" href="#operator-result-types" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Result type rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>+</code>, <code>-</code>, <code>*</code></td>
+<td>Integer-family operands produce <code>int</code>; if either operand is <code>float</code>, the result is <code>float</code>.</td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>Always <code>float</code>.</td>
+</tr>
+<tr>
+<td><code>//</code></td>
+<td><code>int</code> when both operands are integer-family values; otherwise <code>float</code>.</td>
+</tr>
+<tr>
+<td><code>%</code></td>
+<td><code>int</code> when both operands are integer-family values; otherwise <code>float</code>.</td>
+</tr>
+<tr>
+<td><code>**</code></td>
+<td><code>int</code> only for <code>int ** &lt;non-negative int literal&gt;</code>; otherwise <code>float</code>.</td>
+</tr>
+<tr>
+<td><code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code></td>
+<td><code>bool</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="division">Division<a class="headerlink" href="#division" title="Permanent link">&para;</a></h3>
+<p><code>/</code> is true division and always returns <code>float</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="mi">1</span> <span class="o">/</span> <span class="mi">2</span>
+<span class="mi">4</span> <span class="o">/</span> <span class="mi">2</span>
+<span class="mf">7.0</span> <span class="o">/</span> <span class="mi">2</span>
+<span class="mi">7</span> <span class="o">/</span> <span class="mf">2.0</span>
+</code></pre></div>
+<p>Division by zero currently panics with a <code>ZeroDivisionError: float division by zero</code>-style runtime message.</p>
+<h3 id="floor-division">Floor division<a class="headerlink" href="#floor-division" title="Permanent link">&para;</a></h3>
+<p><code>//</code> floors toward negative infinity.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="mi">7</span> <span class="o">//</span> <span class="mi">3</span>
+<span class="o">-</span><span class="mi">7</span> <span class="o">//</span> <span class="mi">3</span>
+<span class="mi">7</span> <span class="o">//</span> <span class="o">-</span><span class="mi">3</span>
+<span class="o">-</span><span class="mi">7</span> <span class="o">//</span> <span class="o">-</span><span class="mi">3</span>
+</code></pre></div>
+<p>Floor division by zero currently panics with a <code>ZeroDivisionError: float division by zero</code>-style runtime message.</p>
+<h3 id="modulo">Modulo<a class="headerlink" href="#modulo" title="Permanent link">&para;</a></h3>
+<p><code>%</code> uses Python-style modulo semantics. The remainder has the sign of the divisor and satisfies <code>a == (a // b) * b + (a % b)</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="mi">7</span> <span class="o">%</span> <span class="mi">3</span>
+<span class="o">-</span><span class="mi">7</span> <span class="o">%</span> <span class="mi">3</span>
+<span class="mi">7</span> <span class="o">%</span> <span class="o">-</span><span class="mi">3</span>
+<span class="o">-</span><span class="mi">7</span> <span class="o">%</span> <span class="o">-</span><span class="mi">3</span>
+</code></pre></div>
+<p>Modulo by zero currently panics with a <code>ZeroDivisionError: float division by zero</code>-style runtime message.</p>
+<h3 id="power">Power<a class="headerlink" href="#power" title="Permanent link">&para;</a></h3>
+<p><code>**</code> returns <code>int</code> only when the left operand is <code>int</code> and the exponent is a non-negative integer literal.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="mi">2</span> <span class="o">**</span> <span class="mi">3</span>
+<span class="mi">2</span> <span class="o">**</span> <span class="mi">0</span>
+<span class="mi">2</span> <span class="o">**</span> <span class="o">-</span><span class="mi">1</span>
 
 <span class="nb">exp</span> <span class="o">=</span> <span class="mi">3</span>
-<span class="mi">2</span> <span class="o">**</span> <span class="nb">exp</span>      <span class="c1"># float (even if exp is int at runtime)</span>
-
-<span class="mf">2.0</span> <span class="o">**</span> <span class="mi">3</span>      <span class="c1"># float</span>
-<span class="mi">2</span> <span class="o">**</span> <span class="mf">3.0</span>      <span class="c1"># float</span>
+<span class="mi">2</span> <span class="o">**</span> <span class="nb">exp</span>
 </code></pre></div>
-<h4 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h4>
-<ul>
-<li>This is a <strong>compile-time</strong> rule: we only choose integer exponentiation when we can prove
-  the exponent is a non-negative integer literal.</li>
-</ul>
-<h3 id="comparisons">Comparisons (<code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>)<a class="headerlink" href="#comparisons" title="Permanent link">&para;</a></h3>
-<p>Mixed numeric comparisons are allowed:</p>
-<ul>
-<li><code>int</code> and <code>float</code> can be compared.</li>
-<li>Operands are promoted to <code>float</code> for comparison.</li>
-<li>The result type is <code>bool</code>.</li>
-</ul>
-<h4 id="examples-comparisons">Examples (comparisons)<a class="headerlink" href="#examples-comparisons" title="Permanent link">&para;</a></h4>
-<div class="language-incan highlight"><pre><span></span><code><span class="mi">1</span> <span class="o">==</span> <span class="mf">1.0</span>      <span class="c1"># true</span>
-<span class="mi">1</span> <span class="o">&lt;</span> <span class="mf">1.5</span>       <span class="c1"># true</span>
-<span class="mi">2</span> <span class="o">&gt;=</span> <span class="mf">2.0</span>      <span class="c1"># true</span>
+<h2 id="compound-assignment">Compound assignment<a class="headerlink" href="#compound-assignment" title="Permanent link">&para;</a></h2>
+<p>Compound assignment is typechecked as assignment of the operator result back to the left-hand binding.</p>
+<div class="language-text highlight"><pre><span></span><code>x &lt;op&gt;= y
+x = x &lt;op&gt; y
 </code></pre></div>
-<h2 id="compound-assignments">Compound assignments<a class="headerlink" href="#compound-assignments" title="Permanent link">&para;</a></h2>
-<p>This section covers: <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code></p>
-<p>Compound assignment is typechecked as if it were:</p>
-<div class="language-text highlight"><pre><span></span><code>x &lt;op&gt;= y   ≈   x = (x &lt;op&gt; y)
-</code></pre></div>
-<p>Because variables are statically typed, the <strong>result type</strong> of <code>(x &lt;op&gt; y)</code> must be
-assignable back to <code>x</code>.</p>
-<h3 id="examples-compound-assignments">Examples (compound assignments)<a class="headerlink" href="#examples-compound-assignments" title="Permanent link">&para;</a></h3>
+<p>The two forms are not exactly the same evaluation form, but they have the same assignability requirement.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">mut</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span>
-<span class="n">x</span> <span class="o">+=</span> <span class="mi">2</span>        <span class="c1"># ok (int)</span>
-<span class="n">x</span> <span class="o">*=</span> <span class="mi">3</span>        <span class="c1"># ok (int)</span>
-<span class="c1"># x /= 2      # error: (int / int) is float, cannot assign to int</span>
+<span class="n">x</span> <span class="o">+=</span> <span class="mi">2</span>
+<span class="n">x</span> <span class="o">*=</span> <span class="mi">3</span>
+<span class="n">x</span> <span class="o">/=</span> <span class="mi">2</span>
 
 <span class="k">mut</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span>
-<span class="n">y</span> <span class="o">/=</span> <span class="mi">2</span>        <span class="c1"># ok (float)</span>
-<span class="n">y</span> <span class="o">%=</span> <span class="mi">7</span>        <span class="c1"># ok (float)</span>
+<span class="n">y</span> <span class="o">/=</span> <span class="mi">2</span>
+<span class="n">y</span> <span class="o">%=</span> <span class="mi">7</span>
 </code></pre></div>
-<h2 id="nan-infinity">NaN / Infinity<a class="headerlink" href="#nan-infinity" title="Permanent link">&para;</a></h2>
-<p>This section documents how <code>float</code> behaves today.</p>
-<p>For <code>float</code>, NaN/Inf behavior follows IEEE/Rust behavior from the generated code and <code>incan_stdlib</code>.</p>
-<h3 id="examples-naninf">Examples (NaN/Inf)<a class="headerlink" href="#examples-naninf" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="c1"># Conceptual examples; exact behavior depends on IEEE rules.</span>
-<span class="c1">#</span>
-<span class="c1"># Note: Incan currently panics on division by zero, so these *do not* produce</span>
-<span class="c1"># NaN/Inf today:</span>
-<span class="c1"># nan = 0.0 / 0.0</span>
-<span class="c1"># inf = 1.0 / 0.0</span>
-<span class="c1">#</span>
-<span class="c1"># NaN/Inf can still appear via Rust interop or other IEEE-producing operations.</span>
-<span class="k">pass</span>
+<p><code>x /= 2</code> is rejected when <code>x</code> is <code>int</code>, because <code>/</code> returns <code>float</code>.</p>
+<p>Exact-width integer arithmetic results are ordinary <code>int</code> expressions today, so assigning an arithmetic result back to an exact-width binding requires an explicit policy when narrowing would be needed.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">n</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">10</span>
+<span class="n">maybe_next</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">i8</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">try_resize</span><span class="p">()</span>
 </code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">Python comparison</p>
-<p>Python’s float behavior differs in some edge cases and error behavior (exceptions vs panics).</p>
-</div>
+<h2 id="nan-and-infinity">NaN and infinity<a class="headerlink" href="#nan-and-infinity" title="Permanent link">&para;</a></h2>
+<p><code>float</code>, <code>f32</code>, and <code>f64</code> are IEEE binary floating-point values in generated Rust. NaN and infinity can appear through Rust interop or APIs that produce IEEE special values.</p>
+<p>Incan's checked numeric division helpers currently panic on division by zero instead of producing NaN or infinity.</p>
+<h2 id="current-limitations">Current limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Decimal arithmetic is not defined yet.</li>
+<li>Integer overflow behavior for general exact-width arithmetic is not yet a separately documented language contract.</li>
+<li>Integer-to-float assignment is not an implicit conversion rule.</li>
+<li>Literal suffixes such as <code>42i32</code> or <code>1.0f32</code> are not part of the current syntax.</li>
+<li>Parsing decimal values from strings and rich decimal math should remain library-owned until the language specifies those semantics.</li>
+</ul>
 
 
 

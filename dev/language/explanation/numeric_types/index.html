@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../static_storage/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../derives_and_traits/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 009: Numeric type system and builtin type registry - Incan Documentation</title>
+        <title>Numeric types - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-009-numeric-type-system-and-builtin-type-registry" class="md-skip">
+        <a href="#why-numeric-types-work-this-way" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 009: Numeric type system and builtin type registry
+              Numeric types
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -573,7 +579,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -606,7 +612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -627,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -648,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -669,7 +675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -690,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -711,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -732,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -753,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -774,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -795,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -816,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -837,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -858,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -959,6 +965,8 @@
   
     
     
+      
+        
       
         
       
@@ -1027,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1048,7 +1056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1069,7 +1077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1090,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1111,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1132,7 +1140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1153,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1174,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1195,7 +1203,28 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1216,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1237,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1258,7 +1287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1279,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1300,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1321,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1423,7 +1452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1444,7 +1473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../reference/code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1465,7 +1494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../reference/functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1486,7 +1515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../reference/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1507,7 +1536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../reference/symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1528,7 +1557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1549,7 +1578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1570,7 +1599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1591,7 +1620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1612,7 +1641,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1633,7 +1662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../reference/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1654,7 +1683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1675,7 +1704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1696,7 +1725,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1751,7 +1780,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1784,7 +1813,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1805,7 +1834,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1826,7 +1855,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../../reference/stdlib/fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1847,7 +1876,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1868,7 +1897,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1889,7 +1918,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1910,7 +1939,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1971,7 +2000,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2004,7 +2033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2025,7 +2054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2046,7 +2075,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2067,7 +2096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2088,7 +2117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2109,7 +2138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2189,7 +2218,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2210,7 +2239,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2231,7 +2260,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2252,7 +2281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2273,7 +2302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2294,7 +2323,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2328,8 +2357,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2367,16 +2398,18 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
@@ -2390,7 +2423,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             Explanation
@@ -2404,7 +2437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2425,7 +2458,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2446,7 +2479,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2467,7 +2500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2488,7 +2521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2509,7 +2542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2530,7 +2563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2551,7 +2584,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2569,10 +2602,152 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-end-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      The end state
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ordinary-code-keeps-ordinary-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      Ordinary code keeps ordinary names
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aliases-are-for-shared-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Aliases are for shared vocabulary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#external-data-systems-influenced-the-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      External data systems influenced the shape
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lossless-conversion-is-the-implicit-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lossless conversion is the implicit line
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resize-methods-put-data-loss-in-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resize methods put data loss in source
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-interop-follows-the-same-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust interop follows the same rule
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decimal-is-in-scope-arithmetic-is-not-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      Decimal is in scope, arithmetic is not yet
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-design-does-not-claim" class="md-nav__link">
+    <span class="md-ellipsis">
+      What this design does not claim
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2593,7 +2768,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2614,7 +2789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2635,7 +2810,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2656,7 +2831,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2677,7 +2852,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2717,12 +2892,12 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2733,14 +2908,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -2755,7 +2930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2776,7 +2951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2805,7 +2980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2826,7 +3001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2893,7 +3068,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2971,7 +3146,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2992,7 +3167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3013,7 +3188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3097,7 +3272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3118,7 +3293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3139,7 +3314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3160,7 +3335,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3181,7 +3356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3202,7 +3377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3223,7 +3398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3244,7 +3419,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3316,7 +3491,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3337,7 +3512,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3415,7 +3590,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3436,7 +3611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3457,7 +3632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3478,7 +3653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3499,7 +3674,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3560,7 +3735,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3593,7 +3768,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3661,7 +3836,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3771,7 +3946,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3804,7 +3979,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3825,7 +4000,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3846,7 +4021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3867,7 +4042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3888,7 +4063,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3909,7 +4084,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3930,7 +4105,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3951,7 +4126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4037,7 +4212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4058,7 +4233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4079,7 +4254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4100,7 +4275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4121,7 +4296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4201,7 +4376,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4222,7 +4397,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4243,7 +4418,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4264,7 +4439,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4285,7 +4460,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4306,7 +4481,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4335,7 +4510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4392,7 +4567,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4425,7 +4600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4446,7 +4621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4467,7 +4642,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4495,7 +4670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4515,7 +4690,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4555,288 +4730,81 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#the-end-state" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      The end state
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#ordinary-code-keeps-ordinary-names" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Ordinary code keeps ordinary names
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#aliases-are-for-shared-vocabulary" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Aliases are for shared vocabulary
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#external-data-systems-influenced-the-shape" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
+      External data systems influenced the shape
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+  <a href="#lossless-conversion-is-the-implicit-line" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation (how users think about it)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#explicit-widths-when-they-matter" class="md-nav__link">
-    <span class="md-ellipsis">
-      Explicit widths when they matter
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#aliases-remain-ergonomic" class="md-nav__link">
-    <span class="md-ellipsis">
-      Aliases remain ergonomic
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#data-oriented-spellings-map-to-canonical-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      Data-oriented spellings map to canonical types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#decimal-values-are-schema-stable" class="md-nav__link">
-    <span class="md-ellipsis">
-      Decimal values are schema-stable
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#conversion-policy-is-explicit-when-data-can-change" class="md-nav__link">
-    <span class="md-ellipsis">
-      Conversion policy is explicit when data can change
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rust-interop-stays-ergonomic" class="md-nav__link">
-    <span class="md-ellipsis">
-      Rust interop stays ergonomic
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation (precise rules)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#canonical-numeric-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      Canonical numeric types
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#numeric-aliases" class="md-nav__link">
-    <span class="md-ellipsis">
-      Numeric aliases
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reserved-numeric-names" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reserved numeric names
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#decimal-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Decimal semantics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#literals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Literals
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#arithmetic-and-conversions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Arithmetic and conversions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#overflow-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      Overflow behavior
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#indexing" class="md-nav__link">
-    <span class="md-ellipsis">
-      Indexing
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rust-interop" class="md-nav__link">
-    <span class="md-ellipsis">
-      Rust interop
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-the-coupling-is-intentional" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why the coupling is intentional
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#registry-first-builtin-vocabulary" class="md-nav__link">
-    <span class="md-ellipsis">
-      Registry-first builtin vocabulary
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with existing features
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
+      Lossless conversion is the implicit line
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
+  <a href="#resize-methods-put-data-loss-in-source" class="md-nav__link">
     <span class="md-ellipsis">
-      Drawbacks
+      Resize methods put data loss in source
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
+  <a href="#rust-interop-follows-the-same-rule" class="md-nav__link">
     <span class="md-ellipsis">
-      Layers affected
+      Rust interop follows the same rule
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
+  <a href="#decimal-is-in-scope-arithmetic-is-not-yet" class="md-nav__link">
     <span class="md-ellipsis">
-      Design Decisions
+      Decimal is in scope, arithmetic is not yet
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-design-does-not-claim" class="md-nav__link">
+    <span class="md-ellipsis">
+      What this design does not claim
     </span>
   </a>
   
@@ -4860,339 +4828,44 @@
   
 
 
-<h1 id="rfc-009-numeric-type-system-and-builtin-type-registry">RFC 009: Numeric type system and builtin type registry<a class="headerlink" href="#rfc-009-numeric-type-system-and-builtin-type-registry" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2024-12-11</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 005 (Rust interop)</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/325</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.1</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces Incan's explicit numeric type system: exact-width signed and unsigned integers, exact-width binary floats, fixed-precision decimals, analytics-oriented aliases, and a centralized builtin-type registry. The coupling is intentional: once Incan exposes a broader numeric surface, the language needs one canonical vocabulary source for builtin spellings, aliases, literal suffixes, bounds, conversion behavior, interop metadata, and user-facing diagnostics rather than a growing set of scattered compiler special cases.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>The current numeric surface is intentionally simple: <code>int</code> lowers to <code>i64</code> and <code>float</code> lowers to <code>f64</code>. That is fine for general application code, but it is too blunt for several real cases:</p>
-<ul>
-<li>Rust interop and FFI frequently require exact-width numeric types.</li>
-<li>Binary protocols and file formats encode fixed-width fields.</li>
-<li>Memory-sensitive workloads benefit from smaller element types.</li>
-<li>Bit manipulation and hardware-facing work depend on explicit widths.</li>
-<li>Data and analytics workloads need schema-stable decimal values instead of binary floating-point approximations.</li>
-<li>Query-plan and columnar-data interop benefit from names that map cleanly to Substrait- and Arrow-shaped numeric schemas.</li>
-</ul>
-<p>The RFC also addresses a second problem that appears immediately once this surface arrives: builtin numeric behavior is currently too easy to define piecemeal. If each new builtin type adds methods, coercions, and surface spellings through disconnected compiler logic, the language contract will drift. The builtin registry is therefore not incidental implementation detail in this RFC; it is the mechanism that keeps the expanded numeric surface coherent.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Add exact-width signed integers, unsigned integers, sized floats, and fixed-precision decimals to the language surface.</li>
-<li>Preserve <code>int</code> and <code>float</code> as ergonomic aliases for general-purpose code.</li>
-<li>Add data- and analytics-oriented aliases where the alias maps to an existing canonical numeric type without changing semantics.</li>
-<li>Require explicit conversion where precision, scale, sign, or width can change in a lossy way.</li>
-<li>Allow ergonomic lossless conversion and contextual numeric adaptation at explicit Rust interop boundaries.</li>
-<li>Make builtin numeric vocabulary come from a single language-owned registry rather than repeated string matching.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Arbitrary-precision integers in this RFC.</li>
-<li>Unbounded arbitrary-precision decimals in this RFC.</li>
-<li>SIMD/vector numeric types in this RFC.</li>
-<li>Implicit numeric widening and narrowing rules beyond what this document explicitly allows.</li>
-<li>Making <code>usize</code> the ordinary user-facing indexing type for lists, strings, and slices.</li>
-<li>Adding <code>char</code> or Unicode scalar semantics.</li>
-<li>Freezing every future builtin numeric method.</li>
-</ul>
-<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="explicit-widths-when-they-matter">Explicit widths when they matter<a class="headerlink" href="#explicit-widths-when-they-matter" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">port</span><span class="p">:</span> <span class="n">u16</span> <span class="o">=</span> <span class="mi">8080</span><span class="n">u16</span>
-<span class="n">flags</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mb">0b1010_0001</span><span class="n">u8</span>
-<span class="n">sample_rate</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">44_100</span><span class="kt">i32</span>
+<h1 id="why-numeric-types-work-this-way">Why numeric types work this way<a class="headerlink" href="#why-numeric-types-work-this-way" title="Permanent link">&para;</a></h1>
+<p>Incan's numeric design has two jobs that pull in different directions: ordinary Incan code should stay ergonomic, and boundary-heavy data/Rust code should be explicit enough that widths, precision, and lossy conversions are visible in source.</p>
+<h2 id="the-end-state">The end state<a class="headerlink" href="#the-end-state" title="Permanent link">&para;</a></h2>
+<p>The intended end state is a language where most application code can use <code>int</code>, <code>float</code>, and <code>decimal[p, s]</code> without ceremony, while schema and interop code can name exact widths without casts or guesswork.</p>
+<p>That means Incan has ordinary numeric spellings, exact-width spellings, and data-oriented aliases. These are not three competing models. They are one numeric model seen from three practical contexts.</p>
+<h2 id="ordinary-code-keeps-ordinary-names">Ordinary code keeps ordinary names<a class="headerlink" href="#ordinary-code-keeps-ordinary-names" title="Permanent link">&para;</a></h2>
+<p><code>int</code> and <code>float</code> remain the right defaults for code that Incan owns. They are easy to read, stable as user-facing names, and avoid forcing every loop counter, retry count, or timeout calculation to make a storage-width decision.</p>
+<p>Exact-width types become useful when the width is part of the contract. A packet field, Arrow buffer, SQL column, Rust API parameter, or generated ABI surface is different from an ordinary local variable. In those cases the type annotation should say what the boundary says.</p>
+<h2 id="aliases-are-for-shared-vocabulary">Aliases are for shared vocabulary<a class="headerlink" href="#aliases-are-for-shared-vocabulary" title="Permanent link">&para;</a></h2>
+<p>Aliases such as <code>smallint</code>, <code>integer</code>, <code>bigint</code>, <code>hugeint</code>, <code>real</code>, <code>double</code>, <code>fp32</code>, and <code>fp64</code> exist because Incan is intended to work well in data and analytics settings. Those ecosystems already have vocabulary for fixed-width and floating-point schema fields.</p>
+<p>The aliases are intentionally not nominal types. <code>integer</code> and <code>i32</code> are the same type after resolution. This keeps schema-shaped source readable without multiplying the semantic type universe.</p>
+<h2 id="external-data-systems-influenced-the-shape">External data systems influenced the shape<a class="headerlink" href="#external-data-systems-influenced-the-shape" title="Permanent link">&para;</a></h2>
+<p>Apache Arrow describes its columnar format around typed arrays and physical layouts; its type table includes integer bit width and signedness, floating-point precision, and decimal precision/scale as parameters. Substrait similarly treats type class, nullability, variation, and parameters as the components of a type, with examples such as <code>i8</code>, <code>fp32</code>, and <code>DECIMAL&lt;10, 2&gt;</code>.</p>
+<p>Incan is not copying either system wholesale. Arrow is a memory format and Substrait is a relational algebra serialization format. The relevant lesson is narrower: analytics boundaries need width and scale to be representable in source without translation games.</p>
+<h2 id="lossless-conversion-is-the-implicit-line">Lossless conversion is the implicit line<a class="headerlink" href="#lossless-conversion-is-the-implicit-line" title="Permanent link">&para;</a></h2>
+<p>The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless, and rejected when it may lose data.</p>
+<p>This admits common safe cases without user friction:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">120</span>
+<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span>
 </code></pre></div>
-<p>Authors continue using <code>int</code> and <code>float</code> for ordinary code, but they can opt into explicit widths when interop, protocols, or memory layout demand it.</p>
-<h3 id="aliases-remain-ergonomic">Aliases remain ergonomic<a class="headerlink" href="#aliases-remain-ergonomic" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">42</span>
-<span class="n">precise_count</span><span class="p">:</span> <span class="kt">i64</span> <span class="o">=</span> <span class="mi">42</span>
-
-<span class="n">ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14</span>
-<span class="n">precise_ratio</span><span class="p">:</span> <span class="kt">f64</span> <span class="o">=</span> <span class="mf">3.14</span>
+<p>It rejects the cases reviewers need to notice:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">240</span>
+<span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">wide</span>
 </code></pre></div>
-<p><code>int</code> and <code>float</code> remain the default ergonomic spellings; <code>i64</code> and <code>f64</code> are the exact-width canonical forms.</p>
-<h3 id="data-oriented-spellings-map-to-canonical-types">Data-oriented spellings map to canonical types<a class="headerlink" href="#data-oriented-spellings-map-to-canonical-types" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">kind</span><span class="p">:</span> <span class="n">byte</span> <span class="o">=</span> <span class="mi">255</span><span class="n">u8</span>
-<span class="n">warehouse_id</span><span class="p">:</span> <span class="n">long</span> <span class="o">=</span> <span class="mi">9_223_372_036_854_775_000</span><span class="kt">i64</span>
-<span class="n">score</span><span class="p">:</span> <span class="n">double</span> <span class="o">=</span> <span class="mf">0.992</span>
-<span class="n">embedding_component</span><span class="p">:</span> <span class="n">fp32</span> <span class="o">=</span> <span class="mf">0.125</span><span class="kt">f32</span>
-</code></pre></div>
-<p>These spellings are aliases, not separate numeric semantics. Diagnostics and reflection may preserve the authored spelling where useful, but type identity normalizes to the canonical numeric type.</p>
-<h3 id="decimal-values-are-schema-stable">Decimal values are schema-stable<a class="headerlink" href="#decimal-values-are-schema-stable" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">price</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">10</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">19.99</span><span class="n">d</span>
-<span class="n">tax_rate</span><span class="p">:</span> <span class="n">numeric</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0825</span><span class="n">d</span>
-</code></pre></div>
-<p><code>decimal[P, S]</code> represents a fixed-precision decimal value with precision <code>P</code> and scale <code>S</code>. <code>numeric[P, S]</code> is an alias for <code>decimal[P, S]</code>. A bare <code>decimal</code> spelling is intentionally not introduced by this RFC because analytics schemas should not hide precision and scale behind a default.</p>
-<h3 id="conversion-policy-is-explicit-when-data-can-change">Conversion policy is explicit when data can change<a class="headerlink" href="#conversion-policy-is-explicit-when-data-can-change" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="mi">240</span><span class="n">u8</span>
-<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span><span class="o">.</span><span class="n">resize</span><span class="p">()</span>
-
-<span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span>
-<span class="n">maybe_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">try_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span><span class="o">?</span>
-<span class="n">wrapped_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">wrapping_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span>
-<span class="n">clamped_byte</span><span class="p">:</span> <span class="n">u8</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">saturating_resize</span><span class="p">[</span><span class="n">u8</span><span class="p">]()</span>
-</code></pre></div>
-<p>Lossless upsizing may use <code>resize()</code> when the target type is known from context. Downsizings, sign changes, decimal scale changes, and binary-float/decimal conversions must use an explicit policy.</p>
-<h3 id="rust-interop-stays-ergonomic">Rust interop stays ergonomic<a class="headerlink" href="#rust-interop-stays-ergonomic" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">devices</span> <span class="kn">import</span><span class="w"> </span><span class="nn">configure_port</span>
-
-<span class="n">configure_port</span><span class="p">(</span><span class="mi">8080</span><span class="p">)</span>
-</code></pre></div>
-<p>When an explicit Rust boundary expects a numeric type such as <code>u16</code>, the compiler may adapt a numeric literal or provably lossless value to the boundary type. The compiler must not use Rust interop as a back door for arbitrary lossy conversions; if a conversion may fail or lose information, diagnostics should suggest <code>try_resize</code>, <code>wrapping_resize</code>, <code>saturating_resize</code>, or a more specific helper.</p>
-<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="canonical-numeric-types">Canonical numeric types<a class="headerlink" href="#canonical-numeric-types" title="Permanent link">&para;</a></h3>
-<p>The language adds these canonical builtin numeric spellings:</p>
-<table>
-<thead>
-<tr>
-<th>Incan type</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code></td>
-<td>Signed fixed-width integers</td>
-</tr>
-<tr>
-<td><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code></td>
-<td>Unsigned fixed-width integers</td>
-</tr>
-<tr>
-<td><code>f32</code>, <code>f64</code></td>
-<td>Fixed-width binary floating-point values</td>
-</tr>
-<tr>
-<td><code>isize</code>, <code>usize</code></td>
-<td>Pointer-sized signed and unsigned integers</td>
-</tr>
-<tr>
-<td><code>decimal[P, S]</code></td>
-<td>Fixed-precision decimal with scale <code>S</code></td>
-</tr>
-</tbody>
-</table>
-<p><code>int</code> remains an alias for <code>i64</code>. <code>float</code> remains an alias for <code>f64</code>.</p>
-<h3 id="numeric-aliases">Numeric aliases<a class="headerlink" href="#numeric-aliases" title="Permanent link">&para;</a></h3>
-<p>The builtin registry must recognize these aliases:</p>
-<table>
-<thead>
-<tr>
-<th>Alias</th>
-<th>Canonical type</th>
-<th>Notes</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>byte</code></td>
-<td><code>u8</code></td>
-<td>Binary/data-oriented byte spelling</td>
-</tr>
-<tr>
-<td><code>short</code></td>
-<td><code>i16</code></td>
-<td>Common small signed integer spelling</td>
-</tr>
-<tr>
-<td><code>smallint</code></td>
-<td><code>i16</code></td>
-<td>SQL/data-system spelling</td>
-</tr>
-<tr>
-<td><code>integer</code></td>
-<td><code>i32</code></td>
-<td>SQL/data-system spelling; distinct from Incan's <code>int</code> alias</td>
-</tr>
-<tr>
-<td><code>long</code></td>
-<td><code>i64</code></td>
-<td>Common large signed integer spelling</td>
-</tr>
-<tr>
-<td><code>real</code></td>
-<td><code>f32</code></td>
-<td>SQL/data-system single-precision spelling</td>
-</tr>
-<tr>
-<td><code>double</code></td>
-<td><code>f64</code></td>
-<td>Data-system double-precision spelling</td>
-</tr>
-<tr>
-<td><code>fp32</code></td>
-<td><code>f32</code></td>
-<td>Substrait-style spelling</td>
-</tr>
-<tr>
-<td><code>fp64</code></td>
-<td><code>f64</code></td>
-<td>Substrait-style spelling</td>
-</tr>
-<tr>
-<td><code>numeric[P, S]</code></td>
-<td><code>decimal[P, S]</code></td>
-<td>Fixed-precision decimal alias</td>
-</tr>
-<tr>
-<td><code>decimal128[P, S]</code></td>
-<td><code>decimal[P, S]</code></td>
-<td>Explicit 128-bit decimal storage spelling</td>
-</tr>
-</tbody>
-</table>
-<p>Aliases must not create separate runtime or typechecker identities. Diagnostics may mention the authored alias when that improves clarity, but canonical type identity uses the right-hand side of the table.</p>
-<h3 id="reserved-numeric-names">Reserved numeric names<a class="headerlink" href="#reserved-numeric-names" title="Permanent link">&para;</a></h3>
-<p>The builtin registry must reserve these names so later features can use them without compatibility traps:</p>
-<ul>
-<li><code>bigint</code>, for future arbitrary-precision integer semantics.</li>
-<li>Bare <code>decimal</code>, for a future decision about whether Incan should provide a default decimal precision and scale.</li>
-<li>Bare <code>numeric</code>, for the same reason as bare <code>decimal</code>.</li>
-</ul>
-<h3 id="decimal-semantics">Decimal semantics<a class="headerlink" href="#decimal-semantics" title="Permanent link">&para;</a></h3>
-<p><code>decimal[P, S]</code> is a fixed-precision decimal type. <code>P</code> is the maximum number of significant decimal digits. <code>S</code> is the number of digits after the decimal point. This RFC requires <code>0 &lt;= S &lt;= P</code> and <code>P &lt;= 38</code> for the required implementation surface.</p>
-<p>The required decimal storage model is a signed 128-bit scaled integer. <code>decimal128[P, S]</code> is therefore an explicit alias for <code>decimal[P, S]</code>. A follow-up RFC may add <code>decimal256[P, S]</code> for higher precision, but this RFC does not require it.</p>
-<p>Decimal literals use the suffix <code>d</code>, as in <code>19.99d</code>, so source code can distinguish decimal literals from binary float literals.</p>
-<h3 id="literals">Literals<a class="headerlink" href="#literals" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Unsuffixed integer literals default to <code>int</code> unless a surrounding annotation or inference context requires a different numeric type.</li>
-<li>Unsuffixed float literals default to <code>float</code> unless a surrounding annotation or inference context requires a different float type.</li>
-<li>Suffixed integer literals such as <code>42u16</code> and <code>7i8</code> must construct the explicitly named type.</li>
-<li>Suffixed float literals such as <code>3.14f32</code> must construct the explicitly named type.</li>
-<li>Decimal literals such as <code>19.99d</code> must construct a decimal type from surrounding annotation or inference context.</li>
-<li>Out-of-range suffixed literals are compile-time errors.</li>
-<li>Decimal literals that exceed the target precision or scale are compile-time errors when the target is statically known.</li>
-</ul>
-<h3 id="arithmetic-and-conversions">Arithmetic and conversions<a class="headerlink" href="#arithmetic-and-conversions" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Same-type integer arithmetic yields the same type.</li>
-<li>Same-type binary-float arithmetic yields the same type.</li>
-<li>Same-type decimal arithmetic preserves decimal semantics but may require operator-specific precision and scale rules. This RFC requires those rules to be registry-owned before implementation begins.</li>
-<li>Mixed-width integer arithmetic requires an explicit conversion unless a surrounding context admits only a lossless conversion and the compiler can prove it.</li>
-<li>Narrowing, sign-changing, precision-losing, scale-losing, and binary-float/decimal conversions must be explicit.</li>
-<li>Lossless upsizing may use <code>resize()</code> when the target type is known from context.</li>
-<li>Potentially lossy resizing must use <code>try_resize[T]()</code>, <code>wrapping_resize[T]()</code>, or <code>saturating_resize[T]()</code> depending on the intended behavior.</li>
-</ul>
-<h3 id="overflow-behavior">Overflow behavior<a class="headerlink" href="#overflow-behavior" title="Permanent link">&para;</a></h3>
-<p>Sized integers follow Rust's ordinary overflow behavior for generated Rust:</p>
-<ul>
-<li>debug builds trap on overflow;</li>
-<li>release builds wrap unless the program uses explicit checked, saturating, or wrapping operations.</li>
-</ul>
-<p>The required integer helper families are:</p>
-<ul>
-<li><code>checked_add</code>, <code>checked_sub</code>, <code>checked_mul</code>, and <code>checked_pow</code>;</li>
-<li><code>wrapping_add</code>, <code>wrapping_sub</code>, <code>wrapping_mul</code>, and <code>wrapping_pow</code>;</li>
-<li><code>saturating_add</code>, <code>saturating_sub</code>, <code>saturating_mul</code>, and <code>saturating_pow</code>.</li>
-</ul>
-<p>The builtin registry must record which numeric families support each helper. A follow-up RFC may expand the helper catalog, but these families are part of this RFC's required surface.</p>
-<h3 id="indexing">Indexing<a class="headerlink" href="#indexing" title="Permanent link">&para;</a></h3>
-<p>Ordinary list, string, tuple, bytes, and slice indexing remains Incan-shaped and signed. <code>usize</code> is not required at ordinary indexing call sites. Lowering and runtime helpers may normalize signed indices to Rust <code>usize</code> internally after applying Incan indexing semantics such as negative-index handling.</p>
-<p>APIs that explicitly traffic in capacities, offsets, Rust interop, or columnar layout metadata may use <code>usize</code> or another exact-width integer directly.</p>
-<h3 id="rust-interop">Rust interop<a class="headerlink" href="#rust-interop" title="Permanent link">&para;</a></h3>
-<p>Exact-width numeric types are exact-lowering types at Rust boundaries. <code>i32</code> maps to Rust <code>i32</code>, <code>u16</code> maps to Rust <code>u16</code>, <code>f32</code> maps to Rust <code>f32</code>, and so on. <code>decimal[P, S]</code> maps to the runtime decimal representation associated with that precision and scale.</p>
-<p>The compiler may insert contextual numeric adaptation at explicit Rust boundaries only when the conversion is exact or provably lossless. Examples include an in-range integer literal passed to a Rust function expecting <code>u16</code>, or an <code>i16</code> value passed to a Rust function expecting <code>i64</code>. It must reject or require explicit conversion for downsize, sign-changing, decimal scale-changing, decimal/binary-float, or otherwise lossy cases.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-the-coupling-is-intentional">Why the coupling is intentional<a class="headerlink" href="#why-the-coupling-is-intentional" title="Permanent link">&para;</a></h3>
-<p>This RFC deliberately couples the numeric type system with a builtin registry because the registry is part of getting the language surface right. Without it, the feature would immediately push more builtin names, methods, bounds, literal suffixes, aliases, and coercion rules into scattered compiler branches, which would make the spec harder to reason about and the implementation easier to drift.</p>
-<p>The important point is the contract, not the file layout: builtin behavior should come from one coherent vocabulary source instead of repeated hardcoded matches.</p>
-<h3 id="registry-first-builtin-vocabulary">Registry-first builtin vocabulary<a class="headerlink" href="#registry-first-builtin-vocabulary" title="Permanent link">&para;</a></h3>
-<p>The implementation therefore needs a language-owned builtin registry that defines:</p>
-<ul>
-<li>canonical builtin type spellings;</li>
-<li>aliases;</li>
-<li>literal suffixes;</li>
-<li>integer signedness and bit width;</li>
-<li>binary-float precision;</li>
-<li>decimal precision, scale, and storage width;</li>
-<li>numeric bounds;</li>
-<li>builtin method vocabulary;</li>
-<li>resize/conversion policy;</li>
-<li>Rust interop mapping;</li>
-<li>stable metadata needed for docs, diagnostics, and analytics/schema interop.</li>
-</ul>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Rust interop benefits directly because exact-width types can map to exact-width Rust signatures without widening <code>int</code> into an implicit conversion catch-all.</li>
-<li>Existing <code>int</code> and <code>float</code> code keeps working unchanged.</li>
-<li>Container indexing remains ordinary Incan indexing rather than forcing <code>usize</code> into normal user code.</li>
-<li>Future data/analytics features can map numeric schemas through the registry instead of inventing per-feature vocabulary.</li>
-</ul>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>The feature is additive at the user surface. Existing programs using <code>int</code> and <code>float</code> continue to compile. Existing uses of <code>i32</code>, <code>i64</code>, <code>f32</code>, and <code>f64</code> that were previously accepted as aliases must be audited during implementation because this RFC makes those spellings distinct exact-width types rather than aliases for <code>int</code> or <code>float</code>.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Expose exact widths only through Rust interop</strong></li>
-<li>
-<p>Too indirect. These types are useful inside ordinary Incan code, not only at FFI boundaries.</p>
-</li>
-<li>
-<p><strong>Python-style arbitrary-precision <code>int</code> only</strong></p>
-</li>
-<li>
-<p>That improves some numeric ergonomics, but it does not solve fixed-width interop, protocol parsing, explicit layout control, or columnar schema mapping.</p>
-</li>
-<li>
-<p><strong>Wrapper types only</strong></p>
-</li>
-<li>
-<p>Still requires real underlying fixed-width and decimal types, so it does not remove the core problem.</p>
-</li>
-<li>
-<p><strong>C-style numeric names only</strong></p>
-</li>
-<li>
-<p>Less explicit and often platform-dependent in ways that this RFC is trying to avoid.</p>
-</li>
-<li>
-<p><strong>No aliases</strong></p>
-</li>
-<li>
-<p>Canonical Rust-shaped spellings are clear, but data and analytics users routinely encounter SQL-, Arrow-, and Substrait-shaped numeric names. Registry-owned aliases give those users a familiar entry point without creating additional type identities.</p>
-</li>
-<li>
-<p><strong>Bare <code>decimal</code> with a default precision and scale</strong></p>
-</li>
-<li>This is ergonomic but hides schema decisions. In a data-oriented language, decimal precision and scale are part of the contract, so this RFC requires explicit <code>decimal[P, S]</code> and reserves bare <code>decimal</code> for a future decision.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>More builtin numeric types increase the language surface and the testing matrix.</li>
-<li>Decimal support raises the implementation bar because parser, typechecker, lowering, runtime, docs, and interop need precision/scale-aware behavior.</li>
-<li><code>isize</code> and <code>usize</code> expose target-dependent widths, which slightly weakens the otherwise explicit story.</li>
-<li>Aliases can confuse users if diagnostics do not normalize clearly to canonical types.</li>
-<li>The registry requirement raises the implementation bar, but that is preferable to baking in more ad hoc builtin behavior.</li>
-</ul>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Lexer / parser</strong>: must recognize added type names, aliases, parameterized decimal types, suffixed numeric literals, and decimal literals.</li>
-<li><strong>Typechecker</strong>: must model exact-width numeric types, decimal precision/scale, alias normalization, explicit conversion policy, contextual interop adaptation, and out-of-range literal diagnostics.</li>
-<li><strong>Lowering / emission</strong>: must preserve exact widths and decimal metadata when lowering to backend representations.</li>
-<li><strong>Runtime / stdlib</strong>: must provide required decimal representation and numeric helper families.</li>
-<li><strong>Builtin surface registry</strong>: must own canonical spelling, aliases, literal suffixes, bounds, method vocabulary, conversion policy, and interop/schema metadata for builtin numeric types.</li>
-<li><strong>Formatter / LSP</strong>: should preserve authored spellings where useful while exposing canonical type information and diagnostics.</li>
-<li><strong>Docs / tooling</strong>: should surface width-specific help, aliases, conversions, decimal precision/scale, and overflow behavior consistently.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>int</code> remains an alias for <code>i64</code>; <code>float</code> remains an alias for <code>f64</code>.</li>
-<li>The exact-width integer and binary-float spellings are distinct canonical numeric types, not aliases for <code>int</code> or <code>float</code>.</li>
-<li>Data-oriented aliases are included only when they map to an existing canonical numeric type without changing semantics.</li>
-<li><code>bigint</code>, bare <code>decimal</code>, and bare <code>numeric</code> are reserved for future features rather than claimed as aliases in this RFC.</li>
-<li><code>decimal[P, S]</code> and <code>numeric[P, S]</code> are in scope as fixed-precision decimal types backed by a 128-bit scaled integer for the required implementation surface.</li>
-<li><code>char</code> is out of scope because this RFC is about numerics, not Unicode scalar or string semantics.</li>
-<li>Ordinary indexing remains signed and Incan-shaped; users should not need <code>usize</code> for normal list, tuple, string, bytes, or slice indexing.</li>
-<li>Lossless upsizing can be ergonomic through <code>resize()</code> when the target type is known. Downsize, sign-changing, precision-losing, scale-losing, and binary-float/decimal conversions require explicit policy.</li>
-<li>Explicit Rust interop boundaries may perform exact or provably lossless numeric adaptation for good DX, but they must not silently perform lossy conversion.</li>
-<li>The builtin registry is the source of truth for numeric vocabulary, aliases, bounds, methods, conversions, diagnostics, docs metadata, and interop/schema mappings.</li>
-</ul>
+<p>The second example might work for the value <code>240</code> if the target were unsigned, or might fail for other runtime values. The language should not hide that policy decision.</p>
+<h2 id="resize-methods-put-data-loss-in-source">Resize methods put data loss in source<a class="headerlink" href="#resize-methods-put-data-loss-in-source" title="Permanent link">&para;</a></h2>
+<p>Narrowing can be correct. It just needs to say what should happen when the value does not fit.</p>
+<p><code>try_resize()</code> says failure is data. <code>wrapping_resize()</code> says fixed-width wraparound is intended. <code>saturating_resize()</code> says clipping is intended. <code>resize()</code> says no data loss is allowed.</p>
+<p>That makes code review sharper. A reviewer can accept or challenge the policy by reading the method name, rather than discovering it in generated Rust or runtime behavior.</p>
+<h2 id="rust-interop-follows-the-same-rule">Rust interop follows the same rule<a class="headerlink" href="#rust-interop-follows-the-same-rule" title="Permanent link">&para;</a></h2>
+<p>Rust APIs often encode numeric decisions in parameter types. If Rust expects <code>i64</code>, passing an Incan <code>i32</code> should be painless. If Rust expects <code>i32</code>, passing an Incan <code>int</code> should not silently downcast.</p>
+<p>Keeping Rust interop on the same exact-or-lossless rule prevents a separate "interop cast system" from growing at the boundary. It also means code that typechecks for an Incan assignment is aligned with code that typechecks for a Rust scalar argument.</p>
+<h2 id="decimal-is-in-scope-arithmetic-is-not-yet">Decimal is in scope, arithmetic is not yet<a class="headerlink" href="#decimal-is-in-scope-arithmetic-is-not-yet" title="Permanent link">&para;</a></h2>
+<p>Decimal types are included because fixed-scale values are central to data, finance, and analytics code. Precision and scale belong in the type because they define what values can be represented.</p>
+<p>Decimal arithmetic is a separate language-design problem. Addition, multiplication, division, rounding, overflow, scale propagation, and aggregation need explicit rules. The implemented surface therefore stops at decimal type syntax, literal validation, formatting, runtime representation, generated Rust, and display.</p>
+<h2 id="what-this-design-does-not-claim">What this design does not claim<a class="headerlink" href="#what-this-design-does-not-claim" title="Permanent link">&para;</a></h2>
+<p>This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn <code>usize</code> into a general positive integer type. It also does not claim that aliases are always better than canonical names.</p>
+<p>The rule of thumb is: use ordinary names for ordinary code, exact names for exact boundaries, aliases for schema vocabulary, and explicit resize methods whenever data loss is possible.</p>
 
 
 
@@ -5241,18 +4914,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

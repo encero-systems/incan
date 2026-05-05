@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
       
@@ -1183,6 +1185,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2371,6 +2394,8 @@
       
         
       
+        
+      
     
     
       
@@ -2576,6 +2601,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -2721,7 +2767,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -2737,14 +2783,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4505,6 +4551,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-009-numeric-type-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 009 numeric type system
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-016-loop-expressions-and-break-value" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 016 loop expressions and break &lt;value&gt;
@@ -4866,6 +4921,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-009-numeric-type-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 009 numeric type system
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-016-loop-expressions-and-break-value" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 016 loop expressions and break &lt;value&gt;
@@ -5094,14 +5158,15 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a new control-flow surface, richer enum behavior, and tighter tooling contracts. RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly, RFC 050 lets enums declare methods and adopt traits, and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 050 lets enums declare methods and adopt traits; and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
-<p>For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a> and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
+<p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
 <p>The <code>0.2</code> line made Incan's module, stdlib, and Rust interop boundaries much clearer. <code>0.3</code> continues from that baseline with a stronger emphasis on predictable generated output, contributor ergonomics, and small but meaningful control-flow ergonomics that remove repetitive boilerplate without weakening the language's explicit pattern model.</p>
 <p>The release is still early, but the initial direction is already visible:</p>
 <ul>
 <li>expression-oriented control flow should stay explicit, so infinite loops that return values use <code>loop:</code> and <code>break &lt;value&gt;</code> rather than hidden accumulator patterns</li>
+<li>numeric annotations should be ergonomic for ordinary code while still exact enough for Rust APIs, binary formats, database schemas, and analytics data</li>
 <li>formatter output should be governed by explicit contracts, not scattered newline decisions</li>
 <li>common <code>Option</code> / <code>Result</code> destructuring should have a concise control-flow form when the non-match case is intentionally a no-op</li>
 <li>enums that cross string or integer boundaries should keep enum type safety while exposing one canonical raw representation</li>
@@ -5112,10 +5177,47 @@
 <li>ownership and generated-runtime ergonomics should improve structurally, not through one-off <code>.clone()</code> or <code>.as_ref()</code> patches</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
-<p>There are no required source migrations for the current <code>0.3</code> work. <code>loop:</code> and <code>break &lt;value&gt;</code> are additive control-flow features; existing <code>while True:</code> code remains valid.</p>
+<p>There are no required source migrations for ordinary <code>int</code> and <code>float</code> code. Those spellings remain valid and keep their <code>i64</code> / <code>f64</code> representations.</p>
+<p>Numeric annotations can now be more specific when the representation matters. Code that used a project-local bare type name <code>decimal</code> or <code>numeric</code> should rename that type or use the new parameterized forms such as <code>decimal[12, 2]</code>; those bare names are now reserved for the numeric type family. Data-shaped aliases such as <code>bigint</code>, <code>hugeint</code>, <code>integer</code>, <code>smallint</code>, <code>real</code>, and <code>double</code> canonicalize to exact Incan types rather than introducing new nominal types.</p>
+<p><code>loop:</code> and <code>break &lt;value&gt;</code> are additive control-flow features; existing <code>while True:</code> code remains valid.</p>
 <p>Projects that gate on <code>incan fmt --check</code> should expect one-time vertical-spacing diffs when adopting a formatter that implements RFC 053. Those diffs are intentional: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations get exactly two blank lines around them, following body-bearing members inside type bodies get exactly one blank line, and other same-scope transitions stay in the zero-or-one bucket.</p>
 <p><code>if let</code> and <code>while let</code> are additive. Existing <code>match</code> code keeps working unchanged; the new forms are available when a single successful pattern matters and the non-match path should do nothing.</p>
 <h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
+<h3 id="rfc-009-numeric-type-system">RFC 009 numeric type system<a class="headerlink" href="#rfc-009-numeric-type-system" title="Permanent link">&para;</a></h3>
+<p>Incan now has a registry-backed numeric type system instead of only the broad <code>int</code> and <code>float</code> spellings. Use <code>int</code> and <code>float</code> for ordinary Incan-owned logic, then opt into exact widths when the number crosses a contract boundary.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">attempts</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">timeout_seconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.5</span>
+
+<span class="n">packet_version</span><span class="p">:</span> <span class="kt">u8</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">message_count</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="mi">4096</span>
+<span class="n">rust_code</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">200</span>
+</code></pre></div>
+<p>The new canonical integer surface covers <code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code>, <code>i128</code>, <code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code>, <code>u128</code>, <code>isize</code>, and <code>usize</code>. Binary floats now include <code>f32</code> and <code>f64</code>. <code>int</code> remains the ergonomic signed integer spelling and canonicalizes to <code>i64</code>; <code>float</code> remains the ergonomic binary float spelling and canonicalizes to <code>f64</code>.</p>
+<p>Data and analytics vocabulary is also recognized where it maps cleanly to an exact type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">WarehouseRow</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="kt">bigint</span>
+    <span class="n">fingerprint</span><span class="p">:</span> <span class="kt">hugeint</span>
+    <span class="n">category_id</span><span class="p">:</span> <span class="kt">integer</span>
+    <span class="n">priority</span><span class="p">:</span> <span class="kt">smallint</span>
+    <span class="n">score</span><span class="p">:</span> <span class="kt">double</span>
+</code></pre></div>
+<p>Aliases do not create separate runtime types. <code>integer</code> is <code>i32</code>, <code>bigint</code> is <code>i64</code>, <code>hugeint</code> is <code>i128</code>, <code>real</code> is <code>f32</code>, and <code>double</code> is <code>f64</code>.</p>
+<p>Fixed-scale decimal annotations are now accepted with explicit precision and scale:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">unit_price</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">12</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">19.99</span><span class="n">d</span>
+<span class="n">tax_rate</span><span class="p">:</span> <span class="n">numeric</span><span class="p">[</span><span class="mi">6</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0825</span><span class="n">d</span>
+</code></pre></div>
+<p>The compiler validates decimal precision, scale, and literal fit. Decimal values lower through the toolchain-owned <code>Decimal128</code> representation, so they are useful for typed boundaries, literal validation, formatting, generated Rust, and display. General decimal arithmetic is not yet part of the language contract.</p>
+<p>Numeric conversion is intentionally explicit when values may be lost. Lossless widening is accepted, including at Rust interop boundaries, but narrowing and sign-changing conversions require a policy:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">small</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="mi">120</span>
+<span class="n">wide</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">small</span><span class="o">.</span><span class="n">resize</span><span class="p">()</span>
+
+<span class="n">incoming</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">240</span>
+<span class="n">maybe_small</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">i8</span><span class="p">]</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">try_resize</span><span class="p">()</span>
+<span class="n">wrapped</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">wrapping_resize</span><span class="p">()</span>
+<span class="n">capped</span><span class="p">:</span> <span class="kt">i8</span> <span class="o">=</span> <span class="n">incoming</span><span class="o">.</span><span class="n">saturating_resize</span><span class="p">()</span>
+</code></pre></div>
+<p>The practical rule is simple: write ordinary business logic with <code>int</code> and <code>float</code>, match exact widths at external boundaries, use schema-shaped aliases when they make data models read like their source schema, and choose a resize policy before narrowing.</p>
+<p>See also: <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>, <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a>, <a href="../../language/explanation/numeric_types/">Why numeric types work this way</a>, <a href="../../language/how-to/rust_interop/">Rust interop</a>, <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>.</p>
 <h3 id="rfc-016-loop-expressions-and-break-value">RFC 016 loop expressions and <code>break &lt;value&gt;</code><a class="headerlink" href="#rfc-016-loop-expressions-and-break-value" title="Permanent link">&para;</a></h3>
 <p>Incan now has an explicit infinite-loop construct:</p>
 <ul>
@@ -5218,6 +5320,7 @@ the raw representation for value enums.</p>
 <li><strong>Compiler/Codegen</strong>: Generated Rust now retains Rust enum imports that are referenced only from match patterns, including prost-style patterns such as <code>Some(RelType.Read(_))</code> (#459).</li>
 <li><strong>Compiler/Codegen</strong>: <code>std.testing.assert_eq</code> and <code>assert_ne</code> now isolate their generated Rust operands before comparing them, so checks such as <code>assert_eq(plan_encoded_len(plan) &gt; 0, true)</code> emit valid Rust instead of a chained-comparison parse error.</li>
 <li><strong>Compiler/Codegen</strong>: Cross-module trait-bound propagation no longer lets a same-named external generic helper rewrite a local non-generic function signature. This keeps <code>std.testing.timeout(...)</code> independent from <code>std.async.time.timeout(...)</code> even though both helpers share the same leaf name.</li>
+<li><strong>Language/Compiler/Runtime</strong>: RFC 009 implements the numeric type registry with exact-width signed and unsigned integers, pointer-sized integers, <code>f32</code>/<code>f64</code>, analytics/database aliases including <code>bigint</code> and <code>hugeint</code>, parameterized <code>decimal[p, s]</code> / <code>numeric[p, s]</code> literals, lossless numeric widening, explicit integer resize helpers, and exact/lossless Rust interop numeric adaptation (#325, RFC 009).</li>
 <li><strong>Compiler/Codegen</strong>: RFC 032 value enums now lower their raw-value metadata into IR and generate <code>value()</code>, <code>from_value(...)</code>, display, string parsing, and serde implementations that use the canonical raw representation while keeping <code>message()</code> variant-name based (#317, RFC 032).</li>
 <li><strong>Compiler/Codegen</strong>: RFC 025 now preserves distinct same-generic-trait instantiations on model, class, and enum declarations, allows trait-backed same-name methods, resolves same-family calls by argument types or explicit expected return type, enforces <code>T with Trait[F]</code> generic bound arguments, and emits separate Rust trait impls (#150, RFC 025).</li>
 <li><strong>Compiler/Codegen</strong>: <code>@rust.allow(...)</code> now emits targeted Rust <code>#[allow(...)]</code> metadata for specific generated Rust items when an Incan declaration intentionally accepts a narrow rustc or Clippy lint. The decorator supports functions, methods, models, classes, enums, and newtypes, rejects module-level directives, and blocks broad lint groups such as <code>warnings</code>, <code>unused</code>, and the common Clippy group lints (#337, RFC 057).</li>
@@ -5285,12 +5388,14 @@ the raw representation for value enums.</p>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Decimal arithmetic is not yet general language behavior. The RFC 009 decimal surface covers typed annotations, literal validation, formatting, generated Rust representation, and display; arithmetic semantics should wait for a follow-up language/library decision.</li>
 <li><code>incan fmt</code> remains intentionally conservative on broader wrapping and may still leave indivisible tokens or unsupported expression shapes beyond the documented 120-character line-length target. RFC 053 / #336 narrows the vertical-spacing contract and adds call/constructor wrapping, while #248 adds common function/method signature wrapping; this is still not a general wrapping/configuration overhaul.</li>
 <li><code>0.3</code> is still a development release. This page is intentionally incomplete until more post-<code>0.2</code> work lands.</li>
 </ul>
 <h2 id="rfcs-implemented">RFCs implemented<a class="headerlink" href="#rfcs-implemented" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Async fixtures: <a href="../../RFCs/closed/implemented/004_async_fixtures/">RFC 004</a></li>
+<li>Numeric type system and builtin type registry: <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a></li>
 <li>Hatch-like tooling and project lifecycle CLI: <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li>Testing language primitives: <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a></li>

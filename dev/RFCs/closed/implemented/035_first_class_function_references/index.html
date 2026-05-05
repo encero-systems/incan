@@ -990,6 +990,8 @@
       
         
       
+        
+      
     
     
       
@@ -1179,6 +1181,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2367,6 +2390,8 @@
       
         
       
+        
+      
     
     
       
@@ -2572,6 +2597,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -2717,7 +2763,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -2733,14 +2779,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4970,7 +5016,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">double</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># unnecessary indirection</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="kt">double</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># unnecessary indirection</span>
 </code></pre></div>
 <p>Named function references remove that ceremony.</p>
 <h3 id="it-is-a-prerequisite-for-user-defined-decorators">It is a prerequisite for user-defined decorators<a class="headerlink" href="#it-is-a-prerequisite-for-user-defined-decorators" title="Permanent link">&para;</a></h3>
@@ -4986,14 +5032,14 @@
     <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
 
 <span class="c1"># Pass by name — no closure wrapper needed</span>
-<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>      <span class="c1"># → 10</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="kt">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>      <span class="c1"># → 10</span>
 
 <span class="c1"># Store in a variable</span>
-<span class="n">transform</span> <span class="o">=</span> <span class="n">double</span>
+<span class="n">transform</span> <span class="o">=</span> <span class="kt">double</span>
 <span class="kt">result</span> <span class="o">=</span> <span class="n">transform</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>          <span class="c1"># → 10</span>
 
 <span class="c1"># Put in a list</span>
-<span class="n">ops</span> <span class="o">=</span> <span class="p">[</span><span class="n">double</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>   <span class="c1"># mix of named and anonymous</span>
+<span class="n">ops</span> <span class="o">=</span> <span class="p">[</span><span class="kt">double</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>   <span class="c1"># mix of named and anonymous</span>
 </code></pre></div>
 <p>Function types can be written in two equivalent forms:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Arrow form (canonical)</span>
@@ -5041,7 +5087,7 @@
 <p>Type parameters are not supported on function references in this RFC (a generic function reference requires a separate design). Generic functions are rejected in value position with a dedicated typechecker diagnostic; passing by name remains available for monomorphic functions and for wrapping generic callables in closures at the call site.</p>
 <h3 id="closures-and-named-references-are-interchangeable">Closures and named references are interchangeable<a class="headerlink" href="#closures-and-named-references-are-interchangeable" title="Permanent link">&para;</a></h3>
 <p>A <code>(int) -&gt; int</code> parameter accepts both:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>            <span class="c1"># named function reference</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">apply</span><span class="p">(</span><span class="kt">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>            <span class="c1"># named function reference</span>
 <span class="n">apply</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>     <span class="c1"># anonymous closure</span>
 </code></pre></div>
 <p>Both lower to the same IR type (<code>IrType::Function { params: [IrType::Int], ret: IrType::Int }</code>).</p>

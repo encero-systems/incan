@@ -990,6 +990,8 @@
       
         
       
+        
+      
     
     
       
@@ -1179,6 +1181,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2367,6 +2390,8 @@
       
         
       
+        
+      
     
     
       
@@ -2572,6 +2597,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -2717,7 +2763,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -2733,14 +2779,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4856,7 +4902,7 @@
 <span class="n">version</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_u32_le</span><span class="p">()</span><span class="o">?</span>
 <span class="n">metadata_count</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_u64_le</span><span class="p">()</span><span class="o">?</span>
 
-<span class="n">payload</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_until</span><span class="p">(</span><span class="mi">0</span><span class="n">u8</span><span class="p">)</span><span class="o">?</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_until</span><span class="p">(</span><span class="mi">0</span><span class="kt">u8</span><span class="p">)</span><span class="o">?</span>
 <span class="n">remaining</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">remaining</span><span class="p">()</span>
 </code></pre></div>
 <p><code>BytesIO</code> is also writable. It overwrites from the current cursor position unless the caller explicitly seeks elsewhere first.</p>
@@ -4864,8 +4910,8 @@
 
 <span class="n">out</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">()</span>
 <span class="n">out</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;GGUF&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">out</span><span class="o">.</span><span class="n">write_u32_le</span><span class="p">(</span><span class="mi">3</span><span class="n">u32</span><span class="p">)</span><span class="o">?</span>
-<span class="n">out</span><span class="o">.</span><span class="n">write_u64_le</span><span class="p">(</span><span class="mi">42</span><span class="n">u64</span><span class="p">)</span><span class="o">?</span>
+<span class="n">out</span><span class="o">.</span><span class="n">write_u32_le</span><span class="p">(</span><span class="mi">3</span><span class="kt">u32</span><span class="p">)</span><span class="o">?</span>
+<span class="n">out</span><span class="o">.</span><span class="n">write_u64_le</span><span class="p">(</span><span class="mi">42</span><span class="kt">u64</span><span class="p">)</span><span class="o">?</span>
 
 <span class="n">blob</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">()</span>
 </code></pre></div>

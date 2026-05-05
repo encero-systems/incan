@@ -996,6 +996,8 @@
       
         
       
+        
+      
     
     
       
@@ -1185,6 +1187,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -2375,6 +2398,8 @@
       
         
       
+        
+      
     
     
       
@@ -2656,6 +2681,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -2801,7 +2847,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -2817,14 +2863,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4699,7 +4745,7 @@
 <span class="n">get_value</span> <span class="o">=</span> <span class="p">()</span> <span class="o">=&gt;</span> <span class="mi">42</span>
 
 <span class="c1"># Single parameter (parentheses required)</span>
-<span class="n">double</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
+<span class="kt">double</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
 
 <span class="c1"># Multiple parameters  </span>
 <span class="n">add</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="n">y</span>
@@ -4715,9 +4761,9 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">apply</span><span class="p">(</span><span class="n">f</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="n">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>      <span class="c1"># pass by name — no closure needed</span>
-<span class="n">transform</span> <span class="o">=</span> <span class="n">double</span>             <span class="c1"># store in a variable</span>
-<span class="n">ops</span> <span class="o">=</span> <span class="p">[</span><span class="n">double</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>   <span class="c1"># mix named functions and closures</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">apply</span><span class="p">(</span><span class="kt">double</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>      <span class="c1"># pass by name — no closure needed</span>
+<span class="n">transform</span> <span class="o">=</span> <span class="kt">double</span>             <span class="c1"># store in a variable</span>
+<span class="n">ops</span> <span class="o">=</span> <span class="p">[</span><span class="kt">double</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>   <span class="c1"># mix named functions and closures</span>
 </code></pre></div>
 <p>Both forms are interchangeable wherever a function type is expected. Use a direct reference when the function already exists; use a closure for short inline logic.</p>
 <h2 id="when-to-use-closures">When to use closures<a class="headerlink" href="#when-to-use-closures" title="Permanent link">&para;</a></h2>

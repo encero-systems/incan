@@ -998,6 +998,8 @@
       
         
       
+        
+      
     
     
       
@@ -1187,6 +1189,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
   </span>
   
 
@@ -1467,6 +1490,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numeric-arguments-and-return-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numeric arguments and return values
+    </span>
+  </a>
   
 </li>
       
@@ -2703,6 +2735,8 @@
       
         
       
+        
+      
     
     
       
@@ -2908,6 +2942,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3053,7 +3108,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
         
           
           
@@ -3069,14 +3124,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_15" id="__nav_3_5_15_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_15_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_15">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_16">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5008,6 +5063,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#numeric-arguments-and-return-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Numeric arguments and return values
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#capability-bounds-with-stdrust" class="md-nav__link">
     <span class="md-ellipsis">
       Capability bounds with std.rust
@@ -5304,8 +5368,8 @@ This is the recommended approach for anything beyond single-file scripts:</p>
 </code></pre></div>
 <p>When a crate is configured in <code>incan.toml</code>, inline version annotations for that crate are <strong>not allowed</strong> —
 the manifest is the single source of truth. Bare imports (without <code>@</code>) are fine.</p>
-<p>For the full manifest format, see:<br />
-<a href="../../../tooling/reference/project_configuration/">Project configuration reference</a>.<br />
+<p>For the full manifest format, see:
+<a href="../../../tooling/reference/project_configuration/">Project configuration reference</a>.
 For a practical guide, see: <a href="../../../tooling/how-to/dependencies/">Managing dependencies</a>.</p>
 <h3 id="known-good-defaults">Known-good defaults<a class="headerlink" href="#known-good-defaults" title="Permanent link">&para;</a></h3>
 <p>The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you
@@ -5467,6 +5531,39 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <li><code>from S try adapter</code> for fallible inbound adaptation (<code>S -&gt; Result[ThisType, E]</code> or <code>S -&gt; Option[ThisType]</code>)</li>
 <li><code>into T via adapter</code> for outbound adaptation (<code>ThisType -&gt; T</code>)</li>
 </ul>
+<h2 id="numeric-arguments-and-return-values">Numeric arguments and return values<a class="headerlink" href="#numeric-arguments-and-return-values" title="Permanent link">&para;</a></h2>
+<p>Rust APIs often distinguish numeric widths that ordinary Incan code does not care about. Incan's interop boundary uses the same rule as numeric assignment: exact matches and provably lossless widening are accepted; narrowing is rejected.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">telemetry</span> <span class="kn">import</span><span class="w"> </span><span class="nn">record_i32</span><span class="o">,</span><span class="w"> </span><span class="nn">record_i64</span><span class="o">,</span><span class="w"> </span><span class="nn">record_f32</span><span class="o">,</span><span class="w"> </span><span class="nn">record_f64</span>
+
+<span class="n">code</span><span class="p">:</span> <span class="kt">i32</span> <span class="o">=</span> <span class="mi">200</span>
+<span class="n">record_i32</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>       <span class="c1"># ok: exact</span>
+<span class="n">record_i64</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>       <span class="c1"># ok: i32 widens to i64</span>
+
+<span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span>       <span class="c1"># int is canonical i64</span>
+<span class="n">record_i64</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>      <span class="c1"># ok</span>
+<span class="c1"># error if record_i32 expects Rust i32</span>
+<span class="n">record_i32</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
+
+<span class="n">sample</span><span class="p">:</span> <span class="kt">f32</span> <span class="o">=</span> <span class="mf">1.25</span>
+<span class="n">record_f64</span><span class="p">(</span><span class="n">sample</span><span class="p">)</span>     <span class="c1"># ok: f32 widens to f64</span>
+
+<span class="n">value</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.25</span>    <span class="c1"># float is canonical f64</span>
+<span class="c1"># error if record_f32 expects Rust f32</span>
+<span class="n">record_f32</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+</code></pre></div>
+<p>This rule is deliberate. Users should not have to add casts for safe width increases, but generated code should not silently downcast a value when a Rust API asks for a smaller integer or <code>f32</code>.</p>
+<p>When narrowing is intended, choose the conversion policy in Incan source before the Rust call:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">telemetry</span> <span class="kn">import</span><span class="w"> </span><span class="nn">record_i32</span>
+
+<span class="nb">count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span>
+<span class="n">maybe_code</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="kt">i32</span><span class="p">]</span> <span class="o">=</span> <span class="nb">count</span><span class="o">.</span><span class="n">try_resize</span><span class="p">()</span>
+
+<span class="k">match</span> <span class="n">maybe_code</span><span class="p">:</span>
+    <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">code</span><span class="p">):</span> <span class="n">record_i32</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+    <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;count is outside i32&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>For fixed-scale data, prefer <code>decimal[p, s]</code> / <code>numeric[p, s]</code> at the Incan boundary and explicit Rust adapters for crate-specific decimal types until the target crate's decimal representation is modeled directly.</p>
+<p>For the complete numeric contract, see <a href="../../reference/numeric_semantics/">Numeric semantics</a>. For practical type selection advice, see <a href="../choosing_numeric_types/">Choosing numeric types</a>. For the design rationale, see <a href="../../explanation/numeric_types/">Why numeric types work this way</a>.</p>
 <h2 id="capability-bounds-with-stdrust">Capability bounds with <code>std.rust</code><a class="headerlink" href="#capability-bounds-with-stdrust" title="Permanent link">&para;</a></h2>
 <p>Import Rust capability markers from <code>std.rust</code> and use them in generic <code>with</code> clauses:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.rust</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Send</span><span class="p">,</span> <span class="nc">Sync</span>
@@ -5508,7 +5605,12 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <tr>
 <td><code>float</code></td>
 <td><code>f64</code></td>
-<td><code>f64</code>, <code>f32</code></td>
+<td><code>f64</code></td>
+</tr>
+<tr>
+<td>exact-width numerics</td>
+<td>matching Rust scalar</td>
+<td>same type or provably lossless widening</td>
 </tr>
 <tr>
 <td><code>bool</code></td>
@@ -5532,13 +5634,14 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 </tr>
 </tbody>
 </table>
-<p>Example (<code>float -&gt; f32</code> boundary adaptation):</p>
+<p>Exact-width numeric adaptation is intentionally narrow. <code>i8</code> can flow into an <code>i16</code>/<code>i32</code>/<code>i64</code> Rust parameter, <code>u8</code> can flow into a wider unsigned or strictly wider signed parameter, and <code>f32</code> can flow into <code>f64</code>. Narrowing, signed-to-unsigned conversion, and <code>float</code>/<code>f64</code> to <code>f32</code> are rejected unless the Incan code performs an explicit conversion first.</p>
+<p>Example (<code>f32 -&gt; f64</code> boundary adaptation):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Duration</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="c1"># `from_secs_f32` expects f32; Incan `float` can be adapted at this Rust boundary.</span>
-    <span class="n">d</span> <span class="o">=</span> <span class="nc">Duration</span><span class="o">.</span><span class="n">from_secs_f32</span><span class="p">(</span><span class="mf">1.5</span><span class="p">)</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">as_secs_f32</span><span class="p">())</span>
+    <span class="n">seconds</span><span class="p">:</span> <span class="kt">f32</span> <span class="o">=</span> <span class="mf">1.5</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="nc">Duration</span><span class="o">.</span><span class="n">from_secs_f64</span><span class="p">(</span><span class="n">seconds</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">as_secs_f64</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <h3 id="working-with-json-serde_json">Working with JSON (serde_json)<a class="headerlink" href="#working-with-json-serde_json" title="Permanent link">&para;</a></h3>
@@ -5626,6 +5729,14 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <tr>
 <td><code>float</code></td>
 <td><code>f64</code></td>
+</tr>
+<tr>
+<td><code>i8</code> / <code>u8</code> etc.</td>
+<td>matching Rust primitive</td>
+</tr>
+<tr>
+<td><code>decimal[p, s]</code></td>
+<td><code>incan_stdlib::num::Decimal128</code></td>
 </tr>
 <tr>
 <td><code>str</code></td>
