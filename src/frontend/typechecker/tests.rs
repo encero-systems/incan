@@ -7018,6 +7018,37 @@ fn test_unknown_stdlib_module_from_import() {
     );
 }
 
+#[test]
+fn test_known_stdlib_module_rejects_unknown_annotation_only_import() {
+    let source = r#"
+from std.testing import NotExported
+
+def accepts_marker(value: NotExported) -> None:
+  pass
+"#;
+    let errs = check_str_err(source, "unknown stdlib import used only as an annotation should fail");
+    assert!(
+        errs.iter().any(|e| {
+            e.message
+                .contains("Cannot import `NotExported` from stdlib module `std.testing`")
+                && e.message.contains("not exported")
+        }),
+        "Expected not-exported diagnostic for std.testing.NotExported; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_non_stdlib_annotation_only_import_keeps_placeholder_fallback() {
+    let source = r#"
+from app.types import ExternalOnly
+
+def accepts_external(value: ExternalOnly) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================================================
 // RFC 005: Rust interop
 // ========================================================================

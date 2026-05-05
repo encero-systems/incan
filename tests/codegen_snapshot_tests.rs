@@ -718,6 +718,22 @@ fn test_std_web_routing_compiled_codegen() {
 }
 
 #[test]
+fn imported_stdlib_static_method_defaults_expand_at_call_site_issue500() {
+    let source = r#"
+from std.web import App
+
+def main() -> None:
+  App.run()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("App::run(\"127.0.0.1\".to_string(),8080)"),
+        "imported stdlib static method call should expand omitted defaults:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_web_route_extractors_nested_module_codegen() {
     let main_source = r#"
 import std.async
@@ -1102,6 +1118,30 @@ fn test_match_statements_codegen() {
 }
 
 #[test]
+fn test_issue492_rust_result_match_does_not_clone_scrutinee() {
+    let rust_code = generate_rust(
+        r#"
+from rust::std::fs import read_dir
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    match read_dir(RustPath.new(".")):
+        Ok(entries) =>
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) => println(entry.path().to_string_lossy().into_owned())
+                    Err(err) => println(err.to_string())
+        Err(err) => println(err.to_string())
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("entry_result.clone()"),
+        "Rust Result match scrutinee must not be cloned for non-Clone payloads:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_type_annotations_codegen() {
     let source = load_test_file("type_annotations");
     let rust_code = generate_rust(&source);
@@ -1117,6 +1157,50 @@ fn test_rfc029_union_types_codegen() {
         "union isinstance chains must fully lower before Rust emission:\n{rust_code}"
     );
     insta::assert_snapshot!("rfc029_union_types", rust_code);
+}
+
+#[test]
+fn test_issue501_option_union_isinstance_codegen_no_raw_call() {
+    let rust_code = generate_rust(
+        r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+pub def describe(value: Option[LocalPath | str]) -> str:
+  if value is not None:
+    if isinstance(value, str):
+      return value.upper()
+    elif isinstance(value, LocalPath):
+      return value.0
+  return "missing"
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("isinstance("),
+        "Option[Union] isinstance narrowing must fully lower before Rust emission:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue502_exhaustive_independent_isinstance_branches_codegen_has_no_unit_fallback() {
+    let rust_code = generate_rust(
+        r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+pub def normalize_path_like(value: LocalPath | str) -> LocalPath:
+  if isinstance(value, str):
+    return LocalPath(value)
+  if isinstance(value, LocalPath):
+    return value
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("=> {}"),
+        "exhaustive independent isinstance branches must not emit unit fallthrough arms:\n{rust_code}"
+    );
 }
 
 #[test]

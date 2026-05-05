@@ -120,6 +120,19 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// Look up a method declaration on a stdlib type, following prelude re-exports.
+    ///
+    /// This is intentionally AST-shaped rather than `MethodInfo`-shaped so lowering can preserve default parameter
+    /// expressions when imported type methods are called with omitted arguments.
+    pub(crate) fn lookup_type_method_decl(
+        &mut self,
+        module_path: &[String],
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<ast::MethodDecl> {
+        lookup_type_method_decl_inner(module_path, type_name, method_name, &mut HashSet::new())
+    }
+
     /// List public type signatures in a stdlib module.
     pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
         self.ensure_loaded(module_path);
@@ -411,6 +424,84 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
 
     tracing::debug!(relative_path = %relative, "stdlib file not found in any search path");
     None
+}
+
+/// Find a method declaration on a stdlib type, following prelude-style re-exports.
+fn lookup_type_method_decl_inner(
+    module_path: &[String],
+    type_name: &str,
+    method_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::MethodDecl> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+    let result = load_stdlib_program(module_path).and_then(|program| {
+        find_method_decl_in_program(&program, type_name, method_name)
+            .or_else(|| find_reexported_type_method_decl(&program, type_name, method_name, loading))
+    });
+    loading.remove(&key);
+    result
+}
+
+/// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
+fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
+    let relative = stdlib::stdlib_stub_path(module_path)?;
+    let path = find_stdlib_file(&relative)?;
+    let source = std::fs::read_to_string(path).ok()?;
+    let tokens = crate::frontend::lexer::lex(&source).ok()?;
+    crate::frontend::parser::parse(&tokens).ok()
+}
+
+/// Find a method declaration directly in a parsed stdlib program.
+fn find_method_decl_in_program(program: &ast::Program, type_name: &str, method_name: &str) -> Option<ast::MethodDecl> {
+    program.declarations.iter().find_map(|decl| match &decl.node {
+        ast::Declaration::Model(model) if model.name == type_name => find_method_decl(&model.methods, method_name),
+        ast::Declaration::Class(class) if class.name == type_name => find_method_decl(&class.methods, method_name),
+        ast::Declaration::Newtype(newtype) if newtype.name == type_name => {
+            find_method_decl(&newtype.methods, method_name)
+        }
+        ast::Declaration::Enum(enum_decl) if enum_decl.name == type_name => {
+            find_method_decl(&enum_decl.methods, method_name)
+        }
+        _ => None,
+    })
+}
+
+/// Find one named method in a type declaration's method list.
+fn find_method_decl(methods: &[ast::Spanned<ast::MethodDecl>], method_name: &str) -> Option<ast::MethodDecl> {
+    methods
+        .iter()
+        .find(|method| method.node.name == method_name)
+        .map(|method| method.node.clone())
+}
+
+/// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type declaration.
+fn find_reexported_type_method_decl(
+    program: &ast::Program,
+    type_name: &str,
+    method_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::MethodDecl> {
+    program.declarations.iter().find_map(|decl| {
+        let ast::Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            return None;
+        };
+        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        items.iter().find_map(|item| {
+            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
+            if effective_name != type_name {
+                return None;
+            }
+            lookup_type_method_decl_inner(&module.segments, &item.name, method_name, loading)
+        })
+    })
 }
 
 /// Extract function signatures from a parsed stdlib `.incn` program.

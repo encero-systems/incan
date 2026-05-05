@@ -43,6 +43,54 @@ impl AstLowering {
         }
     }
 
+    /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
+    /// metadata boundaries.
+    fn callable_signature_from_stdlib_method_decl(&mut self, method: &ast::MethodDecl) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_type(&param.node.ty.node);
+                    let ty = Self::lower_param_container_type(param.node.kind, base_ty);
+                    FunctionParam {
+                        name: param.node.name.clone(),
+                        ty,
+                        mutability: super::super::super::types::Mutability::Immutable,
+                        is_self: false,
+                        kind: param.node.kind,
+                        default: param
+                            .node
+                            .default
+                            .as_ref()
+                            .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_type(&method.return_type.node),
+        }
+    }
+
+    /// Resolve an imported stdlib type method signature by loading the owning stdlib stub AST.
+    ///
+    /// Function metadata already has a direct stdlib lookup path, but type-member calls such as `App.run()` arrive as
+    /// method calls. The lightweight frontend import metadata only records `has_default`, so this path rehydrates the
+    /// actual default expressions from the stdlib source declaration before IR emission fills omitted arguments.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_imported_stdlib_type_method_path(
+        &mut self,
+        path: &[String],
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        if path.len() < 3 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let type_name = path.last()?;
+        let module_path = &path[..path.len() - 1];
+        let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+        let method = cache.lookup_type_method_decl(module_path, type_name, method_name)?;
+        Some(self.callable_signature_from_stdlib_method_decl(&method))
+    }
+
     /// Resolve the signature for an imported stdlib function by its canonical import path.
     ///
     /// Lowered stdlib modules may import private helpers from sibling stdlib modules. Those helpers are not in the

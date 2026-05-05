@@ -501,6 +501,13 @@ impl AstLowering {
                         IrType::Unknown,
                     )
                 } else {
+                    let imported_type_method_signature =
+                        match &o.node {
+                            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned().and_then(|path| {
+                                self.callable_signature_for_imported_stdlib_type_method_path(&path, m)
+                            }),
+                            _ => None,
+                        };
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
@@ -508,7 +515,8 @@ impl AstLowering {
                             method: method_name,
                             type_args: lowered_type_args,
                             args: args_ir,
-                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            callable_signature: imported_type_method_signature
+                                .or_else(|| self.callable_signature_for_call_span(expr_span)),
                             arg_policy,
                         },
                         IrType::Unknown,

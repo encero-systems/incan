@@ -2819,6 +2819,91 @@ def main() -> None:
     }
 
     #[test]
+    fn test_issue502_independent_union_narrowing_branches_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+def normalize_path_like(value: LocalPath | str) -> LocalPath:
+    if isinstance(value, str):
+        return LocalPath(value)
+    if isinstance(value, LocalPath):
+        return value
+
+def main() -> None:
+    println(normalize_path_like("from-string").0)
+    println(normalize_path_like(LocalPath("from-path")).0)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "independent union narrowing branch regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["from-string", "from-path"],
+            "unexpected independent union narrowing output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_issue501_option_union_isinstance_narrowing_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+def describe(value: Option[LocalPath | str]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        elif isinstance(value, LocalPath):
+            return value.0
+    return "missing"
+
+def main() -> None:
+    println(describe("from-string"))
+    println(describe(LocalPath("from-path")))
+    println(describe(None))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Option[Union] isinstance narrowing regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["FROM-STRING", "from-path", "missing"],
+            "unexpected Option[Union] narrowing output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_filtered_comprehensions_run_with_borrowed_iterables() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
