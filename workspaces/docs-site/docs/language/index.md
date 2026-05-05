@@ -21,6 +21,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Error Messages](how-to/error_messages.md)
 - [File I/O](how-to/file_io.md)
 - [Module state](how-to/module_state.md)
+- [Choosing numeric types](how-to/choosing_numeric_types.md)
 - [Performance](how-to/performance.md)
 - [Rust Interop](how-to/rust_interop.md)
 
@@ -48,6 +49,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Closures](explanation/closures.md)
 - [Consts](explanation/consts.md)
 - [Module static storage](explanation/static_storage.md)
+- [Numeric types](explanation/numeric_types.md)
 - [Derives & Traits](reference/derives_and_traits.md)
 - [Enums](explanation/enums.md)
 - [Error Handling](explanation/error_handling.md)

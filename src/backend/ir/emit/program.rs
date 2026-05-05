@@ -678,6 +678,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Await(operand)
             | IrExprKind::Try(operand)
             | IrExprKind::InteropCoerce { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::Cast { expr: operand, .. } => self.scan_expr(operand),
             IrExprKind::Call {
                 func, args, type_args, ..
@@ -867,6 +868,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
             | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::Literal(_)
@@ -960,6 +962,8 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Bool
             | IrType::Int
             | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
             | IrType::String
             | IrType::StaticStr
             | IrType::StaticBytes
@@ -1021,6 +1025,8 @@ impl<'a> IrEmitter<'a> {
             | IrType::Bool
             | IrType::Int
             | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
             | IrType::String
             | IrType::StaticStr
             | IrType::StaticBytes
@@ -1065,6 +1071,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Try(operand)
             | IrExprKind::Await(operand)
             | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::InteropCoerce { expr: operand, .. } => Self::collect_union_types_from_expr(operand, out),
             IrExprKind::Index { object, index } => {
                 Self::collect_union_types_from_expr(object, out);
@@ -1197,6 +1204,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
             | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::Var { .. }

@@ -1218,6 +1218,7 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     c = 1_000
     d = 1e6
     e = 1000.0
+    f = 19.99d
 "#;
         let formatted = format_source(source)?;
         assert!(
@@ -1239,6 +1240,10 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
         assert!(
             formatted.contains("e = 1000.0"),
             "expected plain 1000.0 preserved; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("f = 19.99d"),
+            "expected decimal literal suffix preserved; got: {formatted:?}"
         );
         Ok(())
     }

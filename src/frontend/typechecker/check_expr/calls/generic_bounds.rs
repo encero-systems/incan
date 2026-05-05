@@ -397,6 +397,7 @@ impl TypeChecker {
             | ResolvedType::CallSiteInfer => true,
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -464,6 +465,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -502,6 +504,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes

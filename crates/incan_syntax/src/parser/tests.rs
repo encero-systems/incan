@@ -2395,6 +2395,45 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_decimal_literal() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Expr::Literal(Literal::Decimal(value)) = &c.value.node else {
+            panic!("Expected decimal literal");
+        };
+        assert_eq!(value.body, "19.99");
+        assert_eq!(value.repr, "19.99d");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_decimal_type_arguments() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE: decimal[10, 2] = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Some(ty) = &c.ty else {
+            panic!("Expected const type annotation");
+        };
+        let Type::Generic(name, args) = &ty.node else {
+            panic!("Expected generic decimal type");
+        };
+        assert_eq!(name, "decimal");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].node, Type::IntLiteral(value) if value.value == 10));
+        assert!(matches!(&args[1].node, Type::IntLiteral(value) if value.value == 2));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_static_decl() -> Result<(), Vec<CompileError>> {
         let source = r#"
 pub static counter: int = 0

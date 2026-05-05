@@ -852,6 +852,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::Await(object)
         | IrExprKind::Try(object)
         | IrExprKind::Cast { expr: object, .. }
+        | IrExprKind::NumericResize { expr: object, .. }
         | IrExprKind::InteropCoerce { expr: object, .. }
         | IrExprKind::UnaryOp { operand: object, .. } => {
             collect_backend_clone_bounds_in_expr(object, type_param_names, self_clone_params, clone_params);
@@ -974,6 +975,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
         | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::Literal(_)
@@ -1165,6 +1167,8 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::Bool
         | IrType::Int
         | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
         | IrType::String
         | IrType::StaticStr
         | IrType::StaticBytes
@@ -1567,6 +1571,10 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
 
+        IrExprKind::NumericResize { expr, .. } => {
+            scan_expr_for_bounds(expr, type_params, params, bounds_map);
+        }
+
         IrExprKind::InteropCoerce { expr, .. } => {
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
@@ -1590,6 +1598,7 @@ fn scan_expr_for_bounds(
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
         | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::Literal(_)
@@ -1829,6 +1838,8 @@ fn add_bounds_from_type(
         | IrType::Bool
         | IrType::Int
         | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
         | IrType::String
         | IrType::StaticStr
         | IrType::StaticBytes

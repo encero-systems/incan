@@ -600,6 +600,7 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         | IrExprKind::Await(operand)
         | IrExprKind::Try(operand)
         | IrExprKind::Cast { expr: operand, .. }
+        | IrExprKind::NumericResize { expr: operand, .. }
         | IrExprKind::InteropCoerce { expr: operand, .. } => expr_uses_binding_name(operand, binding_name),
         IrExprKind::Call { func, args, .. } => {
             expr_uses_binding_name(func, binding_name)
@@ -722,6 +723,7 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
         | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::Literal(_)

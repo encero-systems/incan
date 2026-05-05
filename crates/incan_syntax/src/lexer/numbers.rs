@@ -4,10 +4,11 @@
 
 use super::Lexer;
 use super::tokens::TokenKind;
-use crate::ast::{FloatLiteral, IntLiteral, Span};
+use crate::ast::{DecimalLiteral, FloatLiteral, IntLiteral, Span};
 use crate::diagnostics::errors;
 
 impl<'a> Lexer<'a> {
+    /// Scan an integer, float, or decimal literal after the first digit has been consumed.
     pub(super) fn scan_number(&mut self, start: usize, first: char) {
         let mut value = String::from(first);
         let mut is_float = false;
@@ -65,7 +66,12 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        if is_float {
+        if self.peek() == Some('d') {
+            self.advance();
+            let end = self.current_pos;
+            let repr = self.source.get(start..end).unwrap_or("").to_string();
+            self.add_token(TokenKind::Decimal(DecimalLiteral { body: value, repr }), start);
+        } else if is_float {
             let end = self.current_pos;
             let repr = self.source.get(start..end).unwrap_or("").to_string();
             // `value` omits `_` (Rust float parsing); `repr` is the exact source substring for faithful formatting.

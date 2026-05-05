@@ -109,8 +109,8 @@ my_crate = "2.0"  # assuming this is a rust crate you are referencing
 When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** —
 the manifest is the single source of truth. Bare imports (without `@`) are fine.
 
-For the full manifest format, see:  
-[Project configuration reference](../../tooling/reference/project_configuration.md).  
+For the full manifest format, see:
+[Project configuration reference](../../tooling/reference/project_configuration.md).
 For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
 
 ### Known-good defaults
@@ -212,6 +212,49 @@ Use:
 - `from S try adapter` for fallible inbound adaptation (`S -> Result[ThisType, E]` or `S -> Option[ThisType]`)
 - `into T via adapter` for outbound adaptation (`ThisType -> T`)
 
+## Numeric arguments and return values
+
+Rust APIs often distinguish numeric widths that ordinary Incan code does not care about. Incan's interop boundary uses the same rule as numeric assignment: exact matches and provably lossless widening are accepted; narrowing is rejected.
+
+```incan
+from rust::telemetry import record_i32, record_i64, record_f32, record_f64
+
+code: i32 = 200
+record_i32(code)       # ok: exact
+record_i64(code)       # ok: i32 widens to i64
+
+count: int = 200       # int is canonical i64
+record_i64(count)      # ok
+# error if record_i32 expects Rust i32
+record_i32(count)
+
+sample: f32 = 1.25
+record_f64(sample)     # ok: f32 widens to f64
+
+value: float = 1.25    # float is canonical f64
+# error if record_f32 expects Rust f32
+record_f32(value)
+```
+
+This rule is deliberate. Users should not have to add casts for safe width increases, but generated code should not silently downcast a value when a Rust API asks for a smaller integer or `f32`.
+
+When narrowing is intended, choose the conversion policy in Incan source before the Rust call:
+
+```incan
+from rust::telemetry import record_i32
+
+count: int = 200
+maybe_code: Option[i32] = count.try_resize()
+
+match maybe_code:
+    case Some(code): record_i32(code)
+    case None: println("count is outside i32")
+```
+
+For fixed-scale data, prefer `decimal[p, s]` / `numeric[p, s]` at the Incan boundary and explicit Rust adapters for crate-specific decimal types until the target crate's decimal representation is modeled directly.
+
+For the complete numeric contract, see [Numeric semantics](../reference/numeric_semantics.md). For practical type selection advice, see [Choosing numeric types](choosing_numeric_types.md). For the design rationale, see [Why numeric types work this way](../explanation/numeric_types.md).
+
 ## Capability bounds with `std.rust`
 
 Import Rust capability markers from `std.rust` and use them in generic `with` clauses:
@@ -256,21 +299,24 @@ When calling Rust functions or methods, the compiler can apply a bounded, compil
 | Incan built-in | Canonical Rust lowering | Admitted Rust boundary targets |
 | -------------- | ----------------------- | ------------------------------ |
 | `int`          | `i64`                   | `i64`                          |
-| `float`        | `f64`                   | `f64`, `f32`                   |
+| `float`        | `f64`                   | `f64`                          |
+| exact-width numerics | matching Rust scalar | same type or provably lossless widening |
 | `bool`         | `bool`                  | `bool`                         |
 | `str`          | `String`                | `String`, `&str`               |
 | `bytes`        | `Vec<u8>`               | `Vec<u8>`, `&[u8]`             |
 | `None` / unit  | `()`                    | `()`                           |
 
-Example (`float -> f32` boundary adaptation):
+Exact-width numeric adaptation is intentionally narrow. `i8` can flow into an `i16`/`i32`/`i64` Rust parameter, `u8` can flow into a wider unsigned or strictly wider signed parameter, and `f32` can flow into `f64`. Narrowing, signed-to-unsigned conversion, and `float`/`f64` to `f32` are rejected unless the Incan code performs an explicit conversion first.
+
+Example (`f32 -> f64` boundary adaptation):
 
 ```incan
 from rust::std::time import Duration
 
 def main() -> None:
-    # `from_secs_f32` expects f32; Incan `float` can be adapted at this Rust boundary.
-    d = Duration.from_secs_f32(1.5)
-    println(d.as_secs_f32())
+    seconds: f32 = 1.5
+    d = Duration.from_secs_f64(seconds)
+    println(d.as_secs_f64())
 ```
 
 ## Examples
@@ -369,6 +415,8 @@ Incan types map to canonical Rust types:
 | -------------- | --------------- |
 | `int`          | `i64`           |
 | `float`        | `f64`           |
+| `i8` / `u8` etc. | matching Rust primitive |
+| `decimal[p, s]` | `incan_stdlib::num::Decimal128` |
 | `str`          | `String`        |
 | `bytes`        | `Vec<u8>`       |
 | `bool`         | `bool`          |

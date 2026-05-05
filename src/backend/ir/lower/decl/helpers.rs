@@ -78,10 +78,14 @@ impl AstLowering {
                     return IrType::Unit;
                 }
                 if let Some(id) = numerics::from_str(n) {
-                    return match id {
-                        NumericTypeId::Int => IrType::Int,
-                        NumericTypeId::Float => IrType::Float,
-                        NumericTypeId::Bool => IrType::Bool,
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
                     };
                 }
                 if n == "str" {
@@ -102,6 +106,7 @@ impl AstLowering {
                 IrType::Tuple(items.iter().map(|item| Self::lower_bound_type(&item.node)).collect())
             }
             ast::Type::SelfType => IrType::SelfType,
+            ast::Type::IntLiteral(_) => IrType::Unknown,
             ast::Type::Infer => IrType::Unknown,
         }
     }
@@ -412,6 +417,7 @@ impl AstLowering {
                 ast::Literal::String(s) => Some(format!("{s:?}")),
                 ast::Literal::Int(i) => Some(i.value.to_string()),
                 ast::Literal::Float(f) => Some(f.value.to_string()),
+                ast::Literal::Decimal(_) => None,
                 ast::Literal::Bool(b) => Some(b.to_string()),
                 ast::Literal::Bytes(bytes) => Some(format!("{bytes:?}")),
                 ast::Literal::None => Some("()".to_string()),
@@ -455,6 +461,7 @@ impl AstLowering {
                 format!("({inner})")
             }
             ast::Type::SelfType => "Self".to_string(),
+            ast::Type::IntLiteral(value) => value.repr.clone(),
             ast::Type::Infer => "_".to_string(),
         }
     }

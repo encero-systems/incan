@@ -5,6 +5,7 @@
 use std::fmt;
 
 use super::decl::IrTraitBound;
+use incan_core::lang::types::numerics::{self, NumericTypeId};
 
 /// Canonical IR generic name used for anonymous union types.
 pub const IR_UNION_TYPE_NAME: &str = "Union";
@@ -39,6 +40,14 @@ pub enum IrType {
     Bool,
     Int,
     Float,
+    /// Exact-width numeric type introduced by RFC 009.
+    Numeric(NumericTypeId),
+    /// Fixed-precision decimal value. Precision/scale are checked by the frontend; Rust emission uses the
+    /// toolchain-owned Decimal128 runtime representation.
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
     String,
     /// &'static str (for compile-time string constants)
     StaticStr,
@@ -108,6 +117,8 @@ impl IrType {
             | IrType::Bool
             | IrType::Int
             | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -152,6 +163,8 @@ impl IrType {
             IrType::Bool => "bool".to_string(),
             IrType::Int => "int".to_string(),
             IrType::Float => "float".to_string(),
+            IrType::Numeric(id) => numerics::as_str(*id).to_string(),
+            IrType::Decimal { precision, scale } => format!("decimal[{precision}, {scale}]"),
             IrType::String => "str".to_string(),
             IrType::StaticStr | IrType::StrRef | IrType::FrozenStr => "str".to_string(),
             IrType::StaticBytes | IrType::FrozenBytes => "bytes".to_string(),
@@ -197,6 +210,8 @@ impl IrType {
             IrType::Bool => "bool".to_string(),
             IrType::Int => "i64".to_string(),
             IrType::Float => "f64".to_string(),
+            IrType::Numeric(id) => numerics::rust_name(*id).to_string(),
+            IrType::Decimal { .. } => "incan_stdlib::num::Decimal128".to_string(),
             IrType::String => "String".to_string(),
             IrType::StaticStr => "&'static str".to_string(),
             IrType::StaticBytes => "&'static [u8]".to_string(),
@@ -329,6 +344,17 @@ mod tests {
     #[test]
     fn test_simple_bool_rust_name() {
         assert_eq!(IrType::Bool.rust_name(), "bool");
+    }
+
+    #[test]
+    fn test_exact_width_numeric_names() {
+        let i32_type = IrType::Numeric(NumericTypeId::I32);
+        assert_eq!(i32_type.incan_name(), "i32");
+        assert_eq!(i32_type.rust_name(), "i32");
+
+        let byte_type = IrType::Numeric(NumericTypeId::U8);
+        assert_eq!(byte_type.incan_name(), "u8");
+        assert_eq!(byte_type.rust_name(), "u8");
     }
 
     #[test]

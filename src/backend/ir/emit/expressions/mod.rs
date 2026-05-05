@@ -55,7 +55,7 @@ use quote::{ToTokens, format_ident, quote};
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
     CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, Literal as IrLiteral,
-    MethodKind, TypedExpr, UnaryOp, VarRefKind,
+    MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -502,6 +502,7 @@ impl<'a> IrEmitter<'a> {
                 Ok(lit.to_token_stream())
             }
             IrExprKind::Float(n) => Ok(quote! { #n }),
+            IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
             IrExprKind::String(s) => Ok(quote! { #s }),
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
@@ -783,6 +784,20 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #e as #t })
             }
 
+            IrExprKind::NumericResize {
+                expr: inner,
+                policy,
+                to_type,
+            } => {
+                let e = self.emit_expr(inner)?;
+                let t = self.emit_type(to_type);
+                match policy {
+                    NumericResizePolicy::Lossless | NumericResizePolicy::Wrapping => Ok(quote! { (#e) as #t }),
+                    NumericResizePolicy::Try => Ok(quote! { incan_stdlib::num::try_resize::<_, #t>(#e) }),
+                    NumericResizePolicy::Saturating => Ok(quote! { incan_stdlib::num::saturating_resize::<_, #t>(#e) }),
+                }
+            }
+
             IrExprKind::InteropCoerce {
                 expr: inner,
                 from_ty: _,
@@ -803,6 +818,14 @@ impl<'a> IrEmitter<'a> {
                                 }
                                 _ => quote! { #inner },
                             },
+                            incan_core::interop::CoercionPolicy::Lossless => {
+                                let target = syn::parse_str::<syn::Type>(rust_target.as_str()).map_err(|err| {
+                                    EmitError::SynParse(format!(
+                                        "invalid Rust boundary cast target `{rust_target}`: {err}"
+                                    ))
+                                })?;
+                                quote! { (#inner) as #target }
+                            }
                             incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
                                 "&str" | "&[u8]" => quote! { #inner },
                                 "&String" | "&std::string::String" | "&alloc::string::String" => {

@@ -3997,6 +3997,49 @@ def main() -> None:
     }
 
     #[test]
+    fn test_rfc009_numeric_resize_and_decimal_codegen_smoke() {
+        let source = r#"
+def main() -> None:
+  small: i8 = 120
+  wide: int = small.resize()
+  maybe: Option[i8] = wide.try_resize()
+  wrapped: i8 = wide.wrapping_resize()
+  capped: i8 = wide.saturating_resize()
+  price: decimal[5, 2] = 19.99d
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains("let wide: i64 = (small) as i64;"),
+            "expected lossless resize to emit a Rust cast, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("incan_stdlib::num::try_resize::<_, i8>(wide)"),
+            "expected try_resize to call stdlib checked resize helper, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("incan_stdlib::num::saturating_resize::<_, i8>(wide)"),
+            "expected saturating_resize to call stdlib saturating helper, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("let _price: incan_stdlib::num::Decimal128")
+                && rust_code.contains("Decimal128::from_literal")
+                && rust_code.contains("\"19.99d\""),
+            "expected decimal annotation/literal to lower to Decimal128, got:\n{rust_code}"
+        );
+    }
+
+    #[test]
     fn test_mixed_numeric_codegen_runs() {
         let Ok(output) = Command::new(incan_debug_binary())
             .args([

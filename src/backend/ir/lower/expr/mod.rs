@@ -14,7 +14,7 @@ mod patterns;
 use super::super::TypedExpr;
 use super::super::expr::{
     CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy,
-    MethodKind, UnaryOp, VarAccess, VarRefKind,
+    MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -214,6 +214,7 @@ impl AstLowering {
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::Int(il) => (IrExprKind::Int(il.value), IrType::Int),
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
+                ast::Literal::Decimal(dl) => (IrExprKind::Decimal(dl.repr.clone()), IrType::Unknown),
                 ast::Literal::String(s) => (IrExprKind::String(s.clone()), IrType::String),
                 ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Unknown),
                 ast::Literal::Bool(b) => (IrExprKind::Bool(*b), IrType::Bool),
@@ -467,8 +468,30 @@ impl AstLowering {
                     }
                 }
 
-                // Check for known methods (enum-based dispatch)
-                if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
+                let expr_ty = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span))
+                    .map(|ty| self.lower_resolved_type(ty))
+                    .unwrap_or(IrType::Unknown);
+
+                if let Some(policy) = numeric_resize_policy(&method_name)
+                    && args_ir.is_empty()
+                    && lowered_type_args.is_empty()
+                {
+                    let target_ty = match (policy, &expr_ty) {
+                        (NumericResizePolicy::Try, IrType::Option(inner)) => (**inner).clone(),
+                        _ => expr_ty.clone(),
+                    };
+                    (
+                        IrExprKind::NumericResize {
+                            expr: Box::new(receiver),
+                            policy,
+                            to_type: target_ty,
+                        },
+                        expr_ty,
+                    )
+                } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
@@ -845,5 +868,16 @@ impl AstLowering {
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
         };
         Ok(TypedExpr::new(kind, ty))
+    }
+}
+
+/// Return the IR resize policy represented by a built-in numeric resize helper name.
+fn numeric_resize_policy(method: &str) -> Option<NumericResizePolicy> {
+    match method {
+        "resize" => Some(NumericResizePolicy::Lossless),
+        "try_resize" => Some(NumericResizePolicy::Try),
+        "wrapping_resize" => Some(NumericResizePolicy::Wrapping),
+        "saturating_resize" => Some(NumericResizePolicy::Saturating),
+        _ => None,
     }
 }

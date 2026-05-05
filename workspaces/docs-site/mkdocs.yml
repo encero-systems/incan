@@ -123,6 +123,7 @@ nav:
           - File I/O: language/how-to/file_io.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
+          - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
           - Testing: language/how-to/testing_stdlib.md
@@ -175,6 +176,7 @@ nav:
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
           - Module static storage: language/explanation/static_storage.md
+          - Numeric types: language/explanation/numeric_types.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md

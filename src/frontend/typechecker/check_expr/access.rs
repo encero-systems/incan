@@ -22,6 +22,7 @@ use incan_core::lang::surface::{
     list_methods, set_methods,
 };
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics::NumericFamily;
 use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
@@ -37,6 +38,14 @@ struct ValueEnumGeneratedCall<'a> {
     span: Span,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumericResizeMethodPolicy {
+    Lossless,
+    Try,
+    Wrapping,
+    Saturating,
+}
+
 /// Diagnostic label for a Rust path receiver in type errors (`rust::{path}`).
 fn rust_receiver_display(path: &str) -> String {
     format!("rust::{path}")
@@ -50,6 +59,113 @@ impl TypeChecker {
         };
         self.lookup_symbol(name)
             .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Enum(_))))
+    }
+
+    /// Typecheck built-in numeric resize helpers using the expected result type as the target.
+    fn check_numeric_resize_method(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let source = super::super::numeric_type_id_for_compat(base_ty)?;
+        let policy = match method {
+            "resize" => NumericResizeMethodPolicy::Lossless,
+            "try_resize" => NumericResizeMethodPolicy::Try,
+            "wrapping_resize" => NumericResizeMethodPolicy::Wrapping,
+            "saturating_resize" => NumericResizeMethodPolicy::Saturating,
+            _ => return None,
+        };
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::type_mismatch("no type arguments", "type arguments", span));
+            return Some(ResolvedType::Unknown);
+        }
+        if !args.is_empty() {
+            self.errors
+                .push(errors::type_mismatch("no arguments", "arguments", span));
+            return Some(ResolvedType::Unknown);
+        }
+
+        let target_ty = match policy {
+            NumericResizeMethodPolicy::Try => match expected_return_ty {
+                Some(ResolvedType::Generic(name, args))
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && args.len() == 1 =>
+                {
+                    args[0].clone()
+                }
+                _ => {
+                    self.errors.push(errors::type_mismatch(
+                        "contextual Option[numeric] target",
+                        expected_return_ty
+                            .map(ToString::to_string)
+                            .as_deref()
+                            .unwrap_or("unknown target"),
+                        span,
+                    ));
+                    return Some(ResolvedType::Unknown);
+                }
+            },
+            _ => match expected_return_ty {
+                Some(ty) => ty.clone(),
+                None => {
+                    self.errors.push(errors::type_mismatch(
+                        "contextual numeric target",
+                        "unknown target",
+                        span,
+                    ));
+                    return Some(ResolvedType::Unknown);
+                }
+            },
+        };
+        let Some(target) = super::super::numeric_type_id_for_compat(&target_ty) else {
+            self.errors
+                .push(errors::type_mismatch("numeric target", &target_ty.to_string(), span));
+            return Some(ResolvedType::Unknown);
+        };
+
+        let source_info = incan_core::lang::types::numerics::info_for(source);
+        let target_info = incan_core::lang::types::numerics::info_for(target);
+        let integer_to_integer = matches!(
+            (source_info.family, target_info.family),
+            (
+                NumericFamily::SignedInteger | NumericFamily::UnsignedInteger,
+                NumericFamily::SignedInteger | NumericFamily::UnsignedInteger
+            )
+        );
+        match policy {
+            NumericResizeMethodPolicy::Lossless => {
+                if !super::super::numeric_type_losslessly_widens_to(source, target) {
+                    self.errors.push(
+                        errors::type_mismatch("lossless numeric resize target", &target_ty.to_string(), span)
+                            .with_hint(
+                                "Use try_resize(), wrapping_resize(), or saturating_resize() for explicit lossy integer resizing.",
+                            ),
+                    );
+                    return Some(ResolvedType::Unknown);
+                }
+                Some(target_ty)
+            }
+            NumericResizeMethodPolicy::Try
+            | NumericResizeMethodPolicy::Wrapping
+            | NumericResizeMethodPolicy::Saturating => {
+                if !integer_to_integer {
+                    self.errors.push(errors::type_mismatch(
+                        "integer resize target",
+                        &target_ty.to_string(),
+                        span,
+                    ));
+                    return Some(ResolvedType::Unknown);
+                }
+                match policy {
+                    NumericResizeMethodPolicy::Try => Some(option_ty(target_ty)),
+                    _ => Some(target_ty),
+                }
+            }
+        }
     }
 
     /// Build the `Option[Enum]` return type for generated `from_value(...)`.
@@ -337,6 +453,7 @@ impl TypeChecker {
             ty,
             ResolvedType::Int
                 | ResolvedType::Float
+                | ResolvedType::Numeric(_)
                 | ResolvedType::Bool
                 | ResolvedType::Unit
                 | ResolvedType::Ref(_)
@@ -349,6 +466,7 @@ impl TypeChecker {
         match ty {
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -1158,6 +1276,11 @@ impl TypeChecker {
             };
             return ret;
         }
+
+        if let Some(ret) = self.check_numeric_resize_method(&base_ty, method, type_args, args, span, expected_return_ty)
+        {
+            return ret;
+        }
         // Trait default methods typecheck against `Self`, so be permissive here too.
         if matches!(base_ty, ResolvedType::SelfType) {
             return ResolvedType::Unknown;
@@ -1252,7 +1375,14 @@ impl TypeChecker {
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
-        if matches!(base_ty, ResolvedType::Float)
+        if (matches!(base_ty, ResolvedType::Float)
+            || matches!(
+                base_ty,
+                ResolvedType::Numeric(
+                    incan_core::lang::types::numerics::NumericTypeId::F32
+                        | incan_core::lang::types::numerics::NumericTypeId::F64
+                )
+            ))
             && let Some(id) = float_methods::from_str(method)
         {
             use float_methods::FloatMethodId as M;

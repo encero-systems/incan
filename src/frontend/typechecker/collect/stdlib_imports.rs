@@ -1006,6 +1006,7 @@ impl TypeChecker {
         }
     }
 
+    /// Rewrite resolved type names through import aliases after stdlib materialization.
     fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
         match ty {
             ResolvedType::Named(name) => {
@@ -1044,6 +1045,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes

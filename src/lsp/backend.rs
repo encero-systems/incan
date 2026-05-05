@@ -1292,6 +1292,7 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("({}) -> {}", params_str.join(", "), format_type(&ret.node))
         }
+        Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),
         Type::Infer => "_".to_string(),

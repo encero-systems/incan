@@ -746,6 +746,7 @@ impl TypeChecker {
         }
     }
 
+    /// Evaluate a literal in a const context, optionally checking it against an expected type.
     fn eval_const_literal(
         &mut self,
         lit: &Literal,
@@ -763,6 +764,11 @@ impl TypeChecker {
                 ty: ResolvedType::Float,
                 kind: ConstKind::RustNative,
                 value: Some(ConstValue::Float(f.value)),
+            },
+            Literal::Decimal(_) => ConstEvalResult {
+                ty: ResolvedType::Unknown,
+                kind: ConstKind::RustNative,
+                value: None,
             },
             Literal::Bool(b) => ConstEvalResult {
                 ty: ResolvedType::Bool,

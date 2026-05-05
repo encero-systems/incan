@@ -104,6 +104,7 @@ impl TypeChecker {
         match lit {
             Literal::Int(_) => ResolvedType::Int,
             Literal::Float(_) => ResolvedType::Float,
+            Literal::Decimal(_) => ResolvedType::Unknown,
             Literal::String(_) => ResolvedType::Str,
             Literal::Bytes(_) => ResolvedType::Bytes,
             Literal::Bool(_) => ResolvedType::Bool,

@@ -71,6 +71,238 @@ fn none_constructor_name() -> String {
 }
 
 #[test]
+fn rfc009_exact_width_numeric_widening_typechecks() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i16 = 120
+  wide: i64 = small
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_exact_width_numeric_narrowing_requires_explicit_policy() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide
+"#;
+    let errors = check_str_err(source, "expected narrowing assignment to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'i8', found 'i16'")),
+        "expected i16 -> i8 mismatch, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_integer_literals_are_range_checked_for_exact_width_targets() {
+    let source = r#"
+def main() -> None:
+  small: i8 = 300
+"#;
+    let errors = check_str_err(source, "expected out-of-range i8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal 300 does not fit in i8")),
+        "expected i8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_negative_integer_literals_use_signed_exact_width_ranges() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = -128
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_negative_integer_literals_do_not_fit_unsigned_targets() {
+    let source = r#"
+def main() -> None:
+  byte: u8 = -1
+"#;
+    let errors = check_str_err(source, "expected negative u8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in u8")),
+        "expected u8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_pointer_sized_integer_literals_are_range_checked() {
+    let source = r#"
+def main() -> None:
+  size: usize = -1
+"#;
+    let errors = check_str_err(source, "expected negative usize literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in usize")),
+        "expected usize range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_lossless_resize_uses_contextual_target() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = 120
+  wide: int = small.resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_lossless_resize_rejects_narrowing() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide.resize()
+"#;
+    let errors = check_str_err(source, "expected narrowing resize to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("lossless numeric resize target")),
+        "expected lossless resize diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_explicit_resize_policies_allow_integer_narrowing() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 240
+  maybe: Option[i8] = wide.try_resize()
+  wrapped: i8 = wide.wrapping_resize()
+  capped: i8 = wide.saturating_resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
+    let ok = r#"
+def main() -> None:
+  value: f32 = 1.5
+"#;
+    check_str(ok).unwrap_or_else(|errs| panic!("expected f32 literal to typecheck: {errs:?}"));
+
+    let too_large = r#"
+def main() -> None:
+  value: f32 = 1e100
+"#;
+    let errors = check_str_err(too_large, "expected out-of-range f32 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Float literal 1e100 does not fit in f32")),
+        "expected f32 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_annotation_accepts_decimal_literal() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.99d
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_precision_and_scale_are_validated() {
+    let source = r#"
+def main() -> None:
+  price: decimal[39, 2] = 19.99d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal precision to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Decimal precision must be between 1 and 38")),
+        "expected decimal precision diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_bare_decimal_and_numeric_are_reserved() {
+    for (source, name) in [
+        (
+            r#"
+def main() -> None:
+  value: decimal = 1
+"#,
+            "decimal",
+        ),
+        (
+            r#"
+def main() -> None:
+  value: numeric = 1
+"#,
+            "numeric",
+        ),
+    ] {
+        let errors = check_str_err(source, "expected reserved numeric type name to fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains(&format!("`{name}` is reserved for numeric types"))),
+            "expected reserved numeric type diagnostic for {name}, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn rfc009_bigint_and_hugeint_aliases_typecheck() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  big: bigint = 1
+  huge: hugeint = big
+"#;
+
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_scale() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.999d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal scale to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 3 fractional digit(s)") && err.message.contains("allows at most 2")),
+        "expected decimal literal scale diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_integer_digits() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 1234.5d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal integer width to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 4 integer digit(s)") && err.message.contains("allows at most 3")),
+        "expected decimal literal integer digit diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn top_level_function_alias_typechecks_as_callable() -> Result<(), String> {
     let source = r#"
 def avg(x: int) -> int:
@@ -1841,7 +2073,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
         scope: 0,
     });
 
-    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Int]);
+    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Numeric(NumericTypeId::I32)]);
     let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
         "incan_stdlib::r#async::channel::Sender<i32>".to_string(),
     )));

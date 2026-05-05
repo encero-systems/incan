@@ -8,7 +8,7 @@
 //! - [`super::TypeChecker`]: the main type checker entrypoint.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
 use incan_core::lang::keywords;
 use incan_semantics_core::SurfaceExprTypeCheck;
@@ -178,6 +178,32 @@ impl TypeChecker {
     ) -> ResolvedType {
         let ty = match (&expr.node, expected) {
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
+            (Expr::Literal(Literal::Int(_)), Some(expected_ty))
+                if super::numeric_type_id_for_compat(expected_ty).is_some() =>
+            {
+                self.check_int_literal_with_expected(expr, expected_ty)
+            }
+            (Expr::Unary(UnaryOp::Neg, inner), Some(expected_ty))
+                if super::numeric_type_id_for_compat(expected_ty).is_some()
+                    && matches!(inner.node, Expr::Literal(Literal::Int(_))) =>
+            {
+                self.check_int_literal_with_expected(expr, expected_ty)
+            }
+            (Expr::Literal(Literal::Float(_)), Some(expected_ty))
+                if matches!(
+                    super::numeric_type_id_for_compat(expected_ty),
+                    Some(
+                        incan_core::lang::types::numerics::NumericTypeId::F32
+                            | incan_core::lang::types::numerics::NumericTypeId::F64
+                    )
+                ) =>
+            {
+                self.check_float_literal_with_expected(expr, expected_ty)
+            }
+            (Expr::Literal(Literal::Decimal(_)), Some(expected_ty)) if is_decimal_type(expected_ty) => {
+                self.validate_decimal_literal_with_expected(expr, expected_ty);
+                expected_ty.clone()
+            }
             (Expr::Binary(left, op, right), Some(expected_ty)) => {
                 self.check_binary_with_expected(left, *op, right, expr.span, Some(expected_ty))
             }
@@ -195,6 +221,90 @@ impl TypeChecker {
 
         self.record_expr_type(expr.span, ty.clone());
         ty
+    }
+
+    /// Typecheck an integer literal in a known numeric target context.
+    fn check_int_literal_with_expected(&mut self, expr: &Spanned<Expr>, expected_ty: &ResolvedType) -> ResolvedType {
+        let Some(target) = super::numeric_type_id_for_compat(expected_ty) else {
+            return self.check_expr(expr);
+        };
+        let Some(value) = signed_int_literal_value(expr) else {
+            return self.check_expr(expr);
+        };
+        if let Some((min, max)) = integer_literal_bounds(target)
+            && (value < min || value > max)
+        {
+            self.errors.push(CompileError::type_error(
+                format!("Integer literal {value} does not fit in {expected_ty}; valid range is {min}..={max}"),
+                expr.span,
+            ));
+        }
+        expected_ty.clone()
+    }
+
+    /// Typecheck a binary-float literal in a known `f32` or `f64` target context.
+    fn check_float_literal_with_expected(&mut self, expr: &Spanned<Expr>, expected_ty: &ResolvedType) -> ResolvedType {
+        let Expr::Literal(Literal::Float(value)) = &expr.node else {
+            return self.check_expr(expr);
+        };
+        if matches!(
+            super::numeric_type_id_for_compat(expected_ty),
+            Some(incan_core::lang::types::numerics::NumericTypeId::F32)
+        ) && value.value.is_finite()
+            && value.value.abs() > f64::from(f32::MAX)
+        {
+            self.errors.push(CompileError::type_error(
+                format!("Float literal {} does not fit in {expected_ty}", value.repr),
+                expr.span,
+            ));
+        }
+        expected_ty.clone()
+    }
+
+    /// Validate a decimal literal against a known decimal precision and scale.
+    fn validate_decimal_literal_with_expected(&mut self, expr: &Spanned<Expr>, expected_ty: &ResolvedType) {
+        let Expr::Literal(Literal::Decimal(value)) = &expr.node else {
+            return;
+        };
+        let Some((precision, scale)) = decimal_precision_scale(expected_ty) else {
+            return;
+        };
+        let Some((integer_digits, fractional_digits, total_digits)) = decimal_literal_digit_counts(value.body.as_str())
+        else {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal literal {} is not a plain decimal literal", value.repr),
+                expr.span,
+            ));
+            return;
+        };
+        let max_integer_digits = precision - scale;
+        if integer_digits > max_integer_digits {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Decimal literal {} has {integer_digits} integer digit(s), but {expected_ty} allows at most {max_integer_digits}"
+                    , value.repr
+                ),
+                expr.span,
+            ));
+        }
+        if fractional_digits > scale {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Decimal literal {} has {fractional_digits} fractional digit(s), but {expected_ty} allows at most {scale}"
+                    , value.repr
+                ),
+                expr.span,
+            ));
+        }
+        if total_digits > precision {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Decimal literal {} has {total_digits} total digit(s), but {expected_ty} allows at most {precision}",
+                    value.repr
+                ),
+                expr.span,
+            ));
+        }
     }
 
     /// Typecheck a surface expression via the semantics registry.
@@ -221,5 +331,82 @@ impl TypeChecker {
             (SurfaceExprTypeCheck::AwaitCheck, SurfaceExprPayload::PrefixUnary(inner)) => self.check_await(inner, span),
             _ => ResolvedType::Unknown,
         }
+    }
+}
+
+/// Return whether a resolved type is one of the parameterized decimal families.
+fn is_decimal_type(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Generic(name, args) => {
+            incan_core::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some() && args.len() == 2
+        }
+        _ => false,
+    }
+}
+
+/// Extract precision and scale from a checked resolved decimal type.
+fn decimal_precision_scale(ty: &ResolvedType) -> Option<(usize, usize)> {
+    match ty {
+        ResolvedType::Generic(name, args)
+            if incan_core::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some()
+                && args.len() == 2 =>
+        {
+            let precision = decimal_type_arg_usize(&args[0])?;
+            let scale = decimal_type_arg_usize(&args[1])?;
+            Some((precision, scale))
+        }
+        _ => None,
+    }
+}
+
+/// Parse one resolved decimal type argument into a host integer for validation.
+fn decimal_type_arg_usize(ty: &ResolvedType) -> Option<usize> {
+    match ty {
+        ResolvedType::TypeVar(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Count integer, fractional, and total digits in a plain decimal literal body.
+fn decimal_literal_digit_counts(body: &str) -> Option<(usize, usize, usize)> {
+    if body.contains('e') || body.contains('E') {
+        return None;
+    }
+    let (integer, fractional) = body.split_once('.').unwrap_or((body, ""));
+    let integer_digits = integer.chars().filter(|ch| ch.is_ascii_digit()).count();
+    let fractional_digits = fractional.chars().filter(|ch| ch.is_ascii_digit()).count();
+    Some((integer_digits, fractional_digits, integer_digits + fractional_digits))
+}
+
+/// Return the signed value represented by an integer literal or unary-negative integer literal.
+fn signed_int_literal_value(expr: &Spanned<Expr>) -> Option<i128> {
+    match &expr.node {
+        Expr::Literal(Literal::Int(value)) => Some(i128::from(value.value)),
+        Expr::Unary(UnaryOp::Neg, inner) => match &inner.node {
+            Expr::Literal(Literal::Int(value)) => Some(-i128::from(value.value)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Return inclusive literal bounds for exact-width integer numeric targets.
+fn integer_literal_bounds(id: incan_core::lang::types::numerics::NumericTypeId) -> Option<(i128, i128)> {
+    use incan_core::lang::types::numerics::NumericTypeId;
+
+    match id {
+        NumericTypeId::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
+        NumericTypeId::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
+        NumericTypeId::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+        NumericTypeId::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+        NumericTypeId::I128 => Some((i128::MIN, i128::MAX)),
+        NumericTypeId::U8 => Some((0, i128::from(u8::MAX))),
+        NumericTypeId::U16 => Some((0, i128::from(u16::MAX))),
+        NumericTypeId::U32 => Some((0, i128::from(u32::MAX))),
+        NumericTypeId::U64 => Some((0, i128::from(u64::MAX))),
+        NumericTypeId::U128 => Some((0, i128::MAX)),
+        NumericTypeId::ISize => Some((isize::MIN as i128, isize::MAX as i128)),
+        NumericTypeId::USize => Some((0, usize::MAX as i128)),
+        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => None,
     }
 }

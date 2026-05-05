@@ -209,7 +209,7 @@ fn types_spellings_unique_and_resolvable() {
 
     assert_registry_round_trip(RegistryRoundTrip {
         label: "numeric",
-        expected_len: 3,
+        expected_len: 15,
         items: numerics::NUMERIC_TYPES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

@@ -968,6 +968,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a literal token at the current parser position, if one is present.
     fn try_literal(&mut self) -> Option<Literal> {
         match &self.peek().kind {
             TokenKind::Int(il) => {
@@ -979,6 +980,11 @@ impl<'a> Parser<'a> {
                 let fl = fl.clone();
                 self.advance();
                 Some(Literal::Float(fl))
+            }
+            TokenKind::Decimal(dl) => {
+                let dl = dl.clone();
+                self.advance();
+                Some(Literal::Decimal(dl))
             }
             TokenKind::String(s) => {
                 let s = s.clone();

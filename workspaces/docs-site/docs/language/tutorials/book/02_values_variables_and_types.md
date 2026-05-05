@@ -8,10 +8,14 @@ If you get stuck on terminology, see: [Glossary](../../reference/glossary.md).
 
 Common built-in types:
 
-- `int` (integers)
-- `float` (floating point)
+- `int` (ordinary integers)
+- `float` (ordinary binary floating point)
 - `bool` (`true` / `false`)
 - `str` (strings)
+
+Incan also has exact numeric types for data and Rust interop boundaries, such as `i32`, `u64`, `usize`, `f32`, and `f64`, plus fixed-scale decimal types such as `decimal[10, 2]`. You usually do not need those in beginner code, but they matter when another system owns the width or precision.
+
+For the full rules, see [Choosing numeric types](../../how-to/choosing_numeric_types.md), [Numeric semantics](../../reference/numeric_semantics.md), and [Why numeric types work this way](../../explanation/numeric_types.md).
 
 ## Variables
 
@@ -54,7 +58,7 @@ def add(a: int, b: int) -> int:
     ```incan
     def add(a: int, b: int) -> int:
         return a + b
-    
+
     def main() -> None:
         name = "Incan"
         count = 3

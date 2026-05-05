@@ -78,6 +78,7 @@ use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustP
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::StringLikeId;
 
 /// Type checker state.
@@ -740,10 +741,20 @@ impl TypeChecker {
         }
         match normalized.as_str() {
             "bool" => ResolvedType::Bool,
-            "f32" | "f64" => ResolvedType::Float,
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-                ResolvedType::Int
-            }
+            "f64" => ResolvedType::Float,
+            "i64" => ResolvedType::Int,
+            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
+            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
+            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
+            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
+            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
+            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
+            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
+            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
+            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
+            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
+            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
+            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
@@ -2097,6 +2108,7 @@ impl TypeChecker {
         self.validate_stdlib_type_usage_inner(&ty.node, ty.span);
     }
 
+    /// Validate stdlib-owned type names recursively inside a type annotation.
     fn validate_stdlib_type_usage_inner(&mut self, ty: &Type, span: Span) {
         match ty {
             Type::Simple(name) => self.validate_stdlib_type_name(name, span),
@@ -2122,7 +2134,7 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&elem.node, elem.span);
                 }
             }
-            Type::Unit | Type::SelfType | Type::Infer => {}
+            Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {}
         }
     }
 
@@ -2135,8 +2147,23 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
+        if let Type::Simple(name) = &ty.node
+            && Self::reserved_numeric_type_name(name)
+        {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "`{name}` is reserved for numeric types; use `decimal[p, s]`/`numeric[p, s]` for decimals or an exact-width integer type"
+                ),
+                ty.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        if let Some(decimal_ty) = self.resolve_decimal_type_checked(ty) {
+            return decimal_ty;
+        }
         if let Type::Simple(name) = &ty.node
             && let Some(sym) = self.lookup_symbol(name.as_str())
             && let SymbolKind::RustItem(info) = &sym.kind
@@ -2147,6 +2174,62 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         resolve_type(&ty.node, &self.symbols)
+    }
+
+    /// Return whether a simple type name is reserved for a parameterized numeric family.
+    fn reserved_numeric_type_name(name: &str) -> bool {
+        matches!(name, "decimal" | "numeric")
+    }
+
+    /// Resolve and validate a parameterized decimal type annotation.
+    fn resolve_decimal_type_checked(&mut self, ty: &Spanned<Type>) -> Option<ResolvedType> {
+        let Type::Generic(name, args) = &ty.node else {
+            return None;
+        };
+        let constructor = numerics::decimal_constructor_from_str(name.as_str())?;
+        if args.len() != 2 {
+            self.errors.push(CompileError::type_error(
+                format!("{name}[...] expects exactly 2 integer parameters: precision and scale"),
+                ty.span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let Some(precision) = decimal_type_int_arg(&args[0]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal precision must be an integer literal".to_string(),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        let Some(scale) = decimal_type_int_arg(&args[1]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal scale must be an integer literal".to_string(),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        if !(1..=38).contains(&precision) {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal precision must be between 1 and 38, found {precision}"),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        if scale < 0 || scale > precision {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal scale must be between 0 and precision {precision}, found {scale}"),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let canonical = numerics::decimal_constructor_info_for(constructor).canonical;
+        Some(ResolvedType::Generic(
+            canonical.to_string(),
+            vec![
+                ResolvedType::TypeVar(precision.to_string()),
+                ResolvedType::TypeVar(scale.to_string()),
+            ],
+        ))
     }
 
     /// Validate alias relationships that need declaration-level context before symbol collection flattens aliases.
@@ -2612,6 +2695,7 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
                 ResolvedType::Generic(expected_name, expected_members),
@@ -2912,6 +2996,70 @@ fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
         Declaration::Trait(t) => Some(t.name.as_str()),
         Declaration::Function(f) => Some(f.name.as_str()),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+    }
+}
+
+/// Extract a decimal precision or scale argument from a type-position integer literal.
+fn decimal_type_int_arg(arg: &Spanned<Type>) -> Option<i64> {
+    match &arg.node {
+        Type::IntLiteral(value) => Some(value.value),
+        _ => None,
+    }
+}
+
+/// Return whether two resolved numeric types are compatible through lossless widening.
+fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -> bool {
+    let Some(actual_id) = numeric_type_id_for_compat(actual) else {
+        return false;
+    };
+    let Some(expected_id) = numeric_type_id_for_compat(expected) else {
+        return false;
+    };
+    numeric_type_losslessly_widens_to(actual_id, expected_id)
+}
+
+/// Map an ordinary or exact numeric type to its canonical numeric id for compatibility checks.
+pub(crate) fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
+    match ty {
+        ResolvedType::Int => Some(NumericTypeId::I64),
+        ResolvedType::Float => Some(NumericTypeId::F64),
+        ResolvedType::Numeric(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Return whether one numeric id can widen to another without value loss under RFC 009 rules.
+pub(crate) fn numeric_type_losslessly_widens_to(actual: NumericTypeId, expected: NumericTypeId) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let actual_info = numerics::info_for(actual);
+    let expected_info = numerics::info_for(expected);
+    match (actual_info.family, expected_info.family) {
+        (NumericFamily::SignedInteger, NumericFamily::SignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::UnsignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::SignedInteger) => {
+            match (actual_info.bit_width, expected_info.bit_width) {
+                (Some(actual_bits), Some(expected_bits)) => expected_bits > actual_bits,
+                _ => false,
+            }
+        }
+        (NumericFamily::BinaryFloat, NumericFamily::BinaryFloat) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        _ => false,
+    }
+}
+
+/// Compare optional bit widths for fixed-width widening decisions.
+fn width_at_least(expected: Option<u16>, actual: Option<u16>) -> bool {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) => expected >= actual,
+        _ => false,
     }
 }
 

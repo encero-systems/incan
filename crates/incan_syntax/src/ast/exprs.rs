@@ -186,10 +186,28 @@ impl PartialEq for FloatLiteral {
     }
 }
 
+/// Parsed decimal literal with the **source substring** used for formatting.
+///
+/// The `body` field is the numeric spelling without `_` separators and without the trailing `d` suffix. Semantic
+/// validation of precision and scale belongs to the typechecker.
+#[derive(Debug, Clone)]
+pub struct DecimalLiteral {
+    pub body: String,
+    pub repr: String,
+}
+
+impl PartialEq for DecimalLiteral {
+    /// Compare semantic decimal literal bodies while ignoring source formatting.
+    fn eq(&self, other: &Self) -> bool {
+        self.body == other.body
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(IntLiteral),
     Float(FloatLiteral),
+    Decimal(DecimalLiteral),
     String(String),
     Bytes(Vec<u8>),
     Bool(bool),

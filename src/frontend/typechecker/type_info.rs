@@ -186,7 +186,7 @@ pub enum IdentKind {
 /// Coercion category selected by the typechecker for a Rust-boundary call argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustArgCoercionKind {
-    /// Builtin scalar matrix coercion (`float -> f32`, `str -> &str`, ...).
+    /// Builtin boundary matrix coercion (`i16 -> i64`, `str -> &str`, ...).
     Builtin(CoercionPolicy),
     /// Rusttype alias can flow to its backing Rust type without an explicit adapter call.
     RustTypeUnwrap,

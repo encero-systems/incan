@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::{Ident, Spanned};
+use super::{Ident, IntLiteral, Spanned};
 
 // ============================================================================
 // Types
@@ -18,6 +18,8 @@ pub enum Type {
     Qualified(Vec<Ident>),
     /// Generic type: `List[T]`, `Result[T, E]`
     Generic(Ident, Vec<Spanned<Type>>),
+    /// Integer literal in type-argument position, used by parameterized numeric types such as `decimal[10, 2]`.
+    IntLiteral(IntLiteral),
     /// Function type: `(int, str) -> bool`
     Function(Vec<Spanned<Type>>, Box<Spanned<Type>>),
     /// Unit type
@@ -31,6 +33,7 @@ pub enum Type {
 }
 
 impl fmt::Display for Type {
+    /// Format a type using Incan source syntax.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Simple(name) => write!(f, "{}", name),
@@ -53,6 +56,7 @@ impl fmt::Display for Type {
                 }
                 write!(f, "]")
             }
+            Type::IntLiteral(value) => write!(f, "{}", value.repr),
             Type::Function(params, ret) => {
                 write!(f, "(")?;
                 for (i, p) in params.iter().enumerate() {
