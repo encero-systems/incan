@@ -5098,10 +5098,10 @@ often simple but the target-language implementation shape is not.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">TokioJoinHandle</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinError</span>
 
-<span class="nb">type</span> <span class="nc">TaskJoinError</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nb">str</span><span class="p">:</span>
+<span class="nb">type</span> <span class="kt">TaskJoinError</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nb">str</span><span class="p">:</span>
     <span class="n">impl</span> <span class="nc">From</span><span class="p">[</span><span class="nc">JoinError</span><span class="p">]:</span>
-        <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span> <span class="nc">JoinError</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">TaskJoinError</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nc">TaskJoinError</span><span class="p">(</span><span class="n">error</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">from</span><span class="p">(</span><span class="n">error</span><span class="p">:</span> <span class="nc">JoinError</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">TaskJoinError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kt">TaskJoinError</span><span class="p">(</span><span class="n">error</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
 </code></pre></div>
 <p>The emitted Rust surface corresponds to:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="k">impl</span><span class="w"> </span><span class="nb">From</span><span class="o">&lt;</span><span class="n">tokio</span><span class="p">::</span><span class="n">task</span><span class="p">::</span><span class="n">JoinError</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TaskJoinError</span><span class="w"> </span><span class="p">{</span>
@@ -5117,7 +5117,7 @@ often simple but the target-language implementation shape is not.</p>
 
 <span class="nb">type</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="nc">TokioJoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="n">impl</span> <span class="nc">Future</span><span class="p">:</span>
-        <span class="nb">type</span> <span class="nc">Output</span> <span class="o">=</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">TaskJoinError</span><span class="p">]</span>
+        <span class="nb">type</span> <span class="nc">Output</span> <span class="o">=</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="kt">TaskJoinError</span><span class="p">]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">abort</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="o">...</span>
