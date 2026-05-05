@@ -1289,6 +1289,10 @@ fn test_rfc006_generator_expression_codegen() {
         compact.contains("ifx>0") && compact.contains("ify>x") && compact.contains("std::iter::empty()"),
         "expected generator expression filters to stay lazy inside the iterator chain; generated:\n{rust_code}"
     );
+    assert!(
+        !compact.contains("u64::try_from(3)"),
+        "generator take() must keep its i64 argument instead of using Rust Read::take u64 coercion; generated:\n{rust_code}"
+    );
 }
 
 #[test]

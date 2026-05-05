@@ -142,7 +142,11 @@ impl<'a> IrEmitter<'a> {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
-                if idx == 0 && method == "take" && matches!(arg.ty, IrType::Int) {
+                if idx == 0
+                    && method == "take"
+                    && matches!(arg.ty, IrType::Int)
+                    && !Self::is_generator_receiver(receiver)
+                {
                     emitted = quote! {
                         match u64::try_from(#emitted) {
                             Ok(__incan_take_count) => __incan_take_count,
