@@ -1,0 +1,1045 @@
+from rust::std::env import current_dir, var as env_var
+from rust::std::cell import RefCell
+from rust::std::fs import (
+    File as RustFile,
+    FileTimes,
+    Metadata as RustMetadata,
+    OpenOptions as RustOpenOptions,
+    Permissions as RustPermissions,
+    copy as rust_copy,
+    create_dir,
+    create_dir_all,
+    hard_link,
+    metadata,
+    read as rust_read,
+    read_dir,
+    read_link,
+    remove_dir,
+    remove_dir_all,
+    remove_file,
+    rename as rust_rename,
+    set_permissions,
+    symlink_metadata,
+    write as rust_write,
+)
+from rust::std::os::unix::fs import MetadataExt, symlink
+from rust::std::path import Path as RustPath
+from rust::std::rc import Rc
+from rust::std::time import SystemTime
+from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
+from std.traits.error import Error
+from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
+from std.fs.glob import matches
+from std.fs.metadata import DirEntry, PathStat, DiskUsage
+
+
+@derive(Clone)
+pub type Path = newtype str:
+    """
+    Filesystem path value.
+
+    Lexical helpers such as `joinpath()`, `parent()`, `name()`, `suffix()`, and `stem()` do not touch the host
+    filesystem. Methods that inspect or mutate the filesystem return `Result` when the host can report an error.
+    Predicate methods intentionally return `false` when the path is missing or cannot be treated as that kind;
+    use `try_exists()` when callers need the underlying `IoError`.
+
+    Example:
+
+    ```incan
+    config = Path.home()?.joinpath(".config").joinpath("app.toml")
+    if config.exists():
+        println(config.read_text(encoding="utf-8", errors="strict")?)
+    ```
+    """
+
+    def __div__(self, segment: str) -> Path:
+        """
+        Compose a child path with slash-style syntax.
+
+        Args:
+            segment: One path segment or relative path fragment to append.
+
+        Returns:
+            A new `Path` equal to `self.joinpath(segment)`.
+
+        Example:
+            `Path("logs") / "today.txt"` returns `Path("logs/today.txt")`.
+        """
+        return self.joinpath(segment)
+
+    # Python-compatible spelling for callers that look for true-division hooks.
+    __truediv__ = alias __div__
+
+    def joinpath(self, segment: str) -> Path:
+        """
+        Append a lexical path segment.
+
+        Args:
+            segment: Segment or relative path fragment to append.
+
+        Returns:
+            A new `Path`; the filesystem is not queried.
+        """
+        return Path(RustPath.new(self.0).join(segment).to_string_lossy().into_owned())
+
+    def parent(self) -> Path:
+        """
+        Return the lexical parent path.
+
+        Returns:
+            The parent path, or `Path(".")` when this path has no parent component.
+        """
+        match RustPath.new(self.0).parent():
+            Some(parent) => return Path(parent.to_string_lossy().into_owned())
+            None => return Path(".")
+
+    def name(self) -> str:
+        """
+        Return the final path component.
+
+        Returns:
+            The last component as a string, or `""` when the path has no final component.
+        """
+        match RustPath.new(self.0).file_name():
+            Some(name) => return name.to_string_lossy().into_owned()
+            None => return ""
+
+    def suffix(self) -> str:
+        """
+        Return the final file extension.
+
+        Returns:
+            The last extension with a leading dot, such as `.txt`, or `""` when no extension exists.
+        """
+        match RustPath.new(self.0).extension():
+            Some(extension) => return f".{extension.to_string_lossy().into_owned()}"
+            None => return ""
+
+    def stem(self) -> str:
+        """
+        Return the final path component without its last extension.
+
+        Returns:
+            The stem string, or `""` when the path has no final component.
+        """
+        match RustPath.new(self.0).file_stem():
+            Some(stem) => return stem.to_string_lossy().into_owned()
+            None => return ""
+
+    def exists(self) -> bool:
+        """
+        Check whether the path exists.
+
+        Returns:
+            `true` when the host reports that the path exists; `false` for missing paths and host errors.
+        """
+        return RustPath.new(self.0).exists()
+
+    def is_file(self) -> bool:
+        """
+        Check whether the path resolves to a regular file.
+
+        Returns:
+            `true` for regular files; `false` for directories, symlinks that do not resolve to files, missing paths, and
+            host errors.
+        """
+        return RustPath.new(self.0).is_file()
+
+    def is_dir(self) -> bool:
+        """
+        Check whether the path resolves to a directory.
+
+        Returns:
+            `true` for directories; `false` for non-directories, missing paths, and host errors.
+        """
+        return RustPath.new(self.0).is_dir()
+
+    def is_symlink(self) -> bool:
+        """
+        Check whether the path itself is a symbolic link.
+
+        Returns:
+            `true` when the path is a symlink; `false` for other paths, missing paths, and host errors.
+        """
+        return RustPath.new(self.0).is_symlink()
+
+    def try_exists(self) -> Result[bool, IoError]:
+        """
+        Check existence while preserving host errors.
+
+        Returns:
+            `Ok(true)` if the path exists, `Ok(false)` if it is missing, or `Err(IoError)` when the host cannot answer.
+        """
+        match RustPath.new(self.0).try_exists():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_io_error(self, err))
+
+    def mkdir(self, parents: bool, exist_ok: bool) -> Result[None, IoError]:
+        """
+        Create this directory.
+
+        When `parents` is true, missing ancestors are created as needed. When `exist_ok` is true, an existing directory
+        is accepted; an existing non-directory still fails.
+
+        Args:
+            parents: Create missing parent directories before creating this directory.
+            exist_ok: Treat an existing directory as success.
+
+        Returns:
+            `Ok(None)` after the directory exists, or `Err(IoError)` if creation fails.
+
+        Example:
+            `Path("logs/archive").mkdir(parents=true, exist_ok=true)?`
+        """
+        if exist_ok and self.is_dir():
+            return Ok(None)
+        if parents:
+            match create_dir_all(RustPath.new(self.0)):
+                Ok(_) => return Ok(None)
+                Err(err) =>
+                    if exist_ok and self.is_dir():
+                        return Ok(None)
+                    return Err(_io_error(self, err))
+        match create_dir(RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) =>
+                if exist_ok and self.is_dir():
+                    return Ok(None)
+                return Err(_io_error(self, err))
+
+    def read_bytes(self) -> Result[bytes, IoError]:
+        """
+        Read the entire file into memory as bytes.
+
+        Returns:
+            The file contents as `bytes`, or `Err(IoError)` if the read fails.
+        """
+        match rust_read(RustPath.new(self.0)):
+            Ok(data) => return Ok(data)
+            Err(err) => return Err(_io_error(self, err))
+
+    def write_bytes(self, data: bytes) -> Result[None, IoError]:
+        """
+        Replace the file contents with bytes.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            `Ok(None)` after writing all bytes, or `Err(IoError)` if the host rejects the write.
+        """
+        match rust_write(RustPath.new(self.0), data):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def read_text(self, encoding: str, errors: str) -> Result[str, IoError]:
+        """
+        Read the entire file as normalized text.
+
+        The encoding label is resolved with the `WHATWG` Encoding Standard labels implemented by `encoding_rs`.
+        `errors="strict"` reports malformed input; `errors="replace"` accepts replacement characters. CRLF and CR line
+        endings are normalized to `\n`.
+
+        Args:
+            encoding: Text encoding label, such as `utf-8`.
+            errors: Either `strict` or `replace`.
+
+        Returns:
+            Decoded text with normalized line endings, or `Err(IoError)` for I/O or decoding failures.
+        """
+        data = self.read_bytes()?
+        return _decode_text(self, data, encoding, errors)
+
+    def write_text(self, data: str, encoding: str, errors: str, newline: Option[str]) -> Result[None, IoError]:
+        """
+        Replace the file contents with text, creating the file if needed.
+
+        The encoding label is resolved with the WHATWG Encoding Standard labels implemented by `encoding_rs`.
+        `errors="strict"` reports unmappable text; `errors="replace"` accepts replacement bytes. When `newline` is
+        provided, each `\n` in `data` is rewritten to that line ending before writing.
+
+        Args:
+            data: Text to encode and write.
+            encoding: Text encoding label, such as `utf-8`.
+            errors: Either `strict` or `replace`.
+            newline: Optional line ending to write instead of `\n`.
+
+        Returns:
+            `Ok(None)` after writing all text, or `Err(IoError)` for I/O or encoding failures.
+        """
+        mut out = data
+        if let Some(line_ending) = newline:
+            out = out.replace("\n", line_ending)
+        bytes_out = _encode_text(self, out, encoding, errors)?
+        match rust_write(RustPath.new(self.0), bytes_out):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def open(
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: Option[str] = None,
+        errors: Option[str] = None,
+        newline: Option[str] = None,
+    ) -> Result[File, IoError]:
+        """
+        Open this path and return a live `File` handle.
+
+        Supported modes are `r`, `w`, `a`, `x`, their binary forms, and `+` read-write variants. Binary handles reject
+        text-only options. Text handles use UTF-8 with strict error handling by default. When callers provide text
+        options, encoding labels use the WHATWG labels implemented by `encoding_rs`, and `errors` accepts `strict` or
+        `replace`.
+
+        Args:
+            mode: File mode such as `r`, `wb`, `a+`, or `x`.
+            buffering: `-1` for default buffering, or `0` for unbuffered binary mode.
+            encoding: Text encoding for text handles. Must be `None` for binary handles.
+            errors: Text error policy, either `strict` or `replace`. Must be `None` for binary handles.
+            newline: Optional newline to write for text handles. Must be `None` for binary handles.
+
+        Returns:
+            A live `File` handle positioned according to the host open mode, or `Err(IoError)`.
+
+        Example:
+            `file = Path("report.txt").open("w")?`
+        """
+        _validate_open_options(self, mode, buffering, encoding, errors, newline)?
+        match _open_file(self, mode):
+            Ok(handle) =>
+                return Ok(
+                    File(
+                        path=self,
+                        mode=mode,
+                        handle=Rc.new(RefCell.new(handle)),
+                        encoding=encoding,
+                        errors=errors,
+                        newline=newline,
+                    ),
+                )
+            Err(err) => return Err(err)
+
+    def iterdir(self) -> Result[list[Path], IoError]:
+        """
+        List direct children of this directory.
+
+        Returns:
+            Direct children as `Path` values in host iteration order, or `Err(IoError)` if the directory cannot be read.
+        """
+        mut out: list[str] = []
+        match read_dir(RustPath.new(self.0)):
+            Ok(entries) =>
+                for entry_result in entries:
+                    match entry_result:
+                        Ok(entry) => out.append(entry.path().to_string_lossy().into_owned())
+                        Err(err) => return Err(_io_error(self, err))
+                return Ok([Path(item) for item in out])
+            Err(err) => return Err(_io_error(self, err))
+
+    def glob(self, pattern: str) -> Result[list[Path], IoError]:
+        """
+        Return direct children whose names match the `std.fs` glob pattern.
+
+        The matcher supports `*`, `?`, and bracket character classes such as `[abc]`, `[!abc]`, and `[a-z]`.
+
+        Args:
+            pattern: Glob pattern matched against each direct child name.
+
+        Returns:
+            Matching child paths, or `Err(IoError)` if this directory cannot be read.
+
+        Example:
+            `for path in Path("logs").glob("*.txt")?: println(path.name())`
+        """
+        return _glob_paths(self, pattern, false)
+
+    def rglob(self, pattern: str) -> Result[list[Path], IoError]:
+        """
+        Recursively return descendants whose names match the glob pattern.
+
+        The pattern rules are the same as `glob()`.
+
+        Args:
+            pattern: Glob pattern matched against descendant relative paths and names.
+
+        Returns:
+            Matching descendant paths, or `Err(IoError)` if traversal fails.
+        """
+        return _glob_paths(self, pattern, true)
+
+    def scandir(self) -> Result[list[DirEntry], IoError]:
+        """
+        List direct children as directory-entry views.
+
+        Returns:
+            `DirEntry` values for each child, or `Err(IoError)` if this directory cannot be read.
+        """
+        mut out: list[DirEntry] = []
+        for path in self.iterdir()?:
+            out.append(DirEntry(path=path))
+        return Ok(out)
+
+    def stat(self) -> Result[PathStat, IoError]:
+        """
+        Create a metadata view that follows symbolic links.
+
+        Returns:
+            A `PathStat` view with `follow_symlinks=true`, or `Err(IoError)` if the path cannot be statted.
+        """
+        match metadata(RustPath.new(self.0)):
+            Ok(_) => return Ok(PathStat(path=self, follow_symlinks=true))
+            Err(err) => return Err(_io_error(self, err))
+
+    def lstat(self) -> Result[PathStat, IoError]:
+        """
+        Create a metadata view for the path itself.
+
+        Returns:
+            A `PathStat` view with `follow_symlinks=false`, or `Err(IoError)` if the path cannot be statted.
+        """
+        match symlink_metadata(RustPath.new(self.0)):
+            Ok(_) => return Ok(PathStat(path=self, follow_symlinks=false))
+            Err(err) => return Err(_io_error(self, err))
+
+    def copy(self, target: Union[Path, str], follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
+        """
+        Copy this file, directory tree, or symbolic link to `target`.
+
+        Directories are copied recursively. When `follow_symlinks` is false, symbolic links are recreated instead of
+        copying their targets. When `preserve_metadata` is true, permissions plus modification and access times are
+        copied where the host supports it.
+
+        Args:
+            target: Destination path. Directories are copied into this exact destination, not into its parent.
+            follow_symlinks: Copy symlink targets when true; recreate symlinks when false.
+            preserve_metadata: Copy permissions and access/modification times where supported.
+
+        Returns:
+            The destination `Path`, or `Err(IoError)` if any copy step fails.
+
+        Example:
+            `Path("assets").copy(Path("build/assets"), follow_symlinks=false, preserve_metadata=true)?`
+        """
+        dest = _as_path(target)
+        if self.is_symlink() and not follow_symlinks:
+            return self._copy_symlink_to(dest)
+        if self.is_dir() and not self.is_symlink():
+            return self._copy_tree_to(dest, follow_symlinks, preserve_metadata)
+        return self._copy_file_to(dest, preserve_metadata)
+
+    def _copy_symlink_to(self, dest: Path) -> Result[Path, IoError]:
+        """
+        Recreate this symbolic link at `dest`.
+
+        Args:
+            dest: Destination path for the new symlink.
+
+        Returns:
+            The destination path, or `Err(IoError)` if the link target cannot be read or created.
+        """
+        match read_link(RustPath.new(self.0)):
+            Ok(target_path) =>
+                match symlink(target_path, RustPath.new(dest.0)):
+                    Ok(_) => return Ok(dest)
+                    Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, err))
+
+    def _copy_tree_to(self, dest: Path, follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
+        """
+        Recursively copy this directory into `dest`.
+
+        Args:
+            dest: Destination directory to create and populate.
+            follow_symlinks: Copy symlink targets when true; recreate symlinks when false.
+            preserve_metadata: Copy directory metadata after children are copied.
+
+        Returns:
+            The destination path, or the first copy error.
+        """
+        dest.mkdir(true, true)?
+        for child in self.iterdir()?:
+            child.copy(dest.joinpath(child.name()), follow_symlinks, preserve_metadata)?
+        if preserve_metadata:
+            self._copy_metadata_to(dest)?
+        return Ok(dest)
+
+    def _copy_file_to(self, dest: Path, preserve_metadata: bool) -> Result[Path, IoError]:
+        """
+        Copy this regular file to `dest`.
+
+        Args:
+            dest: Destination file path.
+            preserve_metadata: Copy file metadata after bytes are copied.
+
+        Returns:
+            The destination path, or `Err(IoError)` if the host copy fails.
+        """
+        match rust_copy(RustPath.new(self.0), RustPath.new(dest.0)):
+            Ok(_) =>
+                if preserve_metadata:
+                    self._copy_metadata_to(dest)?
+                return Ok(dest)
+            Err(err) => return Err(_io_error(self, err))
+
+    def copy_into(
+        self,
+        target_dir: Union[Path, str],
+        follow_symlinks: bool,
+        preserve_metadata: bool,
+    ) -> Result[Path, IoError]:
+        """
+        Copy this path into a directory using the current path name.
+
+        Args:
+            target_dir: Destination directory.
+            follow_symlinks: Copy symlink targets when true; recreate symlinks when false.
+            preserve_metadata: Copy permissions and access/modification times where supported.
+
+        Returns:
+            The copied destination path.
+        """
+        dest = _as_path(target_dir).joinpath(self.name())
+        return self.copy(dest, follow_symlinks, preserve_metadata)
+
+    def move(self, target: Union[Path, str]) -> Result[Path, IoError]:
+        """
+        Move this path to `target`.
+
+        The operation first attempts a host rename. If the host reports a cross-device move, `std.fs` falls back to
+        copy-then-remove while preserving permissions where possible.
+
+        Args:
+            target: Destination path.
+
+        Returns:
+            The destination `Path`, or `Err(IoError)` if rename or fallback copy/remove fails.
+        """
+        dest = _as_path(target)
+        match rust_rename(RustPath.new(self.0), RustPath.new(dest.0)):
+            Ok(_) => return Ok(dest)
+            Err(err) =>
+                message = f"{err}"
+                if (
+                    message.contains("cross-device") or 
+                    message.contains("Invalid cross-device") or 
+                    message.contains("EXDEV",)
+                ):
+                    self.copy(dest.0, true, true)?
+                    if self.is_dir() and not self.is_symlink():
+                        self.remove_tree()?
+                    else:
+                        self.unlink()?
+                    return Ok(dest)
+                return Err(_io_error(self, message))
+
+    def move_into(self, target_dir: Union[Path, str]) -> Result[Path, IoError]:
+        """
+        Move this path into a directory using the current path name.
+
+        Args:
+            target_dir: Destination directory.
+
+        Returns:
+            The moved destination path.
+        """
+        dest = _as_path(target_dir).joinpath(self.name())
+        return self.move(dest)
+
+    def unlink(self) -> Result[None, IoError]:
+        """
+        Remove a file or symbolic link.
+
+        Returns:
+            `Ok(None)` after removal, or `Err(IoError)` if the path is missing, is a directory, or cannot be removed.
+        """
+        match remove_file(RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def rmdir(self) -> Result[None, IoError]:
+        """
+        Remove an empty directory.
+
+        Returns:
+            `Ok(None)` after removal, or `Err(IoError)` if the path is not an empty directory.
+        """
+        match remove_dir(RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def remove_tree(self) -> Result[None, IoError]:
+        """
+        Remove a directory tree.
+
+        This refuses to operate on a symlink path so callers do not accidentally delete a symlink target.
+
+        Returns:
+            `Ok(None)` after recursive removal, or `Err(IoError)` if the path is a symlink or removal fails.
+        """
+        if self.is_symlink():
+            return Err(IoError(path=self, kind="invalid_input", detail="remove_tree refuses to follow symbolic links"))
+        match remove_dir_all(RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def rename(self, target: Union[Path, str]) -> Result[Path, IoError]:
+        """
+        Rename this path to `target`.
+
+        Args:
+            target: Destination path.
+
+        Returns:
+            The destination path. This is an alias for `move()`.
+        """
+        return self.move(target)
+
+    def replace(self, target: Union[Path, str]) -> Result[Path, IoError]:
+        """
+        Replace `target` with this path.
+
+        Existing target directories are removed recursively; existing files and symlinks are unlinked before moving.
+
+        Args:
+            target: Destination path to replace.
+
+        Returns:
+            The destination path after replacement.
+        """
+        dest = _as_path(target)
+        if dest.exists():
+            if dest.is_dir() and not dest.is_symlink():
+                dest.remove_tree()?
+            else:
+                dest.unlink()?
+        return self.move(dest)
+
+    def resolve(self) -> Result[Path, IoError]:
+        """
+        Resolve this path to its canonical absolute path.
+
+        Returns:
+            The canonical path after resolving symlinks, or `Err(IoError)` if the path does not exist or cannot be read.
+        """
+        match RustPath.new(self.0).canonicalize():
+            Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
+            Err(err) => return Err(_io_error(self, err))
+
+    def absolute(self) -> Result[Path, IoError]:
+        """
+        Convert this path to an absolute path without resolving symlinks.
+
+        Returns:
+            An absolute `Path`, or `Err(IoError)` if the current directory cannot be read.
+        """
+        if RustPath.new(self.0).is_absolute():
+            return Ok(Path(self.0))
+        match current_dir():
+            Ok(cwd) => return Ok(Path(cwd.join(self.0).to_string_lossy().into_owned()))
+            Err(err) => return Err(_io_error(self, err))
+
+    def disk_usage(self) -> Result[DiskUsage, IoError]:
+        """
+        Read capacity information for the containing filesystem.
+
+        Returns:
+            `DiskUsage` byte counts, or `Err(IoError)` if the host cannot stat the filesystem.
+        """
+        match statvfs(RustPath.new(self.0)):
+            Ok(stats) =>
+                block_size = int(stats.f_bsize)
+                total = int(stats.f_blocks) * block_size
+                used = (int(stats.f_blocks) - int(stats.f_bfree)) * block_size
+                free = int(stats.f_bavail) * block_size
+                return Ok(DiskUsage(total=total, used=used, free=free))
+            Err(err) => return Err(_io_error(self, err))
+
+    def touch(self, exist_ok: bool) -> Result[None, IoError]:
+        """
+        Create the file if missing, or update its access and modification time.
+
+        Args:
+            exist_ok: Allow an existing file and update its timestamps. When false, an existing path is an error.
+
+        Returns:
+            `Ok(None)` after creation or timestamp update, or `Err(IoError)`.
+        """
+        if self.exists():
+            # Match pathlib-style `touch`: existing paths are either rejected or timestamped in place.
+            if not exist_ok:
+                return Err(IoError(path=self, kind="already_exists", detail="path already exists"))
+            now = SystemTime.now()
+            self._set_times(now, now)?
+            return Ok(None)
+
+        # Opening with write+create creates an empty file without truncating one that appeared after `exists()`.
+        mut opts = RustOpenOptions.new()
+        opts.write(true).create(true)
+        match opts.open(RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def samefile(self, other: Union[Path, str]) -> Result[bool, IoError]:
+        """
+        Compare two paths after canonical resolution.
+
+        Args:
+            other: Path to compare with this path.
+
+        Returns:
+            `Ok(true)` when both paths resolve to the same canonical path.
+        """
+        rhs = _as_path(other)
+        return Ok(self.resolve()?.0 == rhs.resolve()?.0)
+
+    def is_mount(self) -> Result[bool, IoError]:
+        """
+        Check whether this path is a filesystem mount point.
+
+        Returns:
+            `Ok(true)` for a mount point, `Ok(false)` for a non-mount path, or `Err(IoError)` if metadata cannot be read.
+        """
+        if let Some(parent) = RustPath.new(self.0).parent():
+            current = _metadata_for(self)?
+            parent_path = Path(parent.to_string_lossy().into_owned())
+            parent_meta = _metadata_for(parent_path)?
+            return Ok(current.dev() != parent_meta.dev() or current.ino() == parent_meta.ino())
+        return Ok(true)
+
+    def expanduser(self) -> Result[Path, IoError]:
+        """
+        Expand a leading home marker.
+
+        Returns:
+            `~` or `~/...` expanded with the `HOME` environment variable, or the original path when it does not start
+            with a home marker.
+        """
+        if self.0 == "~":
+            return Path.home()
+        if self.0.starts_with("~/"):
+            home = Path.home()?
+            return Ok(home.joinpath(self.0[2:]))
+        return Ok(Path(self.0))
+
+    def symlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
+        """
+        Create this path as a symbolic link.
+
+        Args:
+            target: Link target stored in the symlink.
+
+        Returns:
+            `Ok(None)` after creating the link, or `Err(IoError)` if the host rejects it.
+        """
+        dest = _as_path(target)
+        match symlink(RustPath.new(dest.0), RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def hardlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
+        """
+        Create this path as a hard link.
+
+        Args:
+            target: Existing file to link to.
+
+        Returns:
+            `Ok(None)` after creating the hard link, or `Err(IoError)`.
+        """
+        dest = _as_path(target)
+        match hard_link(RustPath.new(dest.0), RustPath.new(self.0)):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def chmod(self, readonly: bool) -> Result[None, IoError]:
+        """
+        Set or clear the host readonly permission bit.
+
+        Args:
+            readonly: `true` to mark readonly, `false` to make writable where the host permits it.
+
+        Returns:
+            `Ok(None)` after permissions are updated, or `Err(IoError)`.
+        """
+        meta = _metadata_for(self)?
+        mut perms = meta.permissions()
+        perms.set_readonly(readonly)
+        return _set_permissions_for(self, perms)
+
+    def _copy_metadata_to(self, target: Path) -> Result[None, IoError]:
+        """
+        Copy permissions and timestamps from this path to another path.
+
+        Args:
+            target: Path that receives readonly/permission state and access/modification times.
+
+        Returns:
+            `Ok(None)` after metadata is copied, or `Err(IoError)` from the first host operation that fails.
+        """
+        meta = _metadata_for(self)?
+        _set_permissions_for(target, meta.permissions())?
+        modified = _metadata_modified_time(self, meta)?
+        accessed = _metadata_accessed_time(self, meta)?
+        target._set_times(modified, accessed)?
+        return Ok(None)
+
+    def _set_times(self, modified: SystemTime, accessed: SystemTime) -> Result[None, IoError]:
+        """
+        Set access and modification timestamps for this path.
+
+        Args:
+            modified: Host modification timestamp to write.
+            accessed: Host access timestamp to write.
+
+        Returns:
+            `Ok(None)` after timestamps are updated, or `Err(IoError)` if the file cannot be opened or updated.
+        """
+        file = self._open_host_file()?
+        times = FileTimes.new().set_modified(modified).set_accessed(accessed)
+        return self._set_file_times(file, times)
+
+    def _open_host_file(self) -> Result[RustFile, IoError]:
+        """
+        Open this path as a host file handle.
+
+        Returns:
+            Host file handle, or `Err(IoError)` anchored to this path.
+        """
+        match RustFile.open(RustPath.new(self.0)):
+            Ok(file) => return Ok(file)
+            Err(err) => return Err(_io_error(self, err))
+
+    def _set_file_times(self, file: RustFile, times: FileTimes) -> Result[None, IoError]:
+        """
+        Write prepared timestamps through a host file handle.
+
+        Args:
+            file: Open host file handle for this path.
+            times: Prepared access and modification timestamps.
+
+        Returns:
+            `Ok(None)` after timestamps are written, or `Err(IoError)` if the host rejects the update.
+        """
+        match file.set_times(times):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def cwd() -> Result[Path, IoError]:
+        """
+        Return the current working directory.
+
+        Returns:
+            The process current directory as a `Path`, or `Err(IoError)` if the host cannot provide it.
+        """
+        match current_dir():
+            Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
+            Err(err) => return Err(_io_error(Path("."), err))
+
+    def home() -> Result[Path, IoError]:
+        """
+        Return the home directory.
+
+        Returns:
+            The `HOME` environment variable as a `Path`, or `Err(IoError)` if `HOME` is not available.
+        """
+        home_key = "HOME"
+        match env_var(home_key):
+            Ok(path) => return Ok(Path(path))
+            Err(err) => return Err(_io_error(Path("~"), err))
+
+
+@derive(Clone)
+pub model IoError with Error:
+    """
+    Filesystem failure with normalized kind and path context.
+
+    `kind` is intended for branching on common classes such as `not_found`, `permission_denied`, `already_exists`,
+    `invalid_input`, and `unexpected_eof`. `detail` preserves host-provided text when available.
+
+    Example:
+
+    ```incan
+    match Path("missing.txt").read_text(encoding="utf-8", errors="strict"):
+        Ok(text) => println(text)
+        Err(err) => println(f"{err.kind}: {err.message()}")
+    ```
+    """
+
+    pub path: Path
+    pub kind: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+
+        Returns:
+            The host error text preserved in `detail`.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Return the optional source error.
+
+        Returns:
+            `None`; `IoError` preserves host context in `detail` instead of chaining another error.
+        """
+        return None
+
+
+pub def _as_path(value: Union[Path, str]) -> Path:
+    """
+    Normalize path-like std.fs inputs to `Path`.
+
+    This is public only so sibling std.fs modules can share the same `Union[Path, str]` normalization rule without
+    exposing it as a documented user API.
+
+    Args:
+        value: Existing `Path` or string path.
+
+    Returns:
+        `value` as a `Path`.
+    """
+    if isinstance(value, str):
+        return Path(value)
+    elif isinstance(value, Path):
+        return value
+
+
+def _glob_paths(path: Path, pattern: str, recursive: bool) -> Result[list[Path], IoError]:
+    """
+    Collect paths under one directory that match a glob pattern.
+
+    Args:
+        path: Directory path to scan.
+        pattern: Glob pattern matched against relative child paths.
+        recursive: Whether descendant directories should also be scanned.
+
+    Returns:
+        Matching paths, or `Err(IoError)` from directory traversal.
+    """
+    return _glob_paths_with_prefix(path, "", pattern, recursive)
+
+
+def _glob_paths_with_prefix(path: Path, prefix: str, pattern: str, recursive: bool) -> Result[list[Path], IoError]:
+    """
+    Recursive implementation for `Path.glob()` and `Path.rglob()`.
+
+    `prefix` tracks each child's relative path from the original root so patterns like `src/*.incn` can match nested
+    traversal results without losing the concrete child `Path`.
+
+    Args:
+        path: Directory currently being scanned.
+        prefix: Relative path prefix for children of `path`.
+        pattern: Glob pattern matched against relative paths and, for recursive basename matches, child names.
+        recursive: Whether descendant directories should also be scanned.
+
+    Returns:
+        Matching concrete paths, or `Err(IoError)` from traversal.
+    """
+    mut out: list[str] = []
+    for item in path.iterdir()?:
+        name = item.name()
+
+        # Match against the path relative to the original glob root, not only the basename.
+        mut rel = f"{name}"
+        if prefix != "":
+            rel = f"{prefix}/{name}"
+
+        # Recursive basename matching keeps `rglob("*.incn")` useful without requiring `**/*.incn`.
+        if matches(rel, pattern) or (recursive and not pattern.contains("/") and matches(name, pattern)):
+            out.append(item.0)
+
+        # Descend after testing the directory itself so directory paths can also be returned.
+        if recursive and item.is_dir():
+            for child in _glob_paths_with_prefix(item, rel, pattern, recursive)?:
+                out.append(child.0)
+
+    return Ok([Path(item) for item in out])
+
+
+def _metadata_for(path: Path) -> Result[RustMetadata, IoError]:
+    """
+    Read host metadata and anchor any failure to `path`.
+
+    Args:
+        path: Path whose metadata should be read.
+
+    Returns:
+        Host metadata, or `Err(IoError)` with normalized path context.
+    """
+    match metadata(RustPath.new(path.0)):
+        Ok(meta) => return Ok(meta)
+        Err(err) => return Err(_io_error(path, err))
+
+
+def _set_permissions_for(path: Path, permissions: RustPermissions) -> Result[None, IoError]:
+    """
+    Set host permissions and anchor any failure to `path`.
+
+    Args:
+        path: Path whose permissions should be updated.
+        permissions: Host permission object to write.
+
+    Returns:
+        `Ok(None)` after permissions are updated, or `Err(IoError)`.
+    """
+    match set_permissions(RustPath.new(path.0), permissions):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_io_error(path, err))
+
+
+def _metadata_modified_time(path: Path, meta: RustMetadata) -> Result[SystemTime, IoError]:
+    """
+    Read modification time from host metadata.
+
+    Args:
+        path: Path used for error context.
+        meta: Host metadata object to inspect.
+
+    Returns:
+        Modification time, or `Err(IoError)` if the host cannot provide it.
+    """
+    match meta.modified():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_io_error(path, err))
+
+
+def _metadata_accessed_time(path: Path, meta: RustMetadata) -> Result[SystemTime, IoError]:
+    """
+    Read access time from host metadata.
+
+    Args:
+        path: Path used for error context.
+        meta: Host metadata object to inspect.
+
+    Returns:
+        Access time, or `Err(IoError)` if the host cannot provide it.
+    """
+    match meta.accessed():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_io_error(path, err))
+
+
+pub def _io_error(path: Path, message: str) -> IoError:
+    """
+    Convert host filesystem error text into a normalized `IoError`.
+
+    This is public only for sibling std.fs modules. It is intentionally text-based until Rust interop exposes a stable
+    `std::io::ErrorKind` bridge to Incan.
+
+    Args:
+        path: Path associated with the failed operation.
+        message: Host error text.
+
+    Returns:
+        `IoError` with a stable `kind` where common host messages can be recognized.
+    """
+    if message.contains("No such file") or message.contains("not found"):
+        return IoError(path=path, kind="not_found", detail=message)
+    elif message.contains("Permission"):
+        return IoError(path=path, kind="permission_denied", detail=message)
+    elif message.contains("exists"):
+        return IoError(path=path, kind="already_exists", detail=message)
+    return IoError(path=path, kind="other", detail=message)

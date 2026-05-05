@@ -33,9 +33,9 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::FunctionRegistry;
-use super::decl::{VariantFields, Visibility};
+use super::decl::{IrDeclKind, VariantFields, Visibility};
 use super::types::IrType;
+use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use incan_core::lang::rust_keywords;
 
 /// Usage facts collected before Rust emission.
@@ -107,6 +107,8 @@ pub struct IrEmitter<'a> {
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
     rusttype_alias_names: HashSet<String>,
+    /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
+    method_signatures: HashMap<(String, String), FunctionSignature>,
     /// Whether we're currently emitting a return expression (allows moves instead of clones)
     in_return_context: RefCell<bool>,
     /// Map of const string bindings to their literal values (for const folding of string adds)
@@ -190,6 +192,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             rusttype_alias_names: HashSet::new(),
+            method_signatures: HashMap::new(),
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
@@ -412,6 +415,77 @@ impl<'a> IrEmitter<'a> {
     /// Set imported stdlib error types whose trait methods may be called from this module.
     pub fn set_external_error_trait_types(&mut self, type_names: HashSet<String>) {
         self.external_error_trait_types = type_names;
+    }
+
+    /// Seed nominal declaration metadata from another lowered module.
+    ///
+    /// Multi-file emission creates one Rust module at a time, but constructor/default emission still needs the
+    /// declared field list and default expressions for imported Incan types used by the current module.
+    pub(crate) fn seed_nominal_metadata_from_program(&mut self, program: &IrProgram) {
+        for decl in &program.declarations {
+            match &decl.kind {
+                IrDeclKind::Struct(s) => {
+                    if !s.derives.is_empty() {
+                        self.struct_derives.insert(s.name.clone(), s.derives.clone());
+                    }
+                    self.struct_field_names
+                        .insert(s.name.clone(), s.fields.iter().map(|f| f.name.clone()).collect());
+                    for field in &s.fields {
+                        self.struct_field_types
+                            .insert((s.name.clone(), field.name.clone()), field.ty.clone());
+                        self.struct_field_aliases
+                            .insert((s.name.clone(), field.name.clone()), field.alias.clone());
+                        self.struct_field_descriptions
+                            .insert((s.name.clone(), field.name.clone()), field.description.clone());
+                        if let Some(default) = &field.default {
+                            self.struct_field_defaults
+                                .insert((s.name.clone(), field.name.clone()), default.clone());
+                        }
+                    }
+                }
+                IrDeclKind::Enum(e) => {
+                    for v in &e.variants {
+                        self.enum_variant_fields
+                            .insert((e.name.clone(), v.name.clone()), v.fields.clone());
+                    }
+                }
+                IrDeclKind::TypeAlias {
+                    name,
+                    is_rusttype: true,
+                    ..
+                } => {
+                    self.rusttype_alias_names.insert(name.clone());
+                }
+                IrDeclKind::Impl(i) => {
+                    for method in &i.methods {
+                        let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
+                        self.method_signatures.insert(
+                            (i.target_type.clone(), method.name.clone()),
+                            FunctionSignature {
+                                params,
+                                return_type: method.return_type.clone(),
+                            },
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Return an Incan-owned method signature for a receiver type when typechecker call-site metadata is unavailable.
+    pub(super) fn method_signature_for_receiver(
+        &self,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<&FunctionSignature> {
+        match receiver_ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+                self.method_signatures.get(&(name.clone(), method_name.to_string()))
+            }
+            IrType::Ref(inner) | IrType::RefMut(inner) => self.method_signature_for_receiver(inner, method_name),
+            _ => None,
+        }
     }
 
     /// True if `ty` is a user-defined Incan enum in IR, including imported enums.

@@ -9,7 +9,9 @@ use std::sync::LazyLock;
 
 use incan_core::lang::surface::methods::{dict_methods, list_methods};
 
-use super::super::super::expr::{IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodKind, VarAccess};
+use super::super::super::expr::{
+    IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, VarAccess,
+};
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::IrEmitter;
 use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
@@ -69,8 +71,9 @@ impl<'a> IrEmitter<'a> {
                 }
                 self.scan_expr_for_param_writes(value, param_names, mutated);
             }
-            IrStmtKind::Expr(e) => self.scan_expr_for_param_writes(e, param_names, mutated),
-            IrStmtKind::Return(Some(e)) => self.scan_expr_for_param_writes(e, param_names, mutated),
+            IrStmtKind::Expr(e) | IrStmtKind::Return(Some(e)) | IrStmtKind::Yield(e) => {
+                self.scan_expr_for_param_writes(e, param_names, mutated);
+            }
             IrStmtKind::Break { label: _, value } => {
                 if let Some(value) = value {
                     self.scan_expr_for_param_writes(value, param_names, mutated);
@@ -224,6 +227,19 @@ impl<'a> IrEmitter<'a> {
                 self.scan_expr_for_param_writes(iterable, param_names, mutated);
                 if let Some(f) = filter {
                     self.scan_expr_for_param_writes(f, param_names, mutated);
+                }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr_for_param_writes(element, param_names, mutated);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => {
+                            self.scan_expr_for_param_writes(iterable, param_names, mutated);
+                        }
+                        IrGeneratorClause::If(condition) => {
+                            self.scan_expr_for_param_writes(condition, param_names, mutated);
+                        }
+                    }
                 }
             }
             IrExprKind::Tuple(items) | IrExprKind::Set(items) => {

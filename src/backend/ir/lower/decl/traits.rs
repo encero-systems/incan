@@ -130,6 +130,7 @@ impl AstLowering {
                     return_type,
                     body,
                     is_async: m.node.is_async(),
+                    is_generator: false,
                     visibility: Visibility::Private,
                     type_params: all_type_params,
                     is_extern: false,

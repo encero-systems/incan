@@ -290,7 +290,7 @@ impl AstLowering {
             ResolvedType::Numeric(id) => IrType::Numeric(*id),
             ResolvedType::Bool => IrType::Bool,
             ResolvedType::Str => IrType::String,
-            ResolvedType::Bytes => IrType::Unknown,
+            ResolvedType::Bytes => IrType::Bytes,
             ResolvedType::FrozenStr => IrType::FrozenStr,
             ResolvedType::FrozenBytes => IrType::FrozenBytes,
             ResolvedType::FrozenList(elem) => IrType::NamedGeneric(
@@ -353,7 +353,10 @@ impl AstLowering {
                     IrType::Tuple(args.iter().map(|t| self.lower_resolved_type(t)).collect())
                 }
                 GenericBaseKind::Collection(
-                    CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                    CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Generator,
                 ) => {
                     // Normalize to canonical spelling from incan_core.
                     let Some(id) = collections::from_str(name.as_str()) else {
@@ -431,8 +434,7 @@ impl AstLowering {
                 if let Some(id) = stringlike::from_str(n) {
                     return match id {
                         StringLikeId::Str | StringLikeId::FString => IrType::String,
-                        // NOTE: runtime `bytes` is not yet a dedicated IR type; keep it as unknown for now.
-                        StringLikeId::Bytes => IrType::Unknown,
+                        StringLikeId::Bytes => IrType::Bytes,
                         StringLikeId::FrozenStr => IrType::FrozenStr,
                         StringLikeId::FrozenBytes => IrType::FrozenBytes,
                     };
@@ -472,7 +474,10 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Tuple) => IrType::Tuple(lowered_params),
                     GenericBaseKind::Collection(
-                        CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                        CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::FrozenDict
+                        | CollectionTypeId::Generator,
                     ) => {
                         let Some(id) = collections::from_str(base.as_str()) else {
                             return IrType::NamedGeneric(base.clone(), lowered_params);

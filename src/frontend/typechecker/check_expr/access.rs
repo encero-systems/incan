@@ -9,8 +9,8 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
 use crate::frontend::typechecker::helpers::{
-    collection_name, collection_type_id, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty, option_ty,
-    string_method_return,
+    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
+    option_ty, string_method_return,
 };
 use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
@@ -1218,6 +1218,112 @@ impl TypeChecker {
         resolve_on(self, &base_ty)
     }
 
+    /// Validate the RFC 006 `Generator[T].map(fn)` helper and return the mapped element type.
+    fn generator_map_return_type(
+        &mut self,
+        elem: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> ResolvedType {
+        if args.len() != 1 {
+            self.errors.push(errors::type_mismatch(
+                "one callable argument",
+                &format!("{} argument(s)", args.len()),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        let Some(arg_ty) = arg_types.first() else {
+            return ResolvedType::Unknown;
+        };
+        let ResolvedType::Function(params, ret) = arg_ty else {
+            self.errors.push(errors::type_mismatch(
+                &format!("({elem}) -> _"),
+                &arg_ty.to_string(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        };
+        let [param] = params.as_slice() else {
+            self.errors.push(errors::type_mismatch(
+                "one-parameter callable",
+                &format!("{}-parameter callable", params.len()),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        };
+        if !self.types_compatible(elem, &param.ty) {
+            self.errors
+                .push(errors::type_mismatch(&param.ty.to_string(), &elem.to_string(), span));
+        }
+        ret.as_ref().clone()
+    }
+
+    /// Validate the RFC 006 `Generator[T].filter(predicate)` helper.
+    fn validate_generator_filter_arg(
+        &mut self,
+        elem: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        if args.len() != 1 {
+            self.errors.push(errors::type_mismatch(
+                "one callable argument",
+                &format!("{} argument(s)", args.len()),
+                span,
+            ));
+            return;
+        }
+
+        let Some(arg_ty) = arg_types.first() else {
+            return;
+        };
+        let ResolvedType::Function(params, ret) = arg_ty else {
+            self.errors.push(errors::type_mismatch(
+                &format!("({elem}) -> bool"),
+                &arg_ty.to_string(),
+                span,
+            ));
+            return;
+        };
+        let [param] = params.as_slice() else {
+            self.errors.push(errors::type_mismatch(
+                "one-parameter callable",
+                &format!("{}-parameter callable", params.len()),
+                span,
+            ));
+            return;
+        };
+        if !self.types_compatible(elem, &param.ty) {
+            self.errors
+                .push(errors::type_mismatch(&param.ty.to_string(), &elem.to_string(), span));
+        }
+        if !self.types_compatible(ret, &ResolvedType::Bool) {
+            self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
+        }
+    }
+
+    /// Validate the RFC 006 `Generator[T].take(count)` helper.
+    fn validate_generator_take_arg(&mut self, args: &[CallArg], arg_types: &[ResolvedType], span: Span) {
+        if args.len() != 1 {
+            self.errors.push(errors::type_mismatch(
+                "one int argument",
+                &format!("{} argument(s)", args.len()),
+                span,
+            ));
+            return;
+        }
+        if let Some(arg_ty) = arg_types.first()
+            && !self.types_compatible(arg_ty, &ResolvedType::Int)
+        {
+            self.errors
+                .push(errors::type_mismatch("int", &arg_ty.to_string(), span));
+        }
+    }
+
     /// Type-check a method call (`base.method(args...)`) and return the method's return type.
     pub(in crate::frontend::typechecker::check_expr) fn check_method_call(
         &mut self,
@@ -1482,6 +1588,35 @@ impl TypeChecker {
 
         // FIXME: Too many levels of nesting here.
         if let ResolvedType::Generic(name, type_args) = &base_ty {
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator) {
+                let elem = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+                match method {
+                    "map" => {
+                        let mapped = self.generator_map_return_type(&elem, args, &arg_types, span);
+                        return generator_ty(mapped);
+                    }
+                    "filter" => {
+                        self.validate_generator_filter_arg(&elem, args, &arg_types, span);
+                        return generator_ty(elem);
+                    }
+                    "take" => {
+                        self.validate_generator_take_arg(args, &arg_types, span);
+                        return generator_ty(elem);
+                    }
+                    "collect" => {
+                        if !args.is_empty() {
+                            self.errors.push(errors::type_mismatch(
+                                "no arguments",
+                                &format!("{} argument(s)", args.len()),
+                                span,
+                            ));
+                        }
+                        return list_ty(elem);
+                    }
+                    _ => {}
+                }
+            }
+
             if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
                 let elem = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
                 if let Some(id) = list_methods::from_str(method) {

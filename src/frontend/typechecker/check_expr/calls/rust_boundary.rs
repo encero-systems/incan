@@ -3,7 +3,7 @@
 use super::TypeChecker;
 use crate::frontend::ast::{CallArg, Span};
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::{ResolvedType, TypeInfo};
+use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion};
@@ -171,6 +171,18 @@ impl TypeChecker {
     /// boundary adapters.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let normalized = rust_param_ty.replace(' ', "");
+        if let Some((true, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let target_inner_ty = self.resolved_type_from_rust_display(inner);
+            if self.types_compatible(arg_ty, &target_inner_ty) {
+                return RustArgBoundaryMatch::Exact;
+            }
+            if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
+                && let Some(CoercionPolicy::Exact) =
+                    admitted_builtin_coercion(incan_display.as_str(), inner.replace(' ', "").as_str())
+            {
+                return RustArgBoundaryMatch::Exact;
+            }
+        }
         if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
             && Self::is_builtin_rust_boundary_display(normalized.as_str())
         {
@@ -193,6 +205,17 @@ impl TypeChecker {
             return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Builtin(policy));
         }
         RustArgBoundaryMatch::NoMatch
+    }
+
+    /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
+    fn record_rust_call_site_params(&mut self, span: Span, params: &[incan_core::interop::RustParam]) {
+        let params: Vec<CallableParam> = params
+            .iter()
+            .map(|param| {
+                CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
+            })
+            .collect();
+        self.type_info.record_call_site_callable_params(span, &params);
     }
 
     fn rust_lookup_probe_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
@@ -245,6 +268,7 @@ impl TypeChecker {
         } else {
             &sig.params
         };
+        self.record_rust_call_site_params(span, params);
 
         if arg_types.len() != params.len() {
             self.errors.push(errors::builtin_arity(
@@ -297,6 +321,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let arg_types = self.check_call_arg_types(args);
+        self.record_rust_call_site_params(span, &sig.params);
         if arg_types.len() != sig.params.len() {
             self.errors
                 .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));

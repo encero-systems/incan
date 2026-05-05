@@ -987,6 +987,21 @@ fn test_std_math_codegen() {
 }
 
 #[test]
+fn test_std_fs_import_codegen() {
+    let source = load_test_file("std_fs_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.fs Path import should emit through the generated stdlib fs module; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.fs Path must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_fs_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
@@ -1255,6 +1270,58 @@ fn test_issue364_filtered_list_comp_borrow_codegen() {
         "filtered list comprehension must not destructure `&stored`; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
+}
+
+#[test]
+fn test_rfc006_generator_expression_codegen() {
+    let source = load_test_file("rfc006_generator_expression");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("incan_stdlib::iter::Generator::new"),
+        "expected generator expression to construct stdlib Generator; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(".flat_map(move|x|"),
+        "expected nested generator expression to preserve second for-clause lazily; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("ifx>0") && compact.contains("ify>x") && compact.contains("std::iter::empty()"),
+        "expected generator expression filters to stay lazy inside the iterator chain; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("u64::try_from(3)"),
+        "generator take() must keep its i64 argument instead of using Rust Read::take u64 coercion; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_function_yield_codegen() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def numbers() -> Generator[int]:
+  yield 1
+
+def main() -> None:
+  values = numbers().collect()
+  println(values[0])
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lexer failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parser failed: {errs:?}")))?;
+
+    let rust_code = normalize_codegen_output(
+        &IrCodegen::new()
+            .try_generate(&ast)
+            .map_err(|err| std::io::Error::other(format!("generator function codegen failed: {err:?}")))?,
+    );
+    assert!(
+        rust_code.contains("incan_stdlib::iter::Generator::spawn"),
+        "expected generator function to use runtime generator spawn; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("__incan_yield.yield_value(1)"),
+        "expected yield statement to send generator item; generated:\n{rust_code}"
+    );
+    Ok(())
 }
 
 /// Issue #366: struct fields initialized from `self.<owned_field>` inside `clone(self) -> Self` must clone the field.

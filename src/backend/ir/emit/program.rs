@@ -27,7 +27,7 @@ use incan_core::lang::{conventions, magic_methods};
 use super::super::decl::{
     IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrTraitBound, IrTypeParam, Visibility,
 };
-use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, Pattern, VarRefKind};
+use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, VarRefKind};
 use super::super::stmt::AssignTarget;
 use super::super::types::IrType;
 use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
@@ -67,11 +67,11 @@ impl ImportTracker {
         }
     }
 
+    /// Scan one statement for generated Rust dependencies needed by import tracking.
     fn scan_stmt(&mut self, stmt: &IrStmt) {
         match &stmt.kind {
             IrStmtKind::Let { value, .. } => self.scan_expr(value),
-            IrStmtKind::Expr(e) => self.scan_expr(e),
-            IrStmtKind::Return(Some(e)) => self.scan_expr(e),
+            IrStmtKind::Expr(e) | IrStmtKind::Return(Some(e)) | IrStmtKind::Yield(e) => self.scan_expr(e),
             IrStmtKind::Assign { value, .. } => self.scan_expr(value),
             IrStmtKind::If {
                 condition,
@@ -196,6 +196,15 @@ impl ImportTracker {
             IrExprKind::Struct { fields, .. } => {
                 for (_, e) in fields {
                     self.scan_expr(e);
+                }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr(element);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => self.scan_expr(iterable),
+                        IrGeneratorClause::If(condition) => self.scan_expr(condition),
+                    }
                 }
             }
             IrExprKind::InteropCoerce { expr, .. } => self.scan_expr(expr),
@@ -558,7 +567,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Scan one IR statement for generated Rust dependencies.
     fn scan_stmt(&mut self, stmt: &IrStmt) {
         match &stmt.kind {
-            IrStmtKind::Expr(expr) => self.scan_expr(expr),
+            IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => self.scan_expr(expr),
             IrStmtKind::Let { ty, value, .. } => {
                 self.scan_type(ty);
                 self.scan_expr(value);
@@ -781,6 +790,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_expr(expr);
                 }
             }
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr(element);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => self.scan_expr(iterable),
+                        IrGeneratorClause::If(condition) => self.scan_expr(condition),
+                    }
+                }
+            }
             IrExprKind::List(items) => {
                 for item in items {
                     match item {
@@ -912,6 +930,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         ) {
             return false;
         }
+        if matches!(receiver.ty, IrType::Unknown) {
+            return true;
+        }
         let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
             return false;
         };
@@ -965,6 +986,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Numeric(_)
             | IrType::Decimal { .. }
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1028,6 +1050,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::Numeric(_)
             | IrType::Decimal { .. }
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1199,6 +1222,15 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_expr(filter, out);
                 }
             }
+            IrExprKind::Generator { element, clauses } => {
+                Self::collect_union_types_from_expr(element, out);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => Self::collect_union_types_from_expr(iterable, out),
+                        IrGeneratorClause::If(condition) => Self::collect_union_types_from_expr(condition, out),
+                    }
+                }
+            }
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
@@ -1224,7 +1256,7 @@ impl<'a> IrEmitter<'a> {
                 Self::collect_union_types_from_type(ty, out);
                 Self::collect_union_types_from_expr(value, out);
             }
-            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) => {
+            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
                 Self::collect_union_types_from_expr(expr, out);
             }
             IrStmtKind::Assign { value, .. } => Self::collect_union_types_from_expr(value, out),
@@ -1378,6 +1410,7 @@ impl<'a> IrEmitter<'a> {
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
         }
+        self.seed_nominal_metadata_from_program(program);
 
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();

@@ -37,12 +37,12 @@ Convert low-level errors into a stable, module-level error type.
 
 ```incan
 enum ConfigError:
-    Io(IoError)
+    Io(str)
     Parse(str)
 
 def load_config(path: Path) -> Result[Config, ConfigError]:
-    content = path.read_text().map_err(ConfigError.Io)?
-    cfg = parse_toml[Config](content).map_err(|e| ConfigError.Parse(e))?
+    content = path.read_bytes().map_err(ConfigError.Io)?
+    cfg = parse_binary_config[Config](content).map_err(|e| ConfigError.Parse(e))?
     return Ok(cfg)
 ```
 

@@ -2026,6 +2026,91 @@ mod codegen_tests {
     }
 
     #[test]
+    fn test_string_literal_match_patterns_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def describe(value: str) -> str:
+    match value:
+        case "star":
+            return "literal"
+        case other:
+            return other.upper()
+
+def main() -> None:
+    println(describe("star"))
+    println(describe("fallback"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "string literal match pattern regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["literal", "FALLBACK"],
+            "unexpected string match output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_payload_enum_without_equality_payload_compiles() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+model Payload:
+    value: str
+
+enum Token:
+    Item(Payload)
+    Empty
+
+enum Mode:
+    Fast
+    Slow
+
+def describe(token: Token) -> str:
+    match token:
+        case Token.Item(payload):
+            return payload.value
+        case Token.Empty:
+            return "empty"
+
+def main() -> None:
+    if Mode.Fast == Mode.Fast:
+        println(describe(Token.Item(Payload(value="ok"))))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "payload enum derive regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["ok"], "unexpected payload enum output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_method_alias_codegen_rewrites_to_target_method() {
         let source = r#"
 model Stats:
@@ -2153,6 +2238,335 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_fs_compile_and_run_path_file_and_tree_operations() -> Result<(), Box<dyn std::error::Error>> {
+        let base = std::env::temp_dir().join(format!("incan_std_fs_integration_{}", std::process::id()));
+        let root = base.join("root");
+        let copied = base.join("copy");
+        let moved = base.join("moved");
+        let source = format!(
+            r#"
+from std.fs import IoError, OpenOptions, Path
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def run() -> Result[None, IoError]:
+    root = Path("{root}")
+    copied = Path("{copied}")
+    moved = Path("{moved}")
+    if moved.exists():
+        moved.remove_tree()?
+    if copied.exists():
+        copied.remove_tree()?
+    if root.exists():
+        root.remove_tree()?
+    root.mkdir(true, true)?
+    root.joinpath("a.txt").write_text("alpha", "utf-8", "strict", None)?
+    root.joinpath("c.md").write_text("charlie", "utf-8", "strict", None)?
+    root.joinpath("sub").mkdir(true, true)?
+    root.joinpath("sub").joinpath("b.txt").write_text("bravo", "utf-8", "strict", None)?
+    println(len(root.glob("*.txt")?))
+    println(len(root.rglob("*.txt")?))
+    println(len(root.rglob("sub/[ab].txt")?))
+    match root.joinpath("a.txt").open("r", -1, Some("definitely-not-an-encoding"), None, None):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match root.joinpath("a.txt").open("rbb+", -1, None, None, None):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    default_reader = root.joinpath("a.txt").open()?
+    println(default_reader.read(-1)?)
+    default_out = root.joinpath("default-open.txt")
+    default_writer = default_out.open("w")?
+    default_writer.write("delta")?
+    default_writer.flush()?
+    println(default_out.read_text("utf-8", "strict")?)
+    latin = root.joinpath("latin.txt")
+    latin.write_bytes(b"\xff")?
+    println(len(latin.read_text("windows-1252", "strict")?) > 0)
+    match latin.read_text("utf-8", "strict"):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(latin.read_text("utf-8", "replace")? != "")
+    latin_out = root.joinpath("latin-out.txt")
+    latin_out.write_text("€", "windows-1252", "strict", None)?
+    println(latin_out.read_text("windows-1252", "strict")? == "€")
+    latin_handle_out = root.joinpath("latin-handle-out.txt")
+    latin_handle = latin_handle_out.open("w", -1, Some("windows-1252"), Some("strict"), None)?
+    latin_handle.write("€")?
+    latin_handle.flush()?
+    println(latin_handle_out.read_text("windows-1252", "strict")? == "€")
+    text_handle = latin.open("r", -1, Some("windows-1252"), Some("strict"), None)?
+    println(len(text_handle.read(-1)?) > 0)
+    options_file = OpenOptions().write(true).create(true).truncate(true).open(root.joinpath("options.txt"))?
+    options_file.write_bytes(b"opts")?
+    options_file.flush()?
+    println(root.joinpath("options.txt").read_text("utf-8", "strict")?)
+    handle = root.joinpath("a.txt").open("rb", 0, None, None, None)?
+    chunk = handle.read_exact(2)?
+    println(len(chunk))
+    source_modified = root.joinpath("a.txt").stat()?.modified_unix()?
+    root.copy(copied, true, true)?
+    copied_text = copied.joinpath("sub").joinpath("b.txt").read_text("utf-8", "strict")?
+    println(copied_text)
+    copied_modified = copied.joinpath("a.txt").stat()?.modified_unix()?
+    println(copied_modified == source_modified)
+    sleep(Duration.from_secs(1))
+    copied.joinpath("a.txt").touch(true)?
+    touched_modified = copied.joinpath("a.txt").stat()?.modified_unix()?
+    println(touched_modified > copied_modified)
+    copied.move(moved)?
+    println(moved.joinpath("a.txt").exists())
+    stat = moved.joinpath("a.txt").stat()?
+    println(stat.modified_unix()? > 0)
+    usage = moved.disk_usage()?
+    println(usage.total > 0 and usage.free > 0)
+    moved.remove_tree()?
+    root.remove_tree()?
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            root = root.display(),
+            copied = copied.display(),
+            moved = moved.display()
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.fs smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "1",
+                "2",
+                "1",
+                "invalid_input",
+                "invalid_input",
+                "alpha",
+                "delta",
+                "true",
+                "invalid_data",
+                "true",
+                "true",
+                "true",
+                "true",
+                "opts",
+                "2",
+                "bravo",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true"
+            ],
+            "unexpected std.fs output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_fs_glob_string_api_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.fs.glob import filter_matches, matches
+
+def main() -> None:
+    println(matches("routes/users.incn", "routes/*.incn"))
+    println(matches("routes/users.incn", "routes/[a-z]*.incn"))
+    println(matches("routes/users.incn", "routes/[!0-9]*.incn"))
+    println(matches("routes/users.incn", "routes/?.incn"))
+    hits = filter_matches(["api/users", "docs/readme", "api/orders"], "api/*")
+    println(len(hits))
+    println(hits[0])
+    println(hits[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.fs.glob string API failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["true", "true", "true", "false", "2", "api/users", "api/orders"],
+            "unexpected std.fs.glob output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_default_constructor_fields_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("incan_imported_defaults");
+        fs::create_dir_all(root.join("pkg"))?;
+        fs::write(
+            root.join("pkg").join("config.incn"),
+            r#"
+pub model Config:
+    pub enabled: bool = false
+    pub retries: int = 3
+"#,
+        )?;
+        let main_path = root.join("default_ctor.incn");
+        fs::write(
+            &main_path,
+            r#"
+from pkg.config import Config
+
+def main() -> None:
+    cfg = Config()
+    println(cfg.enabled)
+    println(cfg.retries)
+"#,
+        )?;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "imported default constructor regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "false\n3");
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_method_union_arg_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("incan_imported_method_union_arg");
+        fs::create_dir_all(root.join("pkg"))?;
+        fs::write(
+            root.join("pkg").join("ops.incn"),
+            r#"
+pub model LocalPath:
+    pub raw: str
+
+pub class Opener:
+    def accept(self, path: Union[LocalPath, str]) -> str:
+        return "ok"
+"#,
+        )?;
+        let main_path = root.join("union_arg.incn");
+        fs::write(
+            &main_path,
+            r#"
+from pkg.ops import LocalPath, Opener
+
+def main() -> None:
+    println(Opener().accept(LocalPath(raw="a")))
+    println(Opener().accept("b"))
+"#,
+        )?;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "imported method union argument regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok\nok");
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_fs_preserves_legacy_file_builtins() -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::env::temp_dir().join(format!("incan_std_fs_legacy_builtin_{}.txt", std::process::id()));
+        let source = format!(
+            r#"
+def main() -> None:
+    match write_file("{path}", "legacy"):
+        Ok(_) => pass
+        Err(err) => println(err.to_string())
+    match read_file("{path}"):
+        Ok(data) => println(data)
+        Err(err) => println(err.to_string())
+"#,
+            path = path.display()
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "legacy file builtins failed after std.fs registration: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "legacy", "unexpected legacy builtin output:\n{stdout}");
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    mut seen = False
+    match read_dir(RustPath.new(".")):
+        Ok(entries) =>
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+        Err(err) => println(err.to_string())
+    println(seen)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "rust Result non-Clone match regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["true"], "unexpected output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -2242,6 +2656,15 @@ def main() -> None:
                 "run",
                 "-c",
                 r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+def normalize_path_like(value: LocalPath | str) -> LocalPath:
+    if isinstance(value, str):
+        return LocalPath(value)
+    elif isinstance(value, LocalPath):
+        return value
+
 def parse_value(flag: bool) -> int | str:
     if flag:
         return 42
@@ -2349,6 +2772,8 @@ def main() -> None:
     println(describe_wide_match("match"))
     println(describe_optional_narrow("optional"))
     println(describe_optional_narrow(None))
+    println(normalize_path_like("from-string").0)
+    println(normalize_path_like(LocalPath("from-path")).0)
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
@@ -2384,7 +2809,9 @@ def main() -> None:
                 "2.5",
                 "MATCH",
                 "OPTIONAL",
-                "missing"
+                "missing",
+                "from-string",
+                "from-path"
             ],
             "unexpected union output:\n{stdout}"
         );
@@ -2431,6 +2858,171 @@ def main() -> None:
             vec!["a", "4"],
             "unexpected filtered comprehension output:\n{stdout}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_expression_runs_lazily_with_source_ordered_clauses() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    xs = [1, 2, 3]
+    ys = [2, 3, 4]
+    values = (x * y for x in xs if x > 1 for y in ys if y > x).collect()
+    println(values[0])
+    println(values[1])
+    println(values[2])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator expression regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["6", "8", "12"], "unexpected generator output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_helper_chain_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def triple(x: int) -> int:
+    return x * 3
+
+def big(x: int) -> bool:
+    return x > 6
+
+def main() -> None:
+    xs = [1, 2, 3, 4, 5]
+    values = (x for x in xs).map(triple).filter(big).take(2).collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator helper regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["9", "12"], "unexpected generator helper output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+def main() -> None:
+    values = numbers().collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1", "2"], "unexpected generator function output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_body_starts_on_first_consumption() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    println("started")
+    yield 1
+
+def main() -> None:
+    values = numbers()
+    println("after construction")
+    items = values.collect()
+    println(items[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator laziness regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["after construction", "started", "1"],
+            "generator body should not run until first consumption:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def singleton[T](value: T) -> Generator[T]:
+    yield value
+
+def main() -> None:
+    values = singleton[int](3).collect()
+    println(values[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generic generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["3"], "unexpected generic generator output:\n{stdout}");
         Ok(())
     }
 

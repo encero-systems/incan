@@ -11,7 +11,7 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::{TestingFixtureInfo, TypeChecker};
+use super::{TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -113,6 +113,25 @@ fn validate_async_fixture_yield_shape(body: &[Spanned<Statement>]) -> AsyncFixtu
 /// Return whether any yield expression appears in a fixture body.
 fn fixture_body_has_yield(body: &[Spanned<Statement>]) -> bool {
     any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
+}
+
+/// Return whether a function body contains any valued `return` statement.
+fn body_has_return_value(body: &[Spanned<Statement>]) -> bool {
+    body.iter().any(|stmt| match &stmt.node {
+        Statement::Return(Some(_)) => true,
+        Statement::If(if_stmt) => {
+            body_has_return_value(&if_stmt.then_body)
+                || if_stmt
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| body_has_return_value(body))
+                || if_stmt.else_body.as_deref().is_some_and(body_has_return_value)
+        }
+        Statement::Loop(loop_stmt) => body_has_return_value(&loop_stmt.body),
+        Statement::While(while_stmt) => body_has_return_value(&while_stmt.body),
+        Statement::For(for_stmt) => body_has_return_value(&for_stmt.body),
+        _ => false,
+    })
 }
 
 /// Pick a stable declaration span for fixture-level diagnostics when the AST helper receives only the function node.
@@ -405,7 +424,7 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
                             .collect();
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),
@@ -2230,12 +2249,30 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&func.return_type);
+        let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
+        if return_type.generator_element_type().is_some() && !has_yield && !body_has_return_value(&func.body) {
+            self.errors
+                .push(errors::generator_requires_yield(&func.name, func.return_type.span));
+        }
+        let yield_context = if fixture_args.is_some() {
+            YieldContext::Fixture
+        } else if has_yield {
+            match return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(return_type.clone());
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
         let prev_in_async_body = self.in_async_body;
+        let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
         self.in_async_body = func.is_async();
 
         // Check body
@@ -2244,6 +2281,7 @@ impl TypeChecker {
         }
 
         self.in_async_body = prev_in_async_body;
+        self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
@@ -2378,6 +2416,27 @@ impl TypeChecker {
 
         let return_type = self.resolve_type_checked(&method.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        let body_has_yield = method
+            .body
+            .as_ref()
+            .is_some_and(|body| any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))));
+        if effective_return_type.generator_element_type().is_some()
+            && !body_has_yield
+            && method.body.as_deref().is_some_and(|body| !body_has_return_value(body))
+        {
+            self.errors
+                .push(errors::generator_requires_yield(&method.name, method.return_type.span));
+        }
+        let yield_context = if body_has_yield {
+            match effective_return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(effective_return_type);
 
         // Set error type for ? checking
@@ -2386,11 +2445,13 @@ impl TypeChecker {
         // Check body
         if let Some(body) = &method.body {
             let prev_in_async_body = self.in_async_body;
+            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();
             for stmt in body {
                 self.check_statement(stmt);
             }
             self.in_async_body = prev_in_async_body;
+            self.current_yield_context = prev_yield_context;
         }
 
         self.current_return_error_type = None;

@@ -26,6 +26,8 @@ Dunder hooks are the implementation methods. Explicit trait adoption names the c
     - `Iterable[T]`
     - `Iterator[T]`
 
+`Generator[T]` implements this iteration surface. Generator functions and generator expressions can be used directly in `for` loops or passed to APIs that accept `Iterable[T]` / `Iterator[T]`.
+
 ## Bool (truthiness)
 
 - **Syntax**: `if x:` / `while x:`

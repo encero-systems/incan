@@ -79,15 +79,16 @@ def explain_signup(id: int, raw_name: str, users: list[User]) -> str:
 Use `?` when the current function cannot make the right recovery decision. The containing function must also return a compatible `Result`.
 
 ```incan
-from std.fs import IoError, Path
+from std.fs import Path
 
 enum ImportError:
-    Io(IoError)
+    Io(str)
     Signup(SignupError)
 
 def import_user(path: Path, users: list[User]) -> Result[User, ImportError]:
-    text = path.read_text().map_err(ImportError.Io)?
-    user = register_user(42, text, users).map_err(ImportError.Signup)?
+    data = path.read_bytes().map_err(ImportError.Io)?
+    name = parse_user_name(data).map_err(ImportError.Signup)?
+    user = register_user(42, name, users).map_err(ImportError.Signup)?
     return Ok(user)
 ```
 
@@ -100,14 +101,14 @@ Low-level functions should usually return low-level errors. Boundary functions s
 That keeps public APIs stable and caller-oriented. A CLI should not leak parser, filesystem, or backend implementation types when the useful caller-facing question is whether config can be read or validated.
 
 ```incan
-from std.fs import IoError, Path
+from std.fs import Path
 
 enum CliError:
     CouldNotReadConfig(str)
     InvalidConfig(str)
 
-def config_read_error(err: IoError) -> CliError:
-    return CliError.CouldNotReadConfig(err.to_string())
+def config_read_error(err: str) -> CliError:
+    return CliError.CouldNotReadConfig(err)
 
 def config_signup_message(err: SignupError) -> str:
     match err:
@@ -118,8 +119,9 @@ def config_signup_error(err: SignupError) -> CliError:
     return CliError.InvalidConfig(config_signup_message(err))
 
 def load_cli_user(path: Path, users: list[User]) -> Result[User, CliError]:
-    text = path.read_text().map_err(config_read_error)?
-    user = register_user(42, text, users).map_err(config_signup_error)?
+    data = path.read_bytes().map_err(config_read_error)?
+    name = parse_config_user_name(data).map_err(config_signup_error)?
+    user = register_user(42, name, users).map_err(config_signup_error)?
     return Ok(user)
 ```
 

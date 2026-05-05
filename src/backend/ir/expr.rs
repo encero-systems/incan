@@ -220,6 +220,10 @@ pub enum IrExprKind {
         iterable: Box<IrExpr>,
         filter: Option<Box<IrExpr>>,
     },
+    Generator {
+        element: Box<IrExpr>,
+        clauses: Vec<IrGeneratorClause>,
+    },
 
     // List literal
     List(Vec<IrListEntry>),
@@ -329,6 +333,12 @@ pub enum NumericResizePolicy {
     Try,
     Wrapping,
     Saturating,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrGeneratorClause {
+    For { pattern: Pattern, iterable: Box<IrExpr> },
+    If(IrExpr),
 }
 
 /// One lowered entry in a list literal.

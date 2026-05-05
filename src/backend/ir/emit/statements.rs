@@ -7,7 +7,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 
-use super::super::expr::{IrCallArg, IrDictEntry, IrExprKind, IrListEntry, MatchArm, Pattern, TypedExpr};
+use super::super::expr::{
+    IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
+};
 use super::super::ownership::{ValueUseSite, plan_for_loop_iteration, plan_value_use};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
@@ -270,6 +272,15 @@ fn expr_mutates_storage_binding(expr: &super::super::expr::IrExpr, names: &mut H
                 expr_mutates_storage_binding(filter, names);
             }
         }
+        IrExprKind::Generator { element, clauses } => {
+            expr_mutates_storage_binding(element, names);
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { iterable, .. } => expr_mutates_storage_binding(iterable, names),
+                    IrGeneratorClause::If(condition) => expr_mutates_storage_binding(condition, names),
+                }
+            }
+        }
         IrExprKind::Range { start, end, .. } => {
             if let Some(start) = start {
                 expr_mutates_storage_binding(start, names);
@@ -290,7 +301,9 @@ fn expr_mutates_storage_binding(expr: &super::super::expr::IrExpr, names: &mut H
 fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
     match &stmt.kind {
         // ---- Context: single-expression statement forms ----
-        IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) => expr_mutates_storage_binding(expr, names),
+        IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
+            expr_mutates_storage_binding(expr, names);
+        }
         IrStmtKind::Let { value, .. } => expr_mutates_storage_binding(value, names),
         IrStmtKind::Assign { target, value } => {
             match target {
@@ -446,6 +459,10 @@ fn stmt_binding_use_scan(stmt: &IrStmt, binding_name: &str) -> BindingUseScan {
                 shadowed_after: false,
             }
         }
+        IrStmtKind::Yield(expr) => BindingUseScan {
+            used: expr_uses_binding_name(expr, binding_name),
+            shadowed_after: false,
+        },
         IrStmtKind::Let { name, value, .. } => {
             if expr_uses_binding_name(value, binding_name) {
                 return BindingUseScan {
@@ -665,6 +682,24 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
                         || filter
                             .as_ref()
                             .is_some_and(|expr| expr_uses_binding_name(expr, binding_name)))
+        }
+        IrExprKind::Generator { element, clauses } => {
+            let mut used = false;
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { pattern, iterable } => {
+                        used |= expr_uses_binding_name(iterable, binding_name)
+                            || pattern_uses_binding_name(pattern, binding_name);
+                        if pattern_binds_binding_name(pattern, binding_name) {
+                            return used;
+                        }
+                    }
+                    IrGeneratorClause::If(condition) => {
+                        used |= expr_uses_binding_name(condition, binding_name);
+                    }
+                }
+            }
+            used || expr_uses_binding_name(element, binding_name)
         }
         IrExprKind::List(entries) => entries.iter().any(|entry| match entry {
             IrListEntry::Element(expr) | IrListEntry::Spread(expr) => expr_uses_binding_name(expr, binding_name),
@@ -1074,6 +1109,10 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { return #converted; })
             }
             IrStmtKind::Return(None) => Ok(quote! { return; }),
+            IrStmtKind::Yield(expr) => {
+                let value = self.emit_expr(expr)?;
+                Ok(quote! { __incan_yield.yield_value(#value); })
+            }
             IrStmtKind::Break { label, value } => {
                 let break_value = if let Some(value) = value {
                     Some(self.emit_expr(value)?)
@@ -1194,20 +1233,23 @@ impl<'a> IrEmitter<'a> {
                 }
             }
             IrStmtKind::Match { scrutinee, arms } => {
-                let scrut = self.emit_expr_for_use(
-                    scrutinee,
-                    ValueUseSite::MatchScrutinee {
-                        target_ty: Some(&scrutinee.ty),
-                    },
-                )?;
+                let scrut = self.emit_match_scrutinee(scrutinee)?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let pat = self.emit_pattern(&arm.pattern);
+                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
                         let body = self.emit_expr(&arm.body)?;
-                        if let Some(guard) = &arm.guard {
-                            let g = self.emit_expr(guard)?;
-                            Ok(quote! { #pat if #g => #body })
+                        let guard = match (&pattern_guard, &arm.guard) {
+                            (Some(pattern_guard), Some(arm_guard)) => {
+                                let arm_guard = self.emit_expr(arm_guard)?;
+                                Some(quote! { (#pattern_guard) && (#arm_guard) })
+                            }
+                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
+                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
+                            (None, None) => None,
+                        };
+                        if let Some(guard) = guard {
+                            Ok(quote! { #pat if #guard => #body })
                         } else {
                             Ok(quote! { #pat => #body })
                         }

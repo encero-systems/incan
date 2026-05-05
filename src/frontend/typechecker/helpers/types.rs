@@ -70,6 +70,11 @@ pub fn result_ty(ok: ResolvedType, err: ResolvedType) -> ResolvedType {
     ResolvedType::Generic(collection_name(CollectionTypeId::Result).to_string(), vec![ok, err])
 }
 
+/// Construct a `Generator[T]` type.
+pub fn generator_ty(elem: ResolvedType) -> ResolvedType {
+    ResolvedType::Generic(collection_name(CollectionTypeId::Generator).to_string(), vec![elem])
+}
+
 /// Construct a `Tuple[T1, T2, ...]` generic type (when used in generic form).
 pub fn tuple_generic_ty(elems: Vec<ResolvedType>) -> ResolvedType {
     ResolvedType::Generic(collection_name(CollectionTypeId::Tuple).to_string(), elems)

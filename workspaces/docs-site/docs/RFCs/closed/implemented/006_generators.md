@@ -1,6 +1,6 @@
 # RFC 006: Python-style generators
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2024-12-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)
@@ -8,7 +8,7 @@
 - **Follow-up:** RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -248,7 +248,7 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 - Add parser, typechecker, codegen snapshot, integration, and diagnostic tests for the full RFC surface.
 - Update authored user-facing docs, release notes, and the active development version when implementation lands.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
@@ -258,44 +258,44 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 
 ### Parser / AST / formatter
 
-- [ ] Parser: parse generator expressions with the full comprehension-clause surface.
-- [ ] AST: represent generator expressions without confusing them with eager list comprehensions.
-- [ ] Parser: preserve existing fixture `yield` parsing behavior.
-- [ ] Formatter: round-trip generator functions and multi-clause generator expressions stably.
+- [x] Parser: parse generator expressions with the full comprehension-clause surface.
+- [x] AST: represent generator expressions without confusing them with eager list comprehensions.
+- [x] Parser: preserve existing fixture `yield` parsing behavior.
+- [x] Formatter: round-trip generator functions and multi-clause generator expressions stably.
 
 ### Typechecker / diagnostics
 
-- [ ] Type system: represent `Generator[T]` as the checked generator semantic type.
-- [ ] Protocols: make `Generator[T]` satisfy the RFC 068 iteration protocol.
-- [ ] Diagnostics: reject `yield` outside generator functions and fixture contexts.
-- [ ] Diagnostics: reject generator functions whose yielded values do not match `Generator[T]`.
-- [ ] Diagnostics: reject `return value` inside generator functions.
-- [ ] Typechecker: validate generator expressions with nested `for` clauses and trailing `if` filters.
-- [ ] Typechecker: validate `.map()`, `.filter()`, `.take()`, and `.collect()` on generator values.
+- [x] Type system: represent `Generator[T]` as the checked generator semantic type.
+- [x] Protocols: make `Generator[T]` satisfy the RFC 068 iteration protocol.
+- [x] Diagnostics: reject `yield` outside generator functions and fixture contexts.
+- [x] Diagnostics: reject generator functions whose yielded values do not match `Generator[T]`.
+- [x] Diagnostics: reject `return value` inside generator functions.
+- [x] Typechecker: validate generator expressions with nested `for` clauses and trailing `if` filters.
+- [x] Typechecker: validate `.map()`, `.filter()`, `.take()`, and `.collect()` on generator values.
 
 ### Lowering / emission / runtime
 
-- [ ] Lower generator functions to lazy resumable producer behavior.
-- [ ] Lower generator expressions to lazy generator values.
-- [ ] Emit Rust that preserves generator suspension, ordering, and laziness.
-- [ ] Runtime/stdlib: expose the `Generator[T]` surface and minimum helper methods.
-- [ ] Runtime/stdlib: ensure `.map()`, `.filter()`, and `.take()` stay lazy and `.collect()` is terminal.
+- [x] Lower generator functions to lazy resumable producer behavior.
+- [x] Lower generator expressions to lazy generator values.
+- [x] Emit Rust that preserves generator suspension, ordering, and laziness.
+- [x] Runtime/stdlib: expose the `Generator[T]` surface and minimum helper methods.
+- [x] Runtime/stdlib: ensure `.map()`, `.filter()`, and `.take()` stay lazy and `.collect()` is terminal.
 
 ### Tests
 
-- [ ] Parser tests for generator function `yield` and generator-expression clauses.
-- [ ] Typechecker tests for valid and invalid generator function return/yield combinations.
-- [ ] Typechecker tests for invalid `return value` in generator functions.
-- [ ] Typechecker tests for generator helper callback arity and return-type diagnostics.
-- [ ] Codegen snapshot tests for generator functions, generator expressions, and helper chains.
-- [ ] Integration tests for `for` loops over generators and `.map().filter().take().collect()` chains.
-- [ ] Regression tests that fixture `yield` behavior still works.
+- [x] Parser tests for generator function `yield` and generator-expression clauses.
+- [x] Typechecker tests for valid and invalid generator function return/yield combinations.
+- [x] Typechecker tests for invalid `return value` in generator functions.
+- [x] Typechecker tests for generator helper callback arity and return-type diagnostics.
+- [x] Codegen snapshot tests for generator functions, generator expressions, and helper chains.
+- [x] Integration tests for `for` loops over generators and `.map().filter().take().collect()` chains.
+- [x] Regression tests that fixture `yield` behavior still works.
 
 ### Docs / release
 
-- [ ] Update generator language reference or tutorial docs.
-- [ ] Update release notes for the active `0.3` development line.
-- [ ] Bump the active `0.3.0-dev.N` version.
+- [x] Update generator language reference or tutorial docs.
+- [x] Update release notes for the active `0.3` development line.
+- [x] Bump the active `0.3.0-dev.N` version.
 
 ## Design decisions
 

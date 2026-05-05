@@ -54,6 +54,9 @@ pub enum IrStmtKind {
     /// Return statement
     Return(Option<IrExpr>),
 
+    /// Yield a generator item from a compiler-emitted generator body.
+    Yield(IrExpr),
+
     /// Break statement (with optional label and value)
     Break {
         label: Option<String>,

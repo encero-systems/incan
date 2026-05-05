@@ -26,6 +26,8 @@ impl TypeChecker {
     ///
     /// This is the central call coordinator: it preserves constructor and builtin special cases first, then resolves
     /// function values, callable objects, and ordinary value calls through the same argument-binding machinery.
+    /// Callable values record their accepted parameter list at the full call span so IR lowering can preserve Rust
+    /// borrow boundaries for calls reached through associated-function member access.
     pub(in crate::frontend::typechecker::check_expr) fn check_call(
         &mut self,
         callee: &Spanned<Expr>,
@@ -218,6 +220,7 @@ impl TypeChecker {
                 let arg_types = self.check_call_arg_types_for_params(args, &params);
                 let mut type_bindings = std::collections::HashMap::new();
                 self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
+                self.type_info.record_call_site_callable_params(span, &params);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)

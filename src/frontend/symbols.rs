@@ -771,6 +771,18 @@ impl ResolvedType {
             _ => None,
         }
     }
+
+    /// Get the yielded element type from `Generator[T]`.
+    pub fn generator_element_type(&self) -> Option<&ResolvedType> {
+        match self {
+            ResolvedType::Generic(name, args)
+                if collections::from_str(name.as_str()) == Some(CollectionTypeId::Generator) && !args.is_empty() =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ResolvedType {

@@ -15,7 +15,7 @@
 //! - [`methods`]: Method calls (both known methods via `MethodKind` and regular Rust method-call emission)
 //! - [`calls`]: Regular function calls and binary operations
 //! - [`indexing`]: Index, slice, and field access expressions
-//! - [`comprehensions`]: List and dict comprehensions
+//! - [`comprehensions`]: List comprehensions, dict comprehensions, and generator expressions
 //! - [`structs_enums`]: Struct constructor expressions
 //! - [`mod@format`]: Format strings and range expressions
 //! - [`lvalue`]: Assignment target expressions
@@ -60,6 +60,7 @@ use super::super::expr::{
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
@@ -354,6 +355,29 @@ impl<'a> IrEmitter<'a> {
         Ok(plan.apply(emitted))
     }
 
+    /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
+    fn type_is_result_like(ty: &IrType) -> bool {
+        match ty {
+            IrType::Result(_, _) => true,
+            IrType::NamedGeneric(name, args) if args.len() == 2 => {
+                collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
+        if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
+            return self.emit_expr(scrutinee);
+        }
+        self.emit_expr_for_use(
+            scrutinee,
+            ValueUseSite::MatchScrutinee {
+                target_ty: Some(&scrutinee.ty),
+            },
+        )
+    }
+
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
     ///
     /// This covers Incan type names, enum variants, module placeholders, and external Rust imports.
@@ -506,7 +530,11 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::String(s) => Ok(quote! { #s }),
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
-                Ok(lit.to_token_stream())
+                if matches!(expr.ty, IrType::StaticBytes | IrType::FrozenBytes) {
+                    Ok(lit.to_token_stream())
+                } else {
+                    Ok(quote! { #lit.to_vec() })
+                }
             }
 
             IrExprKind::Var {
@@ -614,6 +642,7 @@ impl<'a> IrEmitter<'a> {
                 iterable,
                 filter,
             } => self.emit_dict_comp(key, value, pattern, iterable, filter.as_deref()),
+            IrExprKind::Generator { element, clauses } => self.emit_generator_expr(element, clauses),
 
             IrExprKind::List(items) => {
                 let item_target_ty = match &expr.ty {
@@ -693,20 +722,23 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Match { scrutinee, arms } => {
-                let s = self.emit_expr_for_use(
-                    scrutinee,
-                    ValueUseSite::MatchScrutinee {
-                        target_ty: Some(&scrutinee.ty),
-                    },
-                )?;
+                let s = self.emit_match_scrutinee(scrutinee)?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let pat = self.emit_pattern(&arm.pattern);
+                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
                         let body = self.emit_expr(&arm.body)?;
-                        if let Some(guard) = &arm.guard {
-                            let g = self.emit_expr(guard)?;
-                            Ok(quote! { #pat if #g => #body })
+                        let guard = match (&pattern_guard, &arm.guard) {
+                            (Some(pattern_guard), Some(arm_guard)) => {
+                                let arm_guard = self.emit_expr(arm_guard)?;
+                                Some(quote! { (#pattern_guard) && (#arm_guard) })
+                            }
+                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
+                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
+                            (None, None) => None,
+                        };
+                        if let Some(guard) = guard {
+                            Ok(quote! { #pat if #guard => #body })
                         } else {
                             Ok(quote! { #pat => #body })
                         }

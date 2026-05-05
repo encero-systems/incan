@@ -389,10 +389,12 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
     (has_serialize, has_deserialize)
 }
 
+/// Add serde derives to generated newtypes when the current program needs serde support.
 fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
     use super::decl::IrDeclKind;
     use super::types::IrType;
 
+    /// Return whether a newtype inner type can safely receive derived serde support.
     fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
         match ty {
             IrType::Unit
@@ -400,6 +402,7 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -858,6 +861,7 @@ impl<'a> IrCodegen<'a> {
 
         // Build unified function registry including imported module functions
         let mut unified_registry = ir_program.function_registry.clone();
+        let mut dependency_ir_programs = Vec::new();
         for (_, dep_ast, _) in &self.dependency_modules {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
@@ -865,6 +869,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             unified_registry.merge(&dep_ir.function_registry);
+            dependency_ir_programs.push(dep_ir);
         }
 
         // Emit IR to Rust code
@@ -889,6 +894,9 @@ impl<'a> IrCodegen<'a> {
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                inner.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -908,6 +916,9 @@ impl<'a> IrCodegen<'a> {
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                emitter.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -1075,16 +1086,13 @@ impl<'a> IrCodegen<'a> {
             self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
 
         let mut modules = HashMap::new();
-        for (name, module_path, ir) in lowered_modules {
-            let reachable_items = dependency_reachable_items
-                .get(&module_path)
-                .cloned()
-                .unwrap_or_default();
+        for (name, module_path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
             let preserve_public_items =
-                should_preserve_dependency_public_items(&module_path, self.preserve_dependency_public_items);
+                should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
-                let mut svc = EmitService::new_from_program(&ir);
+                let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1098,7 +1106,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
-                svc.emit_program(&ir)?
+                for (_, _, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
@@ -1113,9 +1124,12 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
-                emitter.emit_program(&ir)?
+                for (_, _, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
             };
-            modules.insert(name, module_code);
+            modules.insert(name.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -1254,13 +1268,13 @@ impl<'a> IrCodegen<'a> {
             self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
 
         let mut modules = HashMap::new();
-        for (path, ir) in lowered_modules {
-            let reachable_items = dependency_reachable_items.get(&path).cloned().unwrap_or_default();
+        for (path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
             let preserve_public_items =
-                should_preserve_dependency_public_items(&path, self.preserve_dependency_public_items);
+                should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
-                let mut svc = EmitService::new_from_program(&ir);
+                let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1274,7 +1288,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
-                svc.emit_program(&ir)?
+                for (_, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
@@ -1289,9 +1306,12 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
-                emitter.emit_program(&ir)?
+                for (_, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
             };
-            modules.insert(path, module_code);
+            modules.insert(path.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -1658,6 +1678,7 @@ def main() -> None:
                 ))),
             ],
             is_async: false,
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
@@ -1766,6 +1787,7 @@ def main() -> None:
                 ))),
             ],
             is_async: false,
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,

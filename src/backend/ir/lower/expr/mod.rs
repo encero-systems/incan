@@ -216,7 +216,7 @@ impl AstLowering {
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
                 ast::Literal::Decimal(dl) => (IrExprKind::Decimal(dl.repr.clone()), IrType::Unknown),
                 ast::Literal::String(s) => (IrExprKind::String(s.clone()), IrType::String),
-                ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Unknown),
+                ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Bytes),
                 ast::Literal::Bool(b) => (IrExprKind::Bool(*b), IrType::Bool),
                 ast::Literal::None => (IrExprKind::None, IrType::Option(Box::new(IrType::Unknown))),
             },
@@ -861,6 +861,7 @@ impl AstLowering {
             }
 
             // ---- Comprehensions (delegated to comprehensions submodule) ----
+            ast::Expr::Generator(generator) => self.lower_generator_expr(generator)?,
             ast::Expr::ListComp(comp) => self.lower_list_comp(comp)?,
             ast::Expr::DictComp(comp) => self.lower_dict_comp(comp)?,
 

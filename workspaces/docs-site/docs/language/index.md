@@ -20,6 +20,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Async Programming](how-to/async_programming.md)
 - [Error Messages](how-to/error_messages.md)
 - [File I/O](how-to/file_io.md)
+- [Generators](how-to/generators.md)
 - [Module state](how-to/module_state.md)
 - [Choosing numeric types](how-to/choosing_numeric_types.md)
 - [Performance](how-to/performance.md)
@@ -32,6 +33,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - Static storage: [Static storage](reference/static_storage.md)
 - Numeric semantics: [Numeric Semantics](reference/numeric_semantics.md)
 - Strings: [Strings](reference/strings.md)
+- Generators: [Generators](reference/generators.md)
 - Derives reference cluster:
 
 | Guide                                                               | Derives                     |
@@ -52,6 +54,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 - [Numeric types](explanation/numeric_types.md)
 - [Derives & Traits](reference/derives_and_traits.md)
 - [Enums](explanation/enums.md)
+- [Generators](explanation/generators.md)
 - [Error Handling](explanation/error_handling.md)
 - [Imports & Modules](explanation/imports_and_modules.md)
 - [Models & Classes](explanation/models_and_classes/index.md)
