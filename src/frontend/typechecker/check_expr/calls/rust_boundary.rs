@@ -8,6 +8,7 @@ use crate::frontend::typechecker::helpers::collection_type_id;
 use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion};
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -54,6 +55,7 @@ impl TypeChecker {
         match arg_ty {
             ResolvedType::Int => Some("int".to_string()),
             ResolvedType::Float => Some("float".to_string()),
+            ResolvedType::Numeric(id) => Some(numerics::as_str(*id).to_string()),
             ResolvedType::Bool => Some("bool".to_string()),
             ResolvedType::Str => Some("str".to_string()),
             ResolvedType::FrozenStr => Some("FrozenStr".to_string()),
@@ -362,6 +364,7 @@ mod validate_rust_function_call_tests {
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo, VariableInfo};
     use incan_core::interop::{RustFunctionSig, RustParam};
+    use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
 
     #[test]
@@ -459,10 +462,24 @@ mod validate_rust_function_call_tests {
     }
 
     #[test]
-    fn rust_arg_boundary_accepts_structural_frozen_dict_to_hash_map() {
+    fn rust_arg_boundary_rejects_structural_float_to_f32() {
         let checker = TypeChecker::new();
         let arg_ty = ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Float));
-        assert!(checker.rust_arg_matches_boundary(&arg_ty, "std::collections::HashMap<&str, f32>"));
+        assert!(!checker.rust_arg_matches_boundary(&arg_ty, "std::collections::HashMap<&str, f32>"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_lossless_exact_width_numeric_widening() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
+        assert!(checker.rust_arg_matches_boundary(&arg_ty, "i64"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_rejects_exact_width_numeric_narrowing() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
+        assert!(!checker.rust_arg_matches_boundary(&arg_ty, "i8"));
     }
 
     #[test]

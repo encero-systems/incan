@@ -104,6 +104,7 @@ pub enum IrExprKind {
     Bool(bool),
     Int(i64),
     Float(f64),
+    Decimal(String),
     String(String),
     Bytes(Vec<u8>),
 
@@ -219,6 +220,10 @@ pub enum IrExprKind {
         iterable: Box<IrExpr>,
         filter: Option<Box<IrExpr>>,
     },
+    Generator {
+        element: Box<IrExpr>,
+        clauses: Vec<IrGeneratorClause>,
+    },
 
     // List literal
     List(Vec<IrListEntry>),
@@ -288,6 +293,14 @@ pub enum IrExprKind {
         to_type: IrType,
     },
 
+    /// RFC 009 numeric resize helper lowered from `resize()`, `try_resize()`, `wrapping_resize()`, and
+    /// `saturating_resize()`.
+    NumericResize {
+        expr: Box<IrExpr>,
+        policy: NumericResizePolicy,
+        to_type: IrType,
+    },
+
     /// RFC 041: Explicit interop coercion inserted by lowering for Rust-boundary calls.
     InteropCoerce {
         expr: Box<IrExpr>,
@@ -314,6 +327,20 @@ pub enum IrExprKind {
     SerdeFromJson(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumericResizePolicy {
+    Lossless,
+    Try,
+    Wrapping,
+    Saturating,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrGeneratorClause {
+    For { pattern: Pattern, iterable: Box<IrExpr> },
+    If(IrExpr),
+}
+
 /// One lowered entry in a list literal.
 #[derive(Debug, Clone)]
 pub enum IrListEntry {
@@ -335,7 +362,7 @@ pub enum IrDictEntry {
 /// Coercion strategy at a Rust interop boundary.
 #[derive(Debug, Clone)]
 pub enum IrInteropCoercionKind {
-    /// Coercion admitted by the scalar matrix (`int -> i64`, `str -> &str`, `float -> f32`, ...).
+    /// Coercion admitted by the boundary matrix (`int -> i64`, `i16 -> i64`, `str -> &str`, ...).
     Builtin {
         policy: CoercionPolicy,
         rust_target: String,

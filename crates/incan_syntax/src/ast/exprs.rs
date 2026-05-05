@@ -53,6 +53,8 @@ pub enum Expr {
     ListComp(Box<ListComp>),
     /// Dict comprehension: `{k: v for x in iter if cond}`
     DictComp(Box<DictComp>),
+    /// Generator expression: `(expr for x in iter if cond)`
+    Generator(Box<GeneratorExpr>),
     /// Closure: `(x, y) => expr` (a lot like python's lambda)
     Closure(Vec<Spanned<Param>>, Box<Spanned<Expr>>),
     /// Tuple: `(a, b)`
@@ -186,10 +188,28 @@ impl PartialEq for FloatLiteral {
     }
 }
 
+/// Parsed decimal literal with the **source substring** used for formatting.
+///
+/// The `body` field is the numeric spelling without `_` separators and without the trailing `d` suffix. Semantic
+/// validation of precision and scale belongs to the typechecker.
+#[derive(Debug, Clone)]
+pub struct DecimalLiteral {
+    pub body: String,
+    pub repr: String,
+}
+
+impl PartialEq for DecimalLiteral {
+    /// Compare semantic decimal literal bodies while ignoring source formatting.
+    fn eq(&self, other: &Self) -> bool {
+        self.body == other.body
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(IntLiteral),
     Float(FloatLiteral),
+    Decimal(DecimalLiteral),
     String(String),
     Bytes(Vec<u8>),
     Bool(bool),
@@ -339,17 +359,53 @@ pub struct LoopExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListComp {
+    /// Element expression produced for each accepted binding.
     pub expr: Spanned<Expr>,
+    /// First `for` binding mirrored for single-clause comprehension lowering.
     pub pattern: Spanned<Pattern>,
+    /// First `for` iterable mirrored for single-clause comprehension lowering.
     pub iter: Spanned<Expr>,
+    /// First trailing `if` filter mirrored for single-clause comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictComp {
+    /// Key expression produced for each accepted binding.
     pub key: Spanned<Expr>,
+    /// Value expression produced for each accepted binding.
     pub value: Spanned<Expr>,
+    /// First `for` binding mirrored for single-clause comprehension lowering.
     pub pattern: Spanned<Pattern>,
+    /// First `for` iterable mirrored for single-clause comprehension lowering.
     pub iter: Spanned<Expr>,
+    /// First trailing `if` filter mirrored for single-clause comprehension lowering.
     pub filter: Option<Spanned<Expr>>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
+}
+
+/// Generator-expression payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorExpr {
+    /// Expression yielded by the generator for each accepted binding.
+    pub expr: Spanned<Expr>,
+    /// Parsed comprehension clauses in source order.
+    pub clauses: Vec<ComprehensionClause>,
+}
+
+/// One clause in a comprehension-like expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComprehensionClause {
+    /// `for pattern in iter`
+    For {
+        /// Binding pattern introduced by the clause.
+        pattern: Spanned<Pattern>,
+        /// Iterable source consumed by the clause.
+        iter: Spanned<Expr>,
+    },
+    /// `if condition`
+    If(Spanned<Expr>),
 }

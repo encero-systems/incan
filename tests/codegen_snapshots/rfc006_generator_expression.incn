@@ -1,0 +1,6 @@
+def positives(xs: List[int], ys: List[int]) -> Generator[int]:
+  return (x * y for x in xs if x > 0 for y in ys if y > x)
+
+def main() -> None:
+  values = positives([1, 2, 3], [2, 3, 4]).take(3).collect()
+  print(values[0])

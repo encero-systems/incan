@@ -1002,10 +1002,14 @@ fn ast_type_to_resolved_with_rust_imports(
 
             // Resolve through incan_core registries (numerics, strings, unit).
             if let Some(id) = numeric_types::from_str(name) {
-                return match id {
-                    NumericTypeId::Int => ResolvedType::Int,
-                    NumericTypeId::Float => ResolvedType::Float,
-                    NumericTypeId::Bool => ResolvedType::Bool,
+                return match name.as_str() {
+                    "int" => ResolvedType::Int,
+                    "float" => ResolvedType::Float,
+                    "bool" => ResolvedType::Bool,
+                    _ => match id {
+                        NumericTypeId::Bool => ResolvedType::Bool,
+                        _ => ResolvedType::Numeric(id),
+                    },
                 };
             }
             if let Some(id) = string_types::from_str(name) {
@@ -1087,6 +1091,7 @@ fn ast_type_to_resolved_with_rust_imports(
                 .collect();
             ResolvedType::Tuple(elem_types)
         }
+        ast::Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         ast::Type::Infer => ResolvedType::CallSiteInfer,
     }
 }

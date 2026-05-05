@@ -2862,6 +2862,171 @@ def main() -> None:
     }
 
     #[test]
+    fn test_generator_expression_runs_lazily_with_source_ordered_clauses() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    xs = [1, 2, 3]
+    ys = [2, 3, 4]
+    values = (x * y for x in xs if x > 1 for y in ys if y > x).collect()
+    println(values[0])
+    println(values[1])
+    println(values[2])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator expression regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["6", "8", "12"], "unexpected generator output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_helper_chain_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def triple(x: int) -> int:
+    return x * 3
+
+def big(x: int) -> bool:
+    return x > 6
+
+def main() -> None:
+    xs = [1, 2, 3, 4, 5]
+    values = (x for x in xs).map(triple).filter(big).take(2).collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator helper regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["9", "12"], "unexpected generator helper output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+def main() -> None:
+    values = numbers().collect()
+    println(values[0])
+    println(values[1])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1", "2"], "unexpected generator function output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_generator_function_body_starts_on_first_consumption() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def numbers() -> Generator[int]:
+    println("started")
+    yield 1
+
+def main() -> None:
+    values = numbers()
+    println("after construction")
+    items = values.collect()
+    println(items[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generator laziness regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["after construction", "started", "1"],
+            "generator body should not run until first consumption:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def singleton[T](value: T) -> Generator[T]:
+    yield value
+
+def main() -> None:
+    values = singleton[int](3).collect()
+    println(values[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run -c generic generator function regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["3"], "unexpected generic generator output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_clone_self_struct_field_reads_do_not_move_out_of_borrowed_self() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -4420,6 +4585,49 @@ def main() -> None:
         assert!(
             rust_code.contains("collect::<HashMap<_, _>>()"),
             "expected Dict[str, float] smoke value to lower to a Rust HashMap collect; got:\n{rust_code}"
+        );
+    }
+
+    #[test]
+    fn test_rfc009_numeric_resize_and_decimal_codegen_smoke() {
+        let source = r#"
+def main() -> None:
+  small: i8 = 120
+  wide: int = small.resize()
+  maybe: Option[i8] = wide.try_resize()
+  wrapped: i8 = wide.wrapping_resize()
+  capped: i8 = wide.saturating_resize()
+  price: decimal[5, 2] = 19.99d
+"#;
+        let Ok(tokens) = lexer::lex(source) else {
+            panic!("lexing failed");
+        };
+        let Ok(ast) = parser::parse(&tokens) else {
+            panic!("parse failed");
+        };
+        let Ok(()) = typechecker::check(&ast) else {
+            panic!("typecheck failed");
+        };
+        let Ok(rust_code) = IrCodegen::new().try_generate(&ast) else {
+            panic!("codegen failed");
+        };
+        assert!(
+            rust_code.contains("let wide: i64 = (small) as i64;"),
+            "expected lossless resize to emit a Rust cast, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("incan_stdlib::num::try_resize::<_, i8>(wide)"),
+            "expected try_resize to call stdlib checked resize helper, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("incan_stdlib::num::saturating_resize::<_, i8>(wide)"),
+            "expected saturating_resize to call stdlib saturating helper, got:\n{rust_code}"
+        );
+        assert!(
+            rust_code.contains("let _price: incan_stdlib::num::Decimal128")
+                && rust_code.contains("Decimal128::from_literal")
+                && rust_code.contains("\"19.99d\""),
+            "expected decimal annotation/literal to lower to Decimal128, got:\n{rust_code}"
         );
     }
 

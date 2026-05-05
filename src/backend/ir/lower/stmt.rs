@@ -812,7 +812,13 @@ impl AstLowering {
         stmt_span: ast::Span,
     ) -> Result<IrStmt, LoweringError> {
         let kind = match stmt {
-            ast::Statement::Expr(e) => IrStmtKind::Expr(self.lower_expr_spanned(e)?),
+            ast::Statement::Expr(e) => {
+                if let ast::Expr::Yield(Some(value)) = &e.node {
+                    IrStmtKind::Yield(self.lower_expr_spanned(value)?)
+                } else {
+                    IrStmtKind::Expr(self.lower_expr_spanned(e)?)
+                }
+            }
             ast::Statement::Assert(assert_stmt) => return Ok(IrStmt::new(self.lower_assert_stmt(assert_stmt)?)),
 
             ast::Statement::Assignment(a) => {
@@ -1955,6 +1961,19 @@ impl AstLowering {
             ast::Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
+            ast::Expr::Generator(generator) => {
+                self.count_expr_ident_reads(&generator.expr.node, counts);
+                for clause in &generator.clauses {
+                    match clause {
+                        ast::ComprehensionClause::For { iter, .. } => {
+                            self.count_expr_ident_reads(&iter.node, counts);
+                        }
+                        ast::ComprehensionClause::If(condition) => {
+                            self.count_expr_ident_reads(&condition.node, counts);
+                        }
+                    }
                 }
             }
             ast::Expr::ListComp(comp) => {

@@ -14,8 +14,9 @@ use crate::frontend::symbols::{CallableParam, ResolvedType};
 /// the export originated.
 pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
     match ty {
-        ResolvedType::Int => named_type_ref(numerics::as_str(NumericTypeId::Int)),
-        ResolvedType::Float => named_type_ref(numerics::as_str(NumericTypeId::Float)),
+        ResolvedType::Int => named_type_ref("int"),
+        ResolvedType::Float => named_type_ref("float"),
+        ResolvedType::Numeric(id) => named_type_ref(numerics::as_str(*id)),
         ResolvedType::Bool => named_type_ref(numerics::as_str(NumericTypeId::Bool)),
         ResolvedType::Str => named_type_ref(stringlike::as_str(StringLikeId::Str)),
         ResolvedType::Bytes => named_type_ref(stringlike::as_str(StringLikeId::Bytes)),
@@ -106,12 +107,17 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     }
 }
 
+/// Resolve a manifest simple type name, preserving ordinary int/float/bool spellings.
 fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
     if let Some(id) = numerics::from_str(name) {
-        return match id {
-            NumericTypeId::Int => ResolvedType::Int,
-            NumericTypeId::Float => ResolvedType::Float,
-            NumericTypeId::Bool => ResolvedType::Bool,
+        return match name {
+            "int" => ResolvedType::Int,
+            "float" => ResolvedType::Float,
+            "bool" => ResolvedType::Bool,
+            _ => match id {
+                NumericTypeId::Bool => ResolvedType::Bool,
+                _ => ResolvedType::Numeric(id),
+            },
         };
     }
     if let Some(id) = stringlike::from_str(name) {

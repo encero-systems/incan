@@ -31,7 +31,8 @@ use incan_core::lang::trait_bounds::rust as tb;
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use super::expr::{
-    BinOp, FormatPart, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind,
+    BinOp, FormatPart, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodCallArgPolicy, VarAccess,
+    VarRefKind,
 };
 use super::ownership::{ValueUseSite, plan_value_use};
 use super::stmt::{IrStmt, IrStmtKind};
@@ -534,7 +535,7 @@ fn collect_backend_clone_bounds_in_stmt(
     clone_params: &mut HashSet<String>,
 ) {
     match &stmt.kind {
-        IrStmtKind::Return(Some(expr)) => {
+        IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
             collect_backend_clone_bounds_for_value_use(
                 expr,
                 ValueUseSite::ReturnValue {
@@ -852,6 +853,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::Await(object)
         | IrExprKind::Try(object)
         | IrExprKind::Cast { expr: object, .. }
+        | IrExprKind::NumericResize { expr: object, .. }
         | IrExprKind::InteropCoerce { expr: object, .. }
         | IrExprKind::UnaryOp { operand: object, .. } => {
             collect_backend_clone_bounds_in_expr(object, type_param_names, self_clone_params, clone_params);
@@ -951,6 +953,29 @@ fn collect_backend_clone_bounds_in_expr(
                 collect_backend_clone_bounds_in_expr(filter, type_param_names, self_clone_params, clone_params);
             }
         }
+        IrExprKind::Generator { element, clauses } => {
+            collect_backend_clone_bounds_in_expr(element, type_param_names, self_clone_params, clone_params);
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { iterable, .. } => {
+                        collect_backend_clone_bounds_in_expr(
+                            iterable,
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                    IrGeneratorClause::If(condition) => {
+                        collect_backend_clone_bounds_in_expr(
+                            condition,
+                            type_param_names,
+                            self_clone_params,
+                            clone_params,
+                        );
+                    }
+                }
+            }
+        }
         IrExprKind::Range { start, end, .. } => {
             if let Some(start) = start {
                 collect_backend_clone_bounds_in_expr(start, type_param_names, self_clone_params, clone_params);
@@ -974,6 +999,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
         | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::Literal(_)
@@ -1165,6 +1191,8 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::Bool
         | IrType::Int
         | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
         | IrType::String
         | IrType::Bytes
         | IrType::StaticStr
@@ -1266,7 +1294,7 @@ fn scan_stmt_for_bounds(
     bounds_map: &mut HashMap<String, Vec<IrTraitBound>>,
 ) {
     match &stmt.kind {
-        IrStmtKind::Expr(expr) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
+        IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => scan_expr_for_bounds(expr, type_params, params, bounds_map),
         IrStmtKind::Let { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
         IrStmtKind::Assign { value, .. } => scan_expr_for_bounds(value, type_params, params, bounds_map),
         IrStmtKind::CompoundAssign { value, .. } => {
@@ -1531,6 +1559,19 @@ fn scan_expr_for_bounds(
                 scan_expr_for_bounds(f, type_params, params, bounds_map);
             }
         }
+        IrExprKind::Generator { element, clauses } => {
+            scan_expr_for_bounds(element, type_params, params, bounds_map);
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { iterable, .. } => {
+                        scan_expr_for_bounds(iterable, type_params, params, bounds_map);
+                    }
+                    IrGeneratorClause::If(condition) => {
+                        scan_expr_for_bounds(condition, type_params, params, bounds_map);
+                    }
+                }
+            }
+        }
 
         // ---- Struct construction: recurse into field values ----
         IrExprKind::Struct { fields, .. } => {
@@ -1568,6 +1609,10 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
 
+        IrExprKind::NumericResize { expr, .. } => {
+            scan_expr_for_bounds(expr, type_params, params, bounds_map);
+        }
+
         IrExprKind::InteropCoerce { expr, .. } => {
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
@@ -1591,6 +1636,7 @@ fn scan_expr_for_bounds(
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
         | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::Literal(_)
@@ -1830,6 +1876,8 @@ fn add_bounds_from_type(
         | IrType::Bool
         | IrType::Int
         | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
         | IrType::String
         | IrType::Bytes
         | IrType::StaticStr
@@ -1989,7 +2037,7 @@ fn collect_calls_in_stmt(
     };
 
     match &stmt.kind {
-        IrStmtKind::Expr(expr) => recurse_expr(expr, result),
+        IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => recurse_expr(expr, result),
         IrStmtKind::Let { value, .. } | IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
             recurse_expr(value, result)
         }
@@ -2216,6 +2264,7 @@ mod tests {
             return_type: IrType::Unit,
             body: Vec::new(),
             is_async: false,
+            is_generator: false,
             visibility: Visibility::Public,
             type_params,
             is_extern: false,

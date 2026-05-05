@@ -844,10 +844,12 @@ fn decorator_expr_value(expr: &Spanned<Expr>, checker: &TypeChecker) -> Decorato
     }
 }
 
+/// Convert a literal into the safe metadata subset used by checked API output.
 fn safe_value_from_literal(literal: &crate::frontend::ast::Literal) -> SafeMetadataValue {
     match literal {
         crate::frontend::ast::Literal::Int(value) => SafeMetadataValue::Int(value.value),
         crate::frontend::ast::Literal::Float(value) => SafeMetadataValue::Float(value.value),
+        crate::frontend::ast::Literal::Decimal(value) => SafeMetadataValue::String(value.repr.clone()),
         crate::frontend::ast::Literal::String(value) => SafeMetadataValue::String(value.clone()),
         crate::frontend::ast::Literal::Bytes(value) => SafeMetadataValue::Bytes(value.clone()),
         crate::frontend::ast::Literal::Bool(value) => SafeMetadataValue::Bool(*value),

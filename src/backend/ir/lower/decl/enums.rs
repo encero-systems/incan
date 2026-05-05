@@ -85,6 +85,8 @@ fn type_defaults_partial_eq(ty: &IrType) -> bool {
         | IrType::Bool
         | IrType::Int
         | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
         | IrType::String
         | IrType::Bytes
         | IrType::StaticStr

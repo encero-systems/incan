@@ -12,6 +12,7 @@ use super::super::types::IrType;
 use super::IrEmitter;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::types::numerics;
 
 impl<'a> IrEmitter<'a> {
     /// Emit the generated Rust type path for an anonymous ordinary union.
@@ -76,6 +77,11 @@ impl<'a> IrEmitter<'a> {
             IrType::Bool => quote! { bool },
             IrType::Int => quote! { i64 },
             IrType::Float => quote! { f64 },
+            IrType::Numeric(id) => {
+                let ident = format_ident!("{}", numerics::rust_name(*id));
+                quote! { #ident }
+            }
+            IrType::Decimal { .. } => quote! { incan_stdlib::num::Decimal128 },
             IrType::String => quote! { String },
             IrType::Bytes => quote! { Vec<u8> },
             IrType::StaticStr => quote! { &'static str },
@@ -123,6 +129,7 @@ impl<'a> IrEmitter<'a> {
                     Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),
                     Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_stdlib::frozen::FrozenSet }),
                     Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_stdlib::frozen::FrozenDict }),
+                    Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
                     _ => None,
                 };
                 let n = Self::emit_path_ident(name);

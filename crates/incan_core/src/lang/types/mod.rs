@@ -16,5 +16,8 @@ pub mod numerics;
 pub mod stringlike;
 
 pub use collections::{COLLECTION_TYPES, CollectionTypeId, CollectionTypeInfo};
-pub use numerics::{NUMERIC_TYPES, NumericTypeId, NumericTypeInfo};
+pub use numerics::{
+    DECIMAL_TYPE_CONSTRUCTORS, DecimalTypeConstructorId, DecimalTypeConstructorInfo, NUMERIC_TYPES, NumericFamily,
+    NumericTypeId, NumericTypeInfo,
+};
 pub use stringlike::{STRING_LIKE_TYPES, StringLikeId, StringLikeInfo};

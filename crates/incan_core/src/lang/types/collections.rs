@@ -31,6 +31,7 @@ pub enum CollectionTypeId {
     FrozenList,
     FrozenDict,
     FrozenSet,
+    Generator,
 }
 
 /// Metadata for a collection/generic-base builtin type.
@@ -120,6 +121,14 @@ pub const COLLECTION_TYPES: &[CollectionTypeInfo] = &[
         RFC::_009,
         Since(0, 1),
     ),
+    info(
+        CollectionTypeId::Generator,
+        "Generator",
+        &["generator"],
+        "Lazy resumable producer type.",
+        RFC::_006,
+        Since(0, 3),
+    ),
 ];
 
 /// Resolve a type name to a [`CollectionTypeId`].
@@ -178,6 +187,7 @@ pub fn info_for(id: CollectionTypeId) -> CollectionTypeInfo {
         CollectionTypeId::FrozenList => COLLECTION_TYPES[6],
         CollectionTypeId::FrozenDict => COLLECTION_TYPES[7],
         CollectionTypeId::FrozenSet => COLLECTION_TYPES[8],
+        CollectionTypeId::Generator => COLLECTION_TYPES[9],
     }
 }
 

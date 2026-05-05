@@ -35,6 +35,7 @@
 /// assert_eq!(py_floor_div_i64(-7, -3), 2);
 /// ```
 use crate::errors::{raise_value_error, raise_zero_division};
+use core::fmt;
 
 // --- Numeric kernels (hot) ---------------------------------------------------------------------
 //
@@ -505,6 +506,208 @@ pub fn lcm_i64(a: i64, b: i64) -> i64 {
     non_negative_i64_or_overflow(lcm, "math.lcm")
 }
 
+/// Runtime representation for RFC 009 `decimal[p, s]` values.
+///
+/// Precision and scale are checked by the compiler at Incan boundaries. The runtime keeps the coefficient plus
+/// literal scale so generated programs have a stable, toolchain-owned Rust type without depending on a third-party
+/// decimal crate before arithmetic semantics are specified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Decimal128 {
+    coefficient: i128,
+    scale: u8,
+}
+
+impl Decimal128 {
+    /// Construct a decimal from its scaled integer coefficient and scale.
+    pub fn new(coefficient: i128, scale: u8) -> Self {
+        Self { coefficient, scale }
+    }
+
+    /// Return the scaled integer coefficient.
+    pub fn coefficient(self) -> i128 {
+        self.coefficient
+    }
+
+    /// Return the number of fractional decimal digits represented by the coefficient.
+    pub fn scale(self) -> u8 {
+        self.scale
+    }
+
+    /// Parse a compiler-validated decimal literal spelling into the runtime representation.
+    pub fn from_literal(literal: &str) -> Self {
+        let body = literal.strip_suffix('d').unwrap_or(literal);
+        let Some((coefficient, scale)) = parse_decimal_literal_body(body) else {
+            raise_value_error(&format!("invalid decimal literal `{literal}`"));
+        };
+        Self::new(coefficient, scale)
+    }
+}
+
+impl fmt::Display for Decimal128 {
+    /// Format the decimal using its stored scale.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.scale == 0 {
+            return write!(f, "{}", self.coefficient);
+        }
+        let negative = self.coefficient < 0;
+        let digits = self.coefficient.unsigned_abs().to_string();
+        let scale = usize::from(self.scale);
+        if digits.len() <= scale {
+            if negative {
+                write!(f, "-")?;
+            }
+            write!(f, "0.")?;
+            for _ in 0..(scale - digits.len()) {
+                write!(f, "0")?;
+            }
+            write!(f, "{digits}")
+        } else {
+            let split = digits.len() - scale;
+            if negative {
+                write!(f, "-")?;
+            }
+            write!(f, "{}.{}", &digits[..split], &digits[split..])
+        }
+    }
+}
+
+/// Parse the decimal literal body after the optional `d` suffix has been removed.
+fn parse_decimal_literal_body(body: &str) -> Option<(i128, u8)> {
+    if body.is_empty() || body.contains('e') || body.contains('E') {
+        return None;
+    }
+    let (integer, fractional) = body.split_once('.').unwrap_or((body, ""));
+    if integer.is_empty() && fractional.is_empty() {
+        return None;
+    }
+    let scale = u8::try_from(fractional.len()).ok()?;
+    let mut coefficient = String::with_capacity(integer.len() + fractional.len());
+    coefficient.push_str(if integer.is_empty() { "0" } else { integer });
+    coefficient.push_str(fractional);
+    coefficient.parse::<i128>().ok().map(|value| (value, scale))
+}
+
+pub trait IncanTryResize<T> {
+    /// Attempt an integer resize and return `None` when the target cannot represent the value.
+    fn incan_try_resize(self) -> Option<T>;
+}
+
+impl<T, U> IncanTryResize<U> for T
+where
+    U: TryFrom<T>,
+{
+    /// Attempt an integer resize using the target type's `TryFrom` implementation.
+    fn incan_try_resize(self) -> Option<U> {
+        U::try_from(self).ok()
+    }
+}
+
+/// Attempt an integer resize and return `None` when the target cannot represent the value.
+pub fn try_resize<T, U>(value: T) -> Option<U>
+where
+    T: IncanTryResize<U>,
+{
+    value.incan_try_resize()
+}
+
+pub trait IncanSaturatingResize<T> {
+    /// Resize an integer and clamp to the target range when the value is outside it.
+    fn incan_saturating_resize(self) -> T;
+}
+
+/// Resize an integer and clamp to the target range when the value is outside it.
+pub fn saturating_resize<T, U>(value: T) -> U
+where
+    T: IncanSaturatingResize<U>,
+{
+    value.incan_saturating_resize()
+}
+
+macro_rules! impl_saturating_signed_to_signed_for_src {
+    ($src:ty => $($dst:ty),* $(,)?) => {
+        $(
+            impl IncanSaturatingResize<$dst> for $src {
+                /// Resize an integer and clamp to the signed target range.
+                fn incan_saturating_resize(self) -> $dst {
+                    (self as i128).clamp(<$dst>::MIN as i128, <$dst>::MAX as i128) as $dst
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_saturating_signed_to_signed {
+    ($($src:ty),* $(,)?) => {
+        $(impl_saturating_signed_to_signed_for_src!($src => i8, i16, i32, i64, i128, isize);)*
+    };
+}
+
+macro_rules! impl_saturating_signed_to_unsigned_for_src {
+    ($src:ty => $($dst:ty),* $(,)?) => {
+        $(
+            impl IncanSaturatingResize<$dst> for $src {
+                /// Resize a signed integer and clamp negative values to zero for unsigned targets.
+                fn incan_saturating_resize(self) -> $dst {
+                    if self <= 0 {
+                        0
+                    } else {
+                        (self as u128).min(<$dst>::MAX as u128) as $dst
+                    }
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_saturating_signed_to_unsigned {
+    ($($src:ty),* $(,)?) => {
+        $(impl_saturating_signed_to_unsigned_for_src!($src => u8, u16, u32, u64, u128, usize);)*
+    };
+}
+
+macro_rules! impl_saturating_unsigned_to_signed_for_src {
+    ($src:ty => $($dst:ty),* $(,)?) => {
+        $(
+            impl IncanSaturatingResize<$dst> for $src {
+                /// Resize an unsigned integer and clamp to the signed target maximum.
+                fn incan_saturating_resize(self) -> $dst {
+                    (self as u128).min(<$dst>::MAX as u128) as $dst
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_saturating_unsigned_to_signed {
+    ($($src:ty),* $(,)?) => {
+        $(impl_saturating_unsigned_to_signed_for_src!($src => i8, i16, i32, i64, i128, isize);)*
+    };
+}
+
+macro_rules! impl_saturating_unsigned_to_unsigned_for_src {
+    ($src:ty => $($dst:ty),* $(,)?) => {
+        $(
+            impl IncanSaturatingResize<$dst> for $src {
+                /// Resize an unsigned integer and clamp to the unsigned target maximum.
+                fn incan_saturating_resize(self) -> $dst {
+                    (self as u128).min(<$dst>::MAX as u128) as $dst
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_saturating_unsigned_to_unsigned {
+    ($($src:ty),* $(,)?) => {
+        $(impl_saturating_unsigned_to_unsigned_for_src!($src => u8, u16, u32, u64, u128, usize);)*
+    };
+}
+
+impl_saturating_signed_to_signed!(i8, i16, i32, i64, i128, isize);
+impl_saturating_signed_to_unsigned!(i8, i16, i32, i64, i128, isize);
+impl_saturating_unsigned_to_signed!(u8, u16, u32, u64, u128, usize);
+impl_saturating_unsigned_to_unsigned!(u8, u16, u32, u64, u128, usize);
+
 // --- Tests -------------------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -635,6 +838,28 @@ mod tests {
             message.contains("ValueError: math.lcm result overflows Incan int"),
             "unexpected panic message: {message}"
         );
+    }
+
+    #[test]
+    fn test_decimal128_from_literal_preserves_coefficient_and_scale() {
+        let value = Decimal128::from_literal("19.99d");
+        assert_eq!(value.coefficient(), 1999);
+        assert_eq!(value.scale(), 2);
+        assert_eq!(value.to_string(), "19.99");
+
+        let whole = Decimal128::from_literal("1000d");
+        assert_eq!(whole.coefficient(), 1000);
+        assert_eq!(whole.scale(), 0);
+        assert_eq!(whole.to_string(), "1000");
+    }
+
+    #[test]
+    fn test_integer_resize_helpers() {
+        assert_eq!(try_resize::<_, i8>(127_i16), Some(127_i8));
+        assert_eq!(try_resize::<_, i8>(128_i16), None);
+        assert_eq!(saturating_resize::<_, i8>(240_i16), i8::MAX);
+        assert_eq!(saturating_resize::<_, u8>(-1_i16), 0_u8);
+        assert_eq!(saturating_resize::<_, i8>(255_u16), i8::MAX);
     }
 
     #[test]
