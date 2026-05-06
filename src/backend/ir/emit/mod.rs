@@ -284,7 +284,7 @@ impl<'a> IrEmitter<'a> {
     ///   (and `syn::Ident::new("r#async", ..)` is invalid and will panic).
     fn rust_ident(name: &str) -> proc_macro2::Ident {
         let span = proc_macro2::Span::call_site();
-        if matches!(name, "self" | "Self") {
+        if matches!(name, "self" | "Self" | "crate" | "super") {
             return proc_macro2::Ident::new(name, span);
         }
         if rust_keywords::is_keyword(name) {

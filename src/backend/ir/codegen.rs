@@ -1667,6 +1667,7 @@ def main() -> None:
                             rng_ty,
                         )),
                         method: String::from("gen_range"),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
@@ -1776,6 +1777,7 @@ def main() -> None:
                             rng_ty,
                         )),
                         method: String::from("gen_range"),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,

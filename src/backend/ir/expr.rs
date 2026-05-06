@@ -171,6 +171,8 @@ pub enum IrExprKind {
     MethodCall {
         receiver: Box<IrExpr>,
         method: String,
+        /// Typechecker-selected dispatch target when this call must not emit as an ordinary Rust method lookup.
+        dispatch: Option<IrMethodDispatch>,
         /// Explicit call-site type arguments (`obj.method[T](...)`) when provided.
         type_args: Vec<IrType>,
         args: Vec<IrCallArg>,
@@ -579,6 +581,13 @@ impl BuiltinFn {
             BuiltinFnId::IsInstance => return None,
         })
     }
+}
+
+/// Backend dispatch target selected by frontend method resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IrMethodDispatch {
+    /// Emit a fully-qualified trait method call.
+    Trait { trait_path: String, type_args: Vec<IrType> },
 }
 
 /// Known method kinds recognized by the Incan compiler.
