@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 006: Python-style generators - Incan Documentation</title>
+        <title>RFC 047: Lightweight directed graph types (stdlib) - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-006-python-style-generators" class="md-skip">
+        <a href="#rfc-047-lightweight-directed-graph-types-stdlib" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 006: Python-style generators
+              RFC 047: Lightweight directed graph types (stdlib)
             
           </span>
         </div>
@@ -4683,55 +4683,82 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+  <a href="#guide-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation (how users think about it)
+      Guide-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#illustrative-api-sketches-non-normative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Illustrative API sketches (non-normative)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Illustrative API sketches (non-normative)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#generator-functions" class="md-nav__link">
+  <a href="#constructing-a-directed-graph-and-querying-neighbors" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator functions
+      Constructing a directed graph and querying neighbors
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#generator-expressions" class="md-nav__link">
+  <a href="#node-payloads-as-object-references-eg-step" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator expressions
+      Node payloads as object references (e.g. Step)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#infinite-generators" class="md-nav__link">
+  <a href="#traversal-bfs-dfs-from-a-start-node" class="md-nav__link">
     <span class="md-ellipsis">
-      Infinite generators
+      Traversal (BFS / DFS) from a start node
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#lazy-transformations" class="md-nav__link">
+  <a href="#topological-order-on-a-dag-shaped-graph" class="md-nav__link">
     <span class="md-ellipsis">
-      Lazy transformations
+      Topological order on a DAG-shaped graph
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#recursive-traversal" class="md-nav__link">
+  <a href="#dag-type-reject-edges-that-would-create-a-cycle" class="md-nav__link">
     <span class="md-ellipsis">
-      Recursive traversal
+      DAG type: reject edges that would create a cycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallel-edges-with-multidigraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parallel edges with MultiDiGraph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storing-a-graph-as-data-not-a-singleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      Storing a graph as data (not a singleton)
     </span>
   </a>
   
@@ -4743,46 +4770,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
+  <a href="#reference-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation (precise rules)
+      Reference-level explanation
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
+    <nav class="md-nav" aria-label="Reference-level explanation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#generator-functions-reference" class="md-nav__link">
+  <a href="#directed-graph" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator functions reference
+      Directed graph
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#generator-expressions-reference" class="md-nav__link">
+  <a href="#nodeid-stability" class="md-nav__link">
     <span class="md-ellipsis">
-      Generator expressions reference
+      NodeId stability
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#typing" class="md-nav__link">
+  <a href="#dag-profile" class="md-nav__link">
     <span class="md-ellipsis">
-      Typing
+      DAG profile
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#consumption" class="md-nav__link">
+  <a href="#topological-order" class="md-nav__link">
     <span class="md-ellipsis">
-      Consumption
+      Topological order
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interrogation-api-minimum-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interrogation API (minimum bar)
     </span>
   </a>
   
@@ -4799,57 +4835,6 @@
       Design details
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#one-generator-model-two-surfaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      One generator model, two surfaces
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#distinction-from-fixtures" class="md-nav__link">
-    <span class="md-ellipsis">
-      Distinction from fixtures
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with existing features
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4891,36 +4876,36 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#phase-1-spec-parser-and-ast" class="md-nav__link">
+  <a href="#phase-1-stdlib-runtime-surface" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 1: Spec, parser, and AST
+      Phase 1: Stdlib Runtime Surface
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-2-typechecker-and-diagnostics" class="md-nav__link">
+  <a href="#phase-2-compiler-and-stdlib-wiring" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 2: Typechecker and diagnostics
+      Phase 2: Compiler and Stdlib Wiring
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-3-lowering-emission-and-runtime-surface" class="md-nav__link">
+  <a href="#phase-3-documentation-and-release-surface" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 3: Lowering, emission, and runtime surface
+      Phase 3: Documentation and Release Surface
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-4-tooling-docs-and-release-readiness" class="md-nav__link">
+  <a href="#phase-4-verification-and-closeout" class="md-nav__link">
     <span class="md-ellipsis">
-      Phase 4: Tooling, docs, and release readiness
+      Phase 4: Verification and Closeout
     </span>
   </a>
   
@@ -4942,45 +4927,27 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#spec-design" class="md-nav__link">
+  <a href="#rfc-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
-      Spec / design
+      RFC / lifecycle
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#parser-ast-formatter" class="md-nav__link">
+  <a href="#stdlib-implementation" class="md-nav__link">
     <span class="md-ellipsis">
-      Parser / AST / formatter
+      Stdlib implementation
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#typechecker-diagnostics" class="md-nav__link">
+  <a href="#compiler-stdlib-wiring" class="md-nav__link">
     <span class="md-ellipsis">
-      Typechecker / diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-emission-runtime" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering / emission / runtime
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tests
+      Compiler / stdlib wiring
     </span>
   </a>
   
@@ -4995,15 +4962,33 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verification
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
 </li>
       
         <li class="md-nav__item">
+  <a href="#prior-art-survey-informative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prior art survey (informative)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design decisions
+      Design Decisions
     </span>
   </a>
   
@@ -5027,279 +5012,376 @@
   
 
 
-<h1 id="rfc-006-python-style-generators">RFC 006: Python-style generators<a class="headerlink" href="#rfc-006-python-style-generators" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-047-lightweight-directed-graph-types-stdlib">RFC 047: Lightweight directed graph types (stdlib)<a class="headerlink" href="#rfc-047-lightweight-directed-graph-types-stdlib" title="Permanent link">&para;</a></h1>
 <ul>
 <li><strong>Status:</strong> Implemented</li>
-<li><strong>Created:</strong> 2024-12-10</li>
+<li><strong>Created:</strong> 2026-03-31</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong> RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/324</li>
-<li><strong>Follow-up:</strong> RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 023 (stdlib namespacing and compiler handoff)</li>
+<li>RFC 030 (std collections)</li>
+<li>RFC 033 (<code>ctx</code> — contrast only; graphs are not ambient singletons)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/204</li>
 <li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.1</li>
-<li><strong>Shipped in:</strong> v0.3</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> v0.3.0-dev.37</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces Python-style generators to Incan in two connected forms: generator functions that use <code>yield</code> inside <code>def</code>, and generator expressions that produce lazy generator values inline. Both forms describe the same underlying language model: a resumable producer of <code>T</code> exposed as <code>Generator[T]</code>.</p>
+<p>This RFC proposes a small, opinionated directed-graph abstraction in the Incan standard library: stable node identifiers, node payloads, directed edges, multigraph edge identity, and a minimal interrogation API covering adjacency, roots and sinks, traversal, and optional topological order. It is not a graph database, query language, or persistence layer. New graph-related stdlib surfaces should continue to go through RFCs rather than growing ad hoc.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan currently has eager collections and iterator-shaped loops, but it does not have a first-class way to express lazy, stateful iteration in the language surface itself. That hurts several common cases:</p>
-<ul>
-<li>large or unbounded sequences that should not be materialized eagerly;</li>
-<li>streaming transformations that would otherwise allocate intermediate lists;</li>
-<li>recursive traversals where the natural shape is "produce one value, suspend, resume";</li>
-<li>portability for authors coming from Python, where <code>yield</code> and generator expressions are familiar ways to express lazy iteration.</li>
-</ul>
-<p>The feature also fits Incan's backend well. Incan does not need a separate user-facing coroutine model just to support this control-flow shape; the compiler can lower generators to ordinary backend state-machine machinery.</p>
+<p>Several Incan-backed domains benefit from a shared in-memory graph model: relational plan DAGs, task or dependency graphs, configuration pipelines, and other tools that need nodes, edges, and programmatic traversal rather than ad hoc maps and lists per project.</p>
+<p>Without a stdlib shape, each library reinvents id allocation, edge storage, and walk order. That fragments tooling, tests, and interop expectations. A lightweight, RFC-governed type keeps the surface small while still allowing domain-specific payloads and future extension, such as weights, attributes, or alternate backends, in follow-on RFCs.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add a first-class generator model based on <code>yield</code> and <code>Generator[T]</code>.</li>
-<li>Support both generator functions and generator expressions as part of that model.</li>
-<li>Make lazy iteration explicit in type signatures instead of inferring it from incidental usage.</li>
-<li>Preserve ordinary <code>for</code>-loop ergonomics over generator results.</li>
-<li>Standardize the minimum helper surface needed to transform and realize generator values ergonomically: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-<li>Distinguish generator <code>yield</code> clearly from fixture <code>yield</code>.</li>
+<li>Define normative semantics for a directed-graph type, and optionally for a
+DAG variant or mode, exposed through the stdlib.</li>
+<li>Specify stable <code>NodeId</code> semantics: what it means to add or remove nodes and
+edges, and when ids must not be reused in ways that confuse callers.</li>
+<li>Specify a minimal interrogation API sufficient for common compiler and
+orchestration patterns: successors, predecessors, roots, sinks, reachability traversal from a start node in at least one documented order, and topological order when acyclic.</li>
+<li>Keep future stdlib graph expansion on the RFC track rather than letting it
+grow ad hoc.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Async generators in this RFC.</li>
-<li>Bidirectional coroutine features such as Python-style <code>send()</code>.</li>
-<li>A wholesale redesign of comprehensions or iterator adapters beyond generator support itself.</li>
-<li>Standardizing the broader <code>Iterator[T]</code> adapter surface in the initial draft. Methods such as <code>.flat_map()</code>, <code>.skip()</code>, <code>.chain()</code>, <code>.enumerate()</code>, <code>.zip()</code>, <code>.take_while()</code>, <code>.skip_while()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, <code>.fold()</code>, and <code>.batch()</code> belong in RFC 088.</li>
+<li>A <strong>graph query language</strong>, <strong>index structures</strong> for scale-out property search, or <strong>disk-backed</strong> storage.</li>
+<li><strong>Undirected</strong> graphs as a first-class mandatory type (may be added later via RFC).</li>
+<li><strong>Distributed</strong> graphs, <strong>transactions</strong>, or <strong>Cypher</strong>-style interfaces.</li>
+<li>Mandating one specific backend implementation; the contract is behavioral,
+not implementation-specific.</li>
+<li>A process-wide or language-global singleton graph. Named registries or
+application-level default graphs may exist in higher-level systems, but this stdlib contract must not require them.</li>
 </ul>
-<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="generator-functions">Generator functions<a class="headerlink" href="#generator-functions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">i</span> <span class="o">=</span> <span class="n">start</span>
-    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">end</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">i</span>
-        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Authors obtain a graph handle from the stdlib, add nodes with payloads, and add directed edges from one node to another. They can ask for outgoing or incoming neighbors, enumerate roots or sinks, and walk from a start node in a documented order. Common walk orders are breadth-first search and depth-first search; the stdlib must document which order each traversal API uses. When the graph is intended to be acyclic, authors may use checked edge insertion that rejects a cycle, or they may call topological-order APIs and handle the error if a cycle exists.</p>
+<p>The type is in-memory and library-scoped. Persistence, network sync, and engine-specific optimization remain outside this RFC.</p>
+<p>Authors construct and pass graph values explicitly rather than reaching for one implicit global graph.</p>
+<h2 id="illustrative-api-sketches-non-normative">Illustrative API sketches (non-normative)<a class="headerlink" href="#illustrative-api-sketches-non-normative" title="Permanent link">&para;</a></h2>
+<p>The following examples show the intended Incan-facing shape. Names, return types, and error modeling may still be refined during implementation, but the design decisions below define the stable contract.</p>
+<p><strong>Module path</strong> is assumed to be <code>std.graph</code> (see RFC 022 stdlib namespacing); final names <strong>may</strong> differ.</p>
+<h3 id="constructing-a-directed-graph-and-querying-neighbors">Constructing a directed graph and querying neighbors<a class="headerlink" href="#constructing-a-directed-graph-and-querying-neighbors" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">):</span>
-    <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">:</span>
-        <span class="k">break</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
-</code></pre></div>
-<p>The function above does not build a list. Each <code>yield</code> produces one element for the surrounding iteration and then suspends the function until the next value is requested.</p>
-<h3 id="generator-expressions">Generator expressions<a class="headerlink" href="#generator-expressions" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
+<span class="c1"># Empty graph; nodes and edges added explicitly.</span>
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
 
-<span class="k">for</span> <span class="n">sq</span> <span class="ow">in</span> <span class="n">squares</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">sq</span><span class="p">)</span>
-</code></pre></div>
-<p>Generator expressions are the expression form of the same idea: they produce a lazy <code>Generator[T]</code> instead of an eager list.</p>
-<h3 id="infinite-generators">Infinite generators<a class="headerlink" href="#infinite-generators" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fibonacci</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
-    <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
-        <span class="k">yield</span> <span class="n">a</span>
-        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+<span class="n">a</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;scan_users&quot;</span><span class="p">)</span>
+<span class="n">b</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;filter_active&quot;</span><span class="p">)</span>
+<span class="n">c</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;join_orders&quot;</span><span class="p">)</span>
 
-<span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
-</code></pre></div>
-<p>This is the core value proposition: the generator can describe an unbounded stream, while the consumer decides how much to realize.</p>
-<h3 id="lazy-transformations">Lazy transformations<a class="headerlink" href="#lazy-transformations" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">square</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">a</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">b</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">b</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">c</span><span class="p">)</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">is_even</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span>
+<span class="n">out_from_b</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">successors</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+<span class="n">roots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">roots</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="node-payloads-as-object-references-eg-step">Node payloads as <strong>object references</strong> (e.g. <code>Step</code>)<a class="headerlink" href="#node-payloads-as-object-references-eg-step" title="Permanent link">&para;</a></h3>
+<p>Graphs are not limited to string or primitive payloads. A common pattern is
+<code>DiGraph[Step]</code>, or another user type, where each <code>NodeId</code> maps to a <code>Step</code>
+value the author already holds. Edges still connect <code>NodeId</code>s, so one <code>Step</code> instance can be the payload of node <code>a</code> and another of node <code>b</code>, with a directed edge <code>a -&gt; b</code> meaning "this step runs before that step," or any other domain-specific relationship.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="n">evens_squared</span> <span class="o">=</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_even</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">square</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">Step</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">pub</span> <span class="nb">timeout_ms</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_step_graph</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]()</span>
+    <span class="n">fetch</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;fetch&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+    <span class="n">parse</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;parse&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+
+    <span class="n">n_fetch</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="n">fetch</span><span class="p">)</span>
+    <span class="n">n_parse</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="n">parse</span><span class="p">)</span>
+
+    <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">n_fetch</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">n_parse</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">g</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">step_name_at</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">],</span> <span class="n">nid</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">step</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">step</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="s2">&quot;&quot;</span>
 </code></pre></div>
-<p>Generator helper methods are lazy until a terminal operation consumes them. In the example above, <code>.filter()</code>, <code>.map()</code>, and <code>.take()</code> build a generator pipeline; <code>.collect()</code> realizes only the first ten transformed values as a <code>list[int]</code>.</p>
-<h3 id="recursive-traversal">Recursive traversal<a class="headerlink" href="#recursive-traversal" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">walk_tree</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="nc">Node</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">Node</span><span class="p">]:</span>
-    <span class="k">yield</span> <span class="n">node</span>
-    <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">descendant</span> <span class="ow">in</span> <span class="n">walk_tree</span><span class="p">(</span><span class="n">child</span><span class="p">):</span>
-            <span class="k">yield</span> <span class="n">descendant</span>
+<p><strong>Semantics:</strong> <code>add_node(payload=...)</code> ties a <code>NodeId</code> to that payload object.
+If two nodes should represent the same <code>Step</code> instance, that is a domain choice: either one node is shared or two nodes hold cloned payloads. The stdlib must document how clone versus shared-reference behavior works for mutable payloads.</p>
+<p><strong>Bounds:</strong> generic graphs such as <code>DiGraph[T]</code> will likely require <code>T</code> to
+satisfy whatever the language requires for stored or shared data. Exact bounds are implementation detail, but they must appear in user-facing docs.</p>
+<h3 id="traversal-bfs-dfs-from-a-start-node">Traversal (BFS / DFS) from a start node<a class="headerlink" href="#traversal-bfs-dfs-from-a-start-node" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_bfs</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">bfs_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">nodes</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">nodes</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_dfs_preorder</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">dfs_preorder_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">nodes</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">nodes</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>
 </code></pre></div>
-<p>Generators are useful when the control flow is naturally incremental instead of collection-oriented.</p>
-<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="generator-functions-reference">Generator functions reference<a class="headerlink" href="#generator-functions-reference" title="Permanent link">&para;</a></h3>
-<ul>
-<li>A function is a generator function when its body contains <code>yield</code> and its declared return type is <code>Generator[T]</code>.</li>
-<li><code>yield expr</code> produces one element of type <code>T</code> for the surrounding generator.</li>
-<li><code>yield</code> must not appear in ordinary functions, except where another RFC explicitly gives <code>yield</code> special meaning for a distinct construct such as fixtures.</li>
-<li>A generator function may use <code>return</code> without a value to terminate iteration early.</li>
-<li><code>return value</code> inside a generator is a compile-time error. Generator return values are reserved for a future delegation or coroutine-oriented RFC.</li>
-</ul>
-<h3 id="generator-expressions-reference">Generator expressions reference<a class="headerlink" href="#generator-expressions-reference" title="Permanent link">&para;</a></h3>
-<ul>
-<li>A generator expression has the form <code>(expr for binding in iterable [if condition] ...)</code> and yields a <code>Generator[T]</code>, where <code>T</code> is the type of <code>expr</code>.</li>
-<li>Generator expressions support the same comprehension-clause shape as list comprehensions: one leading <code>for</code> clause followed by zero or more nested <code>for</code> clauses and zero or more trailing <code>if</code> filters.</li>
-<li>The iterable source is consumed lazily as the resulting generator is advanced.</li>
-<li>A generator expression is semantically equivalent to an anonymous generator that iterates the source and yields <code>expr</code> for each bound element.</li>
-<li>Generator expressions are lazy; the list-comprehension surface remains the eager collection form.</li>
-</ul>
-<h3 id="typing">Typing<a class="headerlink" href="#typing" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Every yielded expression must type-check against the element type <code>T</code> in <code>Generator[T]</code>.</li>
-<li>Declaring <code>Generator[T]</code> without any reachable <code>yield</code> is a compile-time error.</li>
-<li>Using <code>yield</code> without a <code>Generator[T]</code> return type is a compile-time error unless another construct has already claimed <code>yield</code> semantics for that context.</li>
-</ul>
-<h3 id="consumption">Consumption<a class="headerlink" href="#consumption" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>Generator[T]</code> is the semantic type for values produced by generator functions and generator expressions.</li>
-<li><code>Generator[T]</code> must satisfy the static iteration protocol from RFC 068: it may be consumed anywhere an <code>Iterable[T]</code>/<code>Iterator[T]</code> value is accepted, and <code>for</code> loops must accept generator values anywhere they accept iterable values.</li>
-<li>Generator values must expose the following minimum helper surface:</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<p>Implementations <strong>must</strong> document iteration order; <code>bfs_nodes</code> and <code>dfs_preorder_nodes</code> are the shipped traversal methods.</p>
+<h3 id="topological-order-on-a-dag-shaped-graph">Topological order on a DAG-shaped graph<a class="headerlink" href="#topological-order-on-a-dag-shaped-graph" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">topo_or_empty</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">topological_order</span><span class="p">():</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">order</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>  <span class="c1"># cycle present</span>
 </code></pre></div>
+<h3 id="dag-type-reject-edges-that-would-create-a-cycle">DAG type: reject edges that would create a cycle<a class="headerlink" href="#dag-type-reject-edges-that-would-create-a-cycle" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">mut</span> <span class="n">d</span> <span class="o">=</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">x</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">y</span><span class="p">)</span>
+<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">y</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">z</span><span class="p">)</span>
+
+<span class="n">cycle_attempt</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>
+<span class="k">match</span> <span class="n">cycle_attempt</span><span class="p">:</span>
+    <span class="k">case</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+        <span class="k">pass</span>  <span class="c1"># unexpected if cycle detection works</span>
+    <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+        <span class="k">pass</span>  <span class="c1"># expected</span>
+</code></pre></div>
+<p>The stable contract includes a first-class <code>Dag[T]</code> surface for domains that need acyclicity as part of the type they pass around.</p>
+<h3 id="parallel-edges-with-multidigraph">Parallel edges with <code>MultiDiGraph</code><a class="headerlink" href="#parallel-edges-with-multidigraph" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">,</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">mut</span> <span class="n">m</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span>
+<span class="n">v</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">)</span>
+
+<span class="n">e1</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+<span class="n">e2</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+
+<span class="n">edges_uv</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">],</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">edges_between</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+</code></pre></div>
+<p><code>MultiDiGraph[T]</code> is part of this RFC's stable graph family for domains that need multiple separately identified edges between the same ordered node pair.</p>
+<h3 id="storing-a-graph-as-data-not-a-singleton">Storing a graph as <strong>data</strong> (not a singleton)<a class="headerlink" href="#storing-a-graph-as-data-not-a-singleton" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">PipelinePlan</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">deps</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="k">pub</span> <span class="n">tip</span><span class="p">:</span> <span class="nc">NodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">describe_roots</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">PipelinePlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">mut</span> <span class="n">roots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">roots</span><span class="p">():</span>
+        <span class="k">match</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">):</span>
+            <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+                <span class="n">roots</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+            <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+                <span class="k">pass</span>
+    <span class="k">return</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="nb">join</span><span class="p">(</span><span class="n">roots</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="directed-graph">Directed graph<a class="headerlink" href="#directed-graph" title="Permanent link">&para;</a></h3>
+<p>A <strong>directed graph</strong> value <strong>must</strong> conceptually consist of:</p>
 <ul>
-<li><code>.map()</code>, <code>.filter()</code>, and <code>.take()</code> are lazy: they return new generator values and must not materialize intermediate lists.</li>
-<li><code>.collect()</code> is terminal and eager: it consumes the generator and returns a <code>list[T]</code>.</li>
-<li>Exhausting a generator ends iteration normally.</li>
+<li>A set of nodes, each with a distinct <code>NodeId</code> while the graph instance exists. Each node carries a payload: any Incan value the API allows, including primitives, <code>model</code> or <code>class</code> instances, newtypes, and similar values. Edges always connect <code>NodeId</code>s, not raw object references.</li>
+<li>A set of directed edges from one <code>NodeId</code> to another <code>NodeId</code>. <code>DiGraph[T]</code> is simple and does not permit parallel edges between the same ordered node pair; <code>MultiDiGraph[T]</code> permits parallel edges and distinguishes them with <code>EdgeId</code>.</li>
 </ul>
+<p>Removing an edge must remove that edge from outgoing and incoming adjacency. Removing a node must remove all incident edges. Implementations must not leave the graph in an inconsistent state silently.</p>
+<h3 id="nodeid-stability">NodeId stability<a class="headerlink" href="#nodeid-stability" title="Permanent link">&para;</a></h3>
+<p><code>NodeId</code> values must not be reused by ordinary graph operations within the same graph instance, including after node removal.</p>
+<h3 id="dag-profile">DAG profile<a class="headerlink" href="#dag-profile" title="Permanent link">&para;</a></h3>
+<p><code>Dag[T]</code> is a first-class graph type. Adding an edge that would introduce a cycle must fail with a defined error or return type. The graph must not accept the edge.</p>
+<h3 id="topological-order">Topological order<a class="headerlink" href="#topological-order" title="Permanent link">&para;</a></h3>
+<p>When <code>topological_order</code>, or an equivalent API, is provided, it must return a linear order consistent with all edges, meaning every edge goes from an earlier to a later index. If the graph contains a cycle, the operation must report failure in a defined way.</p>
+<h3 id="interrogation-api-minimum-bar">Interrogation API (minimum bar)<a class="headerlink" href="#interrogation-api-minimum-bar" title="Permanent link">&para;</a></h3>
+<p>The stdlib <strong>must</strong> expose operations equivalent to the following capabilities (names may differ):</p>
+<ul>
+<li><strong>Lookup</strong> node existence by <code>NodeId</code>.</li>
+<li><strong>Successors</strong> and <strong>predecessors</strong> (or outgoing/incoming edge iteration).</li>
+<li><strong>Roots</strong> and <strong>sinks</strong> according to the definitions above.</li>
+<li><strong>Reachability traversal</strong> from a start <code>NodeId</code> in at least one documented
+order, for example breadth-first search or depth-first search.</li>
+</ul>
+<p>Implementations <strong>may</strong> add further helpers (e.g. strongly connected components) in later RFCs.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="one-generator-model-two-surfaces">One generator model, two surfaces<a class="headerlink" href="#one-generator-model-two-surfaces" title="Permanent link">&para;</a></h3>
-<p>Generator functions and generator expressions are not separate features stitched together for convenience. They are two surfaces over the same language model:</p>
 <ul>
-<li>generator functions are statement-oriented and better for named, reusable, stateful producers;</li>
-<li>generator expressions are expression-oriented and better for inline lazy transforms.</li>
-</ul>
-<p>This RFC treats both as first-class parts of Python-style generator support rather than as rollout stages.</p>
-<h3 id="distinction-from-fixtures">Distinction from fixtures<a class="headerlink" href="#distinction-from-fixtures" title="Permanent link">&para;</a></h3>
-<p>The language already uses <code>yield</code> in fixture-oriented testing flows. That overlap is tolerable only if the surrounding declaration makes the meaning unambiguous:</p>
+<li>
+<p><strong>Payload model.</strong>
+Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as <code>model</code> or <code>class</code> values, so that <code>DiGraph[Step]</code> means each node's payload is a <code>Step</code>. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one <code>payload: any</code> model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.</p>
+</li>
+<li>
+<p><strong>Edge metadata.</strong>
+Edges should support an optional kind or label so multiple domains can filter edges without separate side maps. <code>DiGraph[T]</code> stores at most one edge per ordered node pair; <code>MultiDiGraph[T]</code> stores multiple edge ids per ordered node pair.</p>
+</li>
+<li>
+<p><strong>Immutability vs mutation.</strong>
+The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.</p>
+</li>
+<li>
+<p><strong>Relationship to other stdlib types.</strong>
+Graph types should compose with existing collections, such as RFC 030 types, where natural, for example returning lists of <code>NodeId</code>. They must not silently duplicate dictionary semantics without documenting key conflicts.</p>
+</li>
+<li>
+<p><strong>Graph values vs global singletons (design decision).</strong></p>
 <ul>
-<li>fixture declarations keep fixture lifecycle semantics;</li>
-<li>ordinary functions returning <code>Generator[T]</code> use lazy iteration semantics.</li>
+<li><strong>Normative:</strong> The stdlib graph abstraction must be usable as ordinary
+  first-class data. Many independent instances may exist at once, and
+  callers pass or store them explicitly.</li>
+<li><strong>Normative:</strong> The stdlib must not define or require one ambient graph
+  analogous to RFC 033 <code>ctx</code>. Graphs represent structured relational or
+  dependency data that is naturally per-pipeline, per-test, or per-request.
+  Conflating the two would break concurrency, test isolation, and
+  composition.</li>
+<li><strong>Non-normative:</strong> A session, runtime, or application layer may still
+  offer a default or named graph registry for ergonomics, but that remains
+  outside this RFC and must layer on top of value-based graph types.</li>
 </ul>
-<p>This RFC therefore treats the declaration context, not the token alone, as the source of truth for <code>yield</code> meaning.</p>
-<p>No separate lint or style guidance is required. Fixture <code>yield</code> and generator <code>yield</code> share the same surface mental model: produce a value, suspend, and later resume. The compiler only needs to make invalid context errors precise.</p>
-<h3 id="lowering-model">Lowering model<a class="headerlink" href="#lowering-model" title="Permanent link">&para;</a></h3>
-<p>The intended implementation strategy is to lower generator functions and generator expressions through a compiler-owned state-machine transformation or equivalent backend support. That lowering choice is not the language definition; the language contract is only that generators behave as lazy, resumable producers of <code>T</code>.</p>
-<p>Generator helper methods should lower to backend-native lazy iterator machinery where the target supports it. For the Rust backend, <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> should preserve Rust iterator-chain behavior rather than inserting eager intermediate collections.</p>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>for</code> loops consume generators the same way they consume other iterable sources.</li>
-<li>Recursive generators are valid as long as the yielded element type remains consistent.</li>
-<li>Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.</li>
-<li>The broader <code>Iterator[T]</code> adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that design and issue #127 tracks it.</li>
+</li>
 </ul>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>The feature is additive. Existing functions, loops, and comprehensions keep their meaning.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Explicit <code>gen</code> keyword</strong></li>
 <li>
-<p>Clear, but more backend-shaped than Incan needs. Requiring <code>Generator[T]</code> plus <code>yield</code> already communicates intent.</p>
+<p><strong>Only document a pattern</strong> such as a hand-rolled <code>dict</code> plus lists:
+rejected because it avoids stdlib surface at the cost of fragmentation and weak interoperability between libraries.</p>
 </li>
 <li>
-<p><strong>Dedicated <code>generator</code> declaration form</strong></p>
+<p><strong>Expose a full-featured property-graph stdlib immediately</strong>: rejected
+because it is too large and blurs boundaries with databases and query engines.</p>
 </li>
 <li>
-<p>Avoids overloading ordinary <code>def</code>, but splits the function surface for a feature that is still "a function producing values over time."</p>
+<p><strong>Standardize on one external implementation’s user-visible API</strong>: rejected
+because it couples the language too tightly to one dependency layout.</p>
 </li>
-<li>
-<p><strong>Functions only, expressions later</strong></p>
-</li>
-<li>Not actually more principled. It would make the RFC weaker while still aiming at the same north-star generator model.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>yield</code> now carries two meanings in the language, so diagnostics must be explicit.</li>
-<li>Generators introduce suspension semantics that users must learn alongside ordinary function control flow.</li>
-<li>Generator expressions add grammar and precedence surface that the language and tooling must handle carefully.</li>
+<li><strong>Surface area</strong>: even a minimal graph API is a long-lived commitment; changes require RFC discipline.</li>
+<li><strong>Performance</strong>: a single generic graph type may not fit every workload.
+Domains may still need specialized structures behind thin wrappers.</li>
+<li><strong>Teaching cost</strong>: users must learn <strong>when</strong> to use graph stdlib vs plain collections.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Language surface</strong>: <code>yield</code> must be valid in generator function bodies, and generator-expression syntax must be recognized.</li>
-<li><strong>Type system</strong>: yielded expressions must match <code>Generator[T]</code>, and generator declarations must remain internally consistent.</li>
-<li><strong>Execution model</strong>: implementations must preserve suspension points and lazy iteration semantics for both named and anonymous generator forms.</li>
-<li><strong>Stdlib / surface vocabulary</strong>: the language must define the <code>Generator</code> type, its RFC 068 iteration-protocol conformance, and the minimum stable helper methods promised publicly.</li>
-<li><strong>Formatter / tooling</strong>: multi-line generators should format predictably, and diagnostics should explain generator-specific behavior clearly.</li>
+<li><strong>Stdlib / runtime bindings</strong>: new graph types and methods, potentially
+backed by runtime-native structures exposed through the normal stdlib binding path.</li>
+<li><strong>Typechecker</strong> — generic methods on graph types, error types for cycle detection.</li>
+<li><strong>Formatter / LSP</strong> — completions and formatting for new stdlib paths.</li>
+<li><strong>Docs-site</strong> — user-facing reference for graph types and examples.</li>
+<li><strong>RFC process</strong> — this RFC establishes that <strong>further</strong> graph stdlib growth is <strong>RFC-gated</strong>.</li>
 </ul>
 <h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-spec-parser-and-ast">Phase 1: Spec, parser, and AST<a class="headerlink" href="#phase-1-spec-parser-and-ast" title="Permanent link">&para;</a></h3>
+<h3 id="phase-1-stdlib-runtime-surface">Phase 1: Stdlib Runtime Surface<a class="headerlink" href="#phase-1-stdlib-runtime-surface" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Keep RFC 006 aligned with the settled design decisions: full generator-expression clause support, no <code>return value</code> in generators, and no extra fixture/generator lint policy.</li>
-<li>Extend parser and AST support for generator expressions using the existing comprehension clause surface.</li>
-<li>Preserve existing fixture <code>yield</code> parsing while separating generator-context validation into later semantic stages.</li>
+<li>Add the source-defined <code>std.graph</code> module surface for <code>DiGraph[T]</code>, <code>Dag[T]</code>, <code>MultiDiGraph[T]</code>, <code>NodeId</code>, <code>EdgeId</code>, and graph errors.</li>
+<li>Implement directed edges, payload storage, stable non-reused node ids, edge/node removal semantics, roots/sinks, successors/predecessors, BFS, DFS preorder, topological order, and checked acyclic insertion.</li>
+<li>Keep serialization out of the stable surface.</li>
 </ul>
-<h3 id="phase-2-typechecker-and-diagnostics">Phase 2: Typechecker and diagnostics<a class="headerlink" href="#phase-2-typechecker-and-diagnostics" title="Permanent link">&para;</a></h3>
+<h3 id="phase-2-compiler-and-stdlib-wiring">Phase 2: Compiler and Stdlib Wiring<a class="headerlink" href="#phase-2-compiler-and-stdlib-wiring" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Add <code>Generator[T]</code> as a checked semantic type that satisfies the RFC 068 iteration protocol.</li>
-<li>Validate generator function bodies: yielded expressions must match <code>Generator[T]</code>, ordinary functions must reject <code>yield</code>, and generator functions must reject <code>return value</code>.</li>
-<li>Type-check generator expressions lazily while preserving the same binding and filter semantics as list comprehensions.</li>
-<li>Type-check the minimum generator helper surface: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
+<li>Register <code>std.graph</code> in the stdlib namespace registry and expose IDE/typechecker stubs through the stdlib source tree.</li>
+<li>Ensure the pure Incan <code>std.graph</code> implementation lowers and emits correctly with generic graph types.</li>
+<li>Add typechecker coverage for valid graph construction, method calls, and invalid edge/node usage where diagnostics can be resolved at compile time.</li>
 </ul>
-<h3 id="phase-3-lowering-emission-and-runtime-surface">Phase 3: Lowering, emission, and runtime surface<a class="headerlink" href="#phase-3-lowering-emission-and-runtime-surface" title="Permanent link">&para;</a></h3>
+<h3 id="phase-3-documentation-and-release-surface">Phase 3: Documentation and Release Surface<a class="headerlink" href="#phase-3-documentation-and-release-surface" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Lower generator functions and generator expressions to lazy backend state-machine or iterator-equivalent behavior.</li>
-<li>Emit Rust code that preserves suspension, ordering, and laziness for generator values.</li>
-<li>Expose the minimum generator helper surface through stdlib-visible declarations and runtime support as needed.</li>
-<li>Ensure generator values work in <code>for</code> loops anywhere the RFC 068 iteration protocol is accepted.</li>
+<li>Add authored user-facing <code>std.graph</code> reference documentation with examples for construction, adjacency, traversal, topological order, <code>Dag[T]</code>, and <code>MultiDiGraph[T]</code>.</li>
+<li>Update stdlib reference navigation and release notes for the active dev line.</li>
+<li>Bump the active dev version after implementation work lands.</li>
 </ul>
-<h3 id="phase-4-tooling-docs-and-release-readiness">Phase 4: Tooling, docs, and release readiness<a class="headerlink" href="#phase-4-tooling-docs-and-release-readiness" title="Permanent link">&para;</a></h3>
+<h3 id="phase-4-verification-and-closeout">Phase 4: Verification and Closeout<a class="headerlink" href="#phase-4-verification-and-closeout" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Format generator functions and multi-clause generator expressions predictably.</li>
-<li>Add parser, typechecker, codegen snapshot, integration, and diagnostic tests for the full RFC surface.</li>
-<li>Update authored user-facing docs, release notes, and the active development version when implementation lands.</li>
+<li>Add unit and integration tests for runtime behavior, stdlib importability, code generation, and user-facing examples.</li>
+<li>Run targeted slice verification, integrated review/fix, and the repository pre-commit gate.</li>
+<li>Update this checklist as implementation phases land.</li>
 </ul>
 <h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
-<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
+<h3 id="rfc-lifecycle">RFC / lifecycle<a class="headerlink" href="#rfc-lifecycle" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that generator expressions support the full comprehension-clause surface.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that <code>return value</code> in generators is rejected and reserved for future delegation or coroutine work.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Decide that fixture and generator <code>yield</code> need precise diagnostics but no extra lint/style guidance.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Move RFC 047 from Draft to Planned with settled design decisions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Move RFC 047 from Planned to In Progress when the Ralph implementation loop starts.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Move RFC 047 from In Progress to Implemented when the implementation is PR-ready.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep this checklist current as slices land.</li>
 </ul>
-<h3 id="parser-ast-formatter">Parser / AST / formatter<a class="headerlink" href="#parser-ast-formatter" title="Permanent link">&para;</a></h3>
+<h3 id="stdlib-implementation">Stdlib implementation<a class="headerlink" href="#stdlib-implementation" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser: parse generator expressions with the full comprehension-clause surface.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> AST: represent generator expressions without confusing them with eager list comprehensions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser: preserve existing fixture <code>yield</code> parsing behavior.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Formatter: round-trip generator functions and multi-clause generator expressions stably.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add pure Incan <code>std.graph</code> implementation in the stdlib source tree.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add <code>NodeId</code>, <code>EdgeId</code>, <code>DiGraph[T]</code>, <code>Dag[T]</code>, <code>MultiDiGraph[T]</code>, and graph error types.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement node insertion and stable non-reused node id semantics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement edge and node removal semantics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement simple directed edge insertion with optional kind metadata.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement multigraph edge insertion with distinct <code>EdgeId</code> values.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Reject duplicate simple edges between the same ordered node pair.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement successors, predecessors, roots, and sinks.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement BFS and DFS preorder traversal with deterministic documented order.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement topological order with cycle reporting.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement <code>Dag[T]</code> edge insertion that rejects cycles without mutating the graph.</li>
 </ul>
-<h3 id="typechecker-diagnostics">Typechecker / diagnostics<a class="headerlink" href="#typechecker-diagnostics" title="Permanent link">&para;</a></h3>
+<h3 id="compiler-stdlib-wiring">Compiler / stdlib wiring<a class="headerlink" href="#compiler-stdlib-wiring" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Type system: represent <code>Generator[T]</code> as the checked generator semantic type.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Protocols: make <code>Generator[T]</code> satisfy the RFC 068 iteration protocol.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: reject <code>yield</code> outside generator functions and fixture contexts.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: reject generator functions whose yielded values do not match <code>Generator[T]</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: reject <code>return value</code> inside generator functions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker: validate generator expressions with nested <code>for</code> clauses and trailing <code>if</code> filters.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker: validate <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> on generator values.</li>
-</ul>
-<h3 id="lowering-emission-runtime">Lowering / emission / runtime<a class="headerlink" href="#lowering-emission-runtime" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Lower generator functions to lazy resumable producer behavior.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Lower generator expressions to lazy generator values.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit Rust that preserves generator suspension, ordering, and laziness.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Runtime/stdlib: expose the <code>Generator[T]</code> surface and minimum helper methods.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Runtime/stdlib: ensure <code>.map()</code>, <code>.filter()</code>, and <code>.take()</code> stay lazy and <code>.collect()</code> is terminal.</li>
-</ul>
-<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser tests for generator function <code>yield</code> and generator-expression clauses.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for valid and invalid generator function return/yield combinations.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for invalid <code>return value</code> in generator functions.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for generator helper callback arity and return-type diagnostics.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen snapshot tests for generator functions, generator expressions, and helper chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Integration tests for <code>for</code> loops over generators and <code>.map().filter().take().collect()</code> chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Regression tests that fixture <code>yield</code> behavior still works.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Register <code>std.graph</code> in the stdlib namespace registry.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add stdlib <code>.incn</code> declarations for graph types and methods.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Ensure graph imports activate through the normal stdlib loader path.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Ensure generic <code>DiGraph[T]</code>, <code>Dag[T]</code>, and <code>MultiDiGraph[T]</code> types resolve and emit to the runtime Rust types.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add focused typechecker/codegen coverage for graph construction and method use.</li>
 </ul>
 <h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update generator language reference or tutorial docs.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update release notes for the active <code>0.3</code> development line.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump the active <code>0.3.0-dev.N</code> version.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add <code>std.graph</code> reference documentation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update stdlib reference index and navigation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add release notes for <code>0.3</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump <code>0.3.0-dev.33</code> to the next dev version.</li>
 </ul>
-<h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<h3 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add Incan source, generated-build, and integration coverage for graph behavior.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add Incan integration/codegen tests for <code>std.graph</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Run targeted stdlib/compiler tests.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Run integrated review/fix.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Run <code>make pre-commit</code>.</li>
+</ul>
+<h2 id="prior-art-survey-informative">Prior art survey (informative)<a class="headerlink" href="#prior-art-survey-informative" title="Permanent link">&para;</a></h2>
+<p>This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy. It is not a mandate to copy any API.</p>
+<ul>
+<li>
+<p><strong>Python (NetworkX).</strong> <code>DiGraph</code> is simple by default, with at most one edge
+per ordered node pair. <code>MultiDiGraph</code> is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.</p>
+</li>
+<li>
+<p><strong>Java (JGraphT).</strong> Separate concrete types are common. Authors choose a
+simple directed graph or a multigraph at construction time.</p>
+</li>
+<li>
+<p><strong>JavaScript / TypeScript (Graphology).</strong> One graph family with options such
+as <code>type: 'directed'</code> and <code>multi: true | false</code>, plus specialized constructors. Parallel edges are opt-in.</p>
+</li>
+<li>
+<p><strong>Ruby (RGL).</strong> Directed adjacency is the common teaching model, and
+multigraph-oriented APIs are less central.</p>
+</li>
+<li>
+<p><strong>Rust (<code>petgraph</code>, illustrative only).</strong> <code>Graph</code> can represent multiple
+edges between the same node pair, while <code>GraphMap</code> does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.</p>
+</li>
+</ul>
+<p><strong>Loose takeaway for question 1 (DAG shape).</strong> Ecosystems rarely expose a
+third ubiquitous type name <code>Dag</code> alongside <code>DiGraph</code>; DAG is often policy on a directed container. A separate <code>Dag</code> type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.</p>
+<p><strong>Loose takeaway for question 2 (parallel edges).</strong> Simple directed graphs are
+the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That supports keeping <code>DiGraph[T]</code> simple while also including <code>MultiDiGraph[T]</code> for domains that need a multigraph profile.</p>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
-<li><code>Generator[T]</code> is the user-facing semantic type for <code>yield</code>-produced values. It should satisfy the iteration protocol rather than being collapsed into a bare <code>Iterator[T]</code> return type.</li>
-<li>The first stable generator helper surface is intentionally small: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-<li>The broader iterator adapter surface belongs in RFC 088, tracked by issue #127.</li>
-<li>Generator expressions support the full comprehension-clause surface rather than only a single <code>for</code> clause.</li>
-<li><code>return</code> without a value may terminate a generator early, but <code>return value</code> is rejected in RFC 006 and reserved for future generator delegation or coroutine work.</li>
-<li>Fixture <code>yield</code> and generator <code>yield</code> do not need extra lint or style guidance beyond precise context-sensitive diagnostics.</li>
+<li><strong>The stable graph family includes <code>DiGraph[T]</code>, <code>Dag[T]</code>, and <code>MultiDiGraph[T]</code>.</strong> <code>DiGraph[T]</code> is the ordinary directed graph, <code>Dag[T]</code> is the acyclicity-preserving directed graph for dependency and workflow domains, and <code>MultiDiGraph[T]</code> is the parallel-edge variant.</li>
+<li><strong><code>Dag[T]</code> is not a follow-up.</strong> Domains such as workflow and dependency modeling need acyclicity in the type they pass around, not just an optional helper call on a general graph.</li>
+<li><strong>Parallel edges are first-class through <code>MultiDiGraph[T]</code>.</strong> <code>DiGraph[T]</code> stays simple, but the RFC includes a multigraph type for domains that need multiple labeled edges between the same ordered node pair.</li>
+<li><strong>Graph construction should use ordinary Incan call syntax.</strong> Examples use <code>DiGraph[T]()</code>, <code>Dag[T]()</code>, and <code>MultiDiGraph[T]()</code> rather than Rust-style <code>.new()</code> calls.</li>
+<li><strong>Node ids are stable and not reused.</strong> Removing a node removes incident edges, but <code>NodeId</code> values remain non-reused within the same graph instance.</li>
+<li><strong>Payloads are generic.</strong> The stdlib surface uses graph types parameterized by node payload type. Richer typed edge metadata, such as <code>Graph[NodePayload, EdgeKind]</code>, may be proposed later if string or enum-like edge kinds are not enough.</li>
+<li><strong>Serialization is out of scope.</strong> This RFC does not define stable JSON or another graph snapshot format. Persistence and interchange formats require a dedicated RFC because they imply compatibility, id-stability, and payload-encoding guarantees beyond the in-memory graph contract.</li>
 </ol>
 
 

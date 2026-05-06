@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../fs/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../io/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 047: Lightweight directed graph types (stdlib) - Incan Documentation</title>
+        <title>std.graph - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-047-lightweight-directed-graph-types-stdlib" class="md-skip">
+        <a href="#stdgraph-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 047: Lightweight directed graph types (stdlib)
+              std.graph
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -573,7 +579,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -606,7 +612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -627,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -648,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -669,7 +675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -690,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -711,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -732,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -753,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -774,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -795,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -816,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -837,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -858,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1029,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1050,7 +1056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1071,7 +1077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1092,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1113,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1134,7 +1140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1155,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1176,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1197,7 +1203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1218,7 +1224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1239,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1260,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1281,7 +1287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1302,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1323,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1344,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1370,8 +1376,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1414,11 +1422,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -1432,7 +1440,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1446,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1467,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1488,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1509,7 +1517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1530,7 +1538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1551,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1572,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1593,7 +1601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1614,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1635,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1656,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1677,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1698,7 +1706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1719,7 +1727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1737,6 +1745,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1762,21 +1772,23 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1793,7 +1805,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1809,7 +1821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1830,7 +1842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1851,7 +1863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1869,10 +1881,221 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#importing-the-graph-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      Importing the graph API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Types
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#digrapht" class="md-nav__link">
+    <span class="md-ellipsis">
+      DiGraph[T]
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dagt" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dag[T]
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multidigrapht" class="md-nav__link">
+    <span class="md-ellipsis">
+      MultiDiGraph[T]
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodeid" class="md-nav__link">
+    <span class="md-ellipsis">
+      NodeId
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edgeid" class="md-nav__link">
+    <span class="md-ellipsis">
+      EdgeId
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#constructing-graphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Constructing graphs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#payloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      Payloads
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#querying-nodes-and-edges" class="md-nav__link">
+    <span class="md-ellipsis">
+      Querying nodes and edges
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Removal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#traversal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Traversal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topological-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      Topological order
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multigraph-edge-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multigraph edge ids
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storing-graphs-as-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      Storing graphs as data
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Boundaries
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1893,7 +2116,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1914,7 +2137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1935,7 +2158,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1956,7 +2179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2017,7 +2240,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2050,7 +2273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2071,7 +2294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2092,7 +2315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2113,7 +2336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2134,7 +2357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2155,7 +2378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2235,7 +2458,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2256,7 +2479,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2277,7 +2500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2298,7 +2521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2319,7 +2542,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2340,7 +2563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2452,7 +2675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2473,7 +2696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2494,7 +2717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2515,7 +2738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2536,7 +2759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2557,7 +2780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2578,7 +2801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2599,7 +2822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2620,7 +2843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2641,7 +2864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2662,7 +2885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2683,7 +2906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2704,7 +2927,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2725,7 +2948,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2746,7 +2969,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2791,7 +3014,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2824,7 +3047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2845,7 +3068,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2874,7 +3097,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2895,7 +3118,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2962,7 +3185,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3040,7 +3263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3061,7 +3284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3082,7 +3305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3166,7 +3389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3187,7 +3410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3208,7 +3431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3229,7 +3452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3250,7 +3473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3271,7 +3494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3292,7 +3515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3313,7 +3536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3385,7 +3608,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3406,7 +3629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3484,7 +3707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3505,7 +3728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3526,7 +3749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3547,7 +3770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3568,7 +3791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3629,7 +3852,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3662,7 +3885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3730,7 +3953,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3840,7 +4063,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3873,7 +4096,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3894,7 +4117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3915,7 +4138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3936,7 +4159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3957,7 +4180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3978,7 +4201,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3999,7 +4222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4020,7 +4243,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4106,7 +4329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4127,7 +4350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4148,7 +4371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4169,7 +4392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4190,7 +4413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4270,7 +4493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4291,7 +4514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4312,7 +4535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4333,7 +4556,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4354,7 +4577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4375,7 +4598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4404,7 +4627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4461,7 +4684,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4494,7 +4717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4515,7 +4738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4536,7 +4759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4564,7 +4787,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4584,7 +4807,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4624,127 +4847,64 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#importing-the-graph-api" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Importing the graph API
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#types" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Types
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#illustrative-api-sketches-non-normative" class="md-nav__link">
-    <span class="md-ellipsis">
-      Illustrative API sketches (non-normative)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Illustrative API sketches (non-normative)">
+    <nav class="md-nav" aria-label="Types">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#constructing-a-directed-graph-and-querying-neighbors" class="md-nav__link">
+  <a href="#digrapht" class="md-nav__link">
     <span class="md-ellipsis">
-      Constructing a directed graph and querying neighbors
+      DiGraph[T]
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#node-payloads-as-object-references-eg-step" class="md-nav__link">
+  <a href="#dagt" class="md-nav__link">
     <span class="md-ellipsis">
-      Node payloads as object references (e.g. Step)
+      Dag[T]
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#traversal-bfs-dfs-from-a-start-node" class="md-nav__link">
+  <a href="#multidigrapht" class="md-nav__link">
     <span class="md-ellipsis">
-      Traversal (BFS / DFS) from a start node
+      MultiDiGraph[T]
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#topological-order-on-a-dag-shaped-graph" class="md-nav__link">
+  <a href="#nodeid" class="md-nav__link">
     <span class="md-ellipsis">
-      Topological order on a DAG-shaped graph
+      NodeId
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#dag-mode-reject-edges-that-would-create-a-cycle" class="md-nav__link">
+  <a href="#edgeid" class="md-nav__link">
     <span class="md-ellipsis">
-      DAG mode: reject edges that would create a cycle
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parallel-edges-multigraph-profile-if-supported" class="md-nav__link">
-    <span class="md-ellipsis">
-      Parallel edges (multigraph profile), if supported
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#edge-kind-on-a-simple-directed-graph" class="md-nav__link">
-    <span class="md-ellipsis">
-      Edge kind on a simple directed graph
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#storing-a-graph-as-data-not-a-singleton" class="md-nav__link">
-    <span class="md-ellipsis">
-      Storing a graph as data (not a singleton)
+      EdgeId
     </span>
   </a>
   
@@ -4756,43 +4916,51 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
+  <a href="#constructing-graphs" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#directed-graph" class="md-nav__link">
-    <span class="md-ellipsis">
-      Directed graph
+      Constructing graphs
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#nodeid-stability" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#payloads" class="md-nav__link">
     <span class="md-ellipsis">
-      NodeId stability
+      Payloads
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#dag-profile" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#querying-nodes-and-edges" class="md-nav__link">
     <span class="md-ellipsis">
-      DAG profile
+      Querying nodes and edges
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
+  <a href="#removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Removal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#traversal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Traversal
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#topological-order" class="md-nav__link">
     <span class="md-ellipsis">
       Topological order
@@ -4800,70 +4968,29 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#interrogation-api-minimum-bar" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interrogation API (minimum bar)
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
+  <a href="#multigraph-edge-ids" class="md-nav__link">
     <span class="md-ellipsis">
-      Design details
+      Multigraph edge ids
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
+  <a href="#storing-graphs-as-data" class="md-nav__link">
     <span class="md-ellipsis">
-      Alternatives considered
+      Storing graphs as data
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
+  <a href="#boundaries" class="md-nav__link">
     <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#prior-art-survey-informative" class="md-nav__link">
-    <span class="md-ellipsis">
-      Prior art survey (informative)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      Boundaries
     </span>
   </a>
   
@@ -4887,76 +5014,63 @@
   
 
 
-<h1 id="rfc-047-lightweight-directed-graph-types-stdlib">RFC 047: Lightweight directed graph types (stdlib)<a class="headerlink" href="#rfc-047-lightweight-directed-graph-types-stdlib" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-03-31</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 005 (Rust interop)</li>
-<li>RFC 023 (stdlib namespacing and compiler handoff)</li>
-<li>RFC 030 (std collections)</li>
-<li>RFC 033 (<code>ctx</code> — contrast only; graphs are not ambient singletons)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/204</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes a small, opinionated directed-graph abstraction in the Incan standard library: stable node identifiers, node payloads, directed edges with optional kind metadata, and a minimal interrogation API covering adjacency, roots and sinks, traversal, and optional topological order. It is not a graph database, query language, or persistence layer. New graph-related stdlib surfaces should continue to go through RFCs rather than growing ad hoc.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Several Incan-backed domains benefit from a shared in-memory graph model: relational plan DAGs, task or dependency graphs, configuration pipelines, and other tools that need nodes, edges, and programmatic traversal rather than ad hoc maps and lists per project.</p>
-<p>Without a stdlib shape, each library reinvents id allocation, edge storage, and walk order. That fragments tooling, tests, and interop expectations. A lightweight, RFC-governed type keeps the surface small while still allowing domain-specific payloads and future extension, such as weights, attributes, or alternate backends, in follow-on RFCs.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Define normative semantics for a directed-graph type, and optionally for a
-DAG variant or mode, exposed through the stdlib.</li>
-<li>Specify stable <code>NodeId</code> semantics: what it means to add or remove nodes and
-edges, and when ids must not be reused in ways that confuse callers.</li>
-<li>Specify a minimal interrogation API sufficient for common compiler and
-orchestration patterns: successors, predecessors, roots, sinks, reachability traversal from a start node in at least one documented order, and topological order when acyclic.</li>
-<li>Keep future stdlib graph expansion on the RFC track rather than letting it
-grow ad hoc.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>A <strong>graph query language</strong>, <strong>index structures</strong> for scale-out property search, or <strong>disk-backed</strong> storage.</li>
-<li><strong>Undirected</strong> graphs as a first-class mandatory type (may be added later via RFC).</li>
-<li><strong>Distributed</strong> graphs, <strong>transactions</strong>, or <strong>Cypher</strong>-style interfaces.</li>
-<li>Mandating one specific backend implementation; the contract is behavioral,
-not implementation-specific.</li>
-<li>A process-wide or language-global singleton graph. Named registries or
-application-level default graphs may exist in higher-level systems, but this stdlib contract must not require them.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors obtain a graph handle from the stdlib, add nodes with optional payloads, and add directed edges from one node to another. They can ask for outgoing or incoming neighbors, enumerate roots or sinks, and walk from a start node in a documented order. Common walk orders are breadth-first search and depth-first search; the stdlib must document which order each traversal API uses. When the graph is intended to be acyclic, authors may use a DAG mode or type that rejects edge insertions that would create a cycle, or they may call topological-order APIs and handle the error if a cycle exists.</p>
-<p>The type is in-memory and library-scoped. Persistence, network sync, and engine-specific optimization remain outside this RFC.</p>
-<p>Authors construct and pass graph values explicitly rather than reaching for one implicit global graph.</p>
-<h2 id="illustrative-api-sketches-non-normative">Illustrative API sketches (non-normative)<a class="headerlink" href="#illustrative-api-sketches-non-normative" title="Permanent link">&para;</a></h2>
-<p>The following examples show one possible Incan-facing shape. Names, return types, and error modeling are illustrative until the RFC moves beyond Draft; they are not commitments to exact signatures.</p>
-<p><strong>Module path</strong> is assumed to be <code>std.graph</code> (see RFC 022 stdlib namespacing); final names <strong>may</strong> differ.</p>
-<h3 id="constructing-a-directed-graph-and-querying-neighbors">Constructing a directed graph and querying neighbors<a class="headerlink" href="#constructing-a-directed-graph-and-querying-neighbors" title="Permanent link">&para;</a></h3>
+<h1 id="stdgraph-reference">std.graph reference<a class="headerlink" href="#stdgraph-reference" title="Permanent link">&para;</a></h1>
+<p>This page documents the graph API exposed by <code>std.graph</code>.
+Use this module when a program needs explicit in-memory dependency, plan, workflow, or relationship graphs instead of ad hoc <code>dict</code> and <code>list</code> structures.</p>
+<p><code>std.graph</code> values are ordinary data. Create them, pass them as arguments, store them on models, and keep separate graph instances for separate pipelines or requests. The standard library does not define one ambient process-wide graph.</p>
+<h2 id="importing-the-graph-api">Importing the graph API<a class="headerlink" href="#importing-the-graph-api" title="Permanent link">&para;</a></h2>
+<p>Import the graph types and identifier types with:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+</code></pre></div>
+<h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
+<h3 id="digrapht"><code>DiGraph[T]</code><a class="headerlink" href="#digrapht" title="Permanent link">&para;</a></h3>
+<p><code>DiGraph[T]</code> is a mutable directed graph whose nodes carry payloads of type <code>T</code>.
+It is the default graph type for ordinary directed relationships where one edge from <code>a</code> to <code>b</code> is enough.</p>
+<p>Edges connect <code>NodeId</code> values, not raw payload objects.
+Use <code>DiGraph[T]</code> when the graph structure itself matters: scheduling dependencies, plan stages, validation pipelines, state machines, or other data where traversal and adjacency are part of the program contract.</p>
+<h3 id="dagt"><code>Dag[T]</code><a class="headerlink" href="#dagt" title="Permanent link">&para;</a></h3>
+<p><code>Dag[T]</code> is a directed acyclic graph.
+It has the same node payload model as <code>DiGraph[T]</code>, but edge insertion rejects any edge that would create a cycle.</p>
+<p>Use <code>Dag[T]</code> when acyclicity is a data invariant rather than just a query-time check.
+Dependency plans, build steps, and staged pipelines usually want <code>Dag[T]</code> because accepting a cycle would make the value invalid.</p>
+<h3 id="multidigrapht"><code>MultiDiGraph[T]</code><a class="headerlink" href="#multidigrapht" title="Permanent link">&para;</a></h3>
+<p><code>MultiDiGraph[T]</code> is a directed graph that allows multiple distinct edges between the same source and destination nodes.
+Each edge has an <code>EdgeId</code>, so callers can add, inspect, and remove one relationship without collapsing every edge between the same node pair.</p>
+<p>Use <code>MultiDiGraph[T]</code> when parallel relationships are meaningful, such as a dataflow edge and a control edge between the same two nodes, or multiple named fallback paths.</p>
+<h3 id="nodeid"><code>NodeId</code><a class="headerlink" href="#nodeid" title="Permanent link">&para;</a></h3>
+<p><code>NodeId</code> identifies a node inside one graph instance.
+Node ids are stable for the lifetime of the node in that graph, but they are not portable across different graph instances.
+Do not compare or reuse a <code>NodeId</code> from one graph with another graph.</p>
+<h3 id="edgeid"><code>EdgeId</code><a class="headerlink" href="#edgeid" title="Permanent link">&para;</a></h3>
+<p><code>EdgeId</code> identifies one edge inside a <code>MultiDiGraph[T]</code>.
+Edge ids are stable for the lifetime of the edge in that multigraph, but they are not portable across different graph instances.
+Use <code>EdgeId</code> when parallel edges need separate identity for lookup, metadata, or removal.</p>
+<h2 id="constructing-graphs">Constructing graphs<a class="headerlink" href="#constructing-graphs" title="Permanent link">&para;</a></h2>
+<p>Construct graph values directly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">MultiDiGraph</span>
+
+<span class="k">mut</span> <span class="n">graph</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="k">mut</span> <span class="n">dag</span> <span class="o">=</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="k">mut</span> <span class="n">multigraph</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+</code></pre></div>
+<p>Add nodes with typed payloads and connect them with directed edges:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="c1"># Empty graph; nodes and edges added explicitly.</span>
-<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
 
-<span class="n">a</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;scan_users&quot;</span><span class="p">)</span>
-<span class="n">b</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;filter_active&quot;</span><span class="p">)</span>
-<span class="n">c</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;join_orders&quot;</span><span class="p">)</span>
+<span class="n">scan</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;scan_users&quot;</span><span class="p">)</span>
+<span class="nb">filter</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;filter_active&quot;</span><span class="p">)</span>
+<span class="nb">join</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;join_orders&quot;</span><span class="p">)</span>
 
-<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">a</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">b</span><span class="p">)</span>
-<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">b</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">c</span><span class="p">)</span>
-
-<span class="n">out_from_b</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">successors</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
-<span class="n">roots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">roots</span><span class="p">()</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">scan</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="nb">filter</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="nb">filter</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="nb">join</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="node-payloads-as-object-references-eg-step">Node payloads as <strong>object references</strong> (e.g. <code>Step</code>)<a class="headerlink" href="#node-payloads-as-object-references-eg-step" title="Permanent link">&para;</a></h3>
-<p>Graphs are not limited to string or primitive payloads. A common pattern is
-<code>DiGraph[Step]</code>, or another user type, where each <code>NodeId</code> maps to a <code>Step</code>
-value the author already holds. Edges still connect <code>NodeId</code>s, so one <code>Step</code> instance can be the payload of node <code>a</code> and another of node <code>b</code>, with a directed edge <code>a -&gt; b</code> meaning "this step runs before that step," or any other domain-specific relationship.</p>
+<p><code>add_node(payload=...)</code> returns the new node id.
+<code>add_edge(from_=..., to=...)</code> adds a directed edge from the first node to the second node.
+Both endpoints must belong to the graph.</p>
+<h2 id="payloads">Payloads<a class="headerlink" href="#payloads" title="Permanent link">&para;</a></h2>
+<p>Payloads are not limited to primitive values.
+A graph can carry model, class, enum, newtype, or other ordinary Incan values as its node payload type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
 <span class="k">pub</span> <span class="k">model</span> <span class="nc">Step</span><span class="p">:</span>
@@ -4964,7 +5078,8 @@ value the author already holds. Edges still connect <code>NodeId</code>s, so one
     <span class="k">pub</span> <span class="nb">timeout_ms</span><span class="p">:</span> <span class="nb">int</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">build_step_graph</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]:</span>
-    <span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
+    <span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">]()</span>
+
     <span class="n">fetch</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;fetch&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
     <span class="n">parse</span> <span class="o">=</span> <span class="nc">Step</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;parse&quot;</span><span class="p">,</span> <span class="nb">timeout_ms</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
 
@@ -4975,217 +5090,193 @@ value the author already holds. Edges still connect <code>NodeId</code>s, so one
     <span class="k">return</span> <span class="n">g</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">step_name_at</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nc">Step</span><span class="p">],</span> <span class="n">nid</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">step</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">step</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="s2">&quot;&quot;</span>
 </code></pre></div>
-<p><strong>Semantics:</strong> <code>add_node(payload=...)</code> ties a <code>NodeId</code> to that payload object.
-If two nodes should represent the same <code>Step</code> instance, that is a domain choice: either one node is shared or two nodes hold cloned payloads. The stdlib must document how clone versus shared-reference behavior works for mutable payloads.</p>
-<p><strong>Bounds:</strong> generic graphs such as <code>DiGraph[T]</code> will likely require <code>T</code> to
-satisfy whatever the language requires for stored or shared data. Exact bounds are implementation detail, but they must appear in user-facing docs.</p>
-<h3 id="traversal-bfs-dfs-from-a-start-node">Traversal (BFS / DFS) from a start node<a class="headerlink" href="#traversal-bfs-dfs-from-a-start-node" title="Permanent link">&para;</a></h3>
+<p>The node id is the graph identity. If two nodes should represent the same logical object, choose that explicitly in your domain model: either reuse one node id or add separate nodes with separate payload values.</p>
+<h2 id="querying-nodes-and-edges">Querying nodes and edges<a class="headerlink" href="#querying-nodes-and-edges" title="Permanent link">&para;</a></h2>
+<p>Use the graph query methods to move between ids, payloads, and adjacency:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g.contains_node(id)</code></td>
+<td><code>bool</code></td>
+<td>Whether <code>id</code> names a live node in <code>g</code></td>
+</tr>
+<tr>
+<td><code>g.node_payload(id)</code></td>
+<td><code>Result[T, GraphError]</code></td>
+<td>Payload stored for <code>id</code></td>
+</tr>
+<tr>
+<td><code>g.successors(id)</code></td>
+<td><code>Result[list[NodeId], GraphError]</code></td>
+<td>Nodes reached by outgoing edges from <code>id</code></td>
+</tr>
+<tr>
+<td><code>g.predecessors(id)</code></td>
+<td><code>Result[list[NodeId], GraphError]</code></td>
+<td>Nodes with outgoing edges into <code>id</code></td>
+</tr>
+<tr>
+<td><code>g.roots()</code></td>
+<td><code>list[NodeId]</code></td>
+<td>Nodes with no incoming edges</td>
+</tr>
+<tr>
+<td><code>g.sinks()</code></td>
+<td><code>list[NodeId]</code></td>
+<td>Nodes with no outgoing edges</td>
+</tr>
+<tr>
+<td><code>g.contains_edge(src, dst)</code></td>
+<td><code>bool</code></td>
+<td>Whether the directed edge <code>src -&gt; dst</code> exists in <code>g</code></td>
+</tr>
+</tbody>
+</table>
+<p>Roots and sinks are structural properties of the current graph, not payload properties.
+In a disconnected graph, each independent component can have its own roots and sinks.</p>
+<h2 id="removal">Removal<a class="headerlink" href="#removal" title="Permanent link">&para;</a></h2>
+<p>Removing a node also removes every incoming and outgoing edge attached to that node.
+After removal, the old <code>NodeId</code> no longer names a live node in that graph.
+Implementations must not leave dangling edges behind.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">,</span> <span class="nc">NodeId</span>
+
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="n">first</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;first&quot;</span><span class="p">)</span>
+<span class="n">second</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;second&quot;</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">first</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">second</span><span class="p">)</span>
+
+<span class="n">removed</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">remove_node</span><span class="p">(</span><span class="n">first</span><span class="p">)</span>
+<span class="k">assert</span> <span class="ow">not</span> <span class="n">g</span><span class="o">.</span><span class="n">contains_node</span><span class="p">(</span><span class="n">first</span><span class="p">)</span>
+<span class="k">assert</span> <span class="ow">not</span> <span class="n">g</span><span class="o">.</span><span class="n">contains_edge</span><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">)</span>
+</code></pre></div>
+<p><code>DiGraph[T]</code> and <code>Dag[T]</code> remove a simple edge by endpoint pair:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">removed_edge</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">remove_edge</span><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">)</span>
+</code></pre></div>
+<p><code>MultiDiGraph[T]</code> removes one edge by <code>EdgeId</code>, so parallel edges can be managed independently:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">,</span> <span class="nc">MultiDiGraph</span>
+
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="n">source</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;read&quot;</span><span class="p">)</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;write&quot;</span><span class="p">)</span>
+
+<span class="n">primary_result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+<span class="n">backup_result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+
+<span class="k">match</span> <span class="n">primary_result</span><span class="p">:</span>
+    <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">primary</span><span class="p">):</span>
+        <span class="n">g</span><span class="o">.</span><span class="n">remove_edge</span><span class="p">(</span><span class="n">primary</span><span class="p">)</span>
+    <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+<span class="k">match</span> <span class="n">backup_result</span><span class="p">:</span>
+    <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">backup</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">g</span><span class="o">.</span><span class="n">contains_edge</span><span class="p">(</span><span class="n">backup</span><span class="p">)</span>
+    <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+        <span class="k">pass</span>
+</code></pre></div>
+<h2 id="traversal">Traversal<a class="headerlink" href="#traversal" title="Permanent link">&para;</a></h2>
+<p>Traversal starts from one node id and returns node ids in a documented order.
+The traversal only visits nodes reachable from the start node.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">collect_bfs</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">bfs_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">)</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">bfs_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">nodes</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">nodes</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">collect_dfs_preorder</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">g</span><span class="o">.</span><span class="n">dfs_preorder_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">)</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_dfs</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nc">NodeId</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+    <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">dfs_preorder_nodes</span><span class="p">(</span><span class="n">start</span><span class="p">):</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">nodes</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">nodes</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">[]</span>
 </code></pre></div>
-<p>Implementations <strong>must</strong> document iteration order; the method names above are <strong>placeholders</strong>.</p>
-<h3 id="topological-order-on-a-dag-shaped-graph">Topological order on a DAG-shaped graph<a class="headerlink" href="#topological-order-on-a-dag-shaped-graph" title="Permanent link">&para;</a></h3>
+<p><code>bfs_nodes(start)</code> visits in breadth-first order: the start node first, then reachable successors by increasing edge distance from the start.
+<code>dfs_preorder_nodes(start)</code> visits in depth-first preorder: a node appears before the nodes reached by continuing down that path.</p>
+<p>Traversal methods visit each reachable node at most once, even when cycles exist.
+<code>Dag[T]</code> traversal follows the same order contracts, with the additional guarantee that the graph itself is acyclic.</p>
+<h2 id="topological-order">Topological order<a class="headerlink" href="#topological-order" title="Permanent link">&para;</a></h2>
+<p>Use topological order when edges represent dependency direction and every edge should point from an earlier requirement to a later dependent:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">topo_or_empty</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">ordered_or_empty</span><span class="p">(</span><span class="n">g</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]:</span>
     <span class="k">match</span> <span class="n">g</span><span class="o">.</span><span class="n">topological_order</span><span class="p">():</span>
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
             <span class="k">return</span> <span class="n">order</span>
         <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
-            <span class="k">return</span> <span class="p">[]</span>  <span class="c1"># cycle present — real API might use Result throughout</span>
+            <span class="k">return</span> <span class="p">[]</span>
 </code></pre></div>
-<h3 id="dag-mode-reject-edges-that-would-create-a-cycle">DAG mode: reject edges that would create a cycle<a class="headerlink" href="#dag-mode-reject-edges-that-would-create-a-cycle" title="Permanent link">&para;</a></h3>
+<p><code>topological_order()</code> returns <code>Ok(list[NodeId])</code> when every edge can be ordered from an earlier node to a later node.
+If a <code>DiGraph[T]</code> or <code>MultiDiGraph[T]</code> contains a cycle, it returns an error instead of silently dropping edges or returning a partial order.</p>
+<p>For <code>Dag[T]</code>, edge insertion enforces acyclicity, so topological order is the normal scheduling view:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="k">mut</span> <span class="n">d</span> <span class="o">=</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
-<span class="n">x</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-<span class="n">y</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-<span class="n">z</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="k">mut</span> <span class="n">plan</span> <span class="o">=</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="n">fetch</span> <span class="o">=</span> <span class="n">plan</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;fetch&quot;</span><span class="p">)</span>
+<span class="n">parse</span> <span class="o">=</span> <span class="n">plan</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;parse&quot;</span><span class="p">)</span>
+<span class="n">plan</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">fetch</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">parse</span><span class="p">)</span>
 
-<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">x</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">y</span><span class="p">)</span>
-<span class="n">d</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">y</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">z</span><span class="p">)</span>
-
-<span class="k">match</span> <span class="n">d</span><span class="o">.</span><span class="n">try_add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">z</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">x</span><span class="p">):</span>
-    <span class="k">case</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
-        <span class="k">pass</span>  <span class="c1"># unexpected if cycle detection works</span>
-    <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">CycleWouldBeCreated</span><span class="p">):</span>
-        <span class="k">pass</span>  <span class="c1"># expected</span>
+<span class="n">order</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">NodeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">plan</span><span class="o">.</span><span class="n">topological_order</span><span class="p">()</span>
 </code></pre></div>
-<p>Alternatively, a single <code>DiGraph</code> type could use
-<code>DiGraph.new(enforce_dag=True)</code> instead of a separate <code>Dag</code> name. See
-Unresolved questions.</p>
-<h3 id="parallel-edges-multigraph-profile-if-supported">Parallel edges (multigraph profile), if supported<a class="headerlink" href="#parallel-edges-multigraph-profile-if-supported" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span><span class="p">,</span> <span class="nc">EdgeId</span>
+<h2 id="multigraph-edge-ids">Multigraph edge ids<a class="headerlink" href="#multigraph-edge-ids" title="Permanent link">&para;</a></h2>
+<p>Use <code>MultiDiGraph[T]</code> when parallel edges have separate identity:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">,</span> <span class="nc">MultiDiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="k">mut</span> <span class="n">m</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
-<span class="n">u</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span>
-<span class="n">v</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">)</span>
+<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">MultiDiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]()</span>
+<span class="n">read</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;read&quot;</span><span class="p">)</span>
+<span class="n">write</span><span class="p">:</span> <span class="nc">NodeId</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="n">payload</span><span class="o">=</span><span class="s2">&quot;write&quot;</span><span class="p">)</span>
 
-<span class="n">e1</span><span class="p">:</span> <span class="nc">EdgeId</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">v</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;primary&quot;</span><span class="p">)</span>
-<span class="n">e2</span><span class="p">:</span> <span class="nc">EdgeId</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">v</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;backup&quot;</span><span class="p">)</span>
+<span class="n">data</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">read</span><span class="p">,</span> <span class="n">write</span><span class="p">)</span>
+<span class="n">control</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">,</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">read</span><span class="p">,</span> <span class="n">write</span><span class="p">)</span>
 
-<span class="n">edges_uv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">edges_between</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+<span class="n">edges</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">EdgeId</span><span class="p">],</span> <span class="nc">GraphError</span><span class="p">]</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">edges_between</span><span class="p">(</span><span class="n">read</span><span class="p">,</span> <span class="n">write</span><span class="p">)</span>
 </code></pre></div>
-<p>If v1 is <strong>simple-only</strong>, this profile is omitted or deferred; authors use <strong><code>DiGraph</code></strong> without <strong><code>MultiDiGraph</code></strong>.</p>
-<h3 id="edge-kind-on-a-simple-directed-graph">Edge <strong>kind</strong> on a simple directed graph<a class="headerlink" href="#edge-kind-on-a-simple-directed-graph" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DiGraph</span><span class="p">,</span> <span class="nc">NodeId</span>
+<p><code>edges_between(from_=..., to=...)</code> returns every edge id from the source node to the destination node.
+<code>edge_endpoints(edge)</code> returns the source and destination node ids for one edge.
+If relationships need labels or attributes, store that data in your own payload model and keep the graph as the structural index.</p>
+<h2 id="storing-graphs-as-data">Storing graphs as data<a class="headerlink" href="#storing-graphs-as-data" title="Permanent link">&para;</a></h2>
+<p>Graphs compose with ordinary Incan models:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Dag</span><span class="p">,</span> <span class="nc">NodeId</span>
 
-<span class="k">mut</span> <span class="n">g</span> <span class="o">=</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">new</span><span class="p">()</span>
-<span class="n">read</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;read&quot;</span><span class="p">)</span>
-<span class="n">write</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">add_node</span><span class="p">(</span><span class="s2">&quot;write&quot;</span><span class="p">)</span>
-
-<span class="n">g</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">from_</span><span class="o">=</span><span class="n">read</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">write</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;dataflow&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="storing-a-graph-as-data-not-a-singleton">Storing a graph as <strong>data</strong> (not a singleton)<a class="headerlink" href="#storing-a-graph-as-data-not-a-singleton" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">PipelinePlan</span><span class="p">:</span>
-    <span class="k">pub</span> <span class="n">deps</span><span class="p">:</span> <span class="nc">DiGraph</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">PipelinePlan</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="n">deps</span><span class="p">:</span> <span class="nc">Dag</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
     <span class="k">pub</span> <span class="n">tip</span><span class="p">:</span> <span class="nc">NodeId</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">describe_roots</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">PipelinePlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="nb">join</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span> <span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">roots</span><span class="p">())</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">root_names</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">PipelinePlan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">roots</span><span class="p">():</span>
+        <span class="k">match</span> <span class="n">plan</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">node_payload</span><span class="p">(</span><span class="n">nid</span><span class="p">):</span>
+            <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+                <span class="n">names</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+            <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span>
+                <span class="k">pass</span>
+    <span class="k">return</span> <span class="n">names</span>
 </code></pre></div>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="directed-graph">Directed graph<a class="headerlink" href="#directed-graph" title="Permanent link">&para;</a></h3>
-<p>A <strong>directed graph</strong> value <strong>must</strong> conceptually consist of:</p>
+<p>This keeps graph ownership explicit.
+It also keeps tests isolated because each test can construct only the graph it needs.</p>
+<h2 id="boundaries">Boundaries<a class="headerlink" href="#boundaries" title="Permanent link">&para;</a></h2>
+<p><code>std.graph</code> is intentionally small:</p>
 <ul>
-<li>A set of nodes, each with a distinct <code>NodeId</code> while the node exists. Each
-node may carry an optional payload: any Incan value the API allows, including primitives, <code>model</code> or <code>class</code> instances, newtypes, and similar values. Edges always connect <code>NodeId</code>s, not raw object references.</li>
-<li>A multiset of directed edges from one <code>NodeId</code> to another <code>NodeId</code>. Parallel
-edges may be permitted unless a future profile forbids them. If they are permitted, edges must be distinguishable by an <code>EdgeId</code> or by iteration order, as specified by the stdlib API.</li>
+<li>It is in-memory; persistence and network synchronization belong in higher-level libraries.</li>
+<li>It covers directed graphs, directed acyclic graphs, and directed multigraphs.</li>
+<li>It is not a graph database or query language.</li>
+<li>Future graph expansion, such as weighted edges, property graph queries, or alternate storage backends, belongs in a documented standard-library extension.</li>
 </ul>
-<p>Removing a node must either remove all incident edges or define explicit behavior, such as an error, in the stdlib contract. Implementations must not leave the graph in an inconsistent state silently.</p>
-<h3 id="nodeid-stability">NodeId stability<a class="headerlink" href="#nodeid-stability" title="Permanent link">&para;</a></h3>
-<p>The stdlib must document whether <code>NodeId</code> values are reused after node removal. The recommended default is not to reuse ids in the same graph instance without an explicit compact or reset operation documented for advanced users.</p>
-<h3 id="dag-profile">DAG profile<a class="headerlink" href="#dag-profile" title="Permanent link">&para;</a></h3>
-<p>If a DAG type or acyclicity-enforcing mode is provided, adding an edge that would introduce a cycle must fail with a defined error or return type. The graph must not accept the edge.</p>
-<h3 id="topological-order">Topological order<a class="headerlink" href="#topological-order" title="Permanent link">&para;</a></h3>
-<p>When <code>topological_order</code>, or an equivalent API, is provided, it must return a linear order consistent with all edges, meaning every edge goes from an earlier to a later index. If the graph contains a cycle, the operation must report failure in a defined way.</p>
-<h3 id="interrogation-api-minimum-bar">Interrogation API (minimum bar)<a class="headerlink" href="#interrogation-api-minimum-bar" title="Permanent link">&para;</a></h3>
-<p>The stdlib <strong>must</strong> expose operations equivalent to the following capabilities (names may differ):</p>
-<ul>
-<li><strong>Lookup</strong> node existence by <code>NodeId</code>.</li>
-<li><strong>Successors</strong> and <strong>predecessors</strong> (or outgoing/incoming edge iteration).</li>
-<li><strong>Roots</strong> and <strong>sinks</strong> according to the definitions above.</li>
-<li><strong>Reachability traversal</strong> from a start <code>NodeId</code> in at least one documented
-order, for example breadth-first search or depth-first search.</li>
-</ul>
-<p>Implementations <strong>may</strong> add further helpers (e.g. strongly connected components) in later RFCs.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<ul>
-<li>
-<p><strong>Payload model.</strong>
-Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as <code>model</code> or <code>class</code> values, so that <code>DiGraph[Step]</code> means each node's payload is a <code>Step</code>. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one <code>payload: any</code> model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.</p>
-</li>
-<li>
-<p><strong>Edge metadata.</strong>
-Edges should support an optional kind or label, whether enumerated or string, so multiple domains can filter edges without separate side maps. This must be specified in the final API review before Planned status.</p>
-</li>
-<li>
-<p><strong>Immutability vs mutation.</strong>
-The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.</p>
-</li>
-<li>
-<p><strong>Relationship to other stdlib types.</strong>
-Graph types should compose with existing collections, such as RFC 030 types, where natural, for example returning lists of <code>NodeId</code>. They must not silently duplicate dictionary semantics without documenting key conflicts.</p>
-</li>
-<li>
-<p><strong>Graph values vs global singletons (design decision).</strong></p>
-<ul>
-<li><strong>Normative:</strong> The stdlib graph abstraction must be usable as ordinary
-  first-class data. Many independent instances may exist at once, and
-  callers pass or store them explicitly.</li>
-<li><strong>Normative:</strong> The stdlib must not define or require one ambient graph
-  analogous to RFC 033 <code>ctx</code>. Graphs represent structured relational or
-  dependency data that is naturally per-pipeline, per-test, or per-request.
-  Conflating the two would break concurrency, test isolation, and
-  composition.</li>
-<li><strong>Non-normative:</strong> A session, runtime, or application layer may still
-  offer a default or named graph registry for ergonomics, but that remains
-  outside this RFC and must layer on top of value-based graph types.</li>
-</ul>
-</li>
-</ul>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong>Only document a pattern</strong> such as a hand-rolled <code>dict</code> plus lists:
-rejected because it avoids stdlib surface at the cost of fragmentation and weak interoperability between libraries.</p>
-</li>
-<li>
-<p><strong>Expose a full-featured property-graph stdlib immediately</strong>: rejected
-because it is too large and blurs boundaries with databases and query engines.</p>
-</li>
-<li>
-<p><strong>Standardize on one external implementation’s user-visible API</strong>: rejected
-because it couples the language too tightly to one dependency layout.</p>
-</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Surface area</strong>: even a minimal graph API is a long-lived commitment; changes require RFC discipline.</li>
-<li><strong>Performance</strong>: a single generic graph type may not fit every workload.
-Domains may still need specialized structures behind thin wrappers.</li>
-<li><strong>Teaching cost</strong>: users must learn <strong>when</strong> to use graph stdlib vs plain collections.</li>
-</ul>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime bindings</strong>: new graph types and methods, potentially
-backed by runtime-native structures exposed through the normal stdlib binding path.</li>
-<li><strong>Typechecker</strong> — generic methods on graph types, error types for cycle detection.</li>
-<li><strong>Formatter / LSP</strong> — completions and formatting for new stdlib paths.</li>
-<li><strong>Docs-site</strong> — user-facing reference for graph types and examples.</li>
-<li><strong>RFC process</strong> — this RFC establishes that <strong>further</strong> graph stdlib growth is <strong>RFC-gated</strong>.</li>
-</ul>
-<h2 id="prior-art-survey-informative">Prior art survey (informative)<a class="headerlink" href="#prior-art-survey-informative" title="Permanent link">&para;</a></h2>
-<p>This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy to inform unresolved questions 1 and 2. It is not a mandate to copy any API.</p>
-<ul>
-<li>
-<p><strong>Python (NetworkX).</strong> <code>DiGraph</code> is simple by default, with at most one edge
-per ordered node pair. <code>MultiDiGraph</code> is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.</p>
-</li>
-<li>
-<p><strong>Java (JGraphT).</strong> Separate concrete types are common. Authors choose a
-simple directed graph or a multigraph at construction time.</p>
-</li>
-<li>
-<p><strong>JavaScript / TypeScript (Graphology).</strong> One graph family with options such
-as <code>type: 'directed'</code> and <code>multi: true | false</code>, plus specialized constructors. Parallel edges are opt-in.</p>
-</li>
-<li>
-<p><strong>Ruby (RGL).</strong> Directed adjacency is the common teaching model, and
-multigraph-oriented APIs are less central.</p>
-</li>
-<li>
-<p><strong>Rust (<code>petgraph</code>, illustrative only).</strong> <code>Graph</code> can represent multiple
-edges between the same node pair, while <code>GraphMap</code> does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.</p>
-</li>
-</ul>
-<p><strong>Loose takeaway for question 1 (DAG shape).</strong> Ecosystems rarely expose a
-third ubiquitous type name <code>Dag</code> alongside <code>DiGraph</code>; DAG is often policy on a directed container. A separate <code>Dag</code> type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.</p>
-<p><strong>Loose takeaway for question 2 (parallel edges).</strong> Simple directed graphs are
-the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That suggests defaulting to no parallel edges in v1 unless a domain clearly needs a multigraph profile, but the RFC does not have to settle that yet.</p>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Single <code>DiGraph</code> type vs separate <code>Dag</code> type vs <code>DiGraph</code> with
-   <code>enforce_dag: bool</code> at construction</strong>: which default best matches Incan
-authors? Prior art suggests DAG-as-policy is more common than a distinct
-   <code>Dag</code> type.</li>
-<li><strong>Parallel edges</strong>: allowed by default, or opt-in multigraph profile only?
-Prior art suggests opt-in multigraph support is the recurring pattern.</li>
-<li><strong>Node removal</strong>: required for v1, or <strong>append-only</strong> graphs only until a follow-on RFC?</li>
-<li><strong>Payload typing</strong> on the Incan side: opaque handle only for v1, or a
-generic <code>DiGraph[T]</code> / <code>Graph[NodePayload, EdgeKind]</code> style surface?</li>
-<li><strong>Serialization</strong>: stable JSON, or another snapshot format, in v1, or
-explicitly out of scope until a dedicated RFC?</li>
-</ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -5234,18 +5325,18 @@ explicitly out of scope until a dedicated RFC?</li>
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
