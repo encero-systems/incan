@@ -7018,6 +7018,37 @@ fn test_unknown_stdlib_module_from_import() {
     );
 }
 
+#[test]
+fn test_known_stdlib_module_rejects_unknown_annotation_only_import() {
+    let source = r#"
+from std.testing import NotExported
+
+def accepts_marker(value: NotExported) -> None:
+  pass
+"#;
+    let errs = check_str_err(source, "unknown stdlib import used only as an annotation should fail");
+    assert!(
+        errs.iter().any(|e| {
+            e.message
+                .contains("Cannot import `NotExported` from stdlib module `std.testing`")
+                && e.message.contains("not exported")
+        }),
+        "Expected not-exported diagnostic for std.testing.NotExported; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_non_stdlib_annotation_only_import_keeps_placeholder_fallback() {
+    let source = r#"
+from app.types import ExternalOnly
+
+def accepts_external(value: ExternalOnly) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================================================
 // RFC 005: Rust interop
 // ========================================================================
@@ -7232,6 +7263,35 @@ fn test_known_stdlib_module_is_accepted() {
             errs.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn test_std_graph_imports_and_direct_constructors_typecheck() {
+    let source = r#"
+from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+
+def exercise() -> None:
+    mut graph = DiGraph[str]()
+    a: NodeId = graph.add_node("a")
+    b: NodeId = graph.add_node("b")
+    edge_result: Result[None, GraphError] = graph.add_edge(a, b)
+    removed: Result[None, GraphError] = graph.remove_edge(a, b)
+    successors: Result[list[NodeId], GraphError] = graph.successors(a)
+    topo: Result[list[NodeId], GraphError] = graph.topological_order()
+
+    mut dag = Dag[str]()
+    root: NodeId = dag.add_node("root")
+    leaf: NodeId = dag.add_node("leaf")
+    dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    dag_order: list[NodeId] = dag.topological_order()
+
+    mut multi = MultiDiGraph[str]()
+    left: NodeId = multi.add_node("left")
+    right: NodeId = multi.add_node("right")
+    multi_edge: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    between: Result[list[EdgeId], GraphError] = multi.edges_between(left, right)
+"#;
+    assert!(check_str(source).is_ok());
 }
 
 #[test]

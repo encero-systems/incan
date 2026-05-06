@@ -606,6 +606,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::MethodCall {
                 receiver,
                 method,
+                dispatch,
                 type_args,
                 args,
                 callable_signature,
@@ -613,6 +614,7 @@ impl<'a> IrEmitter<'a> {
             } => self.emit_method_call_expr(
                 receiver,
                 method,
+                dispatch.as_ref(),
                 type_args,
                 args,
                 callable_signature.as_ref(),
@@ -934,6 +936,7 @@ mod tests {
                     IrType::Struct("Response".to_string()),
                 )),
                 method: "html".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1060,6 +1063,7 @@ mod tests {
                     IrType::Struct("Dataset".to_string()),
                 )),
                 method: "join".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![
                     IrCallArg {
@@ -1162,6 +1166,7 @@ mod tests {
                     IrType::Struct("std::collections::HashMap".to_string()),
                 )),
                 method: "get".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1204,6 +1209,7 @@ mod tests {
                     IrType::NamedGeneric("HashMap".to_string(), vec![IrType::String, IrType::Int]),
                 )),
                 method: "get".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1421,6 +1427,7 @@ mod tests {
                     IrType::Struct("ExternalBuilder".to_string()),
                 )),
                 method: "rename".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1467,6 +1474,7 @@ mod tests {
                     IrType::Struct("Session".to_string()),
                 )),
                 method: "read_csv".to_string(),
+                dispatch: None,
                 type_args: vec![IrType::Struct("OrderLine".to_string())],
                 args: vec![
                     IrCallArg {
@@ -1523,6 +1531,7 @@ mod tests {
                     IrType::Struct("widgets".to_string()),
                 )),
                 method: "make_widget".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1577,6 +1586,7 @@ mod tests {
                     IrType::Struct("Name".to_string()),
                 )),
                 method: "parse".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,

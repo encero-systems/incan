@@ -18,6 +18,7 @@ pub enum SurfaceTypeId {
 
     // Task handles
     JoinHandle,
+    TaskJoinError,
 
     // Channels
     Sender,
@@ -100,6 +101,15 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         &[],
         SurfaceTypeKind::Generic,
         "Handle to a spawned task.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::TaskJoinError,
+        "TaskJoinError",
+        &[],
+        SurfaceTypeKind::Named,
+        "Error returned when a spawned task fails to join.",
         RFC::_000,
         Since(0, 1),
     ),
@@ -268,7 +278,7 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
         }
 
         // Task handles
-        SurfaceTypeId::JoinHandle => Some("std.async.task"),
+        SurfaceTypeId::JoinHandle | SurfaceTypeId::TaskJoinError => Some("std.async.task"),
 
         // Channels
         SurfaceTypeId::Sender
@@ -327,21 +337,22 @@ pub fn info_for(id: SurfaceTypeId) -> SurfaceTypeInfo {
         SurfaceTypeId::Semaphore => SURFACE_TYPES[2],
         SurfaceTypeId::Barrier => SURFACE_TYPES[3],
         SurfaceTypeId::JoinHandle => SURFACE_TYPES[4],
-        SurfaceTypeId::Sender => SURFACE_TYPES[5],
-        SurfaceTypeId::Receiver => SURFACE_TYPES[6],
-        SurfaceTypeId::OneshotSender => SURFACE_TYPES[7],
-        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[8],
-        SurfaceTypeId::Vec => SURFACE_TYPES[9],
-        SurfaceTypeId::HashMap => SURFACE_TYPES[10],
-        SurfaceTypeId::App => SURFACE_TYPES[11],
-        SurfaceTypeId::Response => SURFACE_TYPES[12],
-        SurfaceTypeId::Html => SURFACE_TYPES[13],
-        SurfaceTypeId::Json => SURFACE_TYPES[14],
-        SurfaceTypeId::Query => SURFACE_TYPES[15],
-        SurfaceTypeId::Path => SURFACE_TYPES[16],
-        SurfaceTypeId::Body => SURFACE_TYPES[17],
-        SurfaceTypeId::Request => SURFACE_TYPES[18],
-        SurfaceTypeId::FieldInfo => SURFACE_TYPES[19],
+        SurfaceTypeId::TaskJoinError => SURFACE_TYPES[5],
+        SurfaceTypeId::Sender => SURFACE_TYPES[6],
+        SurfaceTypeId::Receiver => SURFACE_TYPES[7],
+        SurfaceTypeId::OneshotSender => SURFACE_TYPES[8],
+        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[9],
+        SurfaceTypeId::Vec => SURFACE_TYPES[10],
+        SurfaceTypeId::HashMap => SURFACE_TYPES[11],
+        SurfaceTypeId::App => SURFACE_TYPES[12],
+        SurfaceTypeId::Response => SURFACE_TYPES[13],
+        SurfaceTypeId::Html => SURFACE_TYPES[14],
+        SurfaceTypeId::Json => SURFACE_TYPES[15],
+        SurfaceTypeId::Query => SURFACE_TYPES[16],
+        SurfaceTypeId::Path => SURFACE_TYPES[17],
+        SurfaceTypeId::Body => SURFACE_TYPES[18],
+        SurfaceTypeId::Request => SURFACE_TYPES[19],
+        SurfaceTypeId::FieldInfo => SURFACE_TYPES[20],
     }
 }
 

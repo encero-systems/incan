@@ -27,6 +27,12 @@ use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
 
+#[derive(Debug, Clone)]
+struct MethodCandidate {
+    info: MethodInfo,
+    dispatch: Option<crate::frontend::typechecker::ResolvedMethodDispatch>,
+}
+
 struct ValueEnumGeneratedCall<'a> {
     enum_name: &'a str,
     value_enum: &'a ValueEnumInfo,
@@ -52,6 +58,36 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    fn explicit_trait_dispatch_for_backend(
+        &self,
+        trait_name: &str,
+        type_args: Vec<ResolvedType>,
+    ) -> Option<crate::frontend::typechecker::ResolvedMethodDispatch> {
+        let module_path = self.stdlib_cache.loaded_trait_module_path(trait_name)?;
+        let is_std_io_binary_trait = module_path.len() == 2
+            && module_path[0] == "std"
+            && module_path[1] == "io"
+            && matches!(trait_name, "BinaryRead" | "BinaryWrite");
+        is_std_io_binary_trait.then(|| self.resolved_trait_dispatch(trait_name, type_args))
+    }
+
+    fn resolved_trait_dispatch(
+        &self,
+        trait_name: &str,
+        type_args: Vec<ResolvedType>,
+    ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
+        let trait_path = self
+            .stdlib_cache
+            .loaded_trait_module_path(trait_name)
+            .filter(|segments| segments.first().is_some_and(|segment| segment == "std"))
+            .map(|segments| {
+                let module_path = segments.into_iter().skip(1).collect::<Vec<_>>().join("::");
+                format!("crate::__incan_std::{module_path}::{trait_name}")
+            })
+            .unwrap_or_else(|| trait_name.to_string());
+        crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args }
+    }
+
     /// Return whether an expression names an enum type rather than an enum value.
     fn is_enum_type_name_expr(&self, expr: &Spanned<Expr>) -> bool {
         let Expr::Ident(name) = &expr.node else {
@@ -641,9 +677,38 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
         if let Some(overloads) = method_overloads.and_then(|overloads| overloads.get(method)) {
+            let trait_entries = trait_adoptions
+                .map(|trait_adoptions| {
+                    trait_adoptions
+                        .iter()
+                        .filter_map(|adoption| {
+                            self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let candidates = overloads
+                .iter()
+                .cloned()
+                .map(|info| {
+                    let dispatch = trait_entries
+                        .iter()
+                        .find(|entry| {
+                            self.method_sigs_compatible(&info, &entry.info)
+                                && self.method_sigs_compatible(&entry.info, &info)
+                        })
+                        .and_then(|entry| {
+                            self.explicit_trait_dispatch_for_backend(
+                                &entry.origin_trait,
+                                entry.origin_type_args.clone(),
+                            )
+                        });
+                    MethodCandidate { info, dispatch }
+                })
+                .collect::<Vec<_>>();
             return self.resolve_method_overload(
                 method,
-                overloads,
+                &candidates,
                 explicit_type_args,
                 args,
                 arg_types,
@@ -666,10 +731,13 @@ impl TypeChecker {
         if let Some(trait_adoptions) = trait_adoptions {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
-                if let Some(method_info) =
-                    self.trait_method_info_resolved_for_adoption(adoption, method, call_site_span)
-                {
-                    candidates.push(method_info);
+                if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
+                    let dispatch =
+                        self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                    candidates.push(MethodCandidate {
+                        info: entry.info,
+                        dispatch,
+                    });
                 }
             }
             if !candidates.is_empty() {
@@ -693,7 +761,7 @@ impl TypeChecker {
     fn resolve_method_overload(
         &mut self,
         method: &str,
-        candidates: &[MethodInfo],
+        candidates: &[MethodCandidate],
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
@@ -701,65 +769,92 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
-        let mut viable: Vec<MethodInfo> = candidates
+        let mut viable: Vec<(usize, MethodCandidate)> = candidates
             .iter()
-            .filter(|candidate| {
-                self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, expected_return_ty)
+            .filter_map(|candidate| {
+                self.method_candidate_match_score(&candidate.info, args, arg_types, receiver_ty, expected_return_ty)
+                    .map(|score| (score, candidate.clone()))
             })
-            .cloned()
             .collect();
 
         if viable.is_empty() && expected_return_ty.is_some() {
             viable = candidates
                 .iter()
-                .filter(|candidate| self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, None))
-                .cloned()
+                .filter_map(|candidate| {
+                    self.method_candidate_match_score(&candidate.info, args, arg_types, receiver_ty, None)
+                        .map(|score| (score, candidate.clone()))
+                })
                 .collect();
         }
 
-        match viable.as_slice() {
-            [method_info] => Some(self.check_generic_method_call(
-                method,
-                method_info.clone(),
-                explicit_type_args,
-                args,
-                arg_types,
-                call_site_span,
-                receiver_ty,
-            )),
-            [] => candidates.first().map(|method_info| {
+        if viable.is_empty() {
+            return candidates.first().map(|candidate| {
+                if let Some(dispatch) = candidate.dispatch.clone() {
+                    self.type_info
+                        .record_resolved_method_call(call_site_span, method, dispatch);
+                }
                 self.check_generic_method_call(
                     method,
-                    method_info.clone(),
+                    candidate.info.clone(),
                     explicit_type_args,
                     args,
                     arg_types,
                     call_site_span,
                     receiver_ty,
                 )
-            }),
-            _ => {
-                self.errors
-                    .push(errors::ambiguous_trait_method_call(method, call_site_span));
-                Some(ResolvedType::Unknown)
-            }
+            });
         }
+
+        let best_score = viable.iter().map(|(score, _)| *score).max().unwrap_or(0);
+        let mut best = viable
+            .into_iter()
+            .filter(|(score, _)| *score == best_score)
+            .map(|(_, method_info)| method_info)
+            .collect::<Vec<_>>();
+
+        if best.len() == 1 {
+            let candidate = best.remove(0);
+            if let Some(dispatch) = candidate.dispatch.clone() {
+                self.type_info
+                    .record_resolved_method_call(call_site_span, method, dispatch);
+            }
+            return Some(self.check_generic_method_call(
+                method,
+                candidate.info,
+                explicit_type_args,
+                args,
+                arg_types,
+                call_site_span,
+                receiver_ty,
+            ));
+        }
+
+        self.errors
+            .push(errors::ambiguous_trait_method_call(method, call_site_span));
+        Some(ResolvedType::Unknown)
     }
 
-    /// Return whether one method candidate is compatible with the supplied arguments and expected result type.
-    fn method_candidate_matches_call(
+    /// Return a compatibility score for one method candidate.
+    ///
+    /// Compatibility admits useful coercions such as lossless numeric widening, but overload selection must prefer the
+    /// candidate that most directly matches the call site. Exact argument and contextual return matches therefore score
+    /// higher than merely compatible matches; ties remain ambiguous.
+    fn method_candidate_match_score(
         &self,
         candidate: &MethodInfo,
         args: &[CallArg],
         arg_types: &[ResolvedType],
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
-    ) -> bool {
+    ) -> Option<usize> {
         let (params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        let mut score = 0usize;
         if let Some(expected) = expected_return_ty
             && !self.types_compatible(&return_type, expected)
         {
-            return false;
+            return None;
+        } else if let Some(expected) = expected_return_ty {
+            score += self.type_match_score(&return_type, expected);
         }
         let normal_params: Vec<&CallableParam> =
             params.iter().filter(|param| param.kind == ParamKind::Normal).collect();
@@ -773,21 +868,23 @@ impl TypeChecker {
                 CallArg::Positional(_) => {
                     if let Some(param) = normal_params.get(positional_index) {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[positional_index] = true;
                         positional_index += 1;
                     } else if let Some(param) = rest_positional {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                     } else {
-                        return false;
+                        return None;
                     }
                 }
                 CallArg::Named(name, _) => {
                     if !named_seen.insert(name.as_str()) {
-                        return false;
+                        return None;
                     }
                     if let Some((normal_idx, param)) = normal_params
                         .iter()
@@ -795,27 +892,76 @@ impl TypeChecker {
                         .find(|(_, param)| param.name() == Some(name.as_str()))
                     {
                         if normal_bound[normal_idx] {
-                            return false;
+                            return None;
                         }
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[normal_idx] = true;
                     } else if let Some(param) = rest_keyword {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                     } else {
-                        return false;
+                        return None;
                     }
                 }
-                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return true,
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return Some(score),
             }
         }
         normal_params
             .iter()
             .zip(normal_bound.iter())
             .all(|(param, bound)| *bound || param.has_default)
+            .then_some(score)
+    }
+
+    /// Score how directly `actual` matches `expected` for overload ranking.
+    fn type_match_score(&self, actual: &ResolvedType, expected: &ResolvedType) -> usize {
+        if actual == expected {
+            return 16;
+        }
+
+        match (actual, expected) {
+            (ResolvedType::Unknown, _)
+            | (_, ResolvedType::Unknown)
+            | (ResolvedType::TypeVar(_), _)
+            | (_, ResolvedType::TypeVar(_))
+            | (ResolvedType::CallSiteInfer, _)
+            | (_, ResolvedType::CallSiteInfer) => 0,
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(expected_name, expected_args))
+                if actual_name == expected_name && actual_args.len() == expected_args.len() =>
+            {
+                4 + actual_args
+                    .iter()
+                    .zip(expected_args.iter())
+                    .map(|(actual_arg, expected_arg)| self.type_match_score(actual_arg, expected_arg))
+                    .sum::<usize>()
+            }
+            (ResolvedType::Tuple(actual_items), ResolvedType::Tuple(expected_items))
+                if actual_items.len() == expected_items.len() =>
+            {
+                4 + actual_items
+                    .iter()
+                    .zip(expected_items.iter())
+                    .map(|(actual_item, expected_item)| self.type_match_score(actual_item, expected_item))
+                    .sum::<usize>()
+            }
+            (ResolvedType::FrozenList(actual_item), ResolvedType::FrozenList(expected_item)) => {
+                4 + self.type_match_score(actual_item, expected_item)
+            }
+            (
+                ResolvedType::FrozenDict(actual_key, actual_value),
+                ResolvedType::FrozenDict(expected_key, expected_value),
+            ) => {
+                4 + self.type_match_score(actual_key, expected_key)
+                    + self.type_match_score(actual_value, expected_value)
+            }
+            _ if self.rust_type_identities_compatible(actual, expected) == Some(true) => 12,
+            _ => 0,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -840,8 +986,13 @@ impl TypeChecker {
         }
         let mut candidates = Vec::new();
         for bound in &active_bounds {
-            if let Some(method_info) = self.trait_method_info_resolved_for_adoption(bound, method, call_site_span) {
-                candidates.push(method_info);
+            if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
+                let dispatch =
+                    self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                candidates.push(MethodCandidate {
+                    info: entry.info,
+                    dispatch,
+                });
             }
         }
         if candidates.is_empty() {

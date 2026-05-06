@@ -13,14 +13,14 @@ mod patterns;
 
 use super::super::TypedExpr;
 use super::super::expr::{
-    CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy,
-    MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
+    CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, IrMethodDispatch,
+    MethodCallArgPolicy, MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
-use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
+use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_semantics_core::SurfaceExprLoweringAction;
@@ -42,6 +42,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: Vec::new(),
                     callable_signature: self.callable_signature_for_call_span(expr.span),
@@ -253,6 +254,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,
@@ -275,6 +277,7 @@ impl AstLowering {
                     let contains_call = IrExprKind::MethodCall {
                         receiver: Box::new(receiver),
                         method: resolved_operator.method,
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
@@ -336,6 +339,7 @@ impl AstLowering {
                                 IrExprKind::MethodCall {
                                     receiver: Box::new(collection),
                                     method: "contains".to_string(),
+                                    dispatch: None,
                                     type_args: Vec::new(),
                                     args: contains_args,
                                     callable_signature: None,
@@ -398,6 +402,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(operand),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: self.callable_signature_for_call_span(expr_span),
@@ -474,6 +479,16 @@ impl AstLowering {
                     .and_then(|info| info.expr_type(expr_span))
                     .map(|ty| self.lower_resolved_type(ty))
                     .unwrap_or(IrType::Unknown);
+                let dispatch = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_method_call(expr_span).cloned())
+                    .map(|resolved| match resolved.dispatch {
+                        ResolvedMethodDispatch::Trait { trait_path, type_args } => IrMethodDispatch::Trait {
+                            trait_path,
+                            type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
+                        },
+                    });
 
                 if let Some(policy) = numeric_resize_policy(&method_name)
                     && args_ir.is_empty()
@@ -501,17 +516,26 @@ impl AstLowering {
                         IrType::Unknown,
                     )
                 } else {
+                    let imported_type_method_signature =
+                        match &o.node {
+                            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned().and_then(|path| {
+                                self.callable_signature_for_imported_stdlib_type_method_path(&path, m)
+                            }),
+                            _ => None,
+                        };
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: method_name,
+                            dispatch,
                             type_args: lowered_type_args,
                             args: args_ir,
-                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            callable_signature: imported_type_method_signature
+                                .or_else(|| self.callable_signature_for_call_span(expr_span)),
                             arg_policy,
                         },
-                        IrType::Unknown,
+                        expr_ty,
                     )
                 }
             }
@@ -536,6 +560,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(obj),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,

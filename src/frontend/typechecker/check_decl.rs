@@ -54,10 +54,11 @@ struct ResolvedTraitAdoption {
 }
 
 #[derive(Debug, Clone)]
-struct TraitMethodEntry {
-    method_name: String,
-    origin_trait: String,
-    info: MethodInfo,
+pub(in crate::frontend::typechecker) struct TraitMethodEntry {
+    pub method_name: String,
+    pub origin_trait: String,
+    pub origin_type_args: Vec<ResolvedType>,
+    pub info: MethodInfo,
 }
 
 enum AsyncFixtureYieldShape {
@@ -735,7 +736,11 @@ impl TypeChecker {
         )
     }
 
-    fn method_sigs_compatible(&self, expected: &MethodInfo, found: &MethodInfo) -> bool {
+    pub(in crate::frontend::typechecker) fn method_sigs_compatible(
+        &self,
+        expected: &MethodInfo,
+        found: &MethodInfo,
+    ) -> bool {
         if expected.receiver != found.receiver {
             return false;
         }
@@ -754,6 +759,23 @@ impl TypeChecker {
             }
         }
         self.types_compatible(&expected.return_type, &found.return_type)
+    }
+
+    /// Return whether two methods have the same call-time parameter shape, ignoring return type.
+    fn method_call_shapes_same(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
+        if left.receiver != right.receiver {
+            return false;
+        }
+        if left.is_async != right.is_async {
+            return false;
+        }
+        if left.params.len() != right.params.len() {
+            return false;
+        }
+        left.params
+            .iter()
+            .zip(right.params.iter())
+            .all(|(left_param, right_param)| left_param.kind == right_param.kind && left_param.ty == right_param.ty)
     }
 
     /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).
@@ -906,6 +928,7 @@ impl TypeChecker {
             out.push(TraitMethodEntry {
                 method_name: method_name.clone(),
                 origin_trait: trait_name.to_string(),
+                origin_type_args: trait_args.to_vec(),
                 info: method_info.clone(),
             });
         }
@@ -1033,8 +1056,25 @@ impl TypeChecker {
         method: &str,
         ambiguity_span: Span,
     ) -> Option<MethodInfo> {
+        self.trait_method_entry_resolved_for_adoption(adoption, method, ambiguity_span)
+            .map(|entry| entry.info)
+    }
+
+    pub(in crate::frontend::typechecker) fn trait_method_entry_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        method: &str,
+        ambiguity_span: Span,
+    ) -> Option<TraitMethodEntry> {
         if adoption.type_args.is_empty() {
-            return self.trait_method_info_resolved(&adoption.name, method, ambiguity_span);
+            return self
+                .trait_method_info_resolved(&adoption.name, method, ambiguity_span)
+                .map(|info| TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: adoption.name.clone(),
+                    origin_type_args: Vec::new(),
+                    info,
+                });
         }
         let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
         let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);
@@ -1045,15 +1085,34 @@ impl TypeChecker {
             span: ambiguity_span,
         };
         let entries = self.trait_method_entries_for_adoption(&resolved);
-        let matching: Vec<(String, MethodInfo)> = entries
+        let matching: Vec<(String, Vec<ResolvedType>, MethodInfo)> = entries
             .into_iter()
             .filter(|entry| entry.method_name == method)
-            .map(|entry| (entry.origin_trait, entry.info))
+            .map(|entry| (entry.origin_trait, entry.origin_type_args, entry.info))
             .collect();
-        let filtered = self.filter_supertrait_dominated_entries(matching);
+        let filtered = self.filter_supertrait_dominated_entries(
+            matching
+                .iter()
+                .map(|(origin, _, info)| (origin.clone(), info.clone()))
+                .collect(),
+        );
         match filtered.as_slice() {
             [] => None,
-            [(_, info)] => Some(info.clone()),
+            [(origin_trait, info)] => {
+                let origin_type_args = matching
+                    .iter()
+                    .find(|(origin, _, candidate)| {
+                        origin == origin_trait && self.method_sigs_compatible(candidate, info)
+                    })
+                    .map(|(_, args, _)| args.clone())
+                    .unwrap_or_default();
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: origin_trait.clone(),
+                    origin_type_args,
+                    info: info.clone(),
+                })
+            }
             rest => {
                 let exp0 = &rest[0].1;
                 let all_mutually_compat = rest
@@ -1064,7 +1123,18 @@ impl TypeChecker {
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
                     return None;
                 }
-                Some(exp0.clone())
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: rest[0].0.clone(),
+                    origin_type_args: matching
+                        .iter()
+                        .find(|(origin, _, candidate)| {
+                            origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
+                        })
+                        .map(|(_, args, _)| args.clone())
+                        .unwrap_or_default(),
+                    info: exp0.clone(),
+                })
             }
         }
     }
@@ -1288,7 +1358,7 @@ impl TypeChecker {
         spans
     }
 
-    /// Ensure every duplicate concrete method maps to a distinct same-family trait obligation.
+    /// Ensure overloads that differ only by return type map to same-family trait obligations.
     fn validate_overloaded_methods_are_trait_backed(
         &mut self,
         type_name: &str,
@@ -1312,6 +1382,7 @@ impl TypeChecker {
             }
             let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
             let mut matched_obligations = vec![false; obligations.len()];
+            let mut overload_matches: Vec<Option<usize>> = vec![None; overloads.len()];
             for (idx, overload) in overloads.iter().enumerate() {
                 let matched_index = obligations
                     .iter()
@@ -1322,6 +1393,19 @@ impl TypeChecker {
                     .map(|(obligation_idx, _)| obligation_idx);
                 if let Some(obligation_idx) = matched_index {
                     matched_obligations[obligation_idx] = true;
+                    overload_matches[idx] = Some(obligation_idx);
+                }
+            }
+            let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
+            for (idx, overload) in overloads.iter().enumerate() {
+                if overload_matches[idx].is_some() {
+                    continue;
+                }
+                let shares_call_shape = overloads
+                    .iter()
+                    .enumerate()
+                    .any(|(other_idx, other)| other_idx != idx && self.method_call_shapes_same(overload, other));
+                if has_trait_backed_overload && !shares_call_shape {
                     continue;
                 }
                 let span = method_spans

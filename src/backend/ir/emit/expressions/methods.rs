@@ -8,8 +8,8 @@ use quote::{format_ident, quote};
 
 use super::super::super::FunctionSignature;
 use super::super::super::expr::{
-    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, MethodCallArgPolicy, MethodKind, TypedExpr,
-    VarAccess, VarRefKind,
+    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
+    TypedExpr, VarAccess, VarRefKind,
 };
 use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
@@ -132,6 +132,10 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .enumerate()
             .map(|(idx, (arg, from_default))| {
+                let external_method_shape = matches!(
+                    base_use_site,
+                    ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
+                );
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
@@ -167,9 +171,13 @@ impl<'a> IrEmitter<'a> {
                     return Ok(wrapped);
                 }
                 let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
-                    if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                    if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
+                    {
                         emitted = quote! { &mut #emitted };
-                    } else if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                    } else if external_method_shape
+                        && idx == 0
+                        && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                    {
                         emitted = quote! { &#emitted };
                     }
                     return Ok(emitted);
@@ -177,10 +185,10 @@ impl<'a> IrEmitter<'a> {
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
                     return Ok(quote! { &mut #emitted });
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
                     return Ok(quote! { &#emitted });
                 }
                 match &param.ty {
@@ -367,10 +375,12 @@ impl<'a> IrEmitter<'a> {
     /// Emit a method call expression that remains a regular Rust method call.
     ///
     /// This handles `IrExprKind::MethodCall` when lowering did not classify the method as a builtin-family method.
+    #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn emit_method_call_expr(
         &self,
         receiver: &TypedExpr,
         method: &str,
+        dispatch: Option<&IrMethodDispatch>,
         type_args: &[IrType],
         args: &[IrCallArg],
         callable_signature: Option<&FunctionSignature>,
@@ -382,6 +392,7 @@ impl<'a> IrEmitter<'a> {
             let inner = self.emit_method_call_expr(
                 &rewritten_receiver,
                 method,
+                dispatch,
                 type_args,
                 &rewritten_args,
                 callable_signature,
@@ -483,6 +494,27 @@ impl<'a> IrEmitter<'a> {
                 let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
                 return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
             }
+        }
+
+        if let Some(IrMethodDispatch::Trait { trait_path, type_args }) = dispatch {
+            let path_tokens: Vec<TokenStream> = trait_path
+                .split("::")
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect();
+            let trait_tokens = super::super::decls::join_path_tokens(&path_tokens);
+            let trait_type_args: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            let trait_tokens = if trait_type_args.is_empty() {
+                quote! { #trait_tokens }
+            } else {
+                quote! { #trait_tokens :: < #(#trait_type_args),* > }
+            };
+            let m = Self::rust_ident(method);
+            let arg_tokens =
+                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
+            return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
         }
 
         // Regular method call

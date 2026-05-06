@@ -62,6 +62,11 @@ impl<'a> FromImportContext<'a> {
         self.stdlib.as_ref().is_some_and(|stdlib| stdlib.is_unknown_module)
     }
 
+    /// Return `true` when an unmaterialized import item from this context must be rejected instead of falling back.
+    fn rejects_unmaterialized_stdlib_items(&self) -> bool {
+        self.stdlib.as_ref().is_some_and(|stdlib| !stdlib.is_unknown_module)
+    }
+
     /// Join the source module segments as the user-facing dotted stdlib path.
     fn dotted_module_path(&self) -> String {
         self.module.segments.join(".")
@@ -214,6 +219,14 @@ impl TypeChecker {
 
         for item in items {
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
+                continue;
+            }
+            if context.rejects_unmaterialized_stdlib_items() {
+                self.errors.push(errors::stdlib_import_not_exported(
+                    &item.name,
+                    &context.dotted_module_path(),
+                    span,
+                ));
                 continue;
             }
             if self.preserve_existing_from_import_symbol(item, span) {

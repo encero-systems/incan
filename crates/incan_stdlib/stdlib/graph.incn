@@ -1,0 +1,498 @@
+"""
+Lightweight directed graph primitives implemented in Incan.
+
+RFC 047 exposes value-owned graph containers through `std.graph`: `DiGraph[T]`, `Dag[T]`, and `MultiDiGraph[T]`.
+Graph values are ordinary first-class data. `NodeId` and `EdgeId` are opaque handles scoped to the graph instance that
+created them.
+"""
+
+from std.traits.error import Error
+
+
+@derive(Clone, Copy, Eq, Ord)
+pub type NodeId = newtype int:
+    """Stable handle for one node in a graph instance."""
+
+    def to_int(self) -> int:
+        """Return the runtime numeric representation for diagnostics, storage, or display."""
+        return self.0
+
+
+@derive(Clone, Copy, Eq, Ord)
+pub type EdgeId = newtype int:
+    """Stable handle for one edge in a graph instance."""
+
+    def to_int(self) -> int:
+        """Return the runtime numeric representation for diagnostics, storage, or display."""
+        return self.0
+
+
+pub model GraphError with Error:
+    """Error returned by graph operations when ids are unknown, cycles are rejected, or removal cannot be completed."""
+
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub model GraphNode[T]:
+    pub id: NodeId
+    pub payload: T
+    pub active: bool
+
+
+pub model GraphEdge:
+    pub id: EdgeId
+    pub from_: NodeId
+    pub to: NodeId
+    pub active: bool
+
+
+pub model DiGraph[T]:
+    """Directed graph with at most one active edge for each ordered node pair."""
+
+    pub next_node_id: int
+    pub next_edge_id: int
+    pub nodes: list[GraphNode[T]]
+    pub edges: list[GraphEdge]
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Compiler hook for `DiGraph[T]()` constructor syntax."""
+        return DiGraph(next_node_id=0, next_edge_id=0, nodes=[], edges=[])
+
+    def add_node(mut self, payload: T) -> NodeId:
+        """Add a node with `payload` and return its node id."""
+        id = NodeId(self.next_node_id)
+        self.next_node_id = self.next_node_id + 1
+        self.nodes.append(GraphNode(id=id, payload=payload, active=True))
+        return id
+
+    def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove `node` and any incident edges."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+
+        mut stored = self.nodes[index]
+        stored.active = False
+        self.nodes[index] = stored
+
+        for edge_index in range(len(self.edges)):
+            mut edge = self.edges[edge_index]
+            if edge.active:
+                if edge.from_ == node or edge.to == node:
+                    edge.active = False
+                    self.edges[edge_index] = edge
+
+        return Ok(None)
+
+    def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` belongs to this graph."""
+        return self.node_index(node) >= 0
+
+    def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(self.nodes[index].payload)
+
+    def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Add the directed edge `from_ -> to`."""
+        match self.insert_edge(from_, to, False):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(err)
+
+    def remove_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Remove the directed edge `from_ -> to`."""
+        if not self.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.contains_node(to):
+            return Err(unknown_node(to))
+
+        for index in range(len(self.edges)):
+            mut edge = self.edges[index]
+            if edge.active and edge.from_ == from_ and edge.to == to:
+                edge.active = False
+                self.edges[index] = edge
+                return Ok(None)
+
+        return Err(missing_edge(from_, to))
+
+    def contains_edge(self, from_: NodeId, to: NodeId) -> bool:
+        """Return whether the directed edge `from_ -> to` exists."""
+        for edge in self.edges:
+            if edge.active and edge.from_ == from_ and edge.to == to:
+                return True
+        return False
+
+    def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return outgoing neighbors for `node`."""
+        if not self.contains_node(node):
+            return Err(unknown_node(node))
+
+        mut nodes: list[NodeId] = []
+        for stored in self.nodes:
+            if stored.active and self.contains_edge(node, stored.id):
+                nodes.append(stored.id)
+        return Ok(nodes)
+
+    def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return incoming neighbors for `node`."""
+        if not self.contains_node(node):
+            return Err(unknown_node(node))
+
+        mut nodes: list[NodeId] = []
+        for stored in self.nodes:
+            if stored.active and self.contains_edge(stored.id, node):
+                nodes.append(stored.id)
+        return Ok(nodes)
+
+    def roots(self) -> list[NodeId]:
+        """Return all nodes with no incoming edges."""
+        mut roots: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.predecessors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        roots.append(node)
+                Err(_) => pass
+        return roots
+
+    def sinks(self) -> list[NodeId]:
+        """Return all nodes with no outgoing edges."""
+        mut sinks: list[NodeId] = []
+        for node in self.active_node_ids():
+            match self.successors(node):
+                Ok(nodes) =>
+                    if len(nodes) == 0:
+                        sinks.append(node)
+                Err(_) => pass
+        return sinks
+
+    def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+
+        mut order: list[NodeId] = []
+        mut queue: list[NodeId] = [start]
+        mut cursor = 0
+        while cursor < len(queue):
+            node = queue[cursor]
+            cursor += 1
+            if contains_node_id(order, node):
+                continue
+
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    for successor in nodes:
+                        if not contains_node_id(order, successor) and not contains_node_id(queue, successor):
+                            queue.append(successor)
+                Err(err) => return Err(err)
+
+        return Ok(order)
+
+    def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        if not self.contains_node(start):
+            return Err(unknown_node(start))
+
+        mut order: list[NodeId] = []
+        mut stack: list[NodeId] = [start]
+        while len(stack) > 0:
+            node = stack.pop()
+            if contains_node_id(order, node):
+                continue
+
+            order.append(node)
+            match self.successors(node):
+                Ok(nodes) =>
+                    mut index = len(nodes) - 1
+                    while index >= 0:
+                        successor = nodes[index]
+                        if not contains_node_id(order, successor):
+                            stack.append(successor)
+                        index -= 1
+                Err(err) => return Err(err)
+
+        return Ok(order)
+
+    def topological_order(self) -> Result[list[NodeId], GraphError]:
+        """Return a topological order or `Err(GraphError)` when the graph contains a cycle."""
+        active = self.active_node_ids()
+        mut indegrees: list[int] = []
+        for node in active:
+            match self.predecessors(node):
+                Ok(nodes) => indegrees.append(len(nodes))
+                Err(err) => return Err(err)
+
+        mut order: list[NodeId] = []
+        mut consumed: list[NodeId] = []
+        mut made_progress = True
+        while made_progress:
+            made_progress = False
+            for index in range(len(active)):
+                node = active[index]
+                if indegrees[index] == 0 and not contains_node_id(consumed, node):
+                    consumed.append(node)
+                    order.append(node)
+                    made_progress = True
+                    match self.successors(node):
+                        Ok(nodes) =>
+                            for successor in nodes:
+                                successor_index = node_index_in(active, successor)
+                                if successor_index >= 0:
+                                    indegrees[successor_index] -= 1
+                        Err(err) => return Err(err)
+
+        if len(order) == len(active):
+            return Ok(order)
+
+        return Err(GraphError(detail="graph contains a cycle"))
+
+    def insert_edge(mut self, from_: NodeId, to: NodeId, allow_parallel: bool) -> Result[EdgeId, GraphError]:
+        if not self.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.contains_node(to):
+            return Err(unknown_node(to))
+        if not allow_parallel and self.contains_edge(from_, to):
+            return Err(duplicate_edge(from_, to))
+
+        id = EdgeId(self.next_edge_id)
+        self.next_edge_id = self.next_edge_id + 1
+        self.edges.append(GraphEdge(id=id, from_=from_, to=to, active=True))
+        return Ok(id)
+
+    def active_node_ids(self) -> list[NodeId]:
+        mut ids: list[NodeId] = []
+        for node in self.nodes:
+            if node.active:
+                ids.append(node.id)
+        return ids
+
+    def active_edge_ids(self) -> list[EdgeId]:
+        mut ids: list[EdgeId] = []
+        for edge in self.edges:
+            if edge.active:
+                ids.append(edge.id)
+        return ids
+
+    def node_index(self, node: NodeId) -> int:
+        for index in range(len(self.nodes)):
+            stored = self.nodes[index]
+            if stored.active and stored.id == node:
+                return index
+        return -1
+
+    def edge_index(self, edge_id: EdgeId) -> int:
+        for index in range(len(self.edges)):
+            edge = self.edges[index]
+            if edge.active and edge.id == edge_id:
+                return index
+        return -1
+
+
+pub model Dag[T]:
+    """Directed acyclic graph that rejects cycle-creating edge insertions."""
+
+    pub graph: DiGraph[T]
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Compiler hook for `Dag[T]()` constructor syntax."""
+        return Dag(graph=DiGraph[T]())
+
+    def add_node(mut self, payload: T) -> NodeId:
+        """Add a node with `payload` and return its node id."""
+        return self.graph.add_node(payload)
+
+    def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove `node` and any incident edges."""
+        return self.graph.remove_node(node)
+
+    def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` belongs to this DAG."""
+        return self.graph.contains_node(node)
+
+    def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        return self.graph.node_payload(node)
+
+    def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Add `from_ -> to`, rejecting the edge if it would create a cycle."""
+        if not self.graph.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.graph.contains_node(to):
+            return Err(unknown_node(to))
+        if self.graph.contains_edge(from_, to):
+            return Err(duplicate_edge(from_, to))
+        if self.can_reach(to, from_):
+            return Err(GraphError(detail=f"graph edge would create a cycle: {from_.to_int()} -> {to.to_int()}"))
+        return self.graph.add_edge(from_, to)
+
+    def remove_edge(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Remove the directed edge `from_ -> to`."""
+        return self.graph.remove_edge(from_, to)
+
+    def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return outgoing neighbors for `node`."""
+        return self.graph.successors(node)
+
+    def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return incoming neighbors for `node`."""
+        return self.graph.predecessors(node)
+
+    def roots(self) -> list[NodeId]:
+        """Return all nodes with no incoming edges."""
+        return self.graph.roots()
+
+    def sinks(self) -> list[NodeId]:
+        """Return all nodes with no outgoing edges."""
+        return self.graph.sinks()
+
+    def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        return self.graph.bfs_nodes(start)
+
+    def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        return self.graph.dfs_preorder_nodes(start)
+
+    def topological_order(self) -> list[NodeId]:
+        """Return the DAG's topological node order."""
+        match self.graph.topological_order():
+            Ok(nodes) => return nodes
+            Err(_) => return []
+
+    def can_reach(self, start: NodeId, target: NodeId) -> bool:
+        match self.graph.bfs_nodes(start):
+            Ok(nodes) => return contains_node_id(nodes, target)
+            Err(_) => return False
+
+
+pub model MultiDiGraph[T]:
+    """Directed multigraph whose edge insertions return stable `EdgeId` handles."""
+
+    pub graph: DiGraph[T]
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Compiler hook for `MultiDiGraph[T]()` constructor syntax."""
+        return MultiDiGraph(graph=DiGraph[T]())
+
+    def add_node(mut self, payload: T) -> NodeId:
+        """Add a node with `payload` and return its node id."""
+        return self.graph.add_node(payload)
+
+    def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Remove `node` and any incident edges."""
+        return self.graph.remove_node(node)
+
+    def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` belongs to this multigraph."""
+        return self.graph.contains_node(node)
+
+    def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload for `node`."""
+        return self.graph.node_payload(node)
+
+    def add_edge(mut self, from_: NodeId, to: NodeId) -> Result[EdgeId, GraphError]:
+        """Add a directed edge and return its edge id."""
+        return self.graph.insert_edge(from_, to, True)
+
+    def remove_edge(mut self, edge: EdgeId) -> Result[None, GraphError]:
+        """Remove the edge identified by `edge`."""
+        index = self.graph.edge_index(edge)
+        if index < 0:
+            return Err(GraphError(detail=f"graph edge does not exist: {edge.to_int()}"))
+
+        mut stored = self.graph.edges[index]
+        stored.active = False
+        self.graph.edges[index] = stored
+        return Ok(None)
+
+    def contains_edge(self, edge: EdgeId) -> bool:
+        """Return whether `edge` belongs to this multigraph."""
+        return self.graph.edge_index(edge) >= 0
+
+    def edges_between(self, from_: NodeId, to: NodeId) -> Result[list[EdgeId], GraphError]:
+        """Return all edge ids connecting `from_ -> to`."""
+        if not self.graph.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.graph.contains_node(to):
+            return Err(unknown_node(to))
+
+        mut edges: list[EdgeId] = []
+        for edge in self.graph.edges:
+            if edge.active and edge.from_ == from_ and edge.to == to:
+                edges.append(edge.id)
+        return Ok(edges)
+
+    def edge_endpoints(self, edge: EdgeId) -> Result[Tuple[NodeId, NodeId], GraphError]:
+        """Return the source and target node ids for `edge`."""
+        index = self.graph.edge_index(edge)
+        if index < 0:
+            return Err(GraphError(detail=f"graph edge does not exist: {edge.to_int()}"))
+        stored = self.graph.edges[index]
+        return Ok((stored.from_, stored.to))
+
+    def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return outgoing neighbors for `node`."""
+        return self.graph.successors(node)
+
+    def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return incoming neighbors for `node`."""
+        return self.graph.predecessors(node)
+
+    def roots(self) -> list[NodeId]:
+        """Return all nodes with no incoming edges."""
+        return self.graph.roots()
+
+    def sinks(self) -> list[NodeId]:
+        """Return all nodes with no outgoing edges."""
+        return self.graph.sinks()
+
+    def bfs_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in breadth-first order."""
+        return self.graph.bfs_nodes(start)
+
+    def dfs_preorder_nodes(self, start: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return nodes reachable from `start` in depth-first preorder."""
+        return self.graph.dfs_preorder_nodes(start)
+
+    def topological_order(self) -> Result[list[NodeId], GraphError]:
+        """Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle."""
+        return self.graph.topological_order()
+
+
+def contains_node_id(nodes: list[NodeId], node: NodeId) -> bool:
+    for candidate in nodes:
+        if candidate.to_int() == node.to_int():
+            return True
+    return False
+
+
+def node_index_in(nodes: list[NodeId], node: NodeId) -> int:
+    for index in range(len(nodes)):
+        if nodes[index] == node:
+            return index
+    return -1
+
+
+def unknown_node(node: NodeId) -> GraphError:
+    return GraphError(detail=f"graph node does not exist: {node.to_int()}")
+
+
+def duplicate_edge(from_: NodeId, to: NodeId) -> GraphError:
+    return GraphError(detail=f"graph edge already exists: {from_.to_int()} -> {to.to_int()}")
+
+
+def missing_edge(from_: NodeId, to: NodeId) -> GraphError:
+    return GraphError(detail=f"graph edge does not exist: {from_.to_int()} -> {to.to_int()}")

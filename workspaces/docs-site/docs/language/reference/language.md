@@ -106,6 +106,8 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
+| `std.graph` | - | - | - |
+| `std.io` | - | - | - |
 | `std.rust` | - | - | - |
 
 ## Builtin exceptions
@@ -496,6 +498,7 @@ def main() -> None:
 | Semaphore | `Semaphore` |  | Named | Async/runtime semaphore. | RFC 000 | 0.1 | Stable |
 | Barrier | `Barrier` |  | Named | Async/runtime barrier. | RFC 000 | 0.1 | Stable |
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
+| TaskJoinError | `TaskJoinError` |  | Named | Error returned when a spawned task fails to join. | RFC 000 | 0.1 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |

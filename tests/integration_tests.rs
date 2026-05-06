@@ -2377,6 +2377,107 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_io_compile_and_run_bytesio_core_and_numeric_helpers() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.io's generated-project dependency in the root Cargo graph so CI fetches it before this smoke runs
+        // the generated project under CARGO_NET_OFFLINE.
+        let mut cache_anchor = [0u8; 4];
+        <byteorder::LittleEndian as byteorder::ByteOrder>::write_u32(&mut cache_anchor, 258);
+        assert_eq!(cache_anchor, [2, 1, 0, 0]);
+
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.io import BytesIO, Endian, IoError
+
+def run() -> Result[None, IoError]:
+    buf = BytesIO(b"abc\0rest")
+    first = buf.read(2)?
+    println(len(first))
+    println(buf.tell())
+    buf.rewind()?
+    nul: u8 = 0
+    letter_t: u8 = 116
+    until = buf.read_until(nul)?
+    println(len(until))
+    println(buf.remaining())
+    println(buf.skip_until(letter_t)?)
+    println(buf.remaining())
+    match buf.read_exact(1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+
+    out = BytesIO()
+    u32_value: u32 = 258
+    i16_value: i16 = -2
+    u128_value: u128 = 42
+    f64_value: f64 = 1.5
+    out.write(u32_value, Endian.Little)?
+    out.write(i16_value, Endian.Big)?
+    out.write(u128_value, Endian.Big)?
+    out.write(f64_value, Endian.Little)?
+    println(len(out.getvalue()))
+    out.rewind()?
+    read_u32: u32 = out.read(Endian.Little)?
+    read_i16: i16 = out.read(Endian.Big)?
+    read_u128: u128 = out.read(Endian.Big)?
+    read_f64: f64 = out.read(Endian.Little)?
+    println(read_u32)
+    println(read_i16)
+    println(read_u128)
+    println(read_f64 == f64_value)
+
+    rewrite = BytesIO(b"abcd")
+    rewrite.seek(1, 0)?
+    xy: bytes = b"XY"
+    rewrite.write(xy)?
+    rewrite.truncate(Some(3))?
+    println(len(rewrite.getvalue()))
+    println(rewrite.remaining())
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.io smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "2",
+                "2",
+                "4",
+                "4",
+                "4",
+                "0",
+                "unexpected_eof",
+                "30",
+                "258",
+                "-2",
+                "42",
+                "true",
+                "3",
+                "0"
+            ],
+            "unexpected std.io output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_glob_string_api_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -2452,6 +2553,43 @@ def main() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "false\n3");
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_pascal_case_function_is_not_constructor() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("incan_imported_pascal_case_function");
+        fs::create_dir_all(root.join("pkg"))?;
+        fs::write(
+            root.join("pkg").join("factory.incn"),
+            r#"
+pub def BytesIO(initial: int = 7) -> int:
+    return initial
+"#,
+        )?;
+        let main_path = root.join("factory_call.incn");
+        fs::write(
+            &main_path,
+            r#"
+from pkg.factory import BytesIO
+
+def main() -> None:
+    println(BytesIO())
+    println(BytesIO(3))
+"#,
+        )?;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "imported PascalCase function regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7\n3");
         Ok(())
     }
 
@@ -2814,6 +2952,91 @@ def main() -> None:
                 "from-path"
             ],
             "unexpected union output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_issue502_independent_union_narrowing_branches_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+def normalize_path_like(value: LocalPath | str) -> LocalPath:
+    if isinstance(value, str):
+        return LocalPath(value)
+    if isinstance(value, LocalPath):
+        return value
+
+def main() -> None:
+    println(normalize_path_like("from-string").0)
+    println(normalize_path_like(LocalPath("from-path")).0)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "independent union narrowing branch regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["from-string", "from-path"],
+            "unexpected independent union narrowing output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_issue501_option_union_isinstance_narrowing_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+def describe(value: Option[LocalPath | str]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        elif isinstance(value, LocalPath):
+            return value.0
+    return "missing"
+
+def main() -> None:
+    println(describe("from-string"))
+    println(describe(LocalPath("from-path")))
+    println(describe(None))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Option[Union] isinstance narrowing regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["FROM-STRING", "from-path", "missing"],
+            "unexpected Option[Union] narrowing output:\n{stdout}"
         );
         Ok(())
     }
