@@ -734,9 +734,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#if-let-do-something-only-when-one-pattern-matches" class="md-nav__link">
+  <a href="#if-let-do-something-only-when-a-pattern-matches" class="md-nav__link">
     <span class="md-ellipsis">
-      if let (do something only when one pattern matches)
+      if let (do something only when a pattern matches)
     </span>
   </a>
   
@@ -4819,9 +4819,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#if-let-do-something-only-when-one-pattern-matches" class="md-nav__link">
+  <a href="#if-let-do-something-only-when-a-pattern-matches" class="md-nav__link">
     <span class="md-ellipsis">
-      if let (do something only when one pattern matches)
+      if let (do something only when a pattern matches)
     </span>
   </a>
   
@@ -4929,8 +4929,8 @@
         <span class="k">return</span> <span class="s2">&quot;positive&quot;</span>
 </code></pre></div>
 <p>Use ordinary <code>if</code> when the condition is a boolean expression.</p>
-<h2 id="if-let-do-something-only-when-one-pattern-matches"><code>if let</code> (do something only when one pattern matches)<a class="headerlink" href="#if-let-do-something-only-when-one-pattern-matches" title="Permanent link">&para;</a></h2>
-<p>Use <code>if let</code> when you care about exactly one successful pattern and want the non-match case to do nothing.</p>
+<h2 id="if-let-do-something-only-when-a-pattern-matches"><code>if let</code> (do something only when a pattern matches)<a class="headerlink" href="#if-let-do-something-only-when-a-pattern-matches" title="Permanent link">&para;</a></h2>
+<p>Use <code>if let</code> when you care about one success branch and want the non-match case to do nothing.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">User</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="o">=</span> <span class="n">user</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;hello </span><span class="si">{</span><span class="n">u</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -4942,6 +4942,16 @@
         <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="k">pass</span>
 </code></pre></div>
 <p>Use <code>match</code> instead when both branches matter. In v1, <code>if let</code> is single-arm only and does not accept <code>elif</code> or <code>else</code>.</p>
+<p>The success branch can use pattern alternation when several patterns share the same body:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">JobStatus</span><span class="p">:</span>
+    <span class="nc">Running</span>
+    <span class="nc">Completed</span>
+    <span class="nc">Cancelled</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">log_done</span><span class="p">(</span><span class="n">status</span><span class="p">:</span> <span class="nc">JobStatus</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nc">Completed</span> <span class="o">|</span> <span class="nc">Cancelled</span> <span class="o">=</span> <span class="n">status</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;done&quot;</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="match-pattern-matching"><code>match</code> (pattern matching)<a class="headerlink" href="#match-pattern-matching" title="Permanent link">&para;</a></h2>
 <p><code>match</code> is the main way to branch on enums like <code>Result</code> and <code>Option</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4951,6 +4961,17 @@
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>Use <code>|</code> inside a <code>match</code> arm when alternatives should share the same body:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">PortLookup</span><span class="p">:</span>
+    <span class="nc">Cached</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Fresh</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+<span class="k">match</span> <span class="n">lookup_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+    <span class="k">case</span> <span class="nc">Cached</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="o">|</span> <span class="nc">Fresh</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">Failed</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Alternatives that bind names must bind the same names with the same types. <code>Cached(port) | Fresh(port)</code> is valid because both payloads have the same type; <code>Some(value) | None</code> is rejected because only one alternative binds <code>value</code>.</p>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Rust?</p>
 <p>Incan also supports a more Rust-like match-arm style using <code>=&gt;</code>:</p>

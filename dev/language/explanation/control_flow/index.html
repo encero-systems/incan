@@ -4892,19 +4892,29 @@
 </code></pre></div>
 <p>Use ordinary <code>if</code> when the condition is a boolean expression and both the true/false shape of the branch matters.</p>
 <h2 id="pattern-oriented-branching-with-if-let">Pattern-oriented branching with <code>if let</code><a class="headerlink" href="#pattern-oriented-branching-with-if-let" title="Permanent link">&para;</a></h2>
-<p>Use <code>if let</code> when you want to try one pattern match and do something only on success.</p>
+<p>Use <code>if let</code> when you want to try a pattern match and do something only on success.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">print_primary_email</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">User</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="o">=</span> <span class="n">user</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">email</span><span class="p">)</span>
 </code></pre></div>
-<p>This is the concise form of “match one successful shape, otherwise do nothing.” It is most useful with <code>Option</code>, <code>Result</code>, and enum payloads.</p>
+<p>This is the concise form of “match a successful shape, otherwise do nothing.” It is most useful with <code>Option</code>, <code>Result</code>, and enum payloads.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_port</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">if</span> <span class="k">let</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="o">=</span> <span class="n">parse_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;listening on </span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>When several successful patterns share the same body, join them with <code>|</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">JobStatus</span><span class="p">:</span>
+    <span class="nc">Running</span>
+    <span class="nc">Completed</span>
+    <span class="nc">Cancelled</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">log_terminal</span><span class="p">(</span><span class="n">status</span><span class="p">:</span> <span class="nc">JobStatus</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nc">Completed</span> <span class="o">|</span> <span class="nc">Cancelled</span> <span class="o">=</span> <span class="n">status</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;done&quot;</span><span class="p">)</span>
+</code></pre></div>
 <p>Prefer <code>if let</code> when:</p>
 <ul>
-<li>exactly one successful pattern matters;</li>
+<li>one success branch matters, whether it uses one pattern or a pattern alternation;</li>
 <li>the non-match path should do nothing;</li>
 <li>the code reads more naturally as opportunistic extraction than as full branching.</li>
 </ul>
@@ -4929,6 +4939,17 @@
 <li>more than one variant needs its own behavior;</li>
 <li>you want the full branching structure to stay visible.</li>
 </ul>
+<p>Use pattern alternation in a <code>match</code> arm when several patterns should run the same body:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">PortLookup</span><span class="p">:</span>
+    <span class="nc">Cached</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Fresh</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="nc">Failed</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+<span class="k">match</span> <span class="n">lookup_port</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+    <span class="k">case</span> <span class="nc">Cached</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="o">|</span> <span class="nc">Fresh</span><span class="p">(</span><span class="n">port</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;port=</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nc">Failed</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Alternatives that bind names must bind the same names with the same types. <code>Cached(port) | Fresh(port)</code> is valid because both payloads have the same type; <code>Some(value) | None</code> is rejected because only one alternative binds <code>value</code>.</p>
 <h2 id="looping-while-a-pattern-keeps-matching-with-while-let">Looping while a pattern keeps matching with <code>while let</code><a class="headerlink" href="#looping-while-a-pattern-keeps-matching-with-while-let" title="Permanent link">&para;</a></h2>
 <p>Use <code>while let</code> when a loop should continue only while one pattern keeps matching.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">drain</span><span class="p">(</span><span class="n">rx</span><span class="p">:</span> <span class="kt">Receiver</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>

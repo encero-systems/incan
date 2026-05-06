@@ -4706,6 +4706,13 @@
             <span class="k">return</span> <span class="n">s</span><span class="o">.</span><span class="nb">upper</span><span class="p">()</span>
 </code></pre></div>
 <p><code>match</code> over a union must cover every member type or include <code>_</code>.</p>
+<p>Pattern alternation can group union type patterns when the branch does not need differently typed bindings:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">value</span><span class="p">:</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">|</span> <span class="nb">str</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;present&quot;</span>
+        <span class="kc">None</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;missing&quot;</span>
+</code></pre></div>
+<p>Do not reuse one binding name across alternatives that infer different types. <code>int(item) | str(item)</code> is rejected because <code>item</code> would be both <code>int</code> and <code>str</code> in the same branch.</p>
 <p>For unions that canonicalize through <code>Option[...]</code>, use <code>is None</code> or <code>is not None</code> to narrow the optional value:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>

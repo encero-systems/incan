@@ -5314,6 +5314,12 @@ different data.</p>
     <span class="nc">Completed</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Done!&quot;</span><span class="p">)</span>
     <span class="nc">Cancelled</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Aborted&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>When several variants share the same behavior, join their patterns with <code>|</code> instead of duplicating the branch:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">status</span><span class="p">:</span>
+    <span class="nc">Pending</span> <span class="o">|</span> <span class="nc">Active</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Still working&quot;</span><span class="p">)</span>
+    <span class="nc">Completed</span> <span class="o">|</span> <span class="nc">Cancelled</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;No longer active&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Alternatives that bind names must bind the same names with the same types. <code>Ok(value) | Err(value)</code> is valid for <code>Result[int, int]</code>; <code>Some(value) | None</code> is rejected because only one alternative binds <code>value</code>.</p>
 <h3 id="enum-with-data-variants">Enum with Data (Variants)<a class="headerlink" href="#enum-with-data-variants" title="Permanent link">&para;</a></h3>
 <p>Each variant can carry different types and amounts of data:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Message</span><span class="p">:</span>
