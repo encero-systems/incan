@@ -962,6 +962,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#coming-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      Coming from Python
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#start-with-an-infallible-path" class="md-nav__link">
     <span class="md-ellipsis">
       Start with an infallible path
@@ -2590,6 +2599,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -2674,6 +2687,48 @@
   
   <span class="md-ellipsis">
     How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
   </span>
   
 
@@ -2961,7 +3016,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_18" >
         
           
           
@@ -2977,14 +3032,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_16" id="__nav_3_5_16_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_18" id="__nav_3_5_18_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_16_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_16">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_18">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4799,6 +4854,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#coming-from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      Coming from Python
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#start-with-an-infallible-path" class="md-nav__link">
     <span class="md-ellipsis">
       Start with an infallible path
@@ -4899,6 +4963,77 @@
 
 <h1 id="fallible-and-infallible-paths">Fallible and infallible paths<a class="headerlink" href="#fallible-and-infallible-paths" title="Permanent link">&para;</a></h1>
 <p>This tutorial shows how to choose between plain return values, <code>Option</code>, <code>Result</code>, and panics.</p>
+<h2 id="coming-from-python">Coming from Python<a class="headerlink" href="#coming-from-python" title="Permanent link">&para;</a></h2>
+<p>Python code often uses <code>None</code>, <code>raise</code>, <code>try</code>/<code>except</code>, and <code>assert</code> to describe paths that do not produce the ordinary
+value. Incan keeps those paths visible in signatures and at call sites.</p>
+<table>
+<thead>
+<tr>
+<th>Python habit</th>
+<th>Incan shape</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>None</code> means "not found" or "not present"</td>
+<td><code>Option[T]</code></td>
+</tr>
+<tr>
+<td><code>ValueError</code>, <code>OSError</code>, or a custom recoverable exception</td>
+<td><code>Result[T, E]</code></td>
+</tr>
+<tr>
+<td><code>raise SomeError(...)</code></td>
+<td><code>return Err(SomeError(...))</code></td>
+</tr>
+<tr>
+<td><code>try</code>/<code>except</code> handles a failure locally</td>
+<td><code>match</code> on <code>Result</code></td>
+</tr>
+<tr>
+<td>Let an exception bubble to the caller</td>
+<td><code>?</code> propagates an <code>Err(...)</code></td>
+</tr>
+<tr>
+<td><code>assert</code> for an impossible state or programmer mistake</td>
+<td><code>panic()</code> or a narrowly proven path</td>
+</tr>
+</tbody>
+</table>
+<p>In Python, an exception can skip the rest of the current block and search outward for a handler. In Incan, fallible paths
+are ordinary return values. Propagation is visible where it happens:</p>
+<div class="language-python highlight"><span class="filename">Python</span><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_username</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">read_text</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;guest&quot;</span>
+
+    <span class="k">if</span> <span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;name must not be empty&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</code></pre></div>
+<div class="language-incan highlight"><span class="filename">Incan</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
+
+<span class="k">enum</span> <span class="ne">NameError</span><span class="p">:</span>
+    <span class="nc">Io</span><span class="p">(</span><span class="nc">IoError</span><span class="p">)</span>
+    <span class="nc">Empty</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">read_username</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="ne">NameError</span><span class="p">]:</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="ne">NameError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="ne">NameError</span><span class="o">.</span><span class="nc">Empty</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_username</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">read_username</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+        <span class="nb">Ok</span><span class="p">(</span><span class="n">name</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="n">name</span>
+        <span class="nb">Err</span><span class="p">(</span><span class="ne">NameError</span><span class="o">.</span><span class="nc">Io</span><span class="p">(</span><span class="n">_</span><span class="p">))</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;guest&quot;</span>
+        <span class="nb">Err</span><span class="p">(</span><span class="ne">NameError</span><span class="o">.</span><span class="nc">Empty</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;guest&quot;</span>
+</code></pre></div>
+<p>The important difference is not syntax. It is control flow: Incan makes recovery (<code>match</code>) and propagation (<code>?</code>) explicit
+instead of hiding them behind exception unwinding.</p>
 <p>The short rule:</p>
 <ul>
 <li>Return a plain value when the operation is expected to succeed for valid inputs.</li>
