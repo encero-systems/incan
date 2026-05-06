@@ -14,7 +14,7 @@
         <link rel="prev" href="../graph/">
       
       
-        <link rel="next" href="../reflection/">
+        <link rel="next" href="../tempfile/">
       
       
       <link rel="icon" href="../../../../assets/images/favicon.png">
@@ -1774,6 +1774,8 @@
       
         
       
+        
+      
     
     
       
@@ -1972,6 +1974,27 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -4892,7 +4915,7 @@ Endianness is ignored for one-byte values.</p>
     <span class="nb">count</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
 </code></pre></div>
-<p><code>BytesIO</code> is in-memory only. Spill-to-disk behavior belongs to a future <code>std.tempfile.SpooledTemporaryFile</code> design rather than this module.</p>
+<p><code>BytesIO</code> is in-memory only. Use <code>std.tempfile.SpooledTemporaryFile</code> when a stream should start in memory and roll over to a temporary file after a size threshold.</p>
 
 
 

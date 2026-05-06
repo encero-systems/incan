@@ -1774,6 +1774,8 @@
       
         
       
+        
+      
     
     
       
@@ -2031,6 +2033,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
   </span>
   
 
@@ -5274,7 +5297,8 @@
 <p>Builder methods are <code>read</code>, <code>write</code>, <code>append</code>, <code>truncate</code>, <code>create</code>, and <code>create_new</code>.</p>
 <h2 id="temporary-files">Temporary Files<a class="headerlink" href="#temporary-files" title="Permanent link">&para;</a></h2>
 <p><code>std.tempfile</code> owns temporary location creation and cleanup. Once a temporary path exists, use <code>std.fs</code> for path joins, reads, writes, opens, metadata, copy/move, and cleanup.</p>
-<p><code>std.tempfile.SpooledTemporaryFile</code> remains planned for the temporary-file library rather than part of <code>std.fs</code>.</p>
+<p>See <a href="../tempfile/">std.tempfile</a> for <code>NamedTemporaryFile.try_new()</code>, <code>TemporaryDirectory.try_new()</code>, configured <code>try_new_with(...)</code> creation, spooled temporary streams, path access, and persistence.</p>
+<p><code>std.tempfile.SpooledTemporaryFile</code> starts in memory and rolls over to a named temporary file while still using <code>std.fs.File</code> for disk-backed reads, writes, seeking, and flushing.</p>
 
 
 

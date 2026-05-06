@@ -1764,6 +1764,8 @@
       
         
       
+        
+      
     
     
       
@@ -1900,6 +1902,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
   </span>
   
 
@@ -5091,7 +5114,7 @@ method names:</p>
 <p>Python's <code>BytesIO.getbuffer()</code> exposes a mutable view over the underlying buffer. That is powerful, but it also introduces aliasing and resize constraints that are not worth standardizing before Incan has a broader borrowed-buffer story. This RFC therefore keeps the safe extraction surface small: <code>getvalue()</code> for a snapshot and <code>into_bytes()</code> for retrieving bytes without exposing mutable buffer aliases.</p>
 <p>The same boundary applies to general <code>Reader</code> / <code>Writer</code> protocols. Those may well make sense later for <code>BytesIO</code>, <code>std.fs.File</code>, temporary files, network bodies, or query adapters. But that is a cross-cutting stream-abstraction RFC, not part of the in-memory byte-stream contract itself. RFC 056 should finish the concrete <code>BytesIO</code> design rather than smuggling in a second library proposal.</p>
 <h3 id="interaction-with-temporary-storage">Interaction with temporary storage<a class="headerlink" href="#interaction-with-temporary-storage" title="Permanent link">&para;</a></h3>
-<p>Spill-to-disk behavior does not belong in <code>BytesIO</code>. Python puts that concept in <code>tempfile.SpooledTemporaryFile</code>, not in <code>io.BytesIO</code>, and Incan should keep the same separation. RFC 056 is about pure in-memory streams. If Incan later standardizes spooled temporary files in RFC 010, that type should align with <code>BytesIO</code> where practical without being defined as a magical disk-spilling <code>BytesIO</code>.</p>
+<p>Spill-to-disk behavior does not belong in <code>BytesIO</code>. Python puts that concept in <code>tempfile.SpooledTemporaryFile</code>, not in <code>io.BytesIO</code>, and Incan keeps the same separation. RFC 056 is about pure in-memory streams; RFC 010 standardizes spooled temporary files in <code>std.tempfile</code>, aligned with <code>BytesIO</code> where practical without defining <code>BytesIO</code> as a magical disk-spilling stream.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>No <code>std.io</code>; use slicing and builtins only</strong> — too low-level and repetitive for real parsers.</li>

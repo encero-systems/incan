@@ -1911,6 +1911,8 @@
       
         
       
+        
+      
     
     
       
@@ -2047,6 +2049,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
   </span>
   
 
@@ -5025,16 +5048,32 @@
 <h2 id="temporary-file-layout">Temporary-File Layout<a class="headerlink" href="#temporary-file-layout" title="Permanent link">&para;</a></h2>
 <p>Temporary location creation belongs to <code>std.tempfile</code>; ordinary operations on those locations belong to <code>std.fs</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span><span class="p">,</span> <span class="nc">SpooledTemporaryFile</span><span class="p">,</span> <span class="nc">TemporaryDirectory</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">write_temp_payload</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">path</span> <span class="o">=</span> <span class="n">tmp_dir</span><span class="o">.</span><span class="n">joinpath</span><span class="p">(</span><span class="s2">&quot;payload.bin&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">write_temp_payload</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;payload-&quot;</span><span class="p">,</span> <span class="s2">&quot;.bin&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
     <span class="n">path</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_workspace</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">workspace</span> <span class="o">=</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;incan-build-&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">artifact</span> <span class="o">=</span> <span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;artifact.txt&quot;</span>
+    <span class="n">artifact</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">,</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="n">workspace</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_large_payload</span><span class="p">(</span><span class="n">chunks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">spool</span> <span class="o">=</span> <span class="nc">SpooledTemporaryFile</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+        <span class="n">spool</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="n">spool</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
 </code></pre></div>
-<p><code>std.tempfile.SpooledTemporaryFile</code> is a follow-up API for RFC 010. It should compose with <code>std.fs</code> paths and file handles instead of being folded into <code>std.fs</code>.</p>
+<p>Temporary wrappers delete their live paths when the wrapper is dropped. Call <code>persist()</code> when the caller should keep the path after the wrapper leaves scope. <code>NamedTemporaryFile.try_new()</code> and <code>TemporaryDirectory.try_new()</code> are fallible because they reserve real filesystem entries; use <code>try_new_with(prefix, suffix, dir)</code> when naming or parent placement matters.</p>
+<p><code>SpooledTemporaryFile(max_size=...)</code> starts in memory and rolls over to a named temporary file after the buffer grows beyond <code>max_size</code>. Use it when small payloads should avoid the filesystem but large payloads still need a path through <code>rollover()</code>, <code>path()</code>, or <code>persist()</code>.</p>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../reference/stdlib/fs/">std.fs reference</a></li>
+<li><a href="../../reference/stdlib/tempfile/">std.tempfile reference</a></li>
 <li><a href="../../explanation/error_handling/">Error handling</a></li>
 </ul>
 

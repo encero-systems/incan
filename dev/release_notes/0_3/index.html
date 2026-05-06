@@ -1768,6 +1768,8 @@
       
         
       
+        
+      
     
     
       
@@ -1904,6 +1906,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
   </span>
   
 
@@ -4705,6 +4728,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-010-temporary-files-and-directories" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 010 temporary files and directories
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#deterministic-incanlock-files" class="md-nav__link">
     <span class="md-ellipsis">
       Deterministic incan.lock files
@@ -5093,6 +5125,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-010-temporary-files-and-directories" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 010 temporary files and directories
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#deterministic-incanlock-files" class="md-nav__link">
     <span class="md-ellipsis">
       Deterministic incan.lock files
@@ -5259,6 +5300,7 @@
 <li>testing should feel like a first-class workflow, with inline unit tests, fixtures, parametrization, selection, scheduling, and machine-readable reports owned by Incan rather than delegated to ad hoc scripts</li>
 <li>iterator pipelines should be lazy by default, with terminal consumers such as <code>.collect()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, and <code>.fold()</code> making realization or summarization explicit</li>
 <li>ownership and generated-runtime ergonomics should improve structurally, not through one-off <code>.clone()</code> or <code>.as_ref()</code> patches</li>
+<li>standard-library filesystem workflows should distinguish ordinary path/file operations from temporary resource acquisition and cleanup</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
 <p>There are no required source migrations for ordinary <code>int</code> and <code>float</code> code. Those spellings remain valid and keep their <code>i64</code> / <code>f64</code> representations.</p>
@@ -5361,6 +5403,9 @@ the raw representation for value enums.</p>
 <h3 id="rfc-057-targeted-generated-rust-lint-suppression">RFC 057 targeted generated-Rust lint suppression<a class="headerlink" href="#rfc-057-targeted-generated-rust-lint-suppression" title="Permanent link">&para;</a></h3>
 <p>Incan now supports <code>@rust.allow(...)</code> for narrow suppression of specific rustc or Clippy lints on the generated Rust item for one declaration. This is Rust-emission metadata for unavoidable generated-Rust warnings, not arbitrary Rust attribute injection and not project-wide lint configuration.</p>
 <p>The decorator is item-only and covers functions, methods, models, classes, enums, and newtypes. Module-level <code>rust.allow(...)</code> directives are not supported. The compiler also rejects obvious broad lint groups including <code>warnings</code>, <code>unused</code>, <code>clippy::all</code>, <code>clippy::pedantic</code>, <code>clippy::nursery</code>, <code>clippy::restriction</code>, and <code>clippy::cargo</code>.</p>
+<h3 id="rfc-010-temporary-files-and-directories">RFC 010 temporary files and directories<a class="headerlink" href="#rfc-010-temporary-files-and-directories" title="Permanent link">&para;</a></h3>
+<p><code>std.tempfile</code> now owns temporary resource creation while <code>std.fs</code> owns ordinary path and file operations. Use <code>NamedTemporaryFile.try_new()</code> for a named temporary file and <code>TemporaryDirectory.try_new()</code> for a temporary directory tree. Use <code>try_new_with(prefix, suffix, dir)</code> when the caller needs configured naming or a specific parent directory. Both return <code>Result[..., IoError]</code> because they reserve host filesystem entries.</p>
+<p>Temporary wrappers delete their live paths when dropped. Call <code>path()</code> to work with the location through <code>std.fs.Path</code>, and call <code>persist()</code> when the output should survive the wrapper leaving scope. <code>SpooledTemporaryFile(max_size=...)</code> starts in memory, rolls over to a named temporary file when it grows beyond <code>max_size</code> or <code>rollover()</code> is called, and exposes <code>path()</code> / <code>persist()</code> after rollover. Pathless <code>TemporaryFile</code> remains deferred until its cross-platform file-handle contract is settled.</p>
 <h3 id="deterministic-incanlock-files">Deterministic <code>incan.lock</code> files<a class="headerlink" href="#deterministic-incanlock-files" title="Permanent link">&para;</a></h3>
 <p><code>incan.lock</code> no longer records the wall-clock time when the file was generated. The lock file now contains only reproducibility-relevant inputs such as the Incan lock format version, compiler version, dependency fingerprint, Cargo feature selection, and embedded <code>Cargo.lock</code> payload. Re-running <code>incan lock</code> against unchanged inputs should leave the file byte-for-byte unchanged, reducing noisy VCS churn in projects that commit lock files.</p>
 <p>Older lock files that still contain the previous <code>generated = "..."</code> metadata continue to load, but newly written lock files omit it.</p>
@@ -5495,6 +5540,7 @@ the raw representation for value enums.</p>
 <ul>
 <li>Async fixtures: <a href="../../RFCs/closed/implemented/004_async_fixtures/">RFC 004</a></li>
 <li>Numeric type system and builtin type registry: <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a></li>
+<li>Temporary files and directories: <a href="/dev/RFCs/closed/implemented/010_tempfile">RFC 010</a></li>
 <li>Hatch-like tooling and project lifecycle CLI: <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
 <li>Loop expressions and break values: <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a></li>
 <li>Testing language primitives: <a href="/dev/RFCs/closed/implemented/018_testing">RFC 018</a></li>
