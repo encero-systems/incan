@@ -1077,6 +1077,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(object),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![
                                 IrCallArg {
@@ -1259,6 +1260,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(iterable),
                             method: protocol.iter_method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: self.callable_signature_for_call_span(f.iter.span),
@@ -1278,6 +1280,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(iter_var),
                             method: protocol.next_method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: None,
@@ -1399,6 +1402,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(lhs_expr),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,

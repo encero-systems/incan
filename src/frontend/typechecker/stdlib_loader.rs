@@ -166,6 +166,19 @@ impl StdlibAstCache {
         self.cache.get(&key)?.trait_meta.get(trait_name).cloned()
     }
 
+    /// Return the already-loaded stdlib module path that exports `trait_name`, if known.
+    ///
+    /// This intentionally scans only cached modules. Callers use it after ordinary import/type lookup has loaded the
+    /// relevant stdlib module, avoiding a broad filesystem scan from the typechecker hot path.
+    pub fn loaded_trait_module_path(&self, trait_name: &str) -> Option<Vec<String>> {
+        self.cache.iter().find_map(|(module_path, data)| {
+            data.traits
+                .iter()
+                .any(|(name, _)| name == trait_name)
+                .then(|| module_path.split('.').map(str::to_string).collect())
+        })
+    }
+
     /// Ensure a module is loaded into the cache, loading it on first access.
     fn ensure_loaded(&mut self, module_path: &[String]) {
         let key = module_path.join(".");
