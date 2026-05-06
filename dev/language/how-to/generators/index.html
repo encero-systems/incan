@@ -4836,7 +4836,7 @@
 </code></pre></div>
 <p>The loop consumes one yielded item at a time. The function does not allocate a list of every non-empty line first.</p>
 <h2 id="transform-and-collect">Transform and collect<a class="headerlink" href="#transform-and-collect" title="Permanent link">&para;</a></h2>
-<p>Use <code>map</code>, <code>filter</code>, and <code>take</code> to keep the pipeline lazy until the final <code>collect()</code>.</p>
+<p>Use iterator adapters such as <code>map</code>, <code>filter</code>, and <code>take</code> to keep the pipeline lazy until the final <code>collect()</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">square</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span>
 
@@ -4849,6 +4849,7 @@
     <span class="nb">println</span><span class="p">(</span><span class="nb">values</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
 </code></pre></div>
 <p>Use named functions for callbacks when the operation is shared or worth naming. Use a short closure when the logic is local and obvious.</p>
+<p>Generators support the same adapter and consumer surface as other iterator values, including <code>flat_map</code>, <code>skip</code>, <code>enumerate</code>, <code>zip</code>, <code>batch</code>, <code>count</code>, <code>fold</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>for_each</code>, and <code>sum</code>.</p>
 <h2 id="limit-an-unbounded-producer">Limit an unbounded producer<a class="headerlink" href="#limit-an-unbounded-producer" title="Permanent link">&para;</a></h2>
 <p>Pair an unbounded generator with <code>take</code> before collecting.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_up</span><span class="p">(</span><span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>

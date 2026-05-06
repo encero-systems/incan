@@ -1599,9 +1599,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#helper-methods" class="md-nav__link">
+  <a href="#iterator-adapter-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Helper methods
+      Iterator adapter methods
     </span>
   </a>
   
@@ -4785,9 +4785,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#helper-methods" class="md-nav__link">
+  <a href="#iterator-adapter-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Helper methods
+      Iterator adapter methods
     </span>
   </a>
   
@@ -4857,14 +4857,14 @@
 <li>Nested <code>for</code> clauses and trailing <code>if</code> filters are supported.</li>
 <li>Generator expressions are lazy; list comprehensions remain the eager collection form.</li>
 </ul>
-<h2 id="helper-methods">Helper methods<a class="headerlink" href="#helper-methods" title="Permanent link">&para;</a></h2>
-<p><code>Generator[T]</code> supports this helper surface:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Generator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<h2 id="iterator-adapter-methods">Iterator adapter methods<a class="headerlink" href="#iterator-adapter-methods" title="Permanent link">&para;</a></h2>
+<p><code>Generator[T]</code> satisfies <code>Iterator[T]</code>, so generator values support the standard iterator adapter and consumer surface.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
 </code></pre></div>
-<p><code>map</code>, <code>filter</code>, and <code>take</code> are lazy and return generator values. <code>collect</code> is terminal and materializes the remaining items into a list.</p>
+<p>Lazy adapters return iterator values and do not materialize intermediate lists. Terminal consumers such as <code>collect</code>, <code>count</code>, <code>fold</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>for_each</code>, and <code>sum</code> consume the generator. See <a href="../stdlib_traits/collection_protocols/">Collection protocols</a> for the full surface.</p>
 <h2 id="consumption">Consumption<a class="headerlink" href="#consumption" title="Permanent link">&para;</a></h2>
 <p>Advancing a generator resumes it until the next yielded value or until it finishes. Exhausting a generator ends iteration normally.</p>
 <p>Generator functions do not execute their body when the generator value is created. Execution starts when a consumer asks for the first item.</p>

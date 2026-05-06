@@ -5034,7 +5034,7 @@
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong> RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)</li>
 <li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/324</li>
-<li><strong>Follow-up:</strong> RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127</li>
+<li><strong>Follow-up:</strong> RFC 088 (iterator adapter surface), implemented by https://github.com/dannys-code-corner/incan/issues/127</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.1</li>
 <li><strong>Shipped in:</strong> v0.3</li>
@@ -5182,7 +5182,7 @@
 <li><code>for</code> loops consume generators the same way they consume other iterable sources.</li>
 <li>Recursive generators are valid as long as the yielded element type remains consistent.</li>
 <li>Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.</li>
-<li>The broader <code>Iterator[T]</code> adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that design and issue #127 tracks it.</li>
+<li>The broader <code>Iterator[T]</code> adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that implemented design.</li>
 </ul>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
 <p>The feature is additive. Existing functions, loops, and comprehensions keep their meaning.</p>
@@ -5296,7 +5296,7 @@
 <ol>
 <li><code>Generator[T]</code> is the user-facing semantic type for <code>yield</code>-produced values. It should satisfy the iteration protocol rather than being collapsed into a bare <code>Iterator[T]</code> return type.</li>
 <li>The first stable generator helper surface is intentionally small: <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code>.</li>
-<li>The broader iterator adapter surface belongs in RFC 088, tracked by issue #127.</li>
+<li>The broader iterator adapter surface belongs in RFC 088, implemented by issue #127.</li>
 <li>Generator expressions support the full comprehension-clause surface rather than only a single <code>for</code> clause.</li>
 <li><code>return</code> without a value may terminate a generator early, but <code>return value</code> is rejected in RFC 006 and reserved for future generator delegation or coroutine work.</li>
 <li>Fixture <code>yield</code> and generator <code>yield</code> do not need extra lint or style guidance beyond precise context-sensitive diagnostics.</li>

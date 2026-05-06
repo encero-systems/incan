@@ -4855,7 +4855,7 @@
 </code></pre></div>
 <p>Both forms produce <code>Generator[T]</code>. The difference is how much structure the producer needs. If naming intermediate steps makes the logic easier to read, use a generator function. If the pipeline is short and local, use a generator expression.</p>
 <h2 id="laziness-and-helper-chains">Laziness and helper chains<a class="headerlink" href="#laziness-and-helper-chains" title="Permanent link">&para;</a></h2>
-<p><code>map</code>, <code>filter</code>, and <code>take</code> preserve laziness. They build another generator pipeline instead of building intermediate lists.</p>
+<p>Iterator adapters such as <code>map</code>, <code>filter</code>, and <code>take</code> preserve laziness. They build another iterator pipeline instead of building intermediate lists.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">square</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span>
 
@@ -4868,6 +4868,7 @@
     <span class="nb">println</span><span class="p">(</span><span class="nb">values</span><span class="p">[</span><span class="mi">3</span><span class="p">])</span>
 </code></pre></div>
 <p>In this example, the generator does not compute every square. It computes only as many values as <code>take(4)</code> needs, then <code>collect()</code> materializes those four items into a list.</p>
+<p>Generators use the same iterator adapter surface as other iterator values. That means broader chains can combine helpers such as <code>flat_map</code>, <code>skip</code>, <code>enumerate</code>, <code>zip</code>, <code>batch</code>, and terminal consumers such as <code>count</code>, <code>fold</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>for_each</code>, and <code>sum</code>.</p>
 <h2 id="fixture-yield-and-generator-yield">Fixture <code>yield</code> and generator <code>yield</code><a class="headerlink" href="#fixture-yield-and-generator-yield" title="Permanent link">&para;</a></h2>
 <p>Fixture <code>yield</code> and generator <code>yield</code> share the same surface idea: produce a value, suspend, and later resume. The declaration context gives the token its meaning. Fixture declarations use fixture semantics; functions returning <code>Generator[T]</code> use lazy iteration semantics.</p>
 <p>You do not need a separate style rule for the two forms. Read the enclosing declaration first, then read <code>yield</code> as “produce this value and pause here.”</p>
