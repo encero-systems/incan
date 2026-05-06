@@ -306,6 +306,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1406,8 +1412,9 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
+ "byteorder",
  "clap",
  "hex",
  "incan_core",
@@ -1443,14 +1450,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1459,14 +1466,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1474,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "axum",
  "incan_core",
@@ -1487,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1508,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3013,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 dependencies = [
  "hex",
  "incan_core",

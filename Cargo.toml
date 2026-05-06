@@ -22,7 +22,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.3.0-dev.36"
+version = "0.3.0-dev.37"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.92"
@@ -108,6 +108,8 @@ wasmtime = { version = "44.0.1", default-features = false, features = ["cranelif
 wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
+# Runtime crate used by std.io generated-project offline smoke tests.
+byteorder = "1"
 # Snapshot testing for codegen
 insta = { version = "1.45", features = ["glob"] }
 # Property-based testing

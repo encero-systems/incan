@@ -756,6 +756,23 @@ impl TypeChecker {
         self.types_compatible(&expected.return_type, &found.return_type)
     }
 
+    /// Return whether two methods have the same call-time parameter shape, ignoring return type.
+    fn method_call_shapes_same(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
+        if left.receiver != right.receiver {
+            return false;
+        }
+        if left.is_async != right.is_async {
+            return false;
+        }
+        if left.params.len() != right.params.len() {
+            return false;
+        }
+        left.params
+            .iter()
+            .zip(right.params.iter())
+            .all(|(left_param, right_param)| left_param.kind == right_param.kind && left_param.ty == right_param.ty)
+    }
+
     /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).
     fn is_strict_supertrait_name(&self, ancestor: &str, descendant: &str) -> bool {
         self.semantic_supertrait_closure(descendant)
@@ -1288,7 +1305,7 @@ impl TypeChecker {
         spans
     }
 
-    /// Ensure every duplicate concrete method maps to a distinct same-family trait obligation.
+    /// Ensure overloads that differ only by return type map to same-family trait obligations.
     fn validate_overloaded_methods_are_trait_backed(
         &mut self,
         type_name: &str,
@@ -1312,6 +1329,7 @@ impl TypeChecker {
             }
             let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
             let mut matched_obligations = vec![false; obligations.len()];
+            let mut overload_matches: Vec<Option<usize>> = vec![None; overloads.len()];
             for (idx, overload) in overloads.iter().enumerate() {
                 let matched_index = obligations
                     .iter()
@@ -1322,6 +1340,19 @@ impl TypeChecker {
                     .map(|(obligation_idx, _)| obligation_idx);
                 if let Some(obligation_idx) = matched_index {
                     matched_obligations[obligation_idx] = true;
+                    overload_matches[idx] = Some(obligation_idx);
+                }
+            }
+            let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
+            for (idx, overload) in overloads.iter().enumerate() {
+                if overload_matches[idx].is_some() {
+                    continue;
+                }
+                let shares_call_shape = overloads
+                    .iter()
+                    .enumerate()
+                    .any(|(other_idx, other)| other_idx != idx && self.method_call_shapes_same(overload, other));
+                if has_trait_backed_overload && !shares_call_shape {
                     continue;
                 }
                 let span = method_spans

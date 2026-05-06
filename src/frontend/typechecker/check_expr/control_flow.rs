@@ -9,6 +9,7 @@ use crate::frontend::symbols::{ResolvedType, ScopeKind};
 
 use super::TypeChecker;
 use crate::frontend::typechecker::LoopContextKind;
+use crate::frontend::typechecker::helpers::result_ty;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 
 impl TypeChecker {
@@ -59,7 +60,18 @@ impl TypeChecker {
         inner: &Spanned<Expr>,
         span: Span,
     ) -> ResolvedType {
-        let inner_ty = self.check_expr(inner);
+        self.check_try_with_expected(inner, span, None)
+    }
+
+    /// Validate the `?` operator while preserving contextual `Ok` type information.
+    pub(in crate::frontend::typechecker::check_expr) fn check_try_with_expected(
+        &mut self,
+        inner: &Spanned<Expr>,
+        span: Span,
+        expected_ok_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let expected_result_ty = expected_ok_ty.map(|ok_ty| result_ty(ok_ty.clone(), ResolvedType::Unknown));
+        let inner_ty = self.check_expr_with_expected(inner, expected_result_ty.as_ref());
 
         if !inner_ty.is_result() {
             self.errors.push(errors::try_on_non_result(&inner_ty.to_string(), span));
