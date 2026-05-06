@@ -10,6 +10,7 @@ use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 use super::TypeChecker;
@@ -26,6 +27,8 @@ impl TypeChecker {
     ///
     /// This is the central call coordinator: it preserves constructor and builtin special cases first, then resolves
     /// function values, callable objects, and ordinary value calls through the same argument-binding machinery.
+    /// Callable values record their accepted parameter list at the full call span so IR lowering can preserve Rust
+    /// borrow boundaries for calls reached through associated-function member access.
     pub(in crate::frontend::typechecker::check_expr) fn check_call(
         &mut self,
         callee: &Spanned<Expr>,
@@ -129,6 +132,9 @@ impl TypeChecker {
 
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
+                    SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
+                        return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                    }
                     SymbolKind::Function(func_info) => {
                         return self.validate_function_call(name, &func_info, type_args, args, span);
                     }
@@ -200,6 +206,10 @@ impl TypeChecker {
                 });
             if let Some(fields) = ctor_fields {
                 let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
+                self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                self.type_info
+                    .ident_kinds
+                    .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                 if in_scope && let Some(tid) = surface_types::from_str(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
@@ -223,6 +233,7 @@ impl TypeChecker {
                 let arg_types = self.check_call_arg_types_for_params(args, &params);
                 let mut type_bindings = std::collections::HashMap::new();
                 self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
+                self.type_info.record_call_site_callable_params(span, &params);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)
@@ -248,5 +259,44 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Type-check RFC 047 graph direct constructors (`DiGraph[T]()`, `Dag[T]()`, `MultiDiGraph[T]()`).
+    fn check_graph_constructor_call(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity(name, 0, args.len(), span));
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
+
+        let type_params = match type_info {
+            TypeInfo::Newtype(info) => info.type_params.as_slice(),
+            TypeInfo::Class(info) => info.type_params.as_slice(),
+            TypeInfo::Model(info) => info.type_params.as_slice(),
+            TypeInfo::Enum(info) => info.type_params.as_slice(),
+            TypeInfo::TypeAlias | TypeInfo::Builtin => &[],
+        };
+        if type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        let resolved_args = type_args
+            .iter()
+            .map(|ty| self.resolve_type_checked(ty))
+            .collect::<Vec<_>>();
+        ResolvedType::Generic(name.to_string(), resolved_args)
     }
 }

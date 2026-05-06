@@ -15,7 +15,7 @@
 //! - [`methods`]: Method calls (both known methods via `MethodKind` and regular Rust method-call emission)
 //! - [`calls`]: Regular function calls and binary operations
 //! - [`indexing`]: Index, slice, and field access expressions
-//! - [`comprehensions`]: List and dict comprehensions
+//! - [`comprehensions`]: List comprehensions, dict comprehensions, and generator expressions
 //! - [`structs_enums`]: Struct constructor expressions
 //! - [`mod@format`]: Format strings and range expressions
 //! - [`lvalue`]: Assignment target expressions
@@ -55,11 +55,12 @@ use quote::{ToTokens, format_ident, quote};
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
     CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, Literal as IrLiteral,
-    MethodKind, TypedExpr, UnaryOp, VarRefKind,
+    MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
 pub(super) enum StorageRoot {
@@ -354,6 +355,29 @@ impl<'a> IrEmitter<'a> {
         Ok(plan.apply(emitted))
     }
 
+    /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
+    fn type_is_result_like(ty: &IrType) -> bool {
+        match ty {
+            IrType::Result(_, _) => true,
+            IrType::NamedGeneric(name, args) if args.len() == 2 => {
+                collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
+        if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
+            return self.emit_expr(scrutinee);
+        }
+        self.emit_expr_for_use(
+            scrutinee,
+            ValueUseSite::MatchScrutinee {
+                target_ty: Some(&scrutinee.ty),
+            },
+        )
+    }
+
     /// Check whether an expression is a type-like identifier that should use Rust path syntax.
     ///
     /// This covers Incan type names, enum variants, module placeholders, and external Rust imports.
@@ -502,10 +526,15 @@ impl<'a> IrEmitter<'a> {
                 Ok(lit.to_token_stream())
             }
             IrExprKind::Float(n) => Ok(quote! { #n }),
+            IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
             IrExprKind::String(s) => Ok(quote! { #s }),
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
-                Ok(lit.to_token_stream())
+                if matches!(expr.ty, IrType::StaticBytes | IrType::FrozenBytes) {
+                    Ok(lit.to_token_stream())
+                } else {
+                    Ok(quote! { #lit.to_vec() })
+                }
             }
 
             IrExprKind::Var {
@@ -577,6 +606,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::MethodCall {
                 receiver,
                 method,
+                dispatch,
                 type_args,
                 args,
                 callable_signature,
@@ -584,6 +614,7 @@ impl<'a> IrEmitter<'a> {
             } => self.emit_method_call_expr(
                 receiver,
                 method,
+                dispatch.as_ref(),
                 type_args,
                 args,
                 callable_signature.as_ref(),
@@ -613,6 +644,7 @@ impl<'a> IrEmitter<'a> {
                 iterable,
                 filter,
             } => self.emit_dict_comp(key, value, pattern, iterable, filter.as_deref()),
+            IrExprKind::Generator { element, clauses } => self.emit_generator_expr(element, clauses),
 
             IrExprKind::List(items) => {
                 let item_target_ty = match &expr.ty {
@@ -692,20 +724,23 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Match { scrutinee, arms } => {
-                let s = self.emit_expr_for_use(
-                    scrutinee,
-                    ValueUseSite::MatchScrutinee {
-                        target_ty: Some(&scrutinee.ty),
-                    },
-                )?;
+                let s = self.emit_match_scrutinee(scrutinee)?;
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let pat = self.emit_pattern(&arm.pattern);
+                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
                         let body = self.emit_expr(&arm.body)?;
-                        if let Some(guard) = &arm.guard {
-                            let g = self.emit_expr(guard)?;
-                            Ok(quote! { #pat if #g => #body })
+                        let guard = match (&pattern_guard, &arm.guard) {
+                            (Some(pattern_guard), Some(arm_guard)) => {
+                                let arm_guard = self.emit_expr(arm_guard)?;
+                                Some(quote! { (#pattern_guard) && (#arm_guard) })
+                            }
+                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
+                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
+                            (None, None) => None,
+                        };
+                        if let Some(guard) = guard {
+                            Ok(quote! { #pat if #guard => #body })
                         } else {
                             Ok(quote! { #pat => #body })
                         }
@@ -783,6 +818,20 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #e as #t })
             }
 
+            IrExprKind::NumericResize {
+                expr: inner,
+                policy,
+                to_type,
+            } => {
+                let e = self.emit_expr(inner)?;
+                let t = self.emit_type(to_type);
+                match policy {
+                    NumericResizePolicy::Lossless | NumericResizePolicy::Wrapping => Ok(quote! { (#e) as #t }),
+                    NumericResizePolicy::Try => Ok(quote! { incan_stdlib::num::try_resize::<_, #t>(#e) }),
+                    NumericResizePolicy::Saturating => Ok(quote! { incan_stdlib::num::saturating_resize::<_, #t>(#e) }),
+                }
+            }
+
             IrExprKind::InteropCoerce {
                 expr: inner,
                 from_ty: _,
@@ -803,6 +852,14 @@ impl<'a> IrEmitter<'a> {
                                 }
                                 _ => quote! { #inner },
                             },
+                            incan_core::interop::CoercionPolicy::Lossless => {
+                                let target = syn::parse_str::<syn::Type>(rust_target.as_str()).map_err(|err| {
+                                    EmitError::SynParse(format!(
+                                        "invalid Rust boundary cast target `{rust_target}`: {err}"
+                                    ))
+                                })?;
+                                quote! { (#inner) as #target }
+                            }
                             incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
                                 "&str" | "&[u8]" => quote! { #inner },
                                 "&String" | "&std::string::String" | "&alloc::string::String" => {
@@ -861,8 +918,10 @@ mod tests {
     use super::*;
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::expr::{
-        CollectionMethodKind, IrCallArg, IrCallArgKind, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
+        CollectionMethodKind, IrCallArg, IrCallArgKind, IteratorMethodKind, MethodCallArgPolicy, MethodKind, VarAccess,
+        VarRefKind,
     };
+    use incan_core::lang::traits::{self as core_traits, TraitId};
 
     #[test]
     fn type_name_associated_call_does_not_borrow_string_arguments() -> Result<(), String> {
@@ -879,6 +938,7 @@ mod tests {
                     IrType::Struct("Response".to_string()),
                 )),
                 method: "html".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1005,6 +1065,7 @@ mod tests {
                     IrType::Struct("Dataset".to_string()),
                 )),
                 method: "join".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![
                     IrCallArg {
@@ -1107,6 +1168,7 @@ mod tests {
                     IrType::Struct("std::collections::HashMap".to_string()),
                 )),
                 method: "get".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1149,6 +1211,7 @@ mod tests {
                     IrType::NamedGeneric("HashMap".to_string(), vec![IrType::String, IrType::Int]),
                 )),
                 method: "get".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1366,6 +1429,7 @@ mod tests {
                     IrType::Struct("ExternalBuilder".to_string()),
                 )),
                 method: "rename".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1412,6 +1476,7 @@ mod tests {
                     IrType::Struct("Session".to_string()),
                 )),
                 method: "read_csv".to_string(),
+                dispatch: None,
                 type_args: vec![IrType::Struct("OrderLine".to_string())],
                 args: vec![
                     IrCallArg {
@@ -1468,6 +1533,7 @@ mod tests {
                     IrType::Struct("widgets".to_string()),
                 )),
                 method: "make_widget".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1522,6 +1588,7 @@ mod tests {
                     IrType::Struct("Name".to_string()),
                 )),
                 method: "parse".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: vec![IrCallArg {
                     name: None,
@@ -1547,5 +1614,268 @@ mod tests {
             "rusttype surface associated function must not use external-Rust `.into()` conversion, got `{rendered}`"
         );
         Ok(())
+    }
+
+    #[test]
+    fn known_iterator_adapter_methods_emit_incan_stdlib_models() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+
+        let render = |kind: IteratorMethodKind, args: Vec<IrCallArg>| -> Result<String, String> {
+            let expr = TypedExpr::new(
+                IrExprKind::KnownMethodCall {
+                    receiver: Box::new(iterator_receiver()),
+                    kind: MethodKind::Iterator(kind),
+                    args,
+                },
+                IrType::Unknown,
+            );
+            emitter
+                .emit_expr(&expr)
+                .map(|tokens| tokens.to_string())
+                .map_err(|err| format!("expected successful expression emission, got {err:?}"))
+        };
+
+        let callback = || {
+            vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: function_var("transform"),
+            }]
+        };
+        let count = |value| {
+            vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: TypedExpr::new(IrExprKind::Int(value), IrType::Int),
+            }]
+        };
+        let other = || {
+            vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "others".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric(core_traits::as_str(TraitId::Iterator).to_string(), vec![IrType::Int]),
+                ),
+            }]
+        };
+
+        let map_rendered = render(IteratorMethodKind::Map, callback())?;
+        assert!(
+            map_rendered.contains("collection :: MapIterator") && map_rendered.contains("f : transform"),
+            "unexpected map emission: {map_rendered}"
+        );
+
+        let filter_rendered = render(IteratorMethodKind::Filter, callback())?;
+        assert!(
+            filter_rendered.contains("collection :: FilterIterator") && filter_rendered.contains("f : transform"),
+            "unexpected filter emission: {filter_rendered}"
+        );
+
+        let enumerate_rendered = render(IteratorMethodKind::Enumerate, Vec::new())?;
+        assert!(
+            enumerate_rendered.contains("collection :: EnumerateIterator")
+                && enumerate_rendered.contains("index : 0i64"),
+            "unexpected enumerate emission: {enumerate_rendered}"
+        );
+
+        let zip_rendered = render(IteratorMethodKind::Zip, other())?;
+        assert!(
+            zip_rendered.contains("collection :: ZipIterator") && zip_rendered.contains("right : (others)"),
+            "unexpected zip emission: {zip_rendered}"
+        );
+
+        let take_rendered = render(IteratorMethodKind::Take, count(3))?;
+        assert!(
+            take_rendered.contains("collection :: TakeIterator") && take_rendered.contains("remaining : 3"),
+            "unexpected take emission: {take_rendered}"
+        );
+
+        let skip_rendered = render(IteratorMethodKind::Skip, count(-2))?;
+        assert!(
+            skip_rendered.contains("collection :: SkipIterator") && skip_rendered.contains("remaining : - 2"),
+            "unexpected skip emission: {skip_rendered}"
+        );
+
+        let take_while_rendered = render(IteratorMethodKind::TakeWhile, callback())?;
+        assert!(
+            take_while_rendered.contains("collection :: TakeWhileIterator")
+                && take_while_rendered.contains("f : transform"),
+            "unexpected take_while emission: {take_while_rendered}"
+        );
+
+        let skip_while_rendered = render(IteratorMethodKind::SkipWhile, callback())?;
+        assert!(
+            skip_while_rendered.contains("collection :: SkipWhileIterator")
+                && skip_while_rendered.contains("f : transform"),
+            "unexpected skip_while emission: {skip_while_rendered}"
+        );
+
+        let chain_rendered = render(IteratorMethodKind::Chain, other())?;
+        assert!(
+            chain_rendered.contains("collection :: ChainIterator") && chain_rendered.contains("second : (others)"),
+            "unexpected chain emission: {chain_rendered}"
+        );
+
+        let flat_map_rendered = render(IteratorMethodKind::FlatMap, callback())?;
+        assert!(
+            flat_map_rendered.contains("collection :: FlatMapIterator")
+                && flat_map_rendered.contains("current : Vec :: new ()"),
+            "unexpected flat_map emission: {flat_map_rendered}"
+        );
+
+        let batch_rendered = render(IteratorMethodKind::Batch, count(2))?;
+        assert!(
+            batch_rendered.contains("collection :: BatchIterator") && batch_rendered.contains("size : 2"),
+            "unexpected batch emission: {batch_rendered}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn known_iterator_terminal_methods_emit_incan_next_loops() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+
+        let render = |kind: IteratorMethodKind, args: Vec<IrCallArg>| -> Result<String, String> {
+            let expr = TypedExpr::new(
+                IrExprKind::KnownMethodCall {
+                    receiver: Box::new(iterator_receiver()),
+                    kind: MethodKind::Iterator(kind),
+                    args,
+                },
+                IrType::Unknown,
+            );
+            emitter
+                .emit_expr(&expr)
+                .map(|tokens| tokens.to_string())
+                .map_err(|err| format!("expected successful expression emission, got {err:?}"))
+        };
+
+        let callback = || {
+            vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: function_var("predicate"),
+            }]
+        };
+
+        let collect_rendered = render(IteratorMethodKind::Collect, Vec::new())?;
+        assert!(
+            collect_rendered.contains("collection :: Iterator :: __next__")
+                && collect_rendered.contains("__incan_items . push"),
+            "unexpected collect emission: {collect_rendered}"
+        );
+
+        let count_rendered = render(IteratorMethodKind::Count, Vec::new())?;
+        assert!(
+            count_rendered.contains("collection :: Iterator :: __next__")
+                && count_rendered.contains("__incan_total += 1"),
+            "unexpected count emission: {count_rendered}"
+        );
+
+        let reduce_rendered = render(
+            IteratorMethodKind::Reduce,
+            vec![
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
+                },
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: function_var("predicate"),
+                },
+            ],
+        )?;
+        assert!(
+            reduce_rendered.contains("collection :: Iterator :: __next__")
+                && reduce_rendered.contains("__incan_acc = (predicate) (__incan_acc , __incan_item)"),
+            "unexpected reduce emission: {reduce_rendered}"
+        );
+
+        let fold_rendered = render(
+            IteratorMethodKind::Fold,
+            vec![
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(IrExprKind::Int(0), IrType::Int),
+                },
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: function_var("predicate"),
+                },
+            ],
+        )?;
+        assert!(
+            fold_rendered.contains("collection :: Iterator :: __next__")
+                && fold_rendered.contains("__incan_acc = (predicate) (__incan_acc , __incan_item)"),
+            "unexpected fold emission: {fold_rendered}"
+        );
+
+        let any_rendered = render(IteratorMethodKind::Any, callback())?;
+        assert!(
+            any_rendered.contains("collection :: Iterator :: __next__") && any_rendered.contains("(predicate)"),
+            "unexpected any emission: {any_rendered}"
+        );
+
+        let all_rendered = render(IteratorMethodKind::All, callback())?;
+        assert!(
+            all_rendered.contains("collection :: Iterator :: __next__") && all_rendered.contains("(predicate)"),
+            "unexpected all emission: {all_rendered}"
+        );
+
+        let find_rendered = render(IteratorMethodKind::Find, callback())?;
+        assert!(
+            find_rendered.contains("collection :: Iterator :: __next__") && find_rendered.contains("(predicate)"),
+            "unexpected find emission: {find_rendered}"
+        );
+
+        let for_each_rendered = render(IteratorMethodKind::ForEach, callback())?;
+        assert!(
+            for_each_rendered.contains("collection :: Iterator :: __next__")
+                && for_each_rendered.contains("(predicate) (__incan_item)"),
+            "unexpected for_each emission: {for_each_rendered}"
+        );
+
+        let sum_rendered = render(IteratorMethodKind::Sum, Vec::new())?;
+        assert!(
+            sum_rendered.contains("collection :: Iterator :: __next__")
+                && sum_rendered.contains("__incan_sum += __incan_item"),
+            "unexpected sum emission: {sum_rendered}"
+        );
+
+        Ok(())
+    }
+
+    fn iterator_receiver() -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::NamedGeneric(core_traits::as_str(TraitId::Iterator).to_string(), vec![IrType::Int]),
+        )
+    }
+
+    fn function_var(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Unknown,
+        )
     }
 }

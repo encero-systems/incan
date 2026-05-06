@@ -1,13 +1,51 @@
-//! List and dict comprehension lowering.
+//! Comprehension and generator-expression lowering.
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::IrExprKind;
+use super::super::super::expr::{IrExprKind, IrGeneratorClause};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 impl AstLowering {
+    /// Lower a generator expression `(expr for ... if ...)`.
+    pub(in crate::backend::ir::lower) fn lower_generator_expr(
+        &mut self,
+        generator: &ast::GeneratorExpr,
+    ) -> Result<(IrExprKind, IrType), LoweringError> {
+        let mut clauses = Vec::with_capacity(generator.clauses.len());
+        self.non_linear_context_depth += 1;
+        for clause in &generator.clauses {
+            match clause {
+                ast::ComprehensionClause::For { pattern, iter } => {
+                    clauses.push(IrGeneratorClause::For {
+                        pattern: self.lower_pattern(&pattern.node),
+                        iterable: Box::new(self.lower_expr_spanned(iter)?),
+                    });
+                }
+                ast::ComprehensionClause::If(condition) => {
+                    clauses.push(IrGeneratorClause::If(self.lower_expr_spanned(condition)?));
+                }
+            }
+        }
+        let element = self.lower_expr_spanned(&generator.expr);
+        self.non_linear_context_depth -= 1;
+        let element = element?;
+        let element_ty = element.ty.clone();
+
+        Ok((
+            IrExprKind::Generator {
+                element: Box::new(element),
+                clauses,
+            },
+            IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::Generator).to_string(),
+                vec![element_ty],
+            ),
+        ))
+    }
+
     /// Lower a list comprehension `[expr for var in iter if cond]`.
     pub(in crate::backend::ir::lower) fn lower_list_comp(
         &mut self,

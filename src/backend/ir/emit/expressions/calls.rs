@@ -138,7 +138,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a concrete payload argument for a `Union[...]` parameter as the generated enum variant.
-    fn emit_union_payload_arg(
+    pub(super) fn emit_union_payload_arg(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,
@@ -559,7 +559,9 @@ impl<'a> IrEmitter<'a> {
                 if let IrExprKind::Var { access, .. } = &a.kind {
                     match access {
                         VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                        VarAccess::Borrow => return Ok(quote! { &#emitted }),
+                        VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
+                            return Ok(quote! { &#emitted });
+                        }
                         _ => {}
                     }
                 }
@@ -1072,6 +1074,10 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit one positional or named argument for a non-rest call.
+    ///
+    /// The caller supplies the selected parameter so this path can apply literal inference, union wrapping, and borrow
+    /// preservation with the same target type information used by ordinary Incan calls.
     fn emit_regular_call_arg(
         &self,
         func: &TypedExpr,
@@ -1095,7 +1101,9 @@ impl<'a> IrEmitter<'a> {
         if let IrExprKind::Var { access, .. } = &arg.kind {
             match access {
                 VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                VarAccess::Borrow => return Ok(quote! { &#emitted }),
+                VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
+                    return Ok(quote! { &#emitted });
+                }
                 _ => {}
             }
         }

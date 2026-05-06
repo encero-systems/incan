@@ -593,6 +593,17 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
                     .is_some_and(|body| body_references_name(body, name))
         }
         Expr::Loop(loop_expr) => body_references_name(&loop_expr.body, name),
+        Expr::Generator(generator) => {
+            expr_references_name(&generator.expr.node, name)
+                || generator.clauses.iter().any(|clause| match clause {
+                    crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                        expr_references_name(&iter.node, name)
+                    }
+                    crate::frontend::ast::ComprehensionClause::If(condition) => {
+                        expr_references_name(&condition.node, name)
+                    }
+                })
+        }
         Expr::ListComp(comp) => {
             expr_references_name(&comp.expr.node, name)
                 || expr_references_name(&comp.iter.node, name)

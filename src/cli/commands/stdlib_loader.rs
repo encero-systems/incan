@@ -22,7 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::cli::{CliError, CliResult};
-use crate::frontend::{diagnostics, lexer::Lexer, parser::Parser};
+use crate::frontend::{ast_walk, diagnostics, lexer::Lexer, parser::Parser};
 use incan_core::lang::stdlib;
 use incan_syntax::ast::{Declaration, ImportKind, Program};
 
@@ -57,6 +57,9 @@ pub fn load_stdlib_modules(modules: &[crate::cli::prelude::ParsedModule]) -> Cli
 
     // ---- Collect all stdlib imports ----
     for module in modules {
+        if uses_iterator_adapter_surface(&module.ast) {
+            stdlib_paths.insert(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]);
+        }
         for import in collect_imports(&module.ast) {
             let path = match &import.kind {
                 ImportKind::From { module, .. } => module.segments.clone(),
@@ -83,6 +86,37 @@ pub fn load_stdlib_modules(modules: &[crate::cli::prelude::ParsedModule]) -> Cli
     }
 
     Ok(stdlib_modules)
+}
+
+/// Return whether stdlib collection should be loaded for RFC 088 iterator surface methods.
+fn uses_iterator_adapter_surface(program: &Program) -> bool {
+    ast_walk::any_expr_in_program(program, |expr| match expr {
+        incan_syntax::ast::Expr::MethodCall(_, method, _, _) => matches!(
+            method.as_str(),
+            "iter"
+                | "map"
+                | "filter"
+                | "enumerate"
+                | "zip"
+                | "take"
+                | "skip"
+                | "take_while"
+                | "skip_while"
+                | "chain"
+                | "flat_map"
+                | "batch"
+                | "collect"
+                | "count"
+                | "reduce"
+                | "fold"
+                | "any"
+                | "all"
+                | "find"
+                | "for_each"
+                | "sum"
+        ),
+        _ => false,
+    })
 }
 
 /// Check if an import path refers to a stdlib module (starts with "std").

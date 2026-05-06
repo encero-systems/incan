@@ -114,14 +114,12 @@ impl AstLowering {
                 self.collect_inherited_methods(parent_name, methods)?;
             }
 
-            // Then add/override with this class's own methods
-            // If a method with the same name exists, remove it first (child overrides parent)
-            for m in &class.methods {
-                // Remove any existing method with the same name
-                methods.retain(|existing| existing.node.name != m.node.name);
-                // Add the new method
-                methods.push(m.clone());
-            }
+            // Then add/override with this class's own methods. Remove inherited methods shadowed by this class, but
+            // keep same-name overloads declared together in the class.
+            let local_method_names: std::collections::HashSet<&str> =
+                class.methods.iter().map(|m| m.node.name.as_str()).collect();
+            methods.retain(|existing| !local_method_names.contains(existing.node.name.as_str()));
+            methods.extend(class.methods.iter().cloned());
         }
         Ok(())
     }

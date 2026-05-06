@@ -103,6 +103,15 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
+    if module_path
+        == [
+            stdlib::INCAN_STD_NAMESPACE.to_string(),
+            "derives".to_string(),
+            "collection".to_string(),
+        ]
+    {
+        return true;
+    }
     if !preserve_non_stdlib_public_items {
         return false;
     }
@@ -389,10 +398,12 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
     (has_serialize, has_deserialize)
 }
 
+/// Add serde derives to generated newtypes when the current program needs serde support.
 fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
     use super::decl::IrDeclKind;
     use super::types::IrType;
 
+    /// Return whether a newtype inner type can safely receive derived serde support.
     fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
         match ty {
             IrType::Unit
@@ -400,6 +411,7 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -858,6 +870,7 @@ impl<'a> IrCodegen<'a> {
 
         // Build unified function registry including imported module functions
         let mut unified_registry = ir_program.function_registry.clone();
+        let mut dependency_ir_programs = Vec::new();
         for (_, dep_ast, _) in &self.dependency_modules {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
@@ -865,6 +878,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             unified_registry.merge(&dep_ir.function_registry);
+            dependency_ir_programs.push(dep_ir);
         }
 
         // Emit IR to Rust code
@@ -889,6 +903,9 @@ impl<'a> IrCodegen<'a> {
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                inner.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -908,6 +925,9 @@ impl<'a> IrCodegen<'a> {
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                emitter.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -1075,16 +1095,13 @@ impl<'a> IrCodegen<'a> {
             self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
 
         let mut modules = HashMap::new();
-        for (name, module_path, ir) in lowered_modules {
-            let reachable_items = dependency_reachable_items
-                .get(&module_path)
-                .cloned()
-                .unwrap_or_default();
+        for (name, module_path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
             let preserve_public_items =
-                should_preserve_dependency_public_items(&module_path, self.preserve_dependency_public_items);
+                should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
-                let mut svc = EmitService::new_from_program(&ir);
+                let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1098,7 +1115,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
-                svc.emit_program(&ir)?
+                for (_, _, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
@@ -1113,9 +1133,12 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
-                emitter.emit_program(&ir)?
+                for (_, _, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
             };
-            modules.insert(name, module_code);
+            modules.insert(name.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -1254,13 +1277,13 @@ impl<'a> IrCodegen<'a> {
             self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
 
         let mut modules = HashMap::new();
-        for (path, ir) in lowered_modules {
-            let reachable_items = dependency_reachable_items.get(&path).cloned().unwrap_or_default();
+        for (path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
             let preserve_public_items =
-                should_preserve_dependency_public_items(&path, self.preserve_dependency_public_items);
+                should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
             let module_code = if use_emit_service {
-                let mut svc = EmitService::new_from_program(&ir);
+                let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
@@ -1274,7 +1297,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
-                svc.emit_program(&ir)?
+                for (_, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
@@ -1289,9 +1315,12 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
-                emitter.emit_program(&ir)?
+                for (_, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
             };
-            modules.insert(path, module_code);
+            modules.insert(path.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -1638,6 +1667,7 @@ def main() -> None:
                             rng_ty,
                         )),
                         method: String::from("gen_range"),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
@@ -1658,6 +1688,7 @@ def main() -> None:
                 ))),
             ],
             is_async: false,
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
@@ -1746,6 +1777,7 @@ def main() -> None:
                             rng_ty,
                         )),
                         method: String::from("gen_range"),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
@@ -1766,6 +1798,7 @@ def main() -> None:
                 ))),
             ],
             is_async: false,
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
@@ -2623,6 +2656,92 @@ pub def forward(value: Thing) -> None:
         assert!(
             code.contains("takes_ref(&value);"),
             "expected borrowed rust free-function arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_rust_backed_method_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import Builder
+
+model Payload:
+  name: str
+
+pub def forward(payload: Payload) -> int:
+  builder = Builder.new()
+  return builder.json(payload)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::Builder".to_string(),
+                    definition_path: Some("demo::Builder".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        methods: vec![
+                            RustMethodSig {
+                                name: "new".to_string(),
+                                signature: RustFunctionSig {
+                                    params: Vec::new(),
+                                    return_type: "demo::Builder".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                            RustMethodSig {
+                                name: "json".to_string(),
+                                signature: RustFunctionSig {
+                                    params: vec![RustParam {
+                                        name: Some("value".to_string()),
+                                        type_display: "&T".to_string(),
+                                    }],
+                                    return_type: "i64".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                        ],
+                        fields: Vec::new(),
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("builder.json(&payload);"),
+            "expected borrowed rust method arg in generated code; got:\n{code}"
         );
         Ok(())
     }

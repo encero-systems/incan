@@ -8,8 +8,8 @@ use quote::{format_ident, quote};
 
 use super::super::super::FunctionSignature;
 use super::super::super::expr::{
-    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, MethodCallArgPolicy, MethodKind, TypedExpr,
-    VarAccess, VarRefKind,
+    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
+    TypedExpr, VarAccess, VarRefKind,
 };
 use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
@@ -17,9 +17,11 @@ use super::super::{EmitError, IrEmitter};
 use incan_core::interop::RustCollectionFamily;
 
 mod collection_methods;
+mod iterator_methods;
 mod string_methods;
 
 use collection_methods::emit_collection_method;
+use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
 
 /// Compute common receiver setup for method emission.
@@ -59,6 +61,200 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
+    fn emit_method_call_args(
+        &self,
+        method: &str,
+        receiver: &TypedExpr,
+        args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        base_use_site: ValueUseSite<'_>,
+    ) -> Result<Vec<TokenStream>, EmitError> {
+        let receiver_signature = self.method_signature_for_receiver(&receiver.ty, method);
+        let callable_signature = match (callable_signature, receiver_signature) {
+            (Some(call_sig), Some(method_sig))
+                if call_sig.params.iter().all(|param| param.default.is_none())
+                    && method_sig.params.iter().any(|param| param.default.is_some()) =>
+            {
+                Some(method_sig)
+            }
+            (Some(call_sig), _) => Some(call_sig),
+            (None, method_sig) => method_sig,
+        };
+        if let Some(sig) = callable_signature
+            && sig
+                .params
+                .iter()
+                .any(|param| param.kind != crate::frontend::ast::ParamKind::Normal)
+        {
+            return self.emit_rest_aware_call_args(receiver, args, sig);
+        }
+
+        let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature {
+            if args.iter().any(|arg| arg.name.is_some()) {
+                let mut positional: Vec<TypedExpr> = Vec::new();
+                let mut named: std::collections::HashMap<&str, TypedExpr> = std::collections::HashMap::new();
+                for arg in args {
+                    if let Some(name) = arg.name.as_deref() {
+                        named.insert(name, arg.expr.clone());
+                    } else {
+                        positional.push(arg.expr.clone());
+                    }
+                }
+
+                let mut pos_idx = 0usize;
+                let mut out = Vec::new();
+                for param in &sig.params {
+                    if let Some(value) = named.get(param.name.as_str()) {
+                        out.push((value.clone(), false));
+                    } else if pos_idx < positional.len() {
+                        out.push((positional[pos_idx].clone(), false));
+                        pos_idx += 1;
+                    } else if let Some(default_arg) = &param.default {
+                        out.push((default_arg.clone(), true));
+                    }
+                }
+                out
+            } else {
+                let mut out: Vec<(TypedExpr, bool)> = args.iter().map(|arg| (arg.expr.clone(), false)).collect();
+                for param in sig.params.iter().skip(out.len()) {
+                    if let Some(default_arg) = &param.default {
+                        out.push((default_arg.clone(), true));
+                    } else {
+                        break;
+                    }
+                }
+                out
+            }
+        } else {
+            args.iter().map(|arg| (arg.expr.clone(), false)).collect()
+        };
+
+        ordered_args
+            .iter()
+            .enumerate()
+            .map(|(idx, (arg, from_default))| {
+                let external_method_shape = matches!(
+                    base_use_site,
+                    ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
+                );
+                let previous_qualify = if *from_default {
+                    Some(self.qualify_internal_canonical_paths.replace(true))
+                } else {
+                    None
+                };
+                let emitted = self.emit_expr_for_use(arg, base_use_site);
+                if let Some(previous) = previous_qualify {
+                    self.qualify_internal_canonical_paths.replace(previous);
+                }
+                let mut emitted = emitted?;
+                if idx == 0
+                    && method == "take"
+                    && matches!(arg.ty, IrType::Int)
+                    && !Self::is_generator_receiver(receiver)
+                {
+                    emitted = quote! {
+                        match u64::try_from(#emitted) {
+                            Ok(__incan_take_count) => __incan_take_count,
+                            Err(_) => incan_stdlib::errors::raise_value_error(
+                                "take() count must be non-negative and fit u64",
+                            ),
+                        }
+                    };
+                }
+                if idx == 0 && method == "by_ref" {
+                    emitted = quote! { &mut *#emitted };
+                }
+                if idx == 0
+                    && Self::receiver_type_for_method_dispatch(&receiver.ty).nominal_type_name() == Some("Path")
+                    && Self::method_first_arg_is_path_or_str_union(method)
+                    && let Some(wrapped) = self.emit_union_payload_arg(arg, &Self::path_or_str_union_type(), None)?
+                {
+                    return Ok(wrapped);
+                }
+                let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
+                    if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
+                    {
+                        emitted = quote! { &mut #emitted };
+                    } else if external_method_shape
+                        && idx == 0
+                        && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                    {
+                        emitted = quote! { &#emitted };
+                    }
+                    return Ok(emitted);
+                };
+                if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
+                    return Ok(wrapped);
+                }
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                    return Ok(quote! { &mut #emitted });
+                }
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                    return Ok(quote! { &#emitted });
+                }
+                match &param.ty {
+                    IrType::Ref(_) => match &arg.ty {
+                        IrType::Ref(_) | IrType::RefMut(_) => {}
+                        _ => emitted = quote! { &#emitted },
+                    },
+                    IrType::RefMut(_) => match &arg.ty {
+                        IrType::Ref(_) | IrType::RefMut(_) => {}
+                        _ => emitted = quote! { &mut #emitted },
+                    },
+                    _ => {}
+                }
+                Ok(emitted)
+            })
+            .collect()
+    }
+
+    /// Return whether an external Rust method's first argument should be emitted as a mutable borrow.
+    fn method_arg_needs_fallback_mut_borrow(method: &str, arg_ty: &IrType) -> bool {
+        match method {
+            "read_to_string" => true,
+            "read" | "read_to_end" | "read_exact" | "read_buf" | "read_buf_exact" => Self::is_byte_buffer_type(arg_ty),
+            _ => false,
+        }
+    }
+
+    /// Return whether an external Rust method's first argument should be emitted as a shared borrow.
+    fn method_arg_needs_fallback_borrow(method: &str, arg_ty: &IrType) -> bool {
+        match method {
+            "write_all" => true,
+            "for_label" | "decode" | "encode" => true,
+            "write" => Self::is_byte_buffer_type(arg_ty),
+            _ => false,
+        }
+    }
+
+    /// Return whether an IR type can stand in for a mutable Rust byte buffer.
+    fn is_byte_buffer_type(ty: &IrType) -> bool {
+        matches!(ty, IrType::Bytes | IrType::FrozenBytes)
+            || matches!(
+                ty,
+                IrType::NamedGeneric(name, args)
+                    if matches!(name.as_str(), "Vec" | "std::vec::Vec")
+                        && matches!(args.as_slice(), [IrType::Int])
+            )
+    }
+
+    /// Return whether a std.fs method takes `Path | str` as its first user argument.
+    fn method_first_arg_is_path_or_str_union(method: &str) -> bool {
+        matches!(
+            method,
+            "copy" | "copy_into" | "move" | "move_into" | "rename" | "replace" | "symlink_to" | "hardlink_to"
+        )
+    }
+
+    /// Build the canonical anonymous union type used by std.fs path-target methods.
+    fn path_or_str_union_type() -> IrType {
+        IrType::NamedGeneric(
+            crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::Struct("Path".to_string()), IrType::String],
+        )
+    }
+
     /// Materialize method-call arguments before entering a static storage lock.
     ///
     /// This prevents lock reentry when argument expressions also read/write static-backed values.
@@ -174,6 +370,7 @@ impl<'a> IrEmitter<'a> {
         match kind {
             MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
+            MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Internal(InternalMethodKind::Slice) => self.emit_runtime_str_slice(&info, &arg_exprs),
         }
     }
@@ -181,10 +378,12 @@ impl<'a> IrEmitter<'a> {
     /// Emit a method call expression that remains a regular Rust method call.
     ///
     /// This handles `IrExprKind::MethodCall` when lowering did not classify the method as a builtin-family method.
+    #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn emit_method_call_expr(
         &self,
         receiver: &TypedExpr,
         method: &str,
+        dispatch: Option<&IrMethodDispatch>,
         type_args: &[IrType],
         args: &[IrCallArg],
         callable_signature: Option<&FunctionSignature>,
@@ -196,6 +395,7 @@ impl<'a> IrEmitter<'a> {
             let inner = self.emit_method_call_expr(
                 &rewritten_receiver,
                 method,
+                dispatch,
                 type_args,
                 &rewritten_args,
                 callable_signature,
@@ -215,6 +415,12 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
+            let predicate = self.emit_expr(&args[0].expr)?;
+            return Ok(quote! {
+                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+            });
+        }
         let method_turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -244,7 +450,7 @@ impl<'a> IrEmitter<'a> {
             //
             // This avoids capitalization heuristics that can mis-emit runtime variables named `TitleCase`.
             if Self::expr_is_type_like(receiver) {
-                let type_ident = format_ident!("{}", name);
+                let type_ident = Self::rust_ident(name);
                 let type_path = match &receiver.ty {
                     IrType::NamedGeneric(type_name, type_args) if type_name == name => {
                         let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
@@ -252,7 +458,7 @@ impl<'a> IrEmitter<'a> {
                     }
                     _ => quote! { #type_ident },
                 };
-                let m = format_ident!("{}", method);
+                let m = Self::rust_ident(method);
                 let in_return = *self.in_return_context.borrow();
                 let receiver_ref_kind = match &receiver.kind {
                     IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
@@ -288,25 +494,34 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     ValueUseSite::ExternalCallArg { target_ty: None }
                 };
-                let arg_tokens: Vec<TokenStream> = if let Some(sig) = callable_signature
-                    && sig
-                        .params
-                        .iter()
-                        .any(|param| param.kind != crate::frontend::ast::ParamKind::Normal)
-                {
-                    self.emit_rest_aware_call_args(receiver, args, sig)?
-                } else {
-                    arg_exprs
-                        .iter()
-                        .map(|a| self.emit_expr_for_use(a, use_site))
-                        .collect::<Result<_, _>>()?
-                };
+                let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
                 return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
 
+        if let Some(IrMethodDispatch::Trait { trait_path, type_args }) = dispatch {
+            let path_tokens: Vec<TokenStream> = trait_path
+                .split("::")
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect();
+            let trait_tokens = super::super::decls::join_path_tokens(&path_tokens);
+            let trait_type_args: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            let trait_tokens = if trait_type_args.is_empty() {
+                quote! { #trait_tokens }
+            } else {
+                quote! { #trait_tokens :: < #(#trait_type_args),* > }
+            };
+            let m = Self::rust_ident(method);
+            let arg_tokens =
+                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
+            return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
+        }
+
         // Regular method call
-        let m = format_ident!("{}", method);
+        let m = Self::rust_ident(method);
         // Apply Incan-style argument conversions for methods on nominal types emitted by this compilation unit.
         // This is important for `str` literals: we often emit `"x"` as `&'static str`, but many Incan-level method
         // signatures expect owned `String` in Rust.
@@ -344,19 +559,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             ValueUseSite::ExternalCallArg { target_ty: None }
         };
-        let arg_tokens: Vec<TokenStream> = if let Some(sig) = callable_signature
-            && sig
-                .params
-                .iter()
-                .any(|param| param.kind != crate::frontend::ast::ParamKind::Normal)
-        {
-            self.emit_rest_aware_call_args(receiver, args, sig)?
-        } else {
-            arg_exprs
-                .iter()
-                .map(|a| self.emit_expr_for_use(a, use_site))
-                .collect::<Result<_, _>>()?
-        };
+        let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
 
@@ -471,5 +674,12 @@ impl<'a> IrEmitter<'a> {
         let type_ident = format_ident!("{}", type_name);
         let m = format_ident!("{}", variant);
         Ok(quote! { #type_ident::#m(#(#arg_tokens),*) })
+    }
+
+    /// Return whether a method receiver is the RFC 006 runtime generator wrapper.
+    fn is_generator_receiver(receiver: &TypedExpr) -> bool {
+        matches!(&receiver.ty, IrType::NamedGeneric(name, _)
+            if incan_core::lang::types::collections::from_str(name.as_str())
+                == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
     }
 }

@@ -13,7 +13,7 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::{TestingFixtureInfo, TypeChecker};
+use super::{TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -61,10 +61,11 @@ struct ResolvedTraitAdoption {
 }
 
 #[derive(Debug, Clone)]
-struct TraitMethodEntry {
-    method_name: String,
-    origin_trait: String,
-    info: MethodInfo,
+pub(in crate::frontend::typechecker) struct TraitMethodEntry {
+    pub method_name: String,
+    pub origin_trait: String,
+    pub origin_type_args: Vec<ResolvedType>,
+    pub info: MethodInfo,
 }
 
 enum AsyncFixtureYieldShape {
@@ -120,6 +121,25 @@ fn validate_async_fixture_yield_shape(body: &[Spanned<Statement>]) -> AsyncFixtu
 /// Return whether any yield expression appears in a fixture body.
 fn fixture_body_has_yield(body: &[Spanned<Statement>]) -> bool {
     any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
+}
+
+/// Return whether a function body contains any valued `return` statement.
+fn body_has_return_value(body: &[Spanned<Statement>]) -> bool {
+    body.iter().any(|stmt| match &stmt.node {
+        Statement::Return(Some(_)) => true,
+        Statement::If(if_stmt) => {
+            body_has_return_value(&if_stmt.then_body)
+                || if_stmt
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| body_has_return_value(body))
+                || if_stmt.else_body.as_deref().is_some_and(body_has_return_value)
+        }
+        Statement::Loop(loop_stmt) => body_has_return_value(&loop_stmt.body),
+        Statement::While(while_stmt) => body_has_return_value(&while_stmt.body),
+        Statement::For(for_stmt) => body_has_return_value(&for_stmt.body),
+        _ => false,
+    })
 }
 
 /// Pick a stable declaration span for fixture-level diagnostics when the AST helper receives only the function node.
@@ -412,7 +432,7 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
                             .collect();
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),
@@ -723,7 +743,11 @@ impl TypeChecker {
         )
     }
 
-    fn method_sigs_compatible(&self, expected: &MethodInfo, found: &MethodInfo) -> bool {
+    pub(in crate::frontend::typechecker) fn method_sigs_compatible(
+        &self,
+        expected: &MethodInfo,
+        found: &MethodInfo,
+    ) -> bool {
         if expected.receiver != found.receiver {
             return false;
         }
@@ -742,6 +766,23 @@ impl TypeChecker {
             }
         }
         self.types_compatible(&expected.return_type, &found.return_type)
+    }
+
+    /// Return whether two methods have the same call-time parameter shape, ignoring return type.
+    fn method_call_shapes_same(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
+        if left.receiver != right.receiver {
+            return false;
+        }
+        if left.is_async != right.is_async {
+            return false;
+        }
+        if left.params.len() != right.params.len() {
+            return false;
+        }
+        left.params
+            .iter()
+            .zip(right.params.iter())
+            .all(|(left_param, right_param)| left_param.kind == right_param.kind && left_param.ty == right_param.ty)
     }
 
     /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).
@@ -957,6 +998,7 @@ impl TypeChecker {
             out.push(TraitMethodEntry {
                 method_name: method_name.clone(),
                 origin_trait: trait_name.to_string(),
+                origin_type_args: trait_args.to_vec(),
                 info: method_info.clone(),
             });
         }
@@ -1124,8 +1166,25 @@ impl TypeChecker {
         method: &str,
         ambiguity_span: Span,
     ) -> Option<MethodInfo> {
+        self.trait_method_entry_resolved_for_adoption(adoption, method, ambiguity_span)
+            .map(|entry| entry.info)
+    }
+
+    pub(in crate::frontend::typechecker) fn trait_method_entry_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        method: &str,
+        ambiguity_span: Span,
+    ) -> Option<TraitMethodEntry> {
         if adoption.type_args.is_empty() {
-            return self.trait_method_info_resolved(&adoption.name, method, ambiguity_span);
+            return self
+                .trait_method_info_resolved(&adoption.name, method, ambiguity_span)
+                .map(|info| TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: adoption.name.clone(),
+                    origin_type_args: Vec::new(),
+                    info,
+                });
         }
         let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
         let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);
@@ -1136,15 +1195,34 @@ impl TypeChecker {
             span: ambiguity_span,
         };
         let entries = self.trait_method_entries_for_adoption(&resolved);
-        let matching: Vec<(String, MethodInfo)> = entries
+        let matching: Vec<(String, Vec<ResolvedType>, MethodInfo)> = entries
             .into_iter()
             .filter(|entry| entry.method_name == method)
-            .map(|entry| (entry.origin_trait, entry.info))
+            .map(|entry| (entry.origin_trait, entry.origin_type_args, entry.info))
             .collect();
-        let filtered = self.filter_supertrait_dominated_entries(matching);
+        let filtered = self.filter_supertrait_dominated_entries(
+            matching
+                .iter()
+                .map(|(origin, _, info)| (origin.clone(), info.clone()))
+                .collect(),
+        );
         match filtered.as_slice() {
             [] => None,
-            [(_, info)] => Some(info.clone()),
+            [(origin_trait, info)] => {
+                let origin_type_args = matching
+                    .iter()
+                    .find(|(origin, _, candidate)| {
+                        origin == origin_trait && self.method_sigs_compatible(candidate, info)
+                    })
+                    .map(|(_, args, _)| args.clone())
+                    .unwrap_or_default();
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: origin_trait.clone(),
+                    origin_type_args,
+                    info: info.clone(),
+                })
+            }
             rest => {
                 let exp0 = &rest[0].1;
                 let all_mutually_compat = rest
@@ -1155,7 +1233,18 @@ impl TypeChecker {
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
                     return None;
                 }
-                Some(exp0.clone())
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: rest[0].0.clone(),
+                    origin_type_args: matching
+                        .iter()
+                        .find(|(origin, _, candidate)| {
+                            origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
+                        })
+                        .map(|(_, args, _)| args.clone())
+                        .unwrap_or_default(),
+                    info: exp0.clone(),
+                })
             }
         }
     }
@@ -1585,7 +1674,7 @@ impl TypeChecker {
         spans
     }
 
-    /// Ensure every duplicate concrete method maps to a distinct same-family trait obligation.
+    /// Ensure overloads that differ only by return type map to same-family trait obligations.
     fn validate_overloaded_methods_are_trait_backed(
         &mut self,
         type_name: &str,
@@ -1609,6 +1698,7 @@ impl TypeChecker {
             }
             let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
             let mut matched_obligations = vec![false; obligations.len()];
+            let mut overload_matches: Vec<Option<usize>> = vec![None; overloads.len()];
             for (idx, overload) in overloads.iter().enumerate() {
                 let matched_index = obligations
                     .iter()
@@ -1619,6 +1709,19 @@ impl TypeChecker {
                     .map(|(obligation_idx, _)| obligation_idx);
                 if let Some(obligation_idx) = matched_index {
                     matched_obligations[obligation_idx] = true;
+                    overload_matches[idx] = Some(obligation_idx);
+                }
+            }
+            let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
+            for (idx, overload) in overloads.iter().enumerate() {
+                if overload_matches[idx].is_some() {
+                    continue;
+                }
+                let shares_call_shape = overloads
+                    .iter()
+                    .enumerate()
+                    .any(|(other_idx, other)| other_idx != idx && self.method_call_shapes_same(overload, other));
+                if has_trait_backed_overload && !shares_call_shape {
                     continue;
                 }
                 let span = method_spans
@@ -1820,7 +1923,7 @@ impl TypeChecker {
 
         // Check methods
         for method in &model.methods {
-            self.check_method(&method.node, &model.name);
+            self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
         }
         for property in &model.properties {
             self.check_property(&property.node, &model.name);
@@ -2058,7 +2161,7 @@ impl TypeChecker {
 
         // Check methods
         for method in &class.methods {
-            self.check_method(&method.node, &class.name);
+            self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
         }
         for property in &class.properties {
             self.check_property(&property.node, &class.name);
@@ -2144,7 +2247,8 @@ impl TypeChecker {
         }
     }
 
-    /// Check trait-level declarations, including abstract computed property requirements.
+    /// Validate a trait declaration, including required fields, abstract properties, defaults, and self-typed method
+    /// bodies.
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
@@ -2180,7 +2284,12 @@ impl TypeChecker {
                 // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
                 // `@requires`).
                 let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType, &trait_type_params);
+                self.check_method_with_self_ty(
+                    &method.node,
+                    ResolvedType::SelfType,
+                    &trait_type_params,
+                    &tr.type_params,
+                );
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }
         }
@@ -2283,7 +2392,7 @@ impl TypeChecker {
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         for method in &nt.methods {
             if method.node.body.is_some() {
-                self.check_method(&method.node, &nt.name);
+                self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
         }
     }
@@ -2347,7 +2456,7 @@ impl TypeChecker {
         }
 
         for method in &en.methods {
-            self.check_method(&method.node, &en.name);
+            self.check_method_with_owner_type_params(&method.node, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&en.methods);
@@ -2589,20 +2698,41 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&func.return_type);
+        let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
+        if return_type.generator_element_type().is_some() && !has_yield && !body_has_return_value(&func.body) {
+            self.errors
+                .push(errors::generator_requires_yield(&func.name, func.return_type.span));
+        }
+        let yield_context = if fixture_args.is_some() {
+            YieldContext::Fixture
+        } else if has_yield {
+            match return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(return_type.clone());
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
         let prev_in_async_body = self.in_async_body;
+        let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
         self.in_async_body = func.is_async();
+        let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
 
         // Check body
         for stmt in &func.body {
             self.check_statement(stmt);
         }
 
+        self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.in_async_body = prev_in_async_body;
+        self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
@@ -2635,7 +2765,7 @@ impl TypeChecker {
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
-    pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
+    fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators(&method.decorators);
         let owner_type_params = self
             .lookup_type_info(owner)
@@ -2659,7 +2789,7 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params, owner_params);
         self.current_method_owner = previous_owner;
     }
 
@@ -2743,7 +2873,13 @@ impl TypeChecker {
     /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
     /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
     /// adopter is resolved later during trait conformance and method-call substitution.
-    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
+    fn check_method_with_self_ty(
+        &mut self,
+        method: &MethodDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+        owner_params: &[TypeParam],
+    ) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
@@ -2769,7 +2905,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
-        let active_bounds = self.type_param_bound_details_from_type_params(&method.type_params);
+        let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
+        active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
 
         // Define self if present
@@ -2812,6 +2949,27 @@ impl TypeChecker {
 
         let return_type = self.resolve_type_checked(&method.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        let body_has_yield = method
+            .body
+            .as_ref()
+            .is_some_and(|body| any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))));
+        if effective_return_type.generator_element_type().is_some()
+            && !body_has_yield
+            && method.body.as_deref().is_some_and(|body| !body_has_return_value(body))
+        {
+            self.errors
+                .push(errors::generator_requires_yield(&method.name, method.return_type.span));
+        }
+        let yield_context = if body_has_yield {
+            match effective_return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(effective_return_type);
 
         // Set error type for ? checking
@@ -2820,11 +2978,15 @@ impl TypeChecker {
         // Check body
         if let Some(body) = &method.body {
             let prev_in_async_body = self.in_async_body;
+            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();
+            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
             for stmt in body {
                 self.check_statement(stmt);
             }
+            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.in_async_body = prev_in_async_body;
+            self.current_yield_context = prev_yield_context;
         }
 
         self.current_return_error_type = None;

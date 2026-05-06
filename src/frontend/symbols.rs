@@ -675,6 +675,8 @@ pub enum ResolvedType {
     /// Primitive types
     Int,
     Float,
+    /// Exact-width numeric type introduced by RFC 009.
+    Numeric(NumericTypeId),
     Bool,
     Str,
     Bytes,
@@ -785,13 +787,27 @@ impl ResolvedType {
             _ => None,
         }
     }
+
+    /// Get the yielded element type from `Generator[T]`.
+    pub fn generator_element_type(&self) -> Option<&ResolvedType> {
+        match self {
+            ResolvedType::Generic(name, args)
+                if collections::from_str(name.as_str()) == Some(CollectionTypeId::Generator) && !args.is_empty() =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ResolvedType {
+    /// Format a resolved type using user-facing Incan type syntax.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResolvedType::Int => write!(f, "int"),
             ResolvedType::Float => write!(f, "float"),
+            ResolvedType::Numeric(id) => write!(f, "{}", numerics::as_str(*id)),
             ResolvedType::Bool => write!(f, "bool"),
             ResolvedType::Str => write!(f, "str"),
             ResolvedType::Bytes => write!(f, "bytes"),
@@ -921,10 +937,14 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
         Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
-                return match id {
-                    NumericTypeId::Int => ResolvedType::Int,
-                    NumericTypeId::Float => ResolvedType::Float,
-                    NumericTypeId::Bool => ResolvedType::Bool,
+                return match name.as_str() {
+                    "int" => ResolvedType::Int,
+                    "float" => ResolvedType::Float,
+                    "bool" => ResolvedType::Bool,
+                    _ => match id {
+                        NumericTypeId::Bool => ResolvedType::Bool,
+                        _ => ResolvedType::Numeric(id),
+                    },
                 };
             }
             if let Some(id) = stringlike::from_str(name.as_str()) {
@@ -996,6 +1016,7 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
                 _ => ResolvedType::Generic(normalized_name, resolved_args),
             }
         }
+        Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         Type::Function(params, ret) => {
             let resolved_params: Vec<_> = params
                 .iter()
@@ -1125,6 +1146,50 @@ mod tests {
                 ],
                 Box::new(ResolvedType::Bool),
             )
+        );
+    }
+
+    #[test]
+    fn resolve_type_preserves_existing_int_float_bool_names() {
+        let symbols = SymbolTable::new();
+
+        assert_eq!(
+            resolve_type(&Type::Simple("int".to_string()), &symbols),
+            ResolvedType::Int
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("float".to_string()), &symbols),
+            ResolvedType::Float
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("bool".to_string()), &symbols),
+            ResolvedType::Bool
+        );
+    }
+
+    #[test]
+    fn resolve_type_maps_exact_width_and_alias_numeric_names() {
+        let symbols = SymbolTable::new();
+
+        assert_eq!(
+            resolve_type(&Type::Simple("i64".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::I64)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("integer".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::I32)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("byte".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::U8)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("real".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::F32)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("double".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::F64)
         );
     }
 

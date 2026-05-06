@@ -1,13 +1,13 @@
 # RFC 009: Numeric type system and builtin type registry
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/325
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -139,7 +139,10 @@ The builtin registry must recognize these aliases:
 | `short`            | `i16`            | Common small signed integer spelling                        |
 | `smallint`         | `i16`            | SQL/data-system spelling                                    |
 | `integer`          | `i32`            | SQL/data-system spelling; distinct from Incan's `int` alias |
+| `int`              | `i64`            | Existing Incan signed integer spelling                      |
+| `bigint`           | `i64`            | SQL/data-system large signed integer spelling               |
 | `long`             | `i64`            | Common large signed integer spelling                        |
+| `hugeint`          | `i128`           | Data-system 128-bit signed integer spelling                 |
 | `real`             | `f32`            | SQL/data-system single-precision spelling                   |
 | `double`           | `f64`            | Data-system double-precision spelling                       |
 | `fp32`             | `f32`            | Substrait-style spelling                                    |
@@ -153,7 +156,6 @@ Aliases must not create separate runtime or typechecker identities. Diagnostics 
 
 The builtin registry must reserve these names so later features can use them without compatibility traps:
 
-- `bigint`, for future arbitrary-precision integer semantics.
 - Bare `decimal`, for a future decision about whether Incan should provide a default decimal precision and scale.
 - Bare `numeric`, for the same reason as bare `decimal`.
 
@@ -285,12 +287,121 @@ The feature is additive at the user surface. Existing programs using `int` and `
 - **Formatter / LSP**: should preserve authored spellings where useful while exposing canonical type information and diagnostics.
 - **Docs / tooling**: should surface width-specific help, aliases, conversions, decimal precision/scale, and overflow behavior consistently.
 
+## Implementation Plan
+
+### Phase 1: Numeric registry and semantic model
+
+- Extend the builtin numeric registry so each numeric family has canonical spelling, aliases, literal suffixes, width or precision metadata, bounds, conversion policy, Rust interop mapping, and docs/diagnostic metadata.
+- Replace the current alias treatment of `i32`, `i64`, `f32`, and `f64` with distinct canonical semantic identities while preserving `int` and `float` as aliases for `i64` and `f64`.
+- Add decimal type metadata for `decimal[P, S]`, `numeric[P, S]`, and `decimal128[P, S]`, including validation of precision and scale.
+
+### Phase 2: Parser, AST, and formatter
+
+- Parse exact-width numeric type spellings and registry-owned aliases in type position.
+- Parse parameterized decimal type spellings with precision and scale arguments.
+- Parse integer, float, and decimal literal suffixes with span-preserving literal metadata.
+- Preserve numeric type spellings and literal suffixes through formatting.
+
+### Phase 3: Typechecker and diagnostics
+
+- Resolve numeric aliases to canonical semantic types while preserving enough authored spelling information for clear diagnostics where useful.
+- Typecheck exact-width integer, binary-float, and decimal literals, including range, precision, and scale errors.
+- Enforce explicit conversion for downsize, sign-changing, precision-losing, scale-losing, and binary-float/decimal conversions.
+- Allow lossless upsizing through `resize()` when the target type is known and contextual Rust interop adaptation when the conversion is exact or provably lossless.
+- Keep ordinary indexing signed and Incan-shaped rather than requiring `usize` at list, tuple, string, bytes, or slice indexing sites.
+
+### Phase 4: Lowering, emission, and runtime
+
+- Lower exact-width numeric types to exact Rust numeric types.
+- Lower decimal types with precision and scale metadata to the required 128-bit scaled runtime representation.
+- Emit numeric literals and conversions with the intended exact, checked, wrapping, or saturating behavior.
+- Add required integer helper families and resize helpers in the runtime or builtin dispatch layer.
+
+### Phase 5: Interop, tooling, docs, and release surface
+
+- Update Rust interop coercion policy so exact-width numeric types cross Rust boundaries ergonomically without broadening `int` into an implicit catch-all.
+- Update LSP and diagnostics to expose registry-backed type names, aliases, bounds, and conversion suggestions.
+- Update authored numeric/reference docs and release notes for the new numeric surface.
+- Add parser, typechecker, codegen snapshot, runtime, interop, and docs verification.
+- Bump the active development version before the implementation is presented as review-ready.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Settle numeric aliases, decimal scope, indexing policy, conversion policy, and Rust interop policy.
+- [x] Replace unresolved RFC questions with `Design Decisions`.
+- [x] Keep RFC progress items current as implementation phases land.
+
+### Registry / semantic model
+
+- [x] Numeric registry: represent exact-width integer, unsigned integer, binary-float, pointer-sized, and decimal families.
+- [x] Numeric registry: record aliases, literal suffixes, bounds, conversion policies, Rust interop mapping, and docs/diagnostic metadata.
+- [x] Semantic types: represent exact-width numeric types distinctly from `int` and `float` aliases.
+- [x] Decimal types: validate `decimal[P, S]`, `numeric[P, S]`, and `decimal128[P, S]` precision/scale metadata.
+- [x] Reserved names: reject bare `decimal` and bare `numeric` with clear diagnostics.
+
+### Parser / AST / formatter
+
+- [x] Parser: accept exact-width and alias numeric types in type position.
+- [x] Parser: parse parameterized decimal type spellings.
+- [x] Parser: parse numeric literal suffixes, including decimal `d` literals.
+- [x] AST: preserve numeric literal/type metadata needed by typechecking and formatting.
+- [x] Formatter: round-trip numeric type spellings and literal suffixes.
+
+### Typechecker / diagnostics
+
+- [x] Resolve numeric aliases to canonical semantic types.
+- [x] Typecheck integer literal ranges for signed, unsigned, and pointer-sized integer targets.
+- [x] Typecheck binary-float literals for `f32` and `f64`.
+- [x] Typecheck decimal literals against precision and scale.
+- [x] Enforce explicit conversion for lossy resize, sign changes, precision loss, scale loss, and binary-float/decimal conversion.
+- [x] Allow lossless `resize()` when the target type is known.
+- [x] Keep ordinary indexing signed and Incan-shaped.
+- [x] Add diagnostics that suggest `try_resize`, `wrapping_resize`, or `saturating_resize` when appropriate.
+
+### Lowering / emission / runtime
+
+- [x] Lower exact-width numeric semantic types to exact Rust numeric types.
+- [x] Lower decimal semantic types to the required 128-bit scaled representation.
+- [x] Emit suffixed numeric literals correctly.
+- [x] Emit checked, wrapping, and saturating integer helpers.
+- [x] Emit resize helpers with exact, checked, wrapping, and saturating behavior.
+- [x] Preserve exact-width numeric behavior through codegen snapshots and integration tests.
+
+### Rust interop / tooling
+
+- [x] Allow exact or provably lossless numeric adaptation at explicit Rust boundaries.
+- [x] Reject lossy Rust-boundary numeric conversions unless the user wrote an explicit policy.
+- [x] Update LSP/type hover/completion surfaces for registry-backed numeric types and aliases.
+- [x] Update tooling metadata that exports or consumes builtin type names.
+
+### Tests
+
+- [x] Parser tests for exact-width type names, aliases, decimal types, and literal suffixes.
+- [x] Formatter tests for numeric type and literal round-trips.
+- [x] Typechecker tests for valid exact-width, alias, and decimal usage.
+- [x] Typechecker diagnostic tests for range, precision, scale, reserved-name, and lossy-conversion errors.
+- [x] Codegen snapshot tests for exact-width ints/floats, decimal lowering, resize helpers, and interop adaptation.
+- [x] Runtime/integration tests for helper behavior and generated Rust execution.
+- [x] Docs build passes with the updated numeric reference.
+- [x] Repo-level pre-commit gate passes before final handoff.
+
+### Docs / release
+
+- [x] Update numeric semantics reference docs.
+- [x] Update Rust interop docs for exact-width numeric boundary behavior.
+- [x] Update data/analytics-oriented docs where numeric schemas are discussed.
+- [x] Add release notes entry for RFC 009.
+- [x] Bump the active `0.3.0-dev.N` version by one dev increment before review-ready handoff.
+
 ## Design Decisions
 
 - `int` remains an alias for `i64`; `float` remains an alias for `f64`.
 - The exact-width integer and binary-float spellings are distinct canonical numeric types, not aliases for `int` or `float`.
 - Data-oriented aliases are included only when they map to an existing canonical numeric type without changing semantics.
-- `bigint`, bare `decimal`, and bare `numeric` are reserved for future features rather than claimed as aliases in this RFC.
+- `bigint` maps to `i64` and `hugeint` maps to `i128`, matching common data-system vocabulary without inventing arbitrary-precision integer semantics.
+- Bare `decimal` and bare `numeric` are reserved for future features rather than claimed as default-width value types in this RFC.
 - `decimal[P, S]` and `numeric[P, S]` are in scope as fixed-precision decimal types backed by a 128-bit scaled integer for the required implementation surface.
 - `char` is out of scope because this RFC is about numerics, not Unicode scalar or string semantics.
 - Ordinary indexing remains signed and Incan-shaped; users should not need `usize` for normal list, tuple, string, bytes, or slice indexing.

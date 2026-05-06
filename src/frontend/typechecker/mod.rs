@@ -54,9 +54,9 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    ComputedPropertyAccessInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedOperatorCall,
-    ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo,
-    TypeCheckInfo,
+    ComputedPropertyAccessInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall,
+    ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
 };
 #[cfg(test)]
 mod tests;
@@ -78,7 +78,9 @@ use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_t
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::StringLikeId;
 
 /// Type checker state.
@@ -108,6 +110,17 @@ pub(crate) struct LoopContext {
     pub break_types: Vec<(ResolvedType, Span)>,
 }
 
+/// Declaration context that determines how `yield` expressions are interpreted.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum YieldContext {
+    /// `yield` is not valid in the current body.
+    Disallowed,
+    /// `yield` belongs to `std.testing.fixture` lifecycle semantics.
+    Fixture,
+    /// `yield value` produces one item of the active generator's element type.
+    Generator { element_ty: ResolvedType },
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub(crate) symbols: SymbolTable,
@@ -119,8 +132,12 @@ pub struct TypeChecker {
     pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
+    /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
+    pub(crate) consumed_iterator_bindings: HashMap<String, Span>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
+    /// Active declaration-level interpretation for `yield` expressions.
+    pub(crate) current_yield_context: YieldContext,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
     /// Stack of active loop contexts, innermost last.
@@ -225,7 +242,9 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            consumed_iterator_bindings: HashMap::new(),
             current_return_error_type: None,
+            current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
             loop_stack: Vec::new(),
             current_trait_requires: None,
@@ -597,7 +616,7 @@ impl TypeChecker {
             .params
             .iter()
             .skip(skip)
-            .map(|p| CallableParam::positional(self.resolved_type_from_rust_display(p.type_display.as_str())))
+            .map(|p| CallableParam::positional(self.resolved_param_type_from_rust_display(p.type_display.as_str())))
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
@@ -744,10 +763,20 @@ impl TypeChecker {
         }
         match normalized.as_str() {
             "bool" => ResolvedType::Bool,
-            "f32" | "f64" => ResolvedType::Float,
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-                ResolvedType::Int
-            }
+            "f64" => ResolvedType::Float,
+            "i64" => ResolvedType::Int,
+            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
+            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
+            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
+            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
+            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
+            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
+            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
+            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
+            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
+            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
+            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
+            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
@@ -796,6 +825,30 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
+    ///
+    /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
+    /// into owned Incan value types. Parameters need the opposite treatment: the callable signature must remember the
+    /// borrowed Rust boundary so emission can pass `&arg` instead of moving an owned `String` or `Vec<u8>`.
+    pub(crate) fn resolved_param_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
+        let trimmed = rust_ty.trim();
+        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
+        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let inner_ty = match inner {
+                "str" => ResolvedType::Str,
+                "[u8]" => ResolvedType::Bytes,
+                _ => self.resolved_type_from_rust_display(inner),
+            };
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
+        self.resolved_type_from_rust_display(normalized.as_str())
     }
 
     /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.
@@ -902,41 +955,56 @@ impl TypeChecker {
         self.generic_placeholder_name(ty).is_some()
     }
 
+    /// Return declared type parameters and explicit trait adoptions for a semantic type.
+    fn semantic_type_params_and_adoptions(&self, type_name: &str) -> Option<(&[String], &[TypeBoundInfo])> {
+        match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Model(model) => Some((&model.type_params, &model.trait_adoptions)),
+            TypeInfo::Class(class) => Some((&class.type_params, &class.trait_adoptions)),
+            TypeInfo::Enum(enum_info) => Some((&enum_info.type_params, &enum_info.trait_adoptions)),
+            _ => None,
+        }
+    }
+
     /// Infer the concrete instantiation of `trait_name` for `type_name`, if the type adopts that trait.
     ///
-    /// RFC 042 currently uses the same implicit positional mapping as trait-annotation compatibility: a concrete
-    /// adopter's leading type arguments instantiate the adopted trait's type parameters, and transitive supertrait
-    /// arguments are substituted through the recorded closure.
+    /// Explicit `with Trait[...]` arguments are authoritative. The older positional mapping remains as a fallback for
+    /// nullary adoption metadata and derives.
     fn instantiated_trait_args_for_type(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],
         trait_name: &str,
     ) -> Option<Vec<ResolvedType>> {
-        let adopted = match self.lookup_semantic_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => &model.traits,
-            Some(TypeInfo::Class(class)) => &class.traits,
-            _ => return None,
-        };
+        let (type_params, adopted) = self.semantic_type_params_and_adoptions(type_name)?;
+        let concrete_subst =
+            crate::frontend::resolved_type_subst::type_param_subst_map(type_params, concrete_type_args);
 
         for adopted_trait in adopted {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(adopted_trait) else {
+            let Some(adopted_info) = self.lookup_semantic_trait_info(&adopted_trait.name) else {
                 continue;
             };
-            let direct_args: Vec<ResolvedType> = concrete_type_args
-                .iter()
-                .take(adopted_info.type_params.len())
-                .cloned()
-                .collect();
+            let direct_args: Vec<ResolvedType> = if adopted_trait.type_args.is_empty() {
+                concrete_type_args
+                    .iter()
+                    .take(adopted_info.type_params.len())
+                    .cloned()
+                    .collect()
+            } else {
+                adopted_trait
+                    .type_args
+                    .iter()
+                    .map(|arg| crate::frontend::resolved_type_subst::substitute_resolved_type(arg, &concrete_subst))
+                    .collect()
+            };
             if direct_args.len() != adopted_info.type_params.len() {
                 continue;
             }
 
-            if adopted_trait == trait_name {
+            if adopted_trait.name == trait_name {
                 return Some(direct_args);
             }
 
-            let closure = self.semantic_supertrait_closure(adopted_trait);
+            let closure = self.semantic_supertrait_closure(&adopted_trait.name);
             let subst =
                 crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
             for (supertrait_name, supertrait_args) in closure {
@@ -1371,6 +1439,19 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
             }
+            Expr::Generator(generator) => {
+                self.collect_static_dependencies_from_expr(&generator.expr.node, deps, visiting_functions);
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_dependencies_from_expr(&iter.node, deps, visiting_functions);
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_dependencies_from_expr(&condition.node, deps, visiting_functions);
+                        }
+                    }
+                }
+            }
             Expr::ListComp(list_comp) => {
                 self.collect_static_dependencies_from_expr(&list_comp.expr.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_expr(&list_comp.iter.node, deps, visiting_functions);
@@ -1629,6 +1710,31 @@ impl TypeChecker {
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
+                }
+            }
+            Expr::Generator(generator) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &generator.expr,
+                    current_static,
+                    visiting_functions,
+                );
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                iter,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                condition,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                    }
                 }
             }
             Expr::ListComp(list_comp) => {
@@ -2101,6 +2207,7 @@ impl TypeChecker {
         self.validate_stdlib_type_usage_inner(&ty.node, ty.span);
     }
 
+    /// Validate stdlib-owned type names recursively inside a type annotation.
     fn validate_stdlib_type_usage_inner(&mut self, ty: &Type, span: Span) {
         match ty {
             Type::Simple(name) => self.validate_stdlib_type_name(name, span),
@@ -2126,7 +2233,7 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&elem.node, elem.span);
                 }
             }
-            Type::Unit | Type::SelfType | Type::Infer => {}
+            Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {}
         }
     }
 
@@ -2139,8 +2246,23 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
+        if let Type::Simple(name) = &ty.node
+            && Self::reserved_numeric_type_name(name)
+        {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "`{name}` is reserved for numeric types; use `decimal[p, s]`/`numeric[p, s]` for decimals or an exact-width integer type"
+                ),
+                ty.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        if let Some(decimal_ty) = self.resolve_decimal_type_checked(ty) {
+            return decimal_ty;
+        }
         if let Type::Simple(name) = &ty.node
             && let Some(sym) = self.lookup_symbol(name.as_str())
             && let SymbolKind::RustItem(info) = &sym.kind
@@ -2151,6 +2273,62 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         resolve_type(&ty.node, &self.symbols)
+    }
+
+    /// Return whether a simple type name is reserved for a parameterized numeric family.
+    fn reserved_numeric_type_name(name: &str) -> bool {
+        matches!(name, "decimal" | "numeric")
+    }
+
+    /// Resolve and validate a parameterized decimal type annotation.
+    fn resolve_decimal_type_checked(&mut self, ty: &Spanned<Type>) -> Option<ResolvedType> {
+        let Type::Generic(name, args) = &ty.node else {
+            return None;
+        };
+        let constructor = numerics::decimal_constructor_from_str(name.as_str())?;
+        if args.len() != 2 {
+            self.errors.push(CompileError::type_error(
+                format!("{name}[...] expects exactly 2 integer parameters: precision and scale"),
+                ty.span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let Some(precision) = decimal_type_int_arg(&args[0]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal precision must be an integer literal".to_string(),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        let Some(scale) = decimal_type_int_arg(&args[1]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal scale must be an integer literal".to_string(),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        if !(1..=38).contains(&precision) {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal precision must be between 1 and 38, found {precision}"),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        if scale < 0 || scale > precision {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal scale must be between 0 and precision {precision}, found {scale}"),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let canonical = numerics::decimal_constructor_info_for(constructor).canonical;
+        Some(ResolvedType::Generic(
+            canonical.to_string(),
+            vec![
+                ResolvedType::TypeVar(precision.to_string()),
+                ResolvedType::TypeVar(scale.to_string()),
+            ],
+        ))
     }
 
     /// Validate alias relationships that need declaration-level context before symbol collection flattens aliases.
@@ -2711,6 +2889,12 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
+                if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
+            {
+                true
+            }
+            (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
                 ResolvedType::Generic(expected_name, expected_members),
@@ -2732,6 +2916,15 @@ impl TypeChecker {
                     return false;
                 };
                 self.types_compatible(actual, inner)
+            }
+            (ResolvedType::Generic(name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator)
+                    && expected_args.len() == 1
+                    && (trait_name == builtin_traits::as_str(TraitId::Iterable)
+                        || trait_name == builtin_traits::as_str(TraitId::Iterator)
+                        || trait_name == builtin_traits::as_str(TraitId::IntoIterator)) =>
+            {
+                actual_args.len() == 1 && self.types_compatible(&actual_args[0], &expected_args[0])
             }
 
             // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
@@ -2781,6 +2974,35 @@ impl TypeChecker {
                     .iter()
                     .zip(instantiated.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
+            }
+
+            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable)
+                    && expected_args.len() == 1
+                    && actual_args.len() == 1 =>
+            {
+                let actual_is_iterable = actual_name == builtin_traits::as_str(TraitId::Iterator)
+                    || matches!(
+                        collection_type_id(actual_name.as_str()),
+                        Some(
+                            CollectionTypeId::List
+                                | CollectionTypeId::Set
+                                | CollectionTypeId::FrozenList
+                                | CollectionTypeId::FrozenSet
+                        )
+                    );
+                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+            }
+            (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
+            }
+            (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).
@@ -3011,6 +3233,70 @@ fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
         Declaration::Trait(t) => Some(t.name.as_str()),
         Declaration::Function(f) => Some(f.name.as_str()),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+    }
+}
+
+/// Extract a decimal precision or scale argument from a type-position integer literal.
+fn decimal_type_int_arg(arg: &Spanned<Type>) -> Option<i64> {
+    match &arg.node {
+        Type::IntLiteral(value) => Some(value.value),
+        _ => None,
+    }
+}
+
+/// Return whether two resolved numeric types are compatible through lossless widening.
+fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -> bool {
+    let Some(actual_id) = numeric_type_id_for_compat(actual) else {
+        return false;
+    };
+    let Some(expected_id) = numeric_type_id_for_compat(expected) else {
+        return false;
+    };
+    numeric_type_losslessly_widens_to(actual_id, expected_id)
+}
+
+/// Map an ordinary or exact numeric type to its canonical numeric id for compatibility checks.
+pub(crate) fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
+    match ty {
+        ResolvedType::Int => Some(NumericTypeId::I64),
+        ResolvedType::Float => Some(NumericTypeId::F64),
+        ResolvedType::Numeric(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Return whether one numeric id can widen to another without value loss under RFC 009 rules.
+pub(crate) fn numeric_type_losslessly_widens_to(actual: NumericTypeId, expected: NumericTypeId) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let actual_info = numerics::info_for(actual);
+    let expected_info = numerics::info_for(expected);
+    match (actual_info.family, expected_info.family) {
+        (NumericFamily::SignedInteger, NumericFamily::SignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::UnsignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::SignedInteger) => {
+            match (actual_info.bit_width, expected_info.bit_width) {
+                (Some(actual_bits), Some(expected_bits)) => expected_bits > actual_bits,
+                _ => false,
+            }
+        }
+        (NumericFamily::BinaryFloat, NumericFamily::BinaryFloat) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        _ => false,
+    }
+}
+
+/// Compare optional bit widths for fixed-width widening decisions.
+fn width_at_least(expected: Option<u16>, actual: Option<u16>) -> bool {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) => expected >= actual,
+        _ => false,
     }
 }
 

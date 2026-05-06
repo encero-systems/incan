@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 
 use incan_core::lang::trait_bounds;
+use incan_core::lang::traits as core_traits;
+use incan_core::lang::traits::TraitId;
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
@@ -131,6 +133,7 @@ impl AstLowering {
                     return_type,
                     body,
                     is_async: m.node.is_async(),
+                    is_generator: false,
                     visibility: Visibility::Private,
                     type_params: all_type_params,
                     is_extern: false,
@@ -139,6 +142,9 @@ impl AstLowering {
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        if t.name == core_traits::as_str(TraitId::Iterator) {
+            methods.retain(|method| method.name == "__next__");
+        }
 
         for property in &t.properties {
             methods.push(self.lower_property_with_type_params(

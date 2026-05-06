@@ -206,6 +206,7 @@ pub struct IrFunction {
     pub return_type: IrType,
     pub body: Vec<IrStmt>,
     pub is_async: bool,
+    pub is_generator: bool,
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,

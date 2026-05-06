@@ -105,6 +105,9 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
+| `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
+| `std.graph` | - | - | - |
+| `std.io` | - | - | - |
 | `std.rust` | - | - | - |
 
 ## Builtin exceptions
@@ -318,6 +321,8 @@ def main() -> None:
 | Iterator | `Iterator` |  | Trait for iterator behavior. | RFC 000 | 0.1 | Stable |
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |
+| Iterable | `Iterable` |  | Trait for values that produce iterators. | RFC 006 | 0.3 | Stable |
+| Sum | `Sum` |  | Trait for values that can be produced by summing iterator items. | RFC 088 | 0.3 | Stable |
 
 ## Operators
 
@@ -411,8 +416,20 @@ def main() -> None:
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Int | `int` | `i64`, `i32` | Builtin signed integer type. | RFC 000 | 0.1 | Stable |
-| Float | `float` | `f64`, `f32` | Builtin floating-point type. | RFC 000 | 0.1 | Stable |
+| I8 | `i8` |  | Signed 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| I16 | `i16` | `short`, `smallint` | Signed 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| I32 | `i32` | `integer` | Signed 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| I64 | `i64` | `int`, `bigint`, `long` | Signed 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| I128 | `i128` | `hugeint` | Signed 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| U8 | `u8` | `byte` | Unsigned 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| U16 | `u16` |  | Unsigned 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| U32 | `u32` |  | Unsigned 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| U64 | `u64` |  | Unsigned 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| U128 | `u128` |  | Unsigned 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| F32 | `f32` | `real`, `fp32` | 32-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| F64 | `f64` | `float`, `double`, `fp64` | 64-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| ISize | `isize` |  | Pointer-sized signed integer type. | RFC 009 | 0.3 | Stable |
+| USize | `usize` |  | Pointer-sized unsigned integer type. | RFC 009 | 0.3 | Stable |
 | Bool | `bool` |  | Builtin boolean type. | RFC 000 | 0.1 | Stable |
 
 
@@ -429,6 +446,7 @@ def main() -> None:
 | FrozenList | `FrozenList` | `frozenlist` | Immutable/const-friendly list type. | RFC 009 | 0.1 | Stable |
 | FrozenDict | `FrozenDict` | `frozendict` | Immutable/const-friendly dict type. | RFC 009 | 0.1 | Stable |
 | FrozenSet | `FrozenSet` | `frozenset` | Immutable/const-friendly set type. | RFC 009 | 0.1 | Stable |
+| Generator | `Generator` | `generator` | Lazy resumable producer type. | RFC 006 | 0.3 | Stable |
 
 ## Surface constructors
 
@@ -481,6 +499,7 @@ def main() -> None:
 | Semaphore | `Semaphore` |  | Named | Async/runtime semaphore. | RFC 000 | 0.1 | Stable |
 | Barrier | `Barrier` |  | Named | Async/runtime barrier. | RFC 000 | 0.1 | Stable |
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
+| TaskJoinError | `TaskJoinError` |  | Named | Error returned when a spawned task fails to join. | RFC 000 | 0.1 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |

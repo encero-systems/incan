@@ -143,7 +143,7 @@ impl<'a> IrEmitter<'a> {
             K::MethodCall { .. } | K::KnownMethodCall { .. } => Err(EmitError::Unsupported(
                 "Method calls are not allowed in const initializers".to_string(),
             )),
-            K::ListComp { .. } | K::DictComp { .. } => Err(EmitError::Unsupported(
+            K::ListComp { .. } | K::DictComp { .. } | K::Generator { .. } => Err(EmitError::Unsupported(
                 "Comprehensions are not allowed in const initializers".to_string(),
             )),
             K::Closure { .. } => Err(EmitError::Unsupported(

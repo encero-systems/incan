@@ -218,6 +218,13 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Type::Simple("None".to_string()), Span::new(start, end)));
         }
 
+        if let TokenKind::Int(value) = &self.peek().kind {
+            let value = value.clone();
+            self.advance();
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Type::IntLiteral(value), Span::new(start, end)));
+        }
+
         // Named type (optionally `::`-qualified for Rust paths: `proto_mod::Binary`)
         let name = self.identifier()?;
 

@@ -270,9 +270,28 @@ fn source_fingerprint(source: &DependencySource, project_root: Option<&Path>) ->
             let relative = project_root
                 .and_then(|root| path.strip_prefix(root).ok())
                 .unwrap_or(path);
-            format!("path:{}", relative.to_string_lossy().replace('\\', "/"))
+            let normalized = normalize_relative_path_for_fingerprint(relative);
+            format!("path:{}", normalized.to_string_lossy().replace('\\', "/"))
         }
     }
+}
+
+fn normalize_relative_path_for_fingerprint(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(segment) => normalized.push(segment),
+            std::path::Component::ParentDir => normalized.push(".."),
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn normalize_version_req(input: &str) -> String {
@@ -373,6 +392,24 @@ lock = "payload"
         let fp_a = compute_deps_fingerprint(&deps_a, &[], &selection, None);
         let fp_b = compute_deps_fingerprint(&deps_b, &[], &selection, None);
         assert_ne!(fp_a, fp_b, "fingerprints should differ when features differ");
+    }
+
+    #[test]
+    fn path_dependency_fingerprint_normalizes_current_dir_segments() {
+        let mut dep_plain = sample_spec("tiny_helper", vec![]);
+        dep_plain.source = DependencySource::Path {
+            path: PathBuf::from("rust/tiny_helper"),
+        };
+        let mut dep_current_dir = dep_plain.clone();
+        dep_current_dir.source = DependencySource::Path {
+            path: PathBuf::from("./rust/tiny_helper"),
+        };
+        let selection = CargoFeatureSelection::default();
+
+        assert_eq!(
+            compute_deps_fingerprint(&[dep_plain], &[], &selection, Some(Path::new("."))),
+            compute_deps_fingerprint(&[dep_current_dir], &[], &selection, Some(Path::new("."))),
+        );
     }
 
     // ---- Phase 4: stale fingerprint detection ----

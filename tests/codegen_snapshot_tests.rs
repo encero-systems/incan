@@ -718,6 +718,22 @@ fn test_std_web_routing_compiled_codegen() {
 }
 
 #[test]
+fn imported_stdlib_static_method_defaults_expand_at_call_site_issue500() {
+    let source = r#"
+from std.web import App
+
+def main() -> None:
+  App.run()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("App::run(\"127.0.0.1\".to_string(),8080)"),
+        "imported stdlib static method call should expand omitted defaults:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_web_route_extractors_nested_module_codegen() {
     let main_source = r#"
 import std.async
@@ -987,6 +1003,21 @@ fn test_std_math_codegen() {
 }
 
 #[test]
+fn test_std_fs_import_codegen() {
+    let source = load_test_file("std_fs_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.fs Path import should emit through the generated stdlib fs module; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.fs Path must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_fs_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
@@ -1017,6 +1048,13 @@ fn test_collections_codegen() {
         rust_code.contains("(2, \"two\".to_string())"),
         "expected dict[_, str] literal values to materialize owned String values"
     );
+}
+
+#[test]
+fn test_rfc088_iterator_adapters_codegen() {
+    let source = load_test_file("rfc088_iterator_adapters");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc088_iterator_adapters", rust_code);
 }
 
 #[test]
@@ -1087,6 +1125,30 @@ fn test_match_statements_codegen() {
 }
 
 #[test]
+fn test_issue492_rust_result_match_does_not_clone_scrutinee() {
+    let rust_code = generate_rust(
+        r#"
+from rust::std::fs import read_dir
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    match read_dir(RustPath.new(".")):
+        Ok(entries) =>
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) => println(entry.path().to_string_lossy().into_owned())
+                    Err(err) => println(err.to_string())
+        Err(err) => println(err.to_string())
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("entry_result.clone()"),
+        "Rust Result match scrutinee must not be cloned for non-Clone payloads:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_type_annotations_codegen() {
     let source = load_test_file("type_annotations");
     let rust_code = generate_rust(&source);
@@ -1102,6 +1164,50 @@ fn test_rfc029_union_types_codegen() {
         "union isinstance chains must fully lower before Rust emission:\n{rust_code}"
     );
     insta::assert_snapshot!("rfc029_union_types", rust_code);
+}
+
+#[test]
+fn test_issue501_option_union_isinstance_codegen_no_raw_call() {
+    let rust_code = generate_rust(
+        r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+pub def describe(value: Option[LocalPath | str]) -> str:
+  if value is not None:
+    if isinstance(value, str):
+      return value.upper()
+    elif isinstance(value, LocalPath):
+      return value.0
+  return "missing"
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("isinstance("),
+        "Option[Union] isinstance narrowing must fully lower before Rust emission:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue502_exhaustive_independent_isinstance_branches_codegen_has_no_unit_fallback() {
+    let rust_code = generate_rust(
+        r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+pub def normalize_path_like(value: LocalPath | str) -> LocalPath:
+  if isinstance(value, str):
+    return LocalPath(value)
+  if isinstance(value, LocalPath):
+    return value
+"#,
+    );
+
+    assert!(
+        !rust_code.contains("=> {}"),
+        "exhaustive independent isinstance branches must not emit unit fallthrough arms:\n{rust_code}"
+    );
 }
 
 #[test]
@@ -1255,6 +1361,58 @@ fn test_issue364_filtered_list_comp_borrow_codegen() {
         "filtered list comprehension must not destructure `&stored`; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("issue364_filtered_list_comp_borrow", rust_code);
+}
+
+#[test]
+fn test_rfc006_generator_expression_codegen() {
+    let source = load_test_file("rfc006_generator_expression");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("incan_stdlib::iter::Generator::new"),
+        "expected generator expression to construct stdlib Generator; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(".flat_map(move|x|"),
+        "expected nested generator expression to preserve second for-clause lazily; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("ifx>0") && compact.contains("ify>x") && compact.contains("std::iter::empty()"),
+        "expected generator expression filters to stay lazy inside the iterator chain; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("u64::try_from(3)"),
+        "generator take() must keep its i64 argument instead of using Rust Read::take u64 coercion; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_function_yield_codegen() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def numbers() -> Generator[int]:
+  yield 1
+
+def main() -> None:
+  values = numbers().collect()
+  println(values[0])
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lexer failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parser failed: {errs:?}")))?;
+
+    let rust_code = normalize_codegen_output(
+        &IrCodegen::new()
+            .try_generate(&ast)
+            .map_err(|err| std::io::Error::other(format!("generator function codegen failed: {err:?}")))?,
+    );
+    assert!(
+        rust_code.contains("incan_stdlib::iter::Generator::spawn"),
+        "expected generator function to use runtime generator spawn; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("__incan_yield.yield_value(1)"),
+        "expected yield statement to send generator item; generated:\n{rust_code}"
+    );
+    Ok(())
 }
 
 /// Issue #366: struct fields initialized from `self.<owned_field>` inside `clone(self) -> Self` must clone the field.
@@ -2177,6 +2335,17 @@ fn test_std_derives_string_compiled_codegen() {
     insta::assert_snapshot!("std_derives_string_compiled", rust_code);
 }
 
+/// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
+#[test]
+fn test_std_derives_collection_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/collection.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_collection_compiled", rust_code);
+}
+
 /// RFC 023: compile `std.serde.json` (Serialize, Deserialize) from `.incn` source.
 ///
 /// Verifies that trait declarations with `@rust.extern` methods compile through the full pipeline when serde namespace
@@ -2208,6 +2377,42 @@ fn test_std_serde_json_import_codegen() {
         "generated JSON stringify paths should no longer inline serde_json::to_string fallbacks; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("std_serde_json_import", rust_code);
+}
+
+/// RFC 047: compile `std.graph` declarations from `.incn` source.
+#[test]
+fn test_std_graph_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/graph.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_graph_compiled", rust_code);
+}
+
+/// RFC 047: verify `std.graph` imports, direct constructors, DAGs, and multigraph edge ids lower to Rust.
+#[test]
+fn test_std_graph_import_codegen() {
+    let source = load_test_file("std_graph_import");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("DiGraph::<String>::__incan_new()"),
+        "expected DiGraph constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Dag::<String>::__incan_new()"),
+        "expected Dag constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("MultiDiGraph::<String>::__incan_new()"),
+        "expected MultiDiGraph constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Result<EdgeId,GraphError>"),
+        "expected multigraph add_edge to preserve EdgeId result; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_graph_import", rust_code);
 }
 
 /// RFC 023 (#303): explicit `with Serialize` adoption should expand the stdlib default `to_json` body into the

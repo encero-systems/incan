@@ -17,6 +17,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Language reference (generated)](language.md): compiler-generated tables (keywords, operators, builtins, etc.)
 - [Functions and calls](functions.md): function signatures, ordinary call binding, rest parameters, and call-site unpacking
 - [Computed properties](computed_properties.md): field-like derived members, trait requirements, and `property` vs `def`
+- [Generators](generators.md): `Generator[T]`, `yield`, generator expressions, and helper method signatures
 - [Symbol aliases](symbol_aliases.md): top-level aliases, same-type method aliases, exports, and diagnostics
 - [Glossary](glossary.md): canonical terminology used across the docs
 - [Imports and modules](imports_and_modules.md): import syntax, module paths, and module resolution rules

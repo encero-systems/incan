@@ -968,6 +968,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a literal token at the current parser position, if one is present.
     fn try_literal(&mut self) -> Option<Literal> {
         match &self.peek().kind {
             TokenKind::Int(il) => {
@@ -979,6 +980,11 @@ impl<'a> Parser<'a> {
                 let fl = fl.clone();
                 self.advance();
                 Some(Literal::Float(fl))
+            }
+            TokenKind::Decimal(dl) => {
+                let dl = dl.clone();
+                self.advance();
+                Some(Literal::Decimal(dl))
             }
             TokenKind::String(s) => {
                 let s = s.clone();
@@ -1100,11 +1106,20 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(&mut if_expr.condition, offset);
             }
             Expr::Loop(_) => {}
+            Expr::Generator(generator) => {
+                self.shift_spanned_expr(&mut generator.expr, offset);
+                for clause in &mut generator.clauses {
+                    self.shift_comprehension_clause(clause, offset);
+                }
+            }
             Expr::ListComp(comp) => {
                 self.shift_spanned_expr(&mut comp.expr, offset);
                 self.shift_spanned_expr(&mut comp.iter, offset);
                 if let Some(filter) = &mut comp.filter {
                     self.shift_spanned_expr(filter, offset);
+                }
+                for clause in &mut comp.clauses {
+                    self.shift_comprehension_clause(clause, offset);
                 }
             }
             Expr::DictComp(comp) => {
@@ -1113,6 +1128,9 @@ impl<'a> Parser<'a> {
                 self.shift_spanned_expr(&mut comp.iter, offset);
                 if let Some(filter) = &mut comp.filter {
                     self.shift_spanned_expr(filter, offset);
+                }
+                for clause in &mut comp.clauses {
+                    self.shift_comprehension_clause(clause, offset);
                 }
             }
             Expr::Closure(_, body) => {
@@ -1181,6 +1199,14 @@ impl<'a> Parser<'a> {
                     self.shift_spanned_expr(right, offset);
                 }
             },
+        }
+    }
+
+    /// Shift expression spans that live inside a comprehension clause.
+    fn shift_comprehension_clause(&self, clause: &mut ComprehensionClause, offset: usize) {
+        match clause {
+            ComprehensionClause::For { iter, .. } => self.shift_spanned_expr(iter, offset),
+            ComprehensionClause::If(condition) => self.shift_spanned_expr(condition, offset),
         }
     }
 
@@ -1525,12 +1551,7 @@ impl<'a> Parser<'a> {
         if let ListEntry::Element(first_expr) = &first
             && self.match_token(&TokenKind::Keyword(KeywordId::For))
         {
-            self.skip_newlines();
-            let pattern = self.for_binding_pattern()?;
-            self.skip_newlines();
-            self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
-            self.skip_newlines();
-            let iter = self.expression()?;
+            let (pattern, iter, for_clause) = self.comprehension_for_clause_after_for()?;
             self.skip_newlines();
             let filter = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
                 self.skip_newlines();
@@ -1538,6 +1559,10 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            let mut clauses = vec![for_clause];
+            if let Some(condition) = &filter {
+                clauses.push(ComprehensionClause::If(condition.clone()));
+            }
             self.skip_newlines();
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::RBracket),
@@ -1550,6 +1575,7 @@ impl<'a> Parser<'a> {
                     pattern,
                     iter,
                     filter,
+                    clauses,
                 })),
                 Span::new(start, end),
             ));
@@ -1623,12 +1649,7 @@ impl<'a> Parser<'a> {
 
             // Check for comprehension
             if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
-                self.skip_newlines();
-                let pattern = self.for_binding_pattern()?;
-                self.skip_newlines();
-                self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
-                self.skip_newlines();
-                let iter = self.expression()?;
+                let (pattern, iter, for_clause) = self.comprehension_for_clause_after_for()?;
                 self.skip_newlines();
                 let filter = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
                     self.skip_newlines();
@@ -1636,6 +1657,10 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
+                let mut clauses = vec![for_clause];
+                if let Some(condition) = &filter {
+                    clauses.push(ComprehensionClause::If(condition.clone()));
+                }
                 self.skip_newlines();
                 self.expect(
                     &TokenKind::Punctuation(PunctuationId::RBrace),
@@ -1649,6 +1674,7 @@ impl<'a> Parser<'a> {
                         pattern,
                         iter,
                         filter,
+                        clauses,
                     })),
                     Span::new(start, end),
                 ));
@@ -1725,6 +1751,46 @@ impl<'a> Parser<'a> {
         Ok(DictEntry::Pair(key, value))
     }
 
+    /// Parse a `for pattern in iter` comprehension clause after the leading `for` token has been consumed.
+    fn comprehension_for_clause_after_for(
+        &mut self,
+    ) -> Result<(Spanned<Pattern>, Spanned<Expr>, ComprehensionClause), CompileError> {
+        self.skip_newlines();
+        let pattern = self.for_binding_pattern()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
+        self.skip_newlines();
+        let iter = self.expression()?;
+        let clause = ComprehensionClause::For {
+            pattern: pattern.clone(),
+            iter: iter.clone(),
+        };
+        Ok((pattern, iter, clause))
+    }
+
+    /// Parse the full comprehension-clause tail used by generator expressions.
+    fn generator_clauses_after_for(&mut self) -> Result<Vec<ComprehensionClause>, CompileError> {
+        let (_, _, first_for) = self.comprehension_for_clause_after_for()?;
+        let mut clauses = vec![first_for];
+
+        loop {
+            self.skip_newlines();
+            if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
+                self.skip_newlines();
+                clauses.push(ComprehensionClause::If(self.expression()?));
+                continue;
+            }
+            if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
+                let (_, _, clause) = self.comprehension_for_clause_after_for()?;
+                clauses.push(clause);
+                continue;
+            }
+            break;
+        }
+
+        Ok(clauses)
+    }
+
     fn paren_or_tuple(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after (
         self.skip_newlines();
@@ -1747,6 +1813,23 @@ impl<'a> Parser<'a> {
 
         let first = self.expression()?;
         self.skip_newlines();
+
+        if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
+            let clauses = self.generator_clauses_after_for()?;
+            self.skip_newlines();
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RParen),
+                "Expected ')' after generator expression",
+            )?;
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(
+                Expr::Generator(Box::new(GeneratorExpr {
+                    expr: first,
+                    clauses,
+                })),
+                Span::new(start, end),
+            ));
+        }
 
         // Check for tuple (needs comma)
         if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {

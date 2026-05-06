@@ -62,6 +62,11 @@ impl<'a> FromImportContext<'a> {
         self.stdlib.as_ref().is_some_and(|stdlib| stdlib.is_unknown_module)
     }
 
+    /// Return `true` when an unmaterialized import item from this context must be rejected instead of falling back.
+    fn rejects_unmaterialized_stdlib_items(&self) -> bool {
+        self.stdlib.as_ref().is_some_and(|stdlib| !stdlib.is_unknown_module)
+    }
+
     /// Join the source module segments as the user-facing dotted stdlib path.
     fn dotted_module_path(&self) -> String {
         self.module.segments.join(".")
@@ -210,15 +215,42 @@ impl TypeChecker {
         }
 
         let testing_semantics = self.load_testing_semantics_for_import(&context, span);
+        self.materialize_stdlib_stub_types(&context, span);
 
         for item in items {
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
+                continue;
+            }
+            if context.rejects_unmaterialized_stdlib_items() {
+                self.errors.push(errors::stdlib_import_not_exported(
+                    &item.name,
+                    &context.dotted_module_path(),
+                    span,
+                ));
                 continue;
             }
             if self.preserve_existing_from_import_symbol(item, span) {
                 continue;
             }
             self.define_from_import_placeholder(module, item, span);
+        }
+    }
+
+    /// Materialize all known top-level types for a stub-backed stdlib module before collecting individual items.
+    fn materialize_stdlib_stub_types(&mut self, context: &FromImportContext<'_>, span: Span) {
+        if !context.stdlib.as_ref().is_some_and(|stdlib| stdlib.has_stub) {
+            return;
+        }
+
+        for (type_name, type_info) in self.stdlib_cache.list_types(&context.module.segments) {
+            if self.symbols.lookup(&type_name).is_none() {
+                self.symbols.define(Symbol {
+                    name: type_name,
+                    kind: SymbolKind::Type(type_info),
+                    span,
+                    scope: 0,
+                });
+            }
         }
     }
 
@@ -1023,6 +1055,7 @@ impl TypeChecker {
         }
     }
 
+    /// Rewrite resolved type names through import aliases after stdlib materialization.
     fn remap_resolved_type_with_import_aliases(ty: &mut ResolvedType, imported_type_aliases: &HashMap<String, String>) {
         match ty {
             ResolvedType::Named(name) => {
@@ -1061,6 +1094,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -1446,10 +1480,11 @@ impl TypeChecker {
     /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
     fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
+        let mut trait_methods = HashSet::new();
         if let Some(metadata) = &info.metadata
             && let RustItemKind::Trait(trait_info) = &metadata.kind
         {
-            let methods: HashSet<String> = trait_info
+            trait_methods = trait_info
                 .items
                 .iter()
                 .filter_map(|item| match item {
@@ -1457,11 +1492,44 @@ impl TypeChecker {
                     RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => None,
                 })
                 .collect();
-            if !methods.is_empty() {
-                self.type_info.rust_trait_import_methods.insert(name.clone(), methods);
-            }
+        }
+        if trait_methods.is_empty() {
+            trait_methods.extend(
+                Self::known_rust_trait_methods(info.path.as_str())
+                    .iter()
+                    .map(|method| (*method).to_string()),
+            );
+        }
+        if !trait_methods.is_empty() {
+            self.type_info
+                .rust_trait_import_methods
+                .insert(name.clone(), trait_methods);
         }
         self.define_rust_import_symbol(name, info, span);
+    }
+
+    /// Return fallback trait method names for Rust traits when rustdoc metadata is unavailable.
+    fn known_rust_trait_methods(path: &str) -> &'static [&'static str] {
+        match path {
+            "std::io::Read" => &[
+                "read",
+                "read_to_end",
+                "read_to_string",
+                "read_exact",
+                "read_buf",
+                "read_buf_exact",
+                "bytes",
+                "chain",
+                "take",
+            ],
+            "std::io::Write" => &["write", "write_all", "write_fmt", "flush"],
+            "std::io::Seek" => &["seek", "rewind", "stream_position", "seek_relative"],
+            "std::os::unix::fs::MetadataExt" => &[
+                "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize",
+                "blocks",
+            ],
+            _ => &[],
+        }
     }
 
     /// Define a symbol for a Rust crate import, skipping if a real definition exists.

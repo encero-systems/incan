@@ -354,6 +354,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
+        let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+  return (x*y for x in xs if x>0 for y in ys if y>x)
+"#;
+        let expected = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
         let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
   mat=a@b
@@ -1218,6 +1232,7 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     c = 1_000
     d = 1e6
     e = 1000.0
+    f = 19.99d
 "#;
         let formatted = format_source(source)?;
         assert!(
@@ -1239,6 +1254,10 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
         assert!(
             formatted.contains("e = 1000.0"),
             "expected plain 1000.0 preserved; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("f = 19.99d"),
+            "expected decimal literal suffix preserved; got: {formatted:?}"
         );
         Ok(())
     }

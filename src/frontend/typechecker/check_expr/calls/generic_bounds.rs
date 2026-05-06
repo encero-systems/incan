@@ -59,6 +59,8 @@ impl TypeChecker {
             &mut type_bindings,
             call_span,
         );
+        self.type_info
+            .record_call_site_callable_params(call_span, &params_with_explicit);
         self.emit_explicit_bound_errors(
             func_name,
             &info.type_param_bounds,
@@ -397,6 +399,7 @@ impl TypeChecker {
             | ResolvedType::CallSiteInfer => true,
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -464,6 +467,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes
@@ -502,6 +506,7 @@ impl TypeChecker {
             }
             ResolvedType::Int
             | ResolvedType::Float
+            | ResolvedType::Numeric(_)
             | ResolvedType::Bool
             | ResolvedType::Str
             | ResolvedType::Bytes

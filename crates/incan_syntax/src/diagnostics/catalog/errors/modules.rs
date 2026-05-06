@@ -29,6 +29,16 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// Import path `std.<module>` is known, but the requested item is not part of that stdlib module's public surface.
+pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Cannot import `{name}` from stdlib module `{module}`: it is not exported by that module"),
+        span,
+    )
+    .with_hint("Use a supported stdlib import name from this module")
+    .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
+}
+
 /// A crate-root `import rust::crate_name` binding was used in type position.
 ///
 /// RFC 041: crate-root imports name the crate as a namespace, not a concrete Rust type. Authors should import a

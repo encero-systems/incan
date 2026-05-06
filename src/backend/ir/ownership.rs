@@ -101,10 +101,10 @@ pub fn plan_value_use(expr: &IrExpr, site: ValueUseSite<'_>) -> OwnershipPlan {
         ValueUseSite::ReturnValue { target_ty } => {
             determine_conversion(expr, target_ty, ConversionContext::ReturnValue)
         }
-        // Match scrutinees consume a value into pattern matching. Reuse owned-result materialization semantics so
-        // borrowed/shared non-Copy values are cloned before the match.
+        // Match scrutinees consume a value into pattern matching. Keep this as a dedicated conversion context because
+        // Rust interop results can carry non-Clone values that must be moved into the match.
         ValueUseSite::MatchScrutinee { target_ty } => {
-            determine_conversion(expr, target_ty, ConversionContext::ReturnValue)
+            determine_conversion(expr, target_ty, ConversionContext::MatchScrutinee)
         }
         ValueUseSite::MethodArg => determine_conversion(expr, None, ConversionContext::MethodArg),
     }
