@@ -4787,7 +4787,7 @@
 </tr>
 </tbody>
 </table>
-<p><code>textDocument/hover</code> includes checked API metadata previews for public declarations, selected public model/class members, and public enum variants after successful typechecking. Value enum hovers and completions include backing type and raw-value details where available. <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> emits contract-backed model source or bundle JSON for a selected project, bundle JSON file, or <code>.incnlib</code> artifact. There is currently no LSP command that returns the full checked API metadata JSON package; call <code>incan tools metadata api</code> for that.</p>
+<p><code>textDocument/hover</code> includes checked API metadata previews for public declarations, selected public model/class members, and public enum variants after successful typechecking. Computed property hovers and completions include the owner and return type, such as <code>property Account.total -&gt; int</code>. Value enum hovers and completions include backing type and raw-value details where available. <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> emits contract-backed model source or bundle JSON for a selected project, bundle JSON file, or <code>.incnlib</code> artifact. There is currently no LSP command that returns the full checked API metadata JSON package; call <code>incan tools metadata api</code> for that.</p>
 <p>To learn more about LSP, see the <a href="https://microsoft.github.io/language-server-protocol/">Language Server Protocol</a>
 specification. See also: <a href="../../explanation/lsp_architecture/">LSP architecture</a>.</p>
 

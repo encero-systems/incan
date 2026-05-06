@@ -5026,6 +5026,17 @@
 <span class="hll">    <span class="nb">println</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Because classes don’t support field aliases/metadata (the way a <code>model</code> would), member access always uses the canonical field name. Private fields can only be read or written from methods on the declaring class; use <code>pub</code> for fields that are part of the public object surface.</p>
+<p>For derived field-like values, use a computed property:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Counter</span><span class="p">:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="nb">property</span> <span class="n">doubled</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">*</span> <span class="mi">2</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="nc">Counter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">c</span><span class="o">.</span><span class="n">doubled</span>
+</code></pre></div>
+<p>Computed properties read like fields but execute a body on each read. See: <a href="../../../reference/computed_properties/">Computed properties</a>.</p>
 <h2 id="methods-and-receivers-self-vs-mut-self">Methods and receivers (<code>self</code> vs <code>mut self</code>)<a class="headerlink" href="#methods-and-receivers-self-vs-mut-self" title="Permanent link">&para;</a></h2>
 <p>Use <code>self</code> for read-only methods and <code>mut self</code> for methods that modify the object.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Counter</span><span class="p">:</span>
