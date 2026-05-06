@@ -4829,129 +4829,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-plan" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation Plan
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Implementation Plan">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-iterator-contract-and-stdlib-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 1: Iterator contract and stdlib surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-typechecker-and-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 2: Typechecker and diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-lowering-emission-and-runtime-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 3: Lowering, emission, and runtime support
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-tests-docs-and-release-readiness" class="md-nav__link">
-    <span class="md-ellipsis">
-      Phase 4: Tests, docs, and release readiness
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#progress-checklist" class="md-nav__link">
-    <span class="md-ellipsis">
-      Progress Checklist
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Progress Checklist">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#spec-design" class="md-nav__link">
-    <span class="md-ellipsis">
-      Spec / design
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#stdlib-trait-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Stdlib / trait surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#typechecker-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Typechecker / diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lowering-emission-runtime" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lowering / emission / runtime
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tests
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docs-release" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docs / release
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design Decisions
+      Unresolved questions
     </span>
   </a>
   
@@ -4977,7 +4857,7 @@
 
 <h1 id="rfc-088-iterator-adapter-surface">RFC 088: Iterator adapter surface<a class="headerlink" href="#rfc-088-iterator-adapter-surface" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> In Progress</li>
+<li><strong>Status:</strong> Draft</li>
 <li><strong>Created:</strong> 2026-05-04</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -5076,7 +4956,7 @@
 <p><code>Iterator[T]</code> must expose these lazy adapter methods:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">flat_map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterable</span><span class="p">[</span><span class="nc">U</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">flat_map</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">U</span><span class="p">]</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">skip</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">chain</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">Iterator</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
@@ -5095,24 +4975,12 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">any</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">find</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">reduce</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">init</span><span class="p">:</span> <span class="nc">U</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">U</span><span class="p">,</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">fold</span><span class="p">[</span><span class="nc">U</span><span class="p">](</span><span class="bp">self</span><span class="p">,</span> <span class="n">init</span><span class="p">:</span> <span class="nc">U</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">U</span><span class="p">,</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">U</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">for_each</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="p">(</span><span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">sum</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>  <span class="c1"># when T supports Sum[T]</span>
 </code></pre></div>
 <p>Terminal methods consume the receiver. After a terminal method consumes an iterator value, the program must not rely on that same iterator value yielding additional elements unless the iterator type documents reusable iteration separately.</p>
-<p>If code needs to preserve an iterator value for later use, clone it before the terminal call:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">remaining</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-<span class="n">copy</span> <span class="o">=</span> <span class="n">remaining</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
-
-<span class="n">error_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
-
-<span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">remaining</span><span class="p">:</span>
-    <span class="n">handle</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
-</code></pre></div>
 <h3 id="callback-typing">Callback typing<a class="headerlink" href="#callback-typing" title="Permanent link">&para;</a></h3>
 <p>Callback arguments must type-check against the element type yielded by the receiver at that point in the chain.</p>
-<p><code>map</code> callbacks must return the output element type. <code>filter</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>take_while</code>, and <code>skip_while</code> callbacks must return <code>bool</code>. <code>flat_map</code> callbacks must return <code>Iterable[U]</code>, including iterator values and collection-like values that satisfy the iteration protocol. <code>reduce</code> and <code>fold</code> callbacks must accept the accumulator and current element and must return the next accumulator value.</p>
+<p><code>map</code> callbacks must return the output element type. <code>filter</code>, <code>any</code>, <code>all</code>, <code>find</code>, <code>take_while</code>, and <code>skip_while</code> callbacks must return <code>bool</code>. <code>flat_map</code> callbacks must return <code>Iterator[U]</code> or a type that is accepted as an iterator value under the iteration protocol. <code>fold</code> callbacks must accept the accumulator and current element and must return the next accumulator value.</p>
 <p>When callback arity or return type is incompatible with the method contract, the compiler must emit a type error at the adapter call site.</p>
 <h3 id="evaluation-order">Evaluation order<a class="headerlink" href="#evaluation-order" title="Permanent link">&para;</a></h3>
 <p>The receiver expression must be evaluated before method arguments. Method arguments must be evaluated left to right. Adapter callbacks must be invoked only as the resulting iterator is advanced.</p>
@@ -5120,7 +4988,7 @@
 <h3 id="method-behavior">Method behavior<a class="headerlink" href="#method-behavior" title="Permanent link">&para;</a></h3>
 <p><code>.map(f)</code> yields <code>f(item)</code> for each input item.</p>
 <p><code>.filter(f)</code> yields each input item for which <code>f(item)</code> returns <code>true</code>.</p>
-<p><code>.flat_map(f)</code> applies <code>f</code> to each input item and yields all elements from each returned iterable before advancing to the next input item.</p>
+<p><code>.flat_map(f)</code> applies <code>f</code> to each input item and yields all elements from each returned iterator before advancing to the next input item.</p>
 <p><code>.take(n)</code> yields at most the first <code>n</code> elements. If <code>n</code> is less than or equal to zero, it yields no elements.</p>
 <p><code>.skip(n)</code> discards at most the first <code>n</code> elements and yields the rest. If <code>n</code> is less than or equal to zero, it yields all elements.</p>
 <p><code>.chain(other)</code> yields all remaining elements from the receiver, then all remaining elements from <code>other</code>.</p>
@@ -5129,16 +4997,12 @@
 <p><code>.take_while(f)</code> yields input items until <code>f(item)</code> first returns <code>false</code>, then stops.</p>
 <p><code>.skip_while(f)</code> discards input items while <code>f(item)</code> returns <code>true</code>, then yields that first non-skipped item and all following items.</p>
 <p><code>.batch(size)</code> yields adjacent <code>list[T]</code> batches with at most <code>size</code> elements. The final batch is yielded when it is non-empty even if it contains fewer than <code>size</code> elements. A <code>size</code> less than or equal to zero must be rejected statically when known at compile time and otherwise must produce the same user-facing error category as other invalid numeric standard-library arguments.</p>
-<p><code>.collect()</code> consumes all remaining elements into a <code>list[T]</code>. This RFC does not define target-collection overloads for <code>.collect()</code>.</p>
+<p><code>.collect()</code> consumes all remaining elements into a <code>list[T]</code>.</p>
 <p><code>.count()</code> consumes all remaining elements and returns the number of elements consumed.</p>
-<p><code>.sum()</code> consumes all remaining summable elements and returns their sum. This RFC supports <code>int</code>, <code>float</code>, and newtypes over summable underlying types.</p>
-<p>The capability is named by <code>Sum[T]</code>, mirroring Rust's <code>std::iter::Sum</code>: a type can produce <code>Self</code> from an iterator of <code>T</code> items. For this RFC's implemented surface, primitive numeric types provide the base behavior. Newtypes lift the underlying summation result through normal construction, so checked newtypes still run their selected <code>from_underlying</code>/<code>from_*</code> validation hook and may fail at runtime if the summed underlying value violates the newtype invariant.</p>
 <p><code>.any(f)</code> returns <code>true</code> after the first item for which <code>f(item)</code> returns <code>true</code>; otherwise it returns <code>false</code>.</p>
 <p><code>.all(f)</code> returns <code>false</code> after the first item for which <code>f(item)</code> returns <code>false</code>; otherwise it returns <code>true</code>.</p>
 <p><code>.find(f)</code> returns <code>Some(item)</code> for the first item for which <code>f(item)</code> returns <code>true</code>; otherwise it returns <code>None</code>.</p>
-<p><code>.reduce(init, f)</code> starts with <code>init</code>, applies <code>f(acc, item)</code> for each item, and returns the final accumulator.</p>
 <p><code>.fold(init, f)</code> starts with <code>init</code>, applies <code>f(acc, item)</code> for each item, and returns the final accumulator.</p>
-<p><code>.for_each(f)</code> calls <code>f(item)</code> for each remaining item and returns <code>None</code>.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
 <p>This RFC adds no new syntax. Iterator adapters are ordinary method calls on iterator values.</p>
@@ -5171,7 +5035,7 @@
 <li><code>.batch()</code> is useful for data processing but is less universal than the other adapters, so it adds policy surface around partial batches and invalid sizes.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> The stdlib iterator protocol should be the source of truth for this surface. <code>Iterator[T]</code> should expose Incan default methods and Incan adapter carrier types for the common lazy adapters and terminal consumers, with compiler support only where needed for method resolution, type substitution, consumption diagnostics, builtin collection <code>.iter()</code> bridging, and backend emission. The Rust backend may lower straightforward adapter chains to Rust iterator chains when doing so preserves Incan evaluation order, callback behavior, item typing, and error behavior; that lowering is an optimization/bridge, not a second semantic definition.</p>
+<p><em>(Non-normative.)</em> A practical implementation should model these methods as stdlib-visible iterator protocol methods with compiler support only where needed for method resolution, type substitution, laziness, and backend emission. The Rust backend should lower straightforward adapter chains to Rust iterator chains when doing so preserves Incan evaluation order, callback behavior, item typing, and error behavior.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Typechecker / Symbol resolution</strong>: iterator method lookup, generic substitution, callback arity checks, callback return-type checks, and terminal-consumption rules must be validated.</li>
@@ -5181,96 +5045,14 @@
 <li><strong>LSP / Tooling</strong>: completions, hovers, and diagnostics should expose the adapter signatures and explain callback mismatch errors.</li>
 <li><strong>Documentation</strong>: iterator, generator, collection, and data-transformation docs should teach lazy adapters separately from eager comprehensions.</li>
 </ul>
-<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-iterator-contract-and-stdlib-surface">Phase 1: Iterator contract and stdlib surface<a class="headerlink" href="#phase-1-iterator-contract-and-stdlib-surface" title="Permanent link">&para;</a></h3>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Add the RFC 088 adapter and terminal method declarations to the <code>Iterator[T]</code> trait surface.</li>
-<li>Dogfood the protocol by providing Incan default bodies and Incan adapter carrier types wherever the behavior can be expressed directly in stdlib code.</li>
-<li>Keep <code>.batch()</code> in the core iterator adapter surface with final partial-batch preservation and invalid-size behavior defined by this RFC.</li>
-<li>Keep <code>.collect()</code> fixed to <code>list[T]</code>; target-specific collection is deferred.</li>
-<li>Treat <code>flat_map</code> callbacks as returning <code>Iterable[U]</code>, with iterator conversion handled by the normal iteration protocol.</li>
+<li>Should <code>.batch()</code> remain in the core iterator adapter RFC, or should it move to a smaller follow-up for data-processing-specific helpers?</li>
+<li>Should <code>.collect()</code> eventually support explicit target collection types, or should this RFC keep it fixed to <code>list[T]</code>?</li>
+<li>Should <code>flat_map</code> accept <code>Iterable[U]</code> in addition to <code>Iterator[U]</code>, or should callers explicitly call <code>.iter()</code> on iterable results?</li>
+<li>Should terminal methods consume the iterator linearly in the type system once ownership tracking is strong enough to express that distinction?</li>
 </ul>
-<h3 id="phase-2-typechecker-and-diagnostics">Phase 2: Typechecker and diagnostics<a class="headerlink" href="#phase-2-typechecker-and-diagnostics" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Resolve RFC 088 methods on iterator values and values accepted through the iteration protocol.</li>
-<li>Substitute generic method types through adapter chains so each chained receiver has the expected element type.</li>
-<li>Validate callback arity and return type for every adapter and terminal consumer.</li>
-<li>Enforce terminal consumption semantics at the language contract level and reject obvious same-binding reuse when the compiler can do so without broader linear ownership machinery.</li>
-<li>Emit focused diagnostics at the adapter call site for missing iterator capability, incompatible callback shape, invalid batch size, and invalid terminal reuse when detected.</li>
-</ul>
-<h3 id="phase-3-lowering-emission-and-runtime-support">Phase 3: Lowering, emission, and runtime support<a class="headerlink" href="#phase-3-lowering-emission-and-runtime-support" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Lower adapter and terminal calls so lazy adapters stay lazy and terminal consumers consume the iterator.</li>
-<li>Treat compiler-recognized RFC 088 methods as the optimized lowering path for canonical stdlib iterator defaults, not as the sole implementation of the protocol.</li>
-<li>Emit Rust iterator chains when they preserve Incan evaluation order, callback behavior, ownership behavior, and error behavior.</li>
-<li>Add runtime or generated helper support for behavior that is not covered directly by Rust iterator adapters, especially <code>.batch()</code>.</li>
-<li>Preserve current <code>for</code> loop, comprehension, builtin collection, and generator behavior while adding the adapter surface.</li>
-</ul>
-<h3 id="phase-4-tests-docs-and-release-readiness">Phase 4: Tests, docs, and release readiness<a class="headerlink" href="#phase-4-tests-docs-and-release-readiness" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add typechecker coverage for valid chains, element-type propagation, callback mismatch diagnostics, invalid batch sizes, and terminal consumption behavior.</li>
-<li>Add codegen snapshot and integration coverage for representative adapter chains, terminal consumers, <code>flat_map</code> over iterable callback results, and batching.</li>
-<li>Update authored user-facing docs for iterator pipelines and how they differ from eager comprehensions.</li>
-<li>Update release notes and bump the active <code>0.3.0-dev.N</code> version when implementation lands.</li>
-</ul>
-<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
-<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep <code>.batch()</code> in the core RFC 088 surface.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep <code>.collect()</code> fixed to <code>list[T]</code> for this RFC.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Accept <code>Iterable[U]</code> results from <code>flat_map</code> callbacks.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Define terminal methods as consuming iterators and defer full linear ownership enforcement beyond obvious compiler-detectable reuse.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Make the stdlib iterator protocol carry default Incan implementations for the RFC 088 adapter/consumer surface where possible.</li>
-</ul>
-<h3 id="stdlib-trait-surface">Stdlib / trait surface<a class="headerlink" href="#stdlib-trait-surface" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add lazy adapter declarations to <code>Iterator[T]</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add terminal consumer declarations to <code>Iterator[T]</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Expose <code>.batch()</code> with final partial-batch behavior.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep <code>flat_map</code> typed against iterable callback results.</li>
-</ul>
-<h3 id="typechecker-diagnostics">Typechecker / diagnostics<a class="headerlink" href="#typechecker-diagnostics" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Resolve RFC 088 methods on iterator values.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Propagate element types through adapter chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Validate callback arity and return types.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Validate <code>.batch(size)</code> rejects invalid known sizes and reports runtime invalid sizes consistently.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Detect and reject obvious same-binding reuse after terminal consumption where feasible.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit adapter-specific diagnostics instead of generic missing-method errors.</li>
-</ul>
-<h3 id="lowering-emission-runtime">Lowering / emission / runtime<a class="headerlink" href="#lowering-emission-runtime" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Lower lazy adapters without intermediate list materialization.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Lower terminal consumers as consuming operations.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit Rust iterator chains for standard adapters where equivalent.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add runtime/generated support for <code>.batch()</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Preserve existing collection iteration, comprehensions, and <code>for</code> loops.</li>
-</ul>
-<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for every adapter and terminal consumer.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for callback mismatch diagnostics.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for adapter chain element-type propagation.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Tests for <code>flat_map</code> callbacks returning iterable values.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Tests for <code>.batch()</code> partial final batch and invalid size.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen/emission tests for representative lazy chains.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Integration tests for end-to-end iterator pipelines.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Regression tests proving eager list comprehensions keep existing behavior.</li>
-</ul>
-<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update iterator or collection user docs with lazy pipeline examples.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Update generator docs only where RFC 088 changes cross-references or examples.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add release notes for the active <code>0.3</code> development line.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump the active <code>0.3.0-dev.N</code> version.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>.batch()</code> remains part of RFC 088 because fixed-size batching is a first-order data-processing use case and the RFC defines a narrow, predictable contract: preserve a final partial batch and reject invalid sizes.</li>
-<li><code>.collect()</code> returns <code>list[T]</code> in this RFC. Target-specific collection, such as collecting into sets, maps, or custom containers, is deferred until the collection-construction story is mature enough to specify cleanly.</li>
-<li><code>flat_map</code> accepts callbacks returning <code>Iterable[U]</code>. Requiring callbacks to return only <code>Iterator[U]</code> would force noisy <code>.iter()</code> calls in ordinary cases such as flattening lists or custom iterable fields.</li>
-<li>Terminal consumers consume the iterator. Authors who need to preserve a reusable value should clone or otherwise create a separate iterator source before consuming. Full linear type-system enforcement is deferred; this RFC still allows the compiler to reject obvious same-binding reuse after a terminal consumer.</li>
-</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
