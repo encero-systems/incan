@@ -58,6 +58,19 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    fn explicit_trait_dispatch_for_backend(
+        &self,
+        trait_name: &str,
+        type_args: Vec<ResolvedType>,
+    ) -> Option<crate::frontend::typechecker::ResolvedMethodDispatch> {
+        let module_path = self.stdlib_cache.loaded_trait_module_path(trait_name)?;
+        let is_std_io_binary_trait = module_path.len() == 2
+            && module_path[0] == "std"
+            && module_path[1] == "io"
+            && matches!(trait_name, "BinaryRead" | "BinaryWrite");
+        is_std_io_binary_trait.then(|| self.resolved_trait_dispatch(trait_name, type_args))
+    }
+
     fn resolved_trait_dispatch(
         &self,
         trait_name: &str,
@@ -684,7 +697,12 @@ impl TypeChecker {
                             self.method_sigs_compatible(&info, &entry.info)
                                 && self.method_sigs_compatible(&entry.info, &info)
                         })
-                        .map(|entry| self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args.clone()));
+                        .and_then(|entry| {
+                            self.explicit_trait_dispatch_for_backend(
+                                &entry.origin_trait,
+                                entry.origin_type_args.clone(),
+                            )
+                        });
                     MethodCandidate { info, dispatch }
                 })
                 .collect::<Vec<_>>();
@@ -714,9 +732,11 @@ impl TypeChecker {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
                 if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
+                    let dispatch =
+                        self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
                     candidates.push(MethodCandidate {
                         info: entry.info,
-                        dispatch: Some(self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args)),
+                        dispatch,
                     });
                 }
             }
@@ -967,9 +987,11 @@ impl TypeChecker {
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
+                let dispatch =
+                    self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
                 candidates.push(MethodCandidate {
                     info: entry.info,
-                    dispatch: Some(self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args)),
+                    dispatch,
                 });
             }
         }
