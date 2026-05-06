@@ -19,6 +19,8 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Every implementation must land in a fresh worktree rooted under `/Users/danny/Development/encero/tmp` so VS Code picks it up; do not implement in `/tmp` or in the main repo checkout.
 - Treat each slice as a managed work packet with durable state on disk, not as a chat thread that has to remember its own scope.
 - Require every worker to plan, implement, verify, review, and fix within its owned slice.
+- Consolidate accepted worker output onto the orchestrator branch before any commit, push, or PR work. Worker worktrees are temporary execution sandboxes, not final publication branches.
+- Retire worker worktrees after their `done` output has been integrated and verified unless the orchestrator records a concrete reason to keep one.
 - Require the orchestrator to perform its own explicit plan -> do -> check -> act integration loop after collecting worker output.
 - Require workers and the orchestrator to maintain a persistent review report at `.agents/state/review-report.md` inside each worktree so findings survive across loops.
 - Do not commit, push, or open a PR unless the user explicitly asked for that. When not explicitly asked, still draft the commit message and PR description as ready-to-use artifacts.
@@ -296,6 +298,7 @@ The orchestrator must:
 - verify the repo version baseline again before finish and bump `-dev.N` by one at minimum for implementation work on the active dev line
 - update RFC progress state and checklist items as phases land
 - move the accepted work into the orchestrator worktree cleanly
+- retire each completed worker worktree after its accepted work is present in the orchestrator worktree and the integrated verification gate has passed
 - run the repo-level gate
 - run **Plan -> Do -> Check -> Act** on the integrated result:
   - **Plan**: confirm the combined slice outputs still satisfy the original end-state and create/update orchestrator task state in `.agents/state/ralph-loop/overview.md`
@@ -308,6 +311,17 @@ The orchestrator must:
 The orchestrator worktree's `.agents/state/review-report.md` is the integration source of truth.
 The orchestrator's `.agents/state/ralph-loop/overview.md` is the integration state source of truth.
 
+Worker cleanup is part of integration, not optional closeout. For every slice marked `done`:
+
+1. Confirm `handoff.md`, the worker changed-file list, and the accepted patch are reflected in the orchestrator worktree.
+2. Run the relevant integrated verification before removing the worker sandbox.
+3. Record integration metadata in `slices.json`, such as `integrated_at`, `integrated_by`, and `worktree_removed`.
+4. If the worker worktree is clean, remove it with `git worktree remove <worker-path>`.
+5. If the worker worktree is dirty only because of files already integrated into the orchestrator branch or task-owned scratch state, record the inventory in `overview.md` or `slices.json`, then remove that Ralph-owned worker worktree with `git worktree remove --force <worker-path>`.
+6. After the worktree is removed, delete the disposable worker branch only when it is task-owned and the orchestrator branch contains the accepted work.
+
+Do not force-remove a worker worktree with unknown or unintegrated changes. Do not push while accepted slice work exists only in a worker worktree or worker branch.
+
 `STEERING.md` must be checked at the start of every major iteration. If it changes the priority, scope, or urgency of the work, the orchestrator must update `slices.json`, affected `scope.md` / `tasks.json`, and continue from the new direction rather than pretending the original ordering still applies.
 
 Do not stop at "worker green." Cross-slice regressions and consistency problems belong to the orchestrator.
@@ -316,6 +330,8 @@ Do not stop at "worker green." Cross-slice regressions and consistency problems 
 
 When code is ready:
 
+- confirm all accepted worker slices have been consolidated into the orchestrator branch
+- confirm completed worker worktrees are removed, or record a concrete reason for any kept worker worktree
 - produce a concise done summary
 - draft the commit message with `write-commit-message`
 - draft the PR description with `create-pr-description`
@@ -393,6 +409,9 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Every slice used only the allowed explicit states: `planned`, `doing`, `checking`, `replan_required`, `blocked`, `done`
 - [ ] Scope failures were routed back to planning instead of being treated as ordinary defect cleanup
 - [ ] The orchestrator ran its own integration plan -> do -> check -> act loop
+- [ ] Accepted worker output was consolidated onto the orchestrator branch before final artifacts
+- [ ] Completed worker worktrees were removed, or each kept worker worktree has a recorded reason
+- [ ] No accepted slice work exists only in a worker worktree or disposable worker branch
 - [ ] Every worker maintained `.agents/state/review-report.md` in its worktree
 - [ ] The orchestrator maintained `.agents/state/review-report.md` in the integration worktree
 - [ ] The orchestrator maintained `.agents/state/ralph-loop/overview.md`

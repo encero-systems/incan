@@ -8,6 +8,7 @@ This page is a routing guide for Rust-first evaluators.
 - Explanation:
     - [Why Incan?](../language/explanation/why_incan.md)
     - [Why not just Rust?](../language/explanation/why_not_just_rust.md)
+    - [Rust-shaped confidence](../language/explanation/rust_shaped_confidence.md)
     - [How Incan works](../language/explanation/how_incan_works.md)
 - Interop: [Rust Interop](../language/how-to/rust_interop.md)
 - Projects today: [Projects today](../tooling/explanation/projects_today.md)
