@@ -684,9 +684,7 @@ impl TypeChecker {
                             self.method_sigs_compatible(&info, &entry.info)
                                 && self.method_sigs_compatible(&entry.info, &info)
                         })
-                        .map(|entry| {
-                            self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args.clone())
-                        });
+                        .map(|entry| self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args.clone()));
                     MethodCandidate { info, dispatch }
                 })
                 .collect::<Vec<_>>();
@@ -718,9 +716,7 @@ impl TypeChecker {
                 if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
                     candidates.push(MethodCandidate {
                         info: entry.info,
-                        dispatch: Some(
-                            self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args),
-                        ),
+                        dispatch: Some(self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args)),
                     });
                 }
             }
@@ -756,13 +752,7 @@ impl TypeChecker {
         let mut viable: Vec<(usize, MethodCandidate)> = candidates
             .iter()
             .filter_map(|candidate| {
-                self.method_candidate_match_score(
-                    &candidate.info,
-                    args,
-                    arg_types,
-                    receiver_ty,
-                    expected_return_ty,
-                )
+                self.method_candidate_match_score(&candidate.info, args, arg_types, receiver_ty, expected_return_ty)
                     .map(|score| (score, candidate.clone()))
             })
             .collect();
@@ -979,9 +969,7 @@ impl TypeChecker {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
                 candidates.push(MethodCandidate {
                     info: entry.info,
-                    dispatch: Some(
-                        self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args),
-                    ),
+                    dispatch: Some(self.resolved_trait_dispatch(&entry.origin_trait, entry.origin_type_args)),
                 });
             }
         }

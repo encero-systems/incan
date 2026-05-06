@@ -1067,14 +1067,14 @@ impl TypeChecker {
         ambiguity_span: Span,
     ) -> Option<TraitMethodEntry> {
         if adoption.type_args.is_empty() {
-            return self.trait_method_info_resolved(&adoption.name, method, ambiguity_span).map(|info| {
-                TraitMethodEntry {
+            return self
+                .trait_method_info_resolved(&adoption.name, method, ambiguity_span)
+                .map(|info| TraitMethodEntry {
                     method_name: method.to_string(),
                     origin_trait: adoption.name.clone(),
                     origin_type_args: Vec::new(),
                     info,
-                }
-            });
+                });
         }
         let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
         let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);

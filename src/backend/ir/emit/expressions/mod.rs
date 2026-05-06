@@ -612,7 +612,6 @@ impl<'a> IrEmitter<'a> {
                 callable_signature,
                 arg_policy,
             } => self.emit_method_call_expr(
-                &expr.ty,
                 receiver,
                 method,
                 dispatch.as_ref(),

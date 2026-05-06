@@ -378,7 +378,6 @@ impl<'a> IrEmitter<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn emit_method_call_expr(
         &self,
-        result_ty: &IrType,
         receiver: &TypedExpr,
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
@@ -391,7 +390,6 @@ impl<'a> IrEmitter<'a> {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
             let inner = self.emit_method_call_expr(
-                result_ty,
                 &rewritten_receiver,
                 method,
                 dispatch,
