@@ -1,6 +1,6 @@
 # RFC 088: Iterator adapter surface
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-05-04
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
 - **Issue:** #127
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.36
 
 ## Summary
 
@@ -243,7 +243,7 @@ The semantic center is a shared lazy iterator API. The adapter methods transform
 
 ### Interaction with generators
 
-RFC 006 standardizes `.map()`, `.filter()`, `.take()`, and `.collect()` as the minimum helper surface needed for generator ergonomics. This RFC generalizes that model to `Iterator[T]` and adds the broader adapter and terminal methods. A `Generator[T]` should therefore support the RFC 006 minimum surface directly and support the full RFC 088 surface through its iterator-protocol participation once this RFC is implemented.
+RFC 006 standardizes `.map()`, `.filter()`, `.take()`, and `.collect()` as the minimum helper surface needed for generator ergonomics. This RFC generalizes that model to `Iterator[T]` and adds the broader adapter and terminal methods. A `Generator[T]` supports the RFC 006 minimum surface directly and supports the full RFC 088 surface through its iterator-protocol participation.
 
 ### Interaction with collection iteration
 
@@ -323,7 +323,7 @@ This feature is additive. Existing `for` loops, comprehensions, collection metho
 - Update authored user-facing docs for iterator pipelines and how they differ from eager comprehensions.
 - Update release notes and bump the active `0.3.0-dev.N` version when implementation lands.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
@@ -371,7 +371,7 @@ This feature is additive. Existing `for` loops, comprehensions, collection metho
 ### Docs / release
 
 - [x] Update iterator or collection user docs with lazy pipeline examples.
-- [ ] Update generator docs only where RFC 088 changes cross-references or examples.
+- [x] Update generator docs only where RFC 088 changes cross-references or examples.
 - [x] Add release notes for the active `0.3` development line.
 - [x] Bump the active `0.3.0-dev.N` version.
 
