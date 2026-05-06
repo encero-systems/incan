@@ -236,6 +236,7 @@ impl TypeChecker {
             (Expr::Unary(op, operand), Some(expected_ty)) => {
                 self.check_unary_with_expected(*op, operand, expr.span, Some(expected_ty))
             }
+            (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
             }

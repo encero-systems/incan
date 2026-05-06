@@ -127,12 +127,13 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
         let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
@@ -147,20 +148,6 @@ impl AstLowering {
             trait_type_args: Vec::new(),
             methods: lowered_methods,
         })
-    }
-
-    /// Keep only method names that can safely be emitted as inherent Rust methods.
-    fn inherent_methods_without_duplicate_names(
-        methods: &[Spanned<ast::MethodDecl>],
-    ) -> Vec<&Spanned<ast::MethodDecl>> {
-        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for method in methods {
-            *counts.entry(method.node.name.as_str()).or_default() += 1;
-        }
-        methods
-            .iter()
-            .filter(|method| counts.get(method.node.name.as_str()).copied().unwrap_or(0) == 1)
-            .collect()
     }
 
     /// Substitute generic IR type placeholders with instantiated trait arguments.
@@ -254,6 +241,88 @@ impl AstLowering {
         let empty_subst = std::collections::HashMap::new();
         let candidate_sig = self.lowered_method_signature_for_match(candidate, owner_type_param_names, &empty_subst);
         trait_sig == candidate_sig
+    }
+
+    /// Return whether a concrete method should be lowered only inside an adopted trait impl.
+    fn method_matches_adopted_trait_impl(
+        &mut self,
+        method: &ast::MethodDecl,
+        type_params: &[ast::TypeParam],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+        adopted_traits: &[Spanned<ast::TraitBound>],
+    ) -> bool {
+        for trait_ref in adopted_traits {
+            for (trait_name, trait_type_args) in
+                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, type_params)
+            {
+                let Some(trait_decl) = self.trait_decls.get(&trait_name).cloned() else {
+                    continue;
+                };
+                for trait_method in &trait_decl.methods {
+                    if trait_method.node.name == method.name
+                        && self.trait_impl_override_matches(
+                            &trait_method.node,
+                            method,
+                            &trait_decl.type_params,
+                            &trait_type_args,
+                            owner_type_param_names,
+                        )
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Keep only methods that Rust can safely emit as inherent methods.
+    ///
+    /// Rust does not support inherent overloads by name. Same-name methods that match adopted trait obligations are
+    /// emitted in trait impl blocks instead; a single remaining distinct-shape method can still be emitted inherently.
+    fn inherent_methods_for_rust_impl(
+        &mut self,
+        type_params: &[ast::TypeParam],
+        methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
+    ) -> Vec<Spanned<ast::MethodDecl>> {
+        let owner_type_param_names: std::collections::HashSet<&str> =
+            type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let mut by_name: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+        for (idx, method) in methods.iter().enumerate() {
+            by_name.entry(method.node.name.as_str()).or_default().push(idx);
+        }
+
+        let mut out = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        for method in methods {
+            if !visited.insert(method.node.name.as_str()) {
+                continue;
+            }
+            let Some(indexes) = by_name.get(method.node.name.as_str()) else {
+                continue;
+            };
+            if indexes.len() == 1 {
+                out.push(methods[indexes[0]].clone());
+                continue;
+            }
+
+            let mut inherent_indexes = Vec::new();
+            for idx in indexes {
+                if !self.method_matches_adopted_trait_impl(
+                    &methods[*idx].node,
+                    type_params,
+                    &owner_type_param_names,
+                    adopted_traits,
+                ) {
+                    inherent_indexes.push(*idx);
+                }
+            }
+            if inherent_indexes.len() == 1 {
+                out.push(methods[inherent_indexes[0]].clone());
+            }
+        }
+        out
     }
 
     /// Lower trait implementation for a class.
@@ -448,12 +517,13 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
         let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))
@@ -479,10 +549,11 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
         let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_method_with_type_params(&m.node, Some(&type_param_names)))

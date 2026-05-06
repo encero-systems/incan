@@ -701,33 +701,26 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
-        let mut viable: Vec<MethodInfo> = candidates
+        let mut viable: Vec<(usize, MethodInfo)> = candidates
             .iter()
-            .filter(|candidate| {
-                self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, expected_return_ty)
+            .filter_map(|candidate| {
+                self.method_candidate_match_score(candidate, args, arg_types, receiver_ty, expected_return_ty)
+                    .map(|score| (score, candidate.clone()))
             })
-            .cloned()
             .collect();
 
         if viable.is_empty() && expected_return_ty.is_some() {
             viable = candidates
                 .iter()
-                .filter(|candidate| self.method_candidate_matches_call(candidate, args, arg_types, receiver_ty, None))
-                .cloned()
+                .filter_map(|candidate| {
+                    self.method_candidate_match_score(candidate, args, arg_types, receiver_ty, None)
+                        .map(|score| (score, candidate.clone()))
+                })
                 .collect();
         }
 
-        match viable.as_slice() {
-            [method_info] => Some(self.check_generic_method_call(
-                method,
-                method_info.clone(),
-                explicit_type_args,
-                args,
-                arg_types,
-                call_site_span,
-                receiver_ty,
-            )),
-            [] => candidates.first().map(|method_info| {
+        if viable.is_empty() {
+            return candidates.first().map(|method_info| {
                 self.check_generic_method_call(
                     method,
                     method_info.clone(),
@@ -737,29 +730,54 @@ impl TypeChecker {
                     call_site_span,
                     receiver_ty,
                 )
-            }),
-            _ => {
-                self.errors
-                    .push(errors::ambiguous_trait_method_call(method, call_site_span));
-                Some(ResolvedType::Unknown)
-            }
+            });
         }
+
+        let best_score = viable.iter().map(|(score, _)| *score).max().unwrap_or(0);
+        let mut best = viable
+            .into_iter()
+            .filter(|(score, _)| *score == best_score)
+            .map(|(_, method_info)| method_info)
+            .collect::<Vec<_>>();
+
+        if best.len() == 1 {
+            return Some(self.check_generic_method_call(
+                method,
+                best.remove(0),
+                explicit_type_args,
+                args,
+                arg_types,
+                call_site_span,
+                receiver_ty,
+            ));
+        }
+
+        self.errors
+            .push(errors::ambiguous_trait_method_call(method, call_site_span));
+        Some(ResolvedType::Unknown)
     }
 
-    /// Return whether one method candidate is compatible with the supplied arguments and expected result type.
-    fn method_candidate_matches_call(
+    /// Return a compatibility score for one method candidate.
+    ///
+    /// Compatibility admits useful coercions such as lossless numeric widening, but overload selection must prefer the
+    /// candidate that most directly matches the call site. Exact argument and contextual return matches therefore score
+    /// higher than merely compatible matches; ties remain ambiguous.
+    fn method_candidate_match_score(
         &self,
         candidate: &MethodInfo,
         args: &[CallArg],
         arg_types: &[ResolvedType],
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
-    ) -> bool {
+    ) -> Option<usize> {
         let (params, return_type) = self.method_types_substituting_call_site_self(candidate, receiver_ty);
+        let mut score = 0usize;
         if let Some(expected) = expected_return_ty
             && !self.types_compatible(&return_type, expected)
         {
-            return false;
+            return None;
+        } else if let Some(expected) = expected_return_ty {
+            score += self.type_match_score(&return_type, expected);
         }
         let normal_params: Vec<&CallableParam> =
             params.iter().filter(|param| param.kind == ParamKind::Normal).collect();
@@ -773,21 +791,23 @@ impl TypeChecker {
                 CallArg::Positional(_) => {
                     if let Some(param) = normal_params.get(positional_index) {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[positional_index] = true;
                         positional_index += 1;
                     } else if let Some(param) = rest_positional {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                     } else {
-                        return false;
+                        return None;
                     }
                 }
                 CallArg::Named(name, _) => {
                     if !named_seen.insert(name.as_str()) {
-                        return false;
+                        return None;
                     }
                     if let Some((normal_idx, param)) = normal_params
                         .iter()
@@ -795,27 +815,76 @@ impl TypeChecker {
                         .find(|(_, param)| param.name() == Some(name.as_str()))
                     {
                         if normal_bound[normal_idx] {
-                            return false;
+                            return None;
                         }
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[normal_idx] = true;
                     } else if let Some(param) = rest_keyword {
                         if !self.types_compatible(arg_ty, &param.ty) {
-                            return false;
+                            return None;
                         }
+                        score += self.type_match_score(arg_ty, &param.ty);
                     } else {
-                        return false;
+                        return None;
                     }
                 }
-                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return true,
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return Some(score),
             }
         }
         normal_params
             .iter()
             .zip(normal_bound.iter())
             .all(|(param, bound)| *bound || param.has_default)
+            .then_some(score)
+    }
+
+    /// Score how directly `actual` matches `expected` for overload ranking.
+    fn type_match_score(&self, actual: &ResolvedType, expected: &ResolvedType) -> usize {
+        if actual == expected {
+            return 16;
+        }
+
+        match (actual, expected) {
+            (ResolvedType::Unknown, _)
+            | (_, ResolvedType::Unknown)
+            | (ResolvedType::TypeVar(_), _)
+            | (_, ResolvedType::TypeVar(_))
+            | (ResolvedType::CallSiteInfer, _)
+            | (_, ResolvedType::CallSiteInfer) => 0,
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(expected_name, expected_args))
+                if actual_name == expected_name && actual_args.len() == expected_args.len() =>
+            {
+                4 + actual_args
+                    .iter()
+                    .zip(expected_args.iter())
+                    .map(|(actual_arg, expected_arg)| self.type_match_score(actual_arg, expected_arg))
+                    .sum::<usize>()
+            }
+            (ResolvedType::Tuple(actual_items), ResolvedType::Tuple(expected_items))
+                if actual_items.len() == expected_items.len() =>
+            {
+                4 + actual_items
+                    .iter()
+                    .zip(expected_items.iter())
+                    .map(|(actual_item, expected_item)| self.type_match_score(actual_item, expected_item))
+                    .sum::<usize>()
+            }
+            (ResolvedType::FrozenList(actual_item), ResolvedType::FrozenList(expected_item)) => {
+                4 + self.type_match_score(actual_item, expected_item)
+            }
+            (
+                ResolvedType::FrozenDict(actual_key, actual_value),
+                ResolvedType::FrozenDict(expected_key, expected_value),
+            ) => {
+                4 + self.type_match_score(actual_key, expected_key)
+                    + self.type_match_score(actual_value, expected_value)
+            }
+            _ if self.rust_type_identities_compatible(actual, expected) == Some(true) => 12,
+            _ => 0,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

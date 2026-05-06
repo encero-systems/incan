@@ -1,6 +1,6 @@
 # RFC 056: `std.io` — in-memory byte streams and binary parsing helpers
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-13
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/291
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.37
 
 ## Summary
 
@@ -46,26 +46,29 @@ Not all binary input starts as a file on disk. Tests, network clients, generated
 Authors use `std.io.BytesIO` when they already have a `bytes` value and want to parse or rewrite it incrementally.
 
 ```incan
-from std.io import BytesIO
+from std.io import BytesIO, Endian
 
 buf = BytesIO(data)
 magic = buf.read_exact(4)?
-version = buf.read_u32_le()?
-metadata_count = buf.read_u64_le()?
+version: u32 = buf.read(Endian.Little)?
+metadata_count: u64 = buf.read(Endian.Little)?
 
-payload = buf.read_until(0u8)?
+nul: u8 = 0
+payload = buf.read_until(nul)?
 remaining = buf.remaining()
 ```
 
 `BytesIO` is also writable. It overwrites from the current cursor position unless the caller explicitly seeks elsewhere first.
 
 ```incan
-from std.io import BytesIO
+from std.io import BytesIO, Endian
 
 out = BytesIO()
 out.write(b"GGUF")?
-out.write_u32_le(3u32)?
-out.write_u64_le(42u64)?
+version: u32 = 3
+metadata_count: u64 = 42
+out.write(version, Endian.Little)?
+out.write(metadata_count, Endian.Little)?
 
 blob = out.into_bytes()
 ```
@@ -89,10 +92,10 @@ The `std.io` contract commits to the following `BytesIO` surface:
 - Direct construction: `BytesIO(initial: bytes = b"") -> BytesIO`.
 - Byte reads: `read(size: int = -1) -> Result[bytes, E]`, `read_exact(size: int) -> Result[bytes, E]`.
 - Delimiter helpers: `read_until(byte: u8) -> Result[bytes, E]`, `skip_until(byte: u8) -> Result[int, E]`.
-- Cursor helpers: `tell() -> int`, `seek(offset: int, whence: int = 0) -> Result[int, E]`, `rewind() -> Result[(), E]`, `seek_relative(offset: int) -> Result[(), E]`.
+- Cursor helpers: `tell() -> int`, `seek(offset: int, whence: int = 0) -> Result[int, E]`, `rewind() -> Result[None, E]`, `seek_relative(offset: int) -> Result[None, E]`.
 - Byte writes: `write(data: bytes) -> Result[int, E]`, `truncate(size: int | None = None) -> Result[int, E]`.
 - Buffer extraction and inspection: `getvalue() -> bytes`, `into_bytes() -> bytes`, `remaining() -> int`.
-- Exact-width numeric reads and writes aligned with RFC 009.
+- Trait-backed exact-width numeric reads and writes aligned with RFC 009.
 
 ### Normative cursor and buffer semantics
 
@@ -124,20 +127,23 @@ Delimiter behavior is normative:
 Buffer extraction behavior is normative:
 
 - `getvalue()` returns a `bytes` snapshot of the buffer contents.
-- `into_bytes()` consumes the `BytesIO` value and returns the underlying `bytes` without promising a copy.
+- `into_bytes()` returns the buffer bytes without changing the cursor. Implementations may avoid an extra copy when
+  ownership rules permit it, but callers must not rely on consumption or aliasing behavior.
 - `remaining()` returns the number of unread bytes from the current cursor position to the logical end of the buffer.
 
 ### Numeric helper surface
 
-The numeric helper surface is committed, not tentative:
+The numeric helper surface is committed, not tentative. It is trait-backed rather than a public matrix of dozens of
+method names:
 
-- One-byte reads and writes: `read_u8() -> Result[u8, E]`, `read_i8() -> Result[i8, E]`, `write_u8(value: u8) -> Result[(), E]`, `write_i8(value: i8) -> Result[(), E]`.
-- Unsigned integer reads and writes for `u16`, `u32`, `u64`, and `u128` in both endian families: `read_u16_le`, `read_u16_be`, `read_u32_le`, `read_u32_be`, and so on through `u128`; matching `write_u16_le`, `write_u16_be`, `write_u32_le`, `write_u32_be`, and so on through `u128`.
-- Signed integer reads and writes for `i16`, `i32`, `i64`, and `i128` in both endian families: `read_i16_le`, `read_i16_be`, `read_i32_le`, `read_i32_be`, and so on; matching write helpers.
-- Floating-point reads and writes for `f32` and `f64` in both endian families: `read_f32_le`, `read_f32_be`, `read_f64_le`, `read_f64_be`; matching write helpers.
-- Endianness suffixes are not used for `u8` and `i8`, because byte order is meaningless for one-byte values.
-- Convenience aliases for Incan defaults are part of the surface: `read_int_le`, `read_int_be`, `write_int_le`, `write_int_be`, `read_float_le`, `read_float_be`, `write_float_le`, and `write_float_be`.
-- RFC 009 defines `int` as the ergonomic alias for `i64` and `float` as the ergonomic alias for `f64`, so those convenience helpers are aliases for the corresponding `i64` and `f64` forms rather than independent numeric contracts.
+- `Endian` exposes `Little` and `Big` byte-order variants.
+- `BinaryRead[T]` exposes `read(endian: Endian) -> Result[T, E]`.
+- `BinaryWrite[T]` exposes `write(value: T, endian: Endian) -> Result[None, E]`.
+- `BytesIO` adopts those traits for `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `f32`, and `f64`.
+- Reads are selected by expected result type, so callers must provide static type context: `value: u32 = buf.read(Endian.Little)?`.
+- Writes are selected by the argument type: `out.write(value_u32, Endian.Little)?`.
+- Endianness is ignored for `u8` and `i8`, because byte order is meaningless for one-byte values.
+- Convenience overloads for `int` and `float` are intentionally deferred. RFC 009 defines those as ergonomic aliases for `i64` and `f64`, and adding both aliases and exact-width overloads needs a coherent compiler-level alias-overload rule rather than duplicate Rust impls.
 
 ### Expected API shape (skeletal)
 
@@ -150,20 +156,15 @@ The numeric helper surface is committed, not tentative:
 - `skip_until(byte: u8) -> Result[int, E]`.
 - `tell() -> int`.
 - `seek(offset: int, whence: int = 0) -> Result[int, E]`.
-- `rewind() -> Result[(), E]`.
-- `seek_relative(offset: int) -> Result[(), E]`.
+- `rewind() -> Result[None, E]`.
+- `seek_relative(offset: int) -> Result[None, E]`.
 - `write(data: bytes) -> Result[int, E]`.
 - `truncate(size: int | None = None) -> Result[int, E]`.
 - `getvalue() -> bytes`.
 - `into_bytes() -> bytes`.
 - `remaining() -> int`.
-- `read_u8() -> Result[u8, E]`, `read_i8() -> Result[i8, E]`.
-- `read_u16_le() -> Result[u16, E]`, `read_u16_be() -> Result[u16, E]`, and corresponding helpers for `u32`, `u64`, and `u128`.
-- `read_i16_le() -> Result[i16, E]`, `read_i16_be() -> Result[i16, E]`, and corresponding helpers for `i32`, `i64`, and `i128`.
-- `read_f32_le() -> Result[f32, E]`, `read_f32_be() -> Result[f32, E]`, `read_f64_le() -> Result[f64, E]`, `read_f64_be() -> Result[f64, E]`.
-- Matching `write_*` helpers for every committed numeric read helper.
-- `read_int_le() -> Result[int, E]`, `read_int_be() -> Result[int, E]`, `read_float_le() -> Result[float, E]`, `read_float_be() -> Result[float, E]`.
-- `write_int_le(value: int) -> Result[(), E]`, `write_int_be(value: int) -> Result[(), E]`, `write_float_le(value: float) -> Result[(), E]`, `write_float_be(value: float) -> Result[(), E]`.
+- `BinaryRead[T].read(endian: Endian) -> Result[T, E]`.
+- `BinaryWrite[T].write(value: T, endian: Endian) -> Result[None, E]`.
 
 ### Errors and compatibility
 
@@ -189,13 +190,13 @@ Rust's `BufRead` model also gives a strong case for delimiter-based helpers. `re
 
 ### Why the numeric helper surface is broad
 
-Once `std.io` commits to exact-width numeric parsing, arbitrary seams become harder to defend. Supporting only little-endian reads or only a couple of widths would leave the API lopsided for no principled reason. The Rust substrate already supports endian-aware conversion for the full sized-integer and sized-float family, and RFC 009 already defines that vocabulary at the language level. The coherent design is therefore: full width family, both endian families for multi-byte values, and matching write helpers.
+Once `std.io` commits to exact-width numeric parsing, arbitrary seams become harder to defend. Supporting only little-endian reads or only a couple of widths would leave the API lopsided for no principled reason. The Rust substrate already supports endian-aware conversion for the full sized-integer and sized-float family, and RFC 009 already defines that vocabulary at the language level. The coherent design is therefore: full width family, both endian families for multi-byte values, and matching read/write overloads.
 
-The default `int` and `float` aliases do still matter ergonomically, so `read_int_le` / `read_int_be` and `read_float_le` / `read_float_be` are good additions. But they are just shorthand over the exact-width forms, not a second independent numeric model.
+The default `int` and `float` aliases do still matter ergonomically, but this RFC does not add separate alias overloads. They should be added only after the compiler has a clear rule for alias overloads that does not duplicate emitted Rust trait impls for `i64` and `f64`.
 
 ### Why `getbuffer()` and generic protocols stay out
 
-Python's `BytesIO.getbuffer()` exposes a mutable view over the underlying buffer. That is powerful, but it also introduces aliasing and resize constraints that are not worth standardizing before Incan has a broader borrowed-buffer story. This RFC therefore keeps the safe extraction surface small: `getvalue()` for a snapshot and `into_bytes()` for ownership transfer.
+Python's `BytesIO.getbuffer()` exposes a mutable view over the underlying buffer. That is powerful, but it also introduces aliasing and resize constraints that are not worth standardizing before Incan has a broader borrowed-buffer story. This RFC therefore keeps the safe extraction surface small: `getvalue()` for a snapshot and `into_bytes()` for retrieving bytes without exposing mutable buffer aliases.
 
 The same boundary applies to general `Reader` / `Writer` protocols. Those may well make sense later for `BytesIO`, `std.fs.File`, temporary files, network bodies, or query adapters. But that is a cross-cutting stream-abstraction RFC, not part of the in-memory byte-stream contract itself. RFC 056 should finish the concrete `BytesIO` design rather than smuggling in a second library proposal.
 
@@ -221,6 +222,14 @@ Spill-to-disk behavior does not belong in `BytesIO`. Python puts that concept in
 
 *(Non-normative.)* A practical delivery implements `BytesIO` as a normal Incan stdlib type backed by Rust cursor and buffer primitives, with exact-width conversions delegated to Rust's primitive byte-conversion helpers. The public API should stay Incan-first even when the runtime maps directly onto `Cursor<Vec<u8>>`-like semantics underneath.
 
+## Implementation plan
+
+1. **Stdlib module and registry wiring** — Add `std.io` to the stdlib namespace registry and implement `BytesIO` as an authored stdlib module using direct Rust interop, following the `std.fs` layout rather than adding a custom Rust extern shim.
+2. **Core byte and cursor behavior** — Implement construction, `read`, `read_exact`, `read_until`, `skip_until`, `tell`, `seek`, `rewind`, `seek_relative`, `write`, `truncate`, `getvalue`, `into_bytes`, and `remaining` with the normative cursor and buffer semantics above.
+3. **Numeric helper family** — Implement the RFC 009-aligned trait-backed exact-width read/write overloads, including endian variants.
+4. **Tests and snapshots** — Add focused compile/run coverage for the stdlib module, cursor movement, EOF behavior, delimiter behavior, overwrite semantics, truncation, and numeric round trips. Add codegen or stdlib loader coverage where registry wiring can regress silently.
+5. **User-facing docs and versioning** — Add a curated `std.io` reference page, update stdlib navigation and release notes, regenerate generated language reference data when registry output changes, and bump the active development version for the implementation.
+
 ## Layers affected
 
 - **Stdlib / runtime (`incan_stdlib`)**: new `std.io` module and the `BytesIO` type.
@@ -234,6 +243,17 @@ Spill-to-disk behavior does not belong in `BytesIO`. Python puts that concept in
 - `BytesIO` uses direct construction: `BytesIO(data)`, not `BytesIO.new(data)`.
 - `BytesIO` is a writable, seekable, in-memory binary stream rather than a read-only parser cursor.
 - The committed contract includes `read_until`, `skip_until`, `rewind`, `seek_relative`, `truncate`, `getvalue`, `into_bytes`, and `remaining`.
-- Numeric helpers cover the full RFC 009 width family, with both endian families for multi-byte values and matching write helpers.
-- Convenience aliases for `int` and `float` are included, but the exact-width forms remain canonical.
+- Numeric overloads cover the full RFC 009 width family, with both endian families for multi-byte values and matching write helpers.
+- Convenience overloads for `int` and `float` are deferred until alias overload emission has a compiler-level rule.
 - `BytesIO` does not include `close()`, `getbuffer()`, spill-to-disk behavior, or generic `Reader` / `Writer` protocols.
+
+## Implementation log
+
+- [x] Add `std.io` namespace registration and authored stdlib source.
+- [x] Implement `BytesIO` construction, byte reads/writes, cursor movement, delimiter helpers, truncation, and buffer extraction.
+- [x] Implement trait-backed exact-width numeric read and write overloads for the RFC 009 integer and float family.
+- [x] Add tests for core stream semantics and numeric round trips.
+- [x] Add the curated `std.io` reference page and docs navigation updates.
+- [x] Update release notes and active development version.
+- [x] Regenerate generated language reference output after registry changes.
+- [x] Run the repo verification gate before closeout.

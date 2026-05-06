@@ -1899,6 +1899,28 @@ from std.math import sqrt
     }
 
     #[test]
+    fn merge_project_requirement_dependencies_adds_io_runtime_crate() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+from std.io import BytesIO
+"#,
+        )?;
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        let mut resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+
+        merge_project_requirement_dependencies(&mut resolved, &requirements)?;
+
+        assert!(
+            resolved.dependencies.iter().any(|dep| dep.crate_name == "byteorder"),
+            "std.io should inject byteorder for generated projects"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn collect_modules_skips_unknown_stdlib_source_resolution() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let src_dir = tmp.path().join("src");
