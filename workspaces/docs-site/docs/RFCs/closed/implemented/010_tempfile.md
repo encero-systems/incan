@@ -1,13 +1,13 @@
 # RFC 010: Python-style `tempfile` standard library
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 019 (runner testing), RFC 023 (stdlib namespacing and compiler handoff), RFC 055 (`std.fs` path-centric filesystem APIs), RFC 056 (`std.io` in-memory byte streams)
 - **Issue:** [#79](https://github.com/dannys-code-corner/incan/issues/79)
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -84,18 +84,35 @@ println(f"saved to {final_path}")
 
 `persist()` converts a temporary resource into an ordinary path that will no longer be auto-deleted by the temp handle.
 
+### Spooling from memory to disk
+
+```incan
+from std.tempfile import SpooledTemporaryFile
+
+spool = SpooledTemporaryFile(max_size=1024 * 1024)
+spool.write(payload)?
+
+if spool.rolled_to_disk():
+    process_file(spool.path()?)
+else:
+    process_bytes(spool.getvalue()?)
+```
+
+`SpooledTemporaryFile` starts as an in-memory `std.io.BytesIO` stream and rolls over to a named temporary file once the buffer grows beyond `max_size` or `rollover()` is called explicitly. After rollover, `path()` returns the temporary file path and `persist()` keeps the file.
+
 ## Reference-level explanation (precise rules)
 
 ### Surface
 
-The stdlib provides temporary filesystem types through `std.tempfile`. The implementable initial surface is:
+The stdlib provides temporary filesystem types through `std.tempfile`. The implemented surface is:
 
 - `NamedTemporaryFile`
 - `TemporaryDirectory`
+- `SpooledTemporaryFile`
 
-The module name and public type names are part of the contract. The RFC deliberately uses `std.tempfile.NamedTemporaryFile` and `std.tempfile.TemporaryDirectory`, not top-level compiler builtins and not abbreviated `TempFile` / `TempDir` names.
+The module name and public type names are part of the contract. The RFC deliberately uses `std.tempfile.NamedTemporaryFile`, `std.tempfile.TemporaryDirectory`, and `std.tempfile.SpooledTemporaryFile`, not top-level compiler builtins and not abbreviated `TempFile` / `TempDir` names.
 
-`TemporaryFile` and `SpooledTemporaryFile` are reserved Python-aligned follow-up names, not part of this RFC's required implementation surface. `TemporaryFile` needs a clearer open-file-handle contract than Incan currently has outside `std.fs.File`, and `SpooledTemporaryFile` is a storage-policy type that should align with `std.io.BytesIO` and `std.fs.File` once both surfaces exist.
+`TemporaryFile` remains a reserved Python-aligned follow-up name. It needs a clearer pathless open-file-handle contract than Incan currently has.
 
 ### Required capabilities
 
@@ -106,6 +123,7 @@ The module name and public type names are part of the contract. The RFC delibera
 - Expose the realized `std.fs.Path`.
 - Persist the resource so automatic cleanup no longer runs.
 - Provide text/binary file operations through `std.fs.Path` and `std.fs.File`, not by duplicating the filesystem API on the temporary handle.
+- Provide a spooled temporary binary stream that starts in memory, rolls over to a named temporary file, and keeps the same cleanup/persistence contract after rollover.
 
 ### Factory shape
 
@@ -118,7 +136,7 @@ The user-visible fallible factories are:
 
 The exact error payload type may follow the stdlib's filesystem error model, but construction failures must be ordinary `Result` failures.
 
-Implementation note: the initial implementation splits default and configured factories because imported stdlib static-method default expansion is tracked in [#500](https://github.com/dannys-code-corner/incan/issues/500). The configured `dir` parameter is `Option[Path]` rather than `Option[Path | str]` because nested option-union lowering in authored stdlib code is tracked in [#501](https://github.com/dannys-code-corner/incan/issues/501).
+`SpooledTemporaryFile(max_size: int = 0)` is ordinary infallible construction because it starts in memory. The first filesystem acquisition happens only when the stream rolls over, so rollover, file-backed reads/writes, `path()`, and `persist()` report filesystem errors through `Result`.
 
 ### Handle methods
 
@@ -129,6 +147,21 @@ Both initial handle types must expose:
 
 `NamedTemporaryFile` may additionally expose `open(...) -> Result[File, E]` if `std.fs.File` is available in the same implementation slice, but file reading, writing, seeking, flushing, and durability remain the `std.fs.File` contract rather than a separate `std.tempfile` contract.
 
+`SpooledTemporaryFile` must expose:
+
+- `write(data: bytes) -> Result[int, E]`.
+- `write_bytes(data: bytes) -> Result[int, E]`.
+- `read(size: int = -1) -> Result[bytes, E]`.
+- `read_bytes(size: int = -1) -> Result[bytes, E]`.
+- `seek(offset: int, whence: int = 0) -> Result[int, E]`.
+- `tell() -> Result[int, E]`.
+- `flush() -> Result[None, E]`.
+- `getvalue() -> Result[bytes, E]`.
+- `rolled_to_disk() -> bool`.
+- `rollover() -> Result[Path, E]`.
+- `path() -> Result[Path, E]`.
+- `persist() -> Result[Path, E]`.
+
 ### Cleanup semantics
 
 - A non-persisted temporary file must be removed when its owning temp handle is dropped.
@@ -136,6 +169,7 @@ Both initial handle types must expose:
 - Cleanup failures during explicit operations must surface as ordinary `Result` failures.
 - Cleanup failures during drop must not panic or abort ordinary control flow. The stdlib docs must describe how such failures are reported, logged, or intentionally ignored on each supported target.
 - If the host OS refuses to delete or rename a temporary file because another handle still has it open, the operation must fail with an actionable filesystem error. Incan must not promise cross-platform deletion of open files.
+- A non-persisted spooled temporary file that has rolled to disk follows the named temporary file cleanup contract.
 
 ### Filesystem interaction
 
@@ -143,7 +177,7 @@ Both initial handle types must expose:
 - Existing path-based APIs can consume `temp.path()` without any special cases.
 - Persisting a resource yields a normal path that remains after the temp handle is gone.
 - `std.tempfile` depends on `std.fs` for path vocabulary. It must not become a second home for ordinary path operations.
-- Spill-to-disk buffering belongs in a later `SpooledTemporaryFile` design under `std.tempfile`, not in `std.io.BytesIO`.
+- Spill-to-disk buffering belongs in `std.tempfile.SpooledTemporaryFile`, not in `std.io.BytesIO`.
 
 ### Documentation contract
 
@@ -157,7 +191,7 @@ Required docs:
 - Cross-links from the filesystem docs once `std.fs` exists, so users understand that `std.tempfile` owns lifecycle while `std.fs.Path` / `std.fs.File` own ordinary file operations.
 - Release notes for the release that ships the module.
 
-The reference page must document constructor parameters, return types, `path()`, `persist()`, cleanup semantics, failure behavior, platform caveats around open handles, and the intentionally deferred `TemporaryFile` / `SpooledTemporaryFile` names.
+The reference page must document constructor parameters, return types, `path()`, `persist()`, cleanup semantics, failure behavior, platform caveats around open handles, spooled rollover behavior, and the intentionally deferred `TemporaryFile` name.
 
 ## Design details
 
@@ -177,9 +211,9 @@ Using dedicated temp-handle types keeps lifetime and cleanup tied together. A ra
 
 Python's `TemporaryFile` can be nameless or not durably addressable depending on platform behavior. That is useful, but it is a poorer first target for Incan than path-addressable temporary files and directories because the current stdlib direction centers ordinary filesystem work on `std.fs.Path`. A follow-up RFC may add `TemporaryFile` once the open-file and stream contracts are mature enough to make pathless temporary storage portable and teachable.
 
-### Why `SpooledTemporaryFile` is deferred
+### Why `SpooledTemporaryFile` lives in `std.tempfile`
 
-`SpooledTemporaryFile` crosses the boundary between in-memory buffering and temporary filesystem storage. RFC 056 deliberately keeps spill-to-disk behavior out of `std.io.BytesIO`; this RFC keeps the matching boundary by reserving `SpooledTemporaryFile` for a later design that can align with both `BytesIO` and `std.fs.File`.
+`SpooledTemporaryFile` crosses the boundary between in-memory buffering and temporary filesystem storage. RFC 056 deliberately keeps spill-to-disk behavior out of `std.io.BytesIO`; RFC 010 owns that storage policy by composing `BytesIO` with temporary-file lifecycle management and `std.fs.File` after rollover.
 
 ### Interaction with existing features
 
@@ -206,15 +240,15 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 4. **Fold temporary-resource helpers into `std.fs.Path`**
    - Rejected because temporary resources are lifecycle-managed values, not ordinary path operations.
 
-5. **Include `TemporaryFile` and `SpooledTemporaryFile` immediately**
-   - Rejected because both require adjacent stream/file contracts that should not be smuggled into the initial `std.tempfile` implementation.
+5. **Include `TemporaryFile` immediately**
+   - Rejected because pathless temporary files require a more precise cross-platform file-handle contract than the path-addressable surface needs.
 
 ## Drawbacks
 
 - Temporary-resource cleanup semantics vary subtly across operating systems, especially around open handles.
 - The Python-style surface may not map one-to-one onto the backing runtime's naming or exact semantics, so the docs must be explicit about where Incan intentionally differs.
 - Users may overuse temp files where in-memory buffers would be simpler or faster.
-- Deferring `TemporaryFile` and `SpooledTemporaryFile` leaves some Python `tempfile` workflows for follow-up work.
+- Deferring `TemporaryFile` leaves some Python `tempfile` workflows for follow-up work.
 
 ## Layers affected
 
@@ -224,18 +258,20 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 - **Docs / examples**: must add a dedicated `std.tempfile` reference page plus task-oriented user guidance; release notes and RFC edits alone do not satisfy this layer.
 - **Tests / tooling**: should cover creation, persistence, cleanup, and discoverability through stdlib imports.
 
-## Implementation Plan
+## Implementation log
 
 ### Phase 1: Stdlib surface and registry
 
 - Add `std.tempfile` to the standard-library registry so imports, hints, LSP, and stub loading follow the same path as other stdlib modules.
-- Define authored Incan declarations for `NamedTemporaryFile` and `TemporaryDirectory`, returning `std.fs.Path` and `std.fs.IoError` through the normal stdlib loader.
-- Keep `TemporaryFile` and `SpooledTemporaryFile` out of the exported implementation surface.
+- Define authored Incan declarations for `NamedTemporaryFile`, `TemporaryDirectory`, and `SpooledTemporaryFile`, returning `std.fs.Path` and `std.fs.IoError` through the normal stdlib loader.
+- Keep `TemporaryFile` out of the exported implementation surface.
 
 ### Phase 2: Runtime behavior
 
 - Implement safe creation for named temporary files and temporary directories in the system temp location or a caller-provided parent directory.
 - Implement `path()` and `persist()` for both handle types.
+- Implement `SpooledTemporaryFile` on top of `std.io.BytesIO`, `NamedTemporaryFile`, and `std.fs.File`.
+- Implement rollover, `path()`, and `persist()` for spooled streams.
 - Ensure non-persisted handles clean up on drop without panicking ordinary control flow.
 - Preserve host-sensitive errors for explicit creation, persistence, and filesystem operations.
 
@@ -243,6 +279,7 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 
 - Add registry, typechecker, codegen snapshot, and end-to-end integration tests for `std.tempfile`.
 - Cover cleanup, persistence, prefix/suffix, caller-provided parent directories, and the fact that temporary handles expose `std.fs.Path` rather than raw strings or `std.web.Path`.
+- Cover spooled in-memory behavior, rollover, `path()`, and persistence.
 - Preserve existing `std.fs` behavior from RFC 055.
 
 ### Phase 4: Docs and release
@@ -256,10 +293,11 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 
 ### Spec / lifecycle
 
-- [x] Settle initial surface as `NamedTemporaryFile` and `TemporaryDirectory`.
-- [x] Defer `TemporaryFile` and `SpooledTemporaryFile`.
+- [x] Settle initial path-addressable surface as `NamedTemporaryFile` and `TemporaryDirectory`.
+- [x] Add `SpooledTemporaryFile` once RFC 055 `std.fs` and RFC 056 `std.io` are available.
+- [x] Defer `TemporaryFile`.
 - [x] Record dependency on RFC 055 `std.fs`.
-- [ ] Move RFC 010 to Implemented once all implementation and docs work is complete.
+- [x] Move RFC 010 to Implemented once all implementation and docs work is complete.
 
 ### Stdlib / registry
 
@@ -267,6 +305,7 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 - [x] Add authored `stdlib/tempfile.incn` declarations.
 - [x] Ensure imported `std.tempfile` types resolve through stdlib AST loading.
 - [x] Ensure `path()` returns `std.fs.Path`.
+- [x] Implement `SpooledTemporaryFile` in authored Incan using `std.io.BytesIO`, `std.fs.File`, and `NamedTemporaryFile`.
 
 ### Runtime behavior
 
@@ -276,6 +315,9 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 - [x] Remove non-persisted temporary directories recursively on drop.
 - [x] Persist named temporary files and temporary directories as ordinary `std.fs.Path` values.
 - [x] Surface explicit creation and persistence failures as filesystem errors.
+- [x] Start spooled streams in memory.
+- [x] Roll spooled streams over to a named temporary file when size exceeds `max_size` or `rollover()` is called.
+- [x] Persist rolled spooled streams as ordinary `std.fs.Path` values.
 
 ### Tests
 
@@ -283,7 +325,9 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 - [x] Codegen snapshot verifies `std.tempfile` imports and `std.fs.Path` usage.
 - [x] Integration test covers create, path usage, cleanup, and persistence for named temporary files.
 - [x] Integration test covers create, path usage, cleanup, and persistence for temporary directories.
-- [ ] Regression coverage confirms `TemporaryFile` and `SpooledTemporaryFile` are not exported in the initial surface; currently blocked by import-validation bug [#499](https://github.com/dannys-code-corner/incan/issues/499).
+- [x] Codegen snapshot verifies `SpooledTemporaryFile` import discovery.
+- [x] Integration test covers spooled in-memory writes, rollover, `path()`, and persistence.
+- [x] `TemporaryFile` remains absent from the exported surface.
 
 ### Docs
 
@@ -296,11 +340,11 @@ This feature is additive. Existing `Path` and filesystem APIs keep their meaning
 ## Design Decisions
 
 1. Direct class construction and `.new()` remain infallible constructor conventions; temporary resource acquisition uses explicit `try_new(...)` factories.
-2. Python-style type names `NamedTemporaryFile` and `TemporaryDirectory` are part of the required public surface.
+2. Python-style type names `NamedTemporaryFile`, `TemporaryDirectory`, and `SpooledTemporaryFile` are part of the required public surface.
 3. The implementation lives in `std.tempfile`; temporary-resource APIs must not be compiler builtins or hidden test-runner utilities.
 4. Temporary resources remain path-usable filesystem entries while they exist; this RFC does not invent a separate non-`Path` interaction model for them.
 5. The initial implementation is path-addressable only. `TemporaryFile` is deferred until Incan has a settled pathless open-file model.
-6. `SpooledTemporaryFile` is deferred until it can align with `std.io.BytesIO` and `std.fs.File`.
+6. `SpooledTemporaryFile` belongs in `std.tempfile`, implemented by composing `std.io.BytesIO` before rollover and `std.fs.File` after rollover.
 7. Open-handle deletion and rename behavior is host-sensitive. Incan must surface explicit filesystem failures instead of promising impossible cross-platform cleanup guarantees.
 8. RFC 010 depends on RFC 055's filesystem path surface for its exact `Path` return contract. It should not be implemented by reusing the unrelated `std.web.Path` route extractor or by quietly substituting raw strings for filesystem paths.
 9. `std.tempfile` must not ship as a docs-light stdlib. The implementation is incomplete until it includes a dedicated stdlib reference page, navigation/index updates, task-oriented usage guidance, and release notes.

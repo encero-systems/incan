@@ -56,7 +56,7 @@ Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. U
 
 | API | Returns | Description |
 | --- | --- | --- |
-| `SpooledTemporaryFile(max_size: int = 0)` | `_SpooledTemporaryFile` | Construct a memory-backed binary stream that rolls to disk after the buffer grows beyond `max_size`. |
+| `SpooledTemporaryFile(max_size: int = 0)` | spooled temporary stream | Construct a memory-backed binary stream that rolls to disk after the buffer grows beyond `max_size`. |
 | `spool.write(data: bytes)` | `Result[int, IoError]` | Write bytes and roll over when needed. |
 | `spool.read(size: int = -1)` | `Result[bytes, IoError]` | Read bytes from the active memory or file backing. |
 | `spool.seek(offset: int, whence: int = 0)` | `Result[int, IoError]` | Move the stream cursor. |
