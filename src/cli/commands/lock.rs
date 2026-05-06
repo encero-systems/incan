@@ -3,6 +3,7 @@
 //! Handles creating and validating `incan.lock` files that pin dependency versions for reproducible builds.
 //! Used by both `incan lock` and the build pipeline.
 
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -47,77 +48,42 @@ pub fn lock_project(
         .map_err(|e| CliError::failure(e.to_string()))?
         .ok_or_else(|| CliError::failure("No incan.toml found (run `incan init`)"))?;
 
-    let entry_path = if let Some(file) = entry_file {
-        file.to_path_buf()
-    } else if let Some(project) = &manifest.project {
-        if let Some(main) = project.scripts.get("main") {
-            manifest.project_root().join(main)
-        } else {
-            return Err(CliError::failure(
-                "incan lock requires a FILE argument or [project.scripts].main",
-            ));
-        }
-    } else {
-        return Err(CliError::failure(
-            "incan lock requires a FILE argument or [project.scripts].main",
-        ));
-    };
-
-    let modules = collect_modules(&entry_path.to_string_lossy())?;
-    let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
-    let library_imported_vocab = library_manifest_index.library_imported_vocab();
-    let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let mut inline_imports = Vec::new();
-    for module in &modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
-    }
-
-    inline_imports.extend(collect_test_inline_imports(
-        manifest.project_root(),
-        Some(&library_imported_vocab),
-        Some(&library_imported_dsl_surfaces),
-        Some(&library_manifest_index),
-    )?);
-
     let cargo_features = CargoFeatureSelection {
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
     }
     .normalized();
-
-    let mut resolved =
-        resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
-            let mut msg = String::new();
-            let sources = build_source_map(&modules);
-            for err in errors {
-                msg.push_str(&format_dependency_error(&err, &sources));
-            }
-            CliError::failure(msg.trim_end())
+    let context = collect_project_lock_context(&manifest, entry_file.map(PathBuf::as_path), &cargo_features)?
+        .ok_or_else(|| {
+            CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
         })?;
-    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
 
     let project_name = manifest
         .project
         .as_ref()
         .and_then(|p| p.name.clone())
-        .or_else(|| entry_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()))
+        .or_else(|| {
+            context
+                .modules
+                .first()
+                .and_then(|module| module.file_path.file_stem())
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| "incan_project".to_string());
     let rust_edition = manifest.build.as_ref().and_then(|b| b.rust_edition.clone());
     let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
-    #[cfg(feature = "rust_inspect")]
-    let rust_inspect_query_paths = collect_rust_inspect_query_paths(&modules);
     generate_lockfile(
         manifest.project_root(),
         &project_name,
         rust_edition,
-        &resolved,
-        &project_requirements,
+        &context.resolved,
+        &context.project_requirements,
         &cargo_features,
         &cargo_policy,
         #[cfg(feature = "rust_inspect")]
-        &rust_inspect_query_paths,
+        &context.rust_inspect_query_paths,
     )?;
 
     Ok(ExitCode::SUCCESS)
@@ -162,6 +128,22 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     if manifest.is_none() {
         return Ok(None);
     }
+
+    let project_context = if let Some(manifest) = manifest {
+        collect_project_lock_context(manifest, None, cargo_features)?
+    } else {
+        None
+    };
+    let (resolved, project_requirements) = if let Some(context) = project_context.as_ref() {
+        (&context.resolved, &context.project_requirements)
+    } else {
+        (resolved, project_requirements)
+    };
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_query_paths = project_context
+        .as_ref()
+        .map(|context| context.rust_inspect_query_paths.as_slice())
+        .unwrap_or(rust_inspect_query_paths);
 
     let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
@@ -223,6 +205,93 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         rust_inspect_query_paths,
     )?;
     Ok(Some(lock.cargo_lock_payload))
+}
+
+/// Fully collected dependency inputs that define a manifest project's lock freshness surface.
+struct ProjectLockContext {
+    modules: Vec<ParsedModule>,
+    resolved: ResolvedDependencies,
+    project_requirements: ProjectRequirements,
+    #[cfg(feature = "rust_inspect")]
+    rust_inspect_query_paths: Vec<String>,
+}
+
+/// Test-file dependency inputs that must participate in the same project lock fingerprint as normal scripts.
+struct TestLockInputs {
+    inline_imports: Vec<InlineRustImport>,
+    project_requirement_modules: Vec<ParsedModule>,
+}
+
+/// Return sorted manifest script entry paths plus an optional explicitly requested entry file.
+fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Option<&Path>) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    if let Some(project) = &manifest.project {
+        for script in project.scripts.values() {
+            paths.insert(manifest.project_root().join(script));
+        }
+    }
+    if let Some(file) = explicit_entry_file {
+        paths.insert(file.to_path_buf());
+    }
+    paths.into_iter().collect()
+}
+
+/// Collect the project-wide script and test dependency inputs used for both lock generation and freshness checks.
+fn collect_project_lock_context(
+    manifest: &ProjectManifest,
+    explicit_entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+) -> CliResult<Option<ProjectLockContext>> {
+    let entry_paths = project_lock_entry_paths(manifest, explicit_entry_file);
+    if entry_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let library_manifest_index = LibraryManifestIndex::from_project_manifest(manifest);
+    let library_imported_vocab = library_manifest_index.library_imported_vocab();
+    let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
+    let mut modules = Vec::new();
+    for entry_path in entry_paths {
+        modules.extend(collect_modules(&entry_path.to_string_lossy())?);
+    }
+
+    let test_inputs = collect_test_lock_inputs(
+        manifest.project_root(),
+        Some(&library_imported_vocab),
+        Some(&library_imported_dsl_surfaces),
+        Some(&library_manifest_index),
+    )?;
+
+    let mut project_requirement_modules = modules.clone();
+    project_requirement_modules.extend(test_inputs.project_requirement_modules);
+    let project_requirements = collect_project_requirements(&project_requirement_modules, &library_manifest_index)?;
+
+    let mut inline_imports = Vec::new();
+    for module in &modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+    inline_imports.extend(test_inputs.inline_imports);
+
+    let mut resolved =
+        resolve_dependencies(Some(manifest), &inline_imports, true, cargo_features).map_err(|errors| {
+            let mut msg = String::new();
+            let sources = build_source_map(&project_requirement_modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            CliError::failure(msg.trim_end())
+        })?;
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_query_paths = collect_rust_inspect_query_paths(&project_requirement_modules);
+
+    Ok(Some(ProjectLockContext {
+        modules,
+        resolved,
+        project_requirements,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths,
+    }))
 }
 
 struct LockDependencyPreheatGuard {
@@ -556,14 +625,15 @@ pub(crate) fn generate_lockfile(
     Ok(lock)
 }
 
-/// Collect inline Rust crate imports from test files for lock resolution.
-fn collect_test_inline_imports(
+/// Collect inline Rust crate imports and stdlib/provider requirements from test files for lock resolution.
+fn collect_test_lock_inputs(
     project_root: &Path,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
-) -> CliResult<Vec<InlineRustImport>> {
-    let mut imports = Vec::new();
+) -> CliResult<TestLockInputs> {
+    let mut inline_imports = Vec::new();
+    let mut project_requirement_modules = Vec::new();
     let test_files = crate::cli::test_runner::discover_test_files(project_root);
     let source_root = project_root.join("src");
 
@@ -603,7 +673,8 @@ fn collect_test_inline_imports(
             source: source.clone(),
             ast: ast.clone(),
         };
-        imports.extend(collect_inline_rust_imports(&test_module, true));
+        inline_imports.extend(collect_inline_rust_imports(&test_module, true));
+        project_requirement_modules.push(test_module);
 
         let source_modules = crate::cli::test_runner::collect_source_modules_for_test(
             &ast,
@@ -614,11 +685,15 @@ fn collect_test_inline_imports(
         )
         .map_err(CliError::failure)?;
         for module in &source_modules {
-            imports.extend(collect_inline_rust_imports(module, false));
+            inline_imports.extend(collect_inline_rust_imports(module, false));
         }
+        project_requirement_modules.extend(source_modules);
     }
 
-    Ok(imports)
+    Ok(TestLockInputs {
+        inline_imports,
+        project_requirement_modules,
+    })
 }
 
 /// Check whether any resolved dependency uses a git branch source, which is forbidden in strict
@@ -712,7 +787,8 @@ mod tests {
             "from internal import SessionContext\nfrom rust::tokio @ \"1\" import spawn\n",
         )?;
 
-        let imports = collect_test_inline_imports(project_root, None, None, None)?;
+        let inputs = collect_test_lock_inputs(project_root, None, None, None)?;
+        let imports = inputs.inline_imports;
         let tokio = imports
             .iter()
             .find(|import| import.crate_name == "tokio")
