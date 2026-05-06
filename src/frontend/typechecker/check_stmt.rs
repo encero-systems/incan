@@ -446,6 +446,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate assignment to a nominal field, including generic-owner field substitution.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
@@ -473,18 +474,30 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => {
-                let Some(type_info) = self.lookup_type_info(type_name) else {
-                    // Type not found — already reported elsewhere
-                    return;
-                };
-
-                let field_type = match type_info {
-                    TypeInfo::Model(model) => model.fields.get(field).map(|f| f.ty.clone()),
-                    TypeInfo::Class(class) => class.fields.get(field).map(|f| f.ty.clone()),
-                    _ => None,
-                };
-
-                match field_type {
+                match self.resolve_nominal_field_type(type_name, None, field, field_assign.target_span) {
+                    Some(expected_ty) => {
+                        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
+                        if !self.types_compatible(&value_ty, &expected_ty) {
+                            self.errors.push(errors::field_type_mismatch(
+                                field,
+                                &expected_ty.to_string(),
+                                &value_ty.to_string(),
+                                field_assign.value.span,
+                            ));
+                        }
+                    }
+                    None => {
+                        self.errors.push(errors::missing_field(type_name, field, span));
+                    }
+                }
+            }
+            ResolvedType::Generic(type_name, type_args) => {
+                match self.resolve_nominal_field_type(
+                    type_name,
+                    Some(type_args.as_slice()),
+                    field,
+                    field_assign.target_span,
+                ) {
                     Some(expected_ty) => {
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {

@@ -1523,7 +1523,7 @@ impl TypeChecker {
 
         // Check methods
         for method in &model.methods {
-            self.check_method(&method.node, &model.name);
+            self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
         }
 
         if has_validate {
@@ -1750,7 +1750,7 @@ impl TypeChecker {
 
         // Check methods
         for method in &class.methods {
-            self.check_method(&method.node, &class.name);
+            self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
         }
         if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&class.methods);
@@ -1825,6 +1825,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a trait declaration, including required fields, defaults, and self-typed method bodies.
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
@@ -1858,7 +1859,12 @@ impl TypeChecker {
                 // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
                 // `@requires`).
                 let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType, &trait_type_params);
+                self.check_method_with_self_ty(
+                    &method.node,
+                    ResolvedType::SelfType,
+                    &trait_type_params,
+                    &tr.type_params,
+                );
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }
         }
@@ -1951,7 +1957,7 @@ impl TypeChecker {
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         for method in &nt.methods {
             if method.node.body.is_some() {
-                self.check_method(&method.node, &nt.name);
+                self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
         }
     }
@@ -2015,7 +2021,7 @@ impl TypeChecker {
         }
 
         for method in &en.methods {
-            self.check_method(&method.node, &en.name);
+            self.check_method_with_owner_type_params(&method.node, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&en.methods);
@@ -2316,7 +2322,7 @@ impl TypeChecker {
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
-    pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
+    fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators(&method.decorators);
         let owner_type_params = self
             .lookup_type_info(owner)
@@ -2340,7 +2346,7 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params, owner_params);
         self.current_method_owner = previous_owner;
     }
 
@@ -2349,7 +2355,13 @@ impl TypeChecker {
     /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
     /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
     /// adopter is resolved later during trait conformance and method-call substitution.
-    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
+    fn check_method_with_self_ty(
+        &mut self,
+        method: &MethodDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+        owner_params: &[TypeParam],
+    ) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
@@ -2375,7 +2387,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
-        let active_bounds = self.type_param_bound_details_from_type_params(&method.type_params);
+        let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
+        active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
 
         // Define self if present

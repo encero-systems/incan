@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 
 use incan_core::lang::trait_bounds;
+use incan_core::lang::traits as core_traits;
+use incan_core::lang::traits::TraitId;
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
@@ -48,7 +50,7 @@ impl AstLowering {
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
         let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let methods: Vec<IrFunction> = t
+        let mut methods: Vec<IrFunction> = t
             .methods
             .iter()
             .map(|m| {
@@ -139,6 +141,9 @@ impl AstLowering {
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        if t.name == core_traits::as_str(TraitId::Iterator) {
+            methods.retain(|method| method.name == "__next__");
+        }
 
         let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info

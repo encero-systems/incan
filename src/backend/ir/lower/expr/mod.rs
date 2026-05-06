@@ -26,6 +26,18 @@ use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return whether a concrete receiver type explicitly adopts the Incan `Iterator` protocol.
+    fn receiver_adopts_iterator_protocol(&self, ty: &IrType) -> bool {
+        let mut ty = ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = ty {
+            ty = inner.as_ref();
+        }
+        match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => self.iterator_adopter_names.contains(name),
+            _ => false,
+        }
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::backend::ir::lower) fn lower_condition_expr(
         &mut self,
@@ -491,14 +503,20 @@ impl AstLowering {
                         },
                         expr_ty,
                     )
-                } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
+                } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
+                    if self.receiver_adopts_iterator_protocol(&receiver.ty) {
+                        MethodKind::for_iterator_method_name(&method_name)
+                    } else {
+                        None
+                    }
+                }) {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
                             kind,
                             args: args_ir,
                         },
-                        IrType::Unknown,
+                        expr_ty,
                     )
                 } else {
                     let imported_type_method_signature =

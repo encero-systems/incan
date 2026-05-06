@@ -103,6 +103,15 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
+    if module_path
+        == [
+            stdlib::INCAN_STD_NAMESPACE.to_string(),
+            "derives".to_string(),
+            "collection".to_string(),
+        ]
+    {
+        return true;
+    }
     if !preserve_non_stdlib_public_items {
         return false;
     }

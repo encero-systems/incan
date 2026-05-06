@@ -1,14 +1,11 @@
 //! Emit Rust code for RFC 088 iterator adapter and terminal methods.
 //!
-//! The typechecker and stdlib define the user-facing protocol surface, but this module is the final Rust emission
-//! boundary for known iterator methods. It keeps the generated code lazy by mapping RFC 088 methods onto Rust iterator
-//! adapters where the semantics line up. That is a backend specialization choice: the Incan protocol defaults in
-//! `std.derives.collection` remain the semantic dogfooding surface for custom iterator models.
+//! The typechecker and stdlib define the user-facing protocol surface, and this module keeps codegen aligned with that
+//! surface by constructing the adapter models from `std.derives.collection`.
 //!
-//! The remaining calls into `incan_stdlib::iter` are artifacts of that native Rust iterator path: signed count
-//! conversion for `take`/`skip`, and `batch` for fixed-size grouping. Checked-newtype `sum` is emitted here so the
-//! backend can unwrap to the primitive carrier, use Rust's summation identity, and reconstruct through the selected
-//! checked constructor.
+//! Terminal methods still lower here because generated Rust needs concrete loops over the Incan `Iterator.__next__`
+//! trait method. Checked-newtype `sum` also stays compiler-supported so the backend can unwrap to the primitive
+//! carrier, accumulate from the primitive zero value, and reconstruct through the selected checked constructor.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -17,14 +14,13 @@ use crate::backend::ir::emit::{EmitError, IrEmitter};
 use crate::backend::ir::expr::{IrExprKind, IteratorMethodKind, TypedExpr};
 use crate::backend::ir::types::IrType;
 use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
 use super::ReceiverInfo;
 
-/// Emit iterator-related known methods as Rust iterator chains.
+/// Emit iterator-related known methods through the Incan stdlib adapter models.
 ///
-/// The lowering layer has already classified these calls through `MethodKind::Iterator`, so this emitter keeps the
-/// backend surface structured instead of rediscovering behavior from method-name strings.
+/// The lowering layer has already classified these calls through `MethodKind::Iterator`, so this emitter only maps
+/// structured method kinds to model constructors or terminal `__next__` loops.
 pub(super) fn emit_iterator_method(
     emitter: &IrEmitter<'_>,
     receiver: &TypedExpr,
@@ -36,105 +32,135 @@ pub(super) fn emit_iterator_method(
     match kind {
         IteratorMethodKind::Iter => Ok(emit_iter_receiver(receiver, r)),
         IteratorMethodKind::Map => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).map(std::convert::identity) });
-            };
-            Ok(quote! { (#r).map(#callback) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { std::convert::identity });
+            Ok(quote! { crate::__incan_std::derives::collection::MapIterator { source: (#r), f: #callback } })
         }
         IteratorMethodKind::Filter => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).filter(|_| true) });
-            };
-            Ok(quote! { (#r).filter(|__incan_item| (#callback)((*__incan_item).clone())) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| true });
+            Ok(quote! { crate::__incan_std::derives::collection::FilterIterator { source: (#r), f: #callback } })
         }
-        IteratorMethodKind::Enumerate => Ok(quote! { (#r).enumerate().map(|(idx, value)| (idx as i64, value)) }),
+        IteratorMethodKind::Enumerate => Ok(quote! {
+            crate::__incan_std::derives::collection::EnumerateIterator {
+                source: (#r),
+                index: 0i64,
+                marker: None,
+            }
+        }),
         IteratorMethodKind::Zip => {
-            let Some(other) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).zip(std::iter::empty()) });
-            };
-            Ok(quote! { (#r).zip((#other).into_iter()) })
+            let other = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { std::iter::empty() });
+            Ok(quote! {
+                crate::__incan_std::derives::collection::ZipIterator {
+                    left: (#r),
+                    right: (#other),
+                    left_marker: None,
+                    right_marker: None,
+                }
+            })
         }
         IteratorMethodKind::Take => {
             let count = emit_count_arg(emitter, args)?;
-            Ok(quote! { (#r).take(incan_stdlib::iter::nonnegative_count(#count)) })
+            Ok(quote! {
+                crate::__incan_std::derives::collection::TakeIterator {
+                    source: (#r),
+                    remaining: #count,
+                    marker: None,
+                }
+            })
         }
         IteratorMethodKind::Skip => {
             let count = emit_count_arg(emitter, args)?;
-            Ok(quote! { (#r).skip(incan_stdlib::iter::nonnegative_count(#count)) })
+            Ok(quote! {
+                crate::__incan_std::derives::collection::SkipIterator {
+                    source: (#r),
+                    remaining: #count,
+                    marker: None,
+                }
+            })
         }
         IteratorMethodKind::TakeWhile => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).take_while(|_| true) });
-            };
-            Ok(quote! { (#r).take_while(|__incan_item| (#callback)((*__incan_item).clone())) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| true });
+            Ok(quote! {
+                crate::__incan_std::derives::collection::TakeWhileIterator {
+                    source: (#r),
+                    f: #callback,
+                    done: false,
+                }
+            })
         }
         IteratorMethodKind::SkipWhile => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).skip_while(|_| false) });
-            };
-            Ok(quote! { (#r).skip_while(|__incan_item| (#callback)((*__incan_item).clone())) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| false });
+            Ok(quote! {
+                crate::__incan_std::derives::collection::SkipWhileIterator {
+                    source: (#r),
+                    f: #callback,
+                    skipping: true,
+                }
+            })
         }
         IteratorMethodKind::Chain => {
-            let Some(other) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).chain(std::iter::empty()) });
-            };
-            Ok(quote! { (#r).chain((#other).into_iter()) })
+            let other = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { std::iter::empty() });
+            Ok(quote! {
+                crate::__incan_std::derives::collection::ChainIterator {
+                    first: (#r),
+                    second: (#other),
+                    in_second: false,
+                    marker: None,
+                }
+            })
         }
         IteratorMethodKind::FlatMap => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).flat_map(std::convert::identity) });
-            };
-            Ok(quote! { (#r).flat_map(#callback) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { std::convert::identity });
+            Ok(quote! {
+                crate::__incan_std::derives::collection::FlatMapIterator {
+                    source: (#r),
+                    f: #callback,
+                    current: Vec::new(),
+                    index: 0i64,
+                }
+            })
         }
         IteratorMethodKind::Batch => {
             let size = emit_count_arg(emitter, args)?;
-            Ok(quote! { incan_stdlib::iter::batch((#r), #size) })
+            Ok(quote! {
+                crate::__incan_std::derives::collection::BatchIterator {
+                    source: (#r),
+                    size: #size,
+                    marker: None,
+                }
+            })
         }
-        IteratorMethodKind::Collect => Ok(quote! { (#r).collect::<Vec<_>>() }),
-        IteratorMethodKind::Count => Ok(quote! { ::std::convert::identity((#r).count() as i64) }),
+        IteratorMethodKind::Collect => Ok(emit_collect(r)),
+        IteratorMethodKind::Count => Ok(emit_count(r)),
         IteratorMethodKind::Reduce => emit_reduce(emitter, r, args),
         IteratorMethodKind::Fold => emit_fold(emitter, r, args),
         IteratorMethodKind::Any => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).any(|_| true) });
-            };
-            Ok(quote! { (#r).any(|__incan_item| (#callback)(__incan_item)) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| true });
+            Ok(emit_any(r, callback))
         }
         IteratorMethodKind::All => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).all(|_| true) });
-            };
-            Ok(quote! { (#r).all(|__incan_item| (#callback)(__incan_item)) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| true });
+            Ok(emit_all(r, callback))
         }
         IteratorMethodKind::Find => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).find(|_| true) });
-            };
-            Ok(quote! { (#r).find(|__incan_item| (#callback)((*__incan_item).clone())) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { |_| true });
+            Ok(emit_find(r, callback))
         }
         IteratorMethodKind::ForEach => {
-            let Some(callback) = emit_arg(emitter, args, 0)? else {
-                return Ok(quote! { (#r).for_each(drop) });
-            };
-            Ok(quote! { (#r).for_each(#callback) })
+            let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { drop });
+            Ok(emit_for_each(r, callback))
         }
         IteratorMethodKind::Sum => Ok(emit_sum(emitter, receiver, r)),
     }
 }
 
+/// Emit the value returned by `.iter()` for builtin lists and values that are already Incan iterators.
 fn emit_iter_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
     match receiver_type_for_iterator_dispatch(&receiver.ty) {
-        IrType::List(_) | IrType::Set(_) => quote! { (#r).iter().cloned() },
-        IrType::NamedGeneric(name, _)
-            if matches!(
-                collection_types::from_str(name),
-                Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
-            ) =>
-        {
-            quote! { (#r).into_iter().cloned() }
+        IrType::List(_) => {
+            quote! { crate::__incan_std::derives::collection::ListIterator { items: (#r).clone(), index: 0i64 } }
         }
         IrType::NamedGeneric(name, _) | IrType::Struct(name) if is_iterator_protocol_type_name(name) => quote! { (#r) },
-        _ => quote! { (#r).into_iter() },
+        _ => quote! { (#r) },
     }
 }
 
@@ -158,6 +184,41 @@ fn is_iterator_protocol_type_name(name: &str) -> bool {
     name.rsplit("::").next() == Some(core_traits::as_str(TraitId::Iterator))
 }
 
+/// Emit a fully-qualified call to the Incan iterator protocol's `__next__` method.
+fn next_call(iter: &TokenStream) -> TokenStream {
+    quote! { crate::__incan_std::derives::collection::Iterator::__next__(&mut #iter) }
+}
+
+/// Emit `.collect()` as a loop that appends every remaining protocol item into a `Vec`.
+fn emit_collect(receiver: &TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        let mut __incan_items = Vec::new();
+        loop {
+            match #next {
+                Some(__incan_item) => __incan_items.push(__incan_item),
+                None => break __incan_items,
+            }
+        }
+    }}
+}
+
+/// Emit `.count()` as a loop over `__next__`, preserving Incan's signed `int` result.
+fn emit_count(receiver: &TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        let mut __incan_total = 0i64;
+        loop {
+            match #next {
+                Some(_) => __incan_total += 1,
+                None => break __incan_total,
+            }
+        }
+    }}
+}
+
 /// Emit `.reduce(init, f)` as Rust's explicit-accumulator iterator fold.
 ///
 /// RFC 088 keeps `reduce` and `fold` aligned for now: both require an initial accumulator and both consume the
@@ -168,9 +229,9 @@ fn emit_reduce(emitter: &IrEmitter<'_>, receiver: &TokenStream, args: &[TypedExp
         (Some(init), Some(callback)) => {
             let init = emitter.emit_expr(init)?;
             let callback = emitter.emit_expr(callback)?;
-            Ok(quote! { (#receiver).fold(#init, #callback) })
+            Ok(emit_fold_loop(receiver, init, callback))
         }
-        _ => Ok(quote! { (#receiver).fold((), |__incan_acc, _| __incan_acc) }),
+        _ => Ok(quote! { () }),
     }
 }
 
@@ -180,10 +241,93 @@ fn emit_fold(emitter: &IrEmitter<'_>, receiver: &TokenStream, args: &[TypedExpr]
         (Some(init), Some(callback)) => {
             let init = emitter.emit_expr(init)?;
             let callback = emitter.emit_expr(callback)?;
-            Ok(quote! { (#receiver).fold(#init, #callback) })
+            Ok(emit_fold_loop(receiver, init, callback))
         }
-        _ => Ok(quote! { (#receiver).fold((), |__incan_acc, _| __incan_acc) }),
+        _ => Ok(quote! { () }),
     }
+}
+
+/// Emit the shared terminal loop for `.fold(init, f)` and `.reduce(init, f)`.
+fn emit_fold_loop(receiver: &TokenStream, init: TokenStream, callback: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        let mut __incan_acc = #init;
+        loop {
+            match #next {
+                Some(__incan_item) => __incan_acc = (#callback)(__incan_acc, __incan_item),
+                None => break __incan_acc,
+            }
+        }
+    }}
+}
+
+/// Emit `.any(f)` with short-circuiting over the Incan iterator protocol.
+fn emit_any(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        loop {
+            match #next {
+                Some(__incan_item) => {
+                    if (#callback)(__incan_item) {
+                        break true;
+                    }
+                }
+                None => break false,
+            }
+        }
+    }}
+}
+
+/// Emit `.all(f)` with short-circuiting over the Incan iterator protocol.
+fn emit_all(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        loop {
+            match #next {
+                Some(__incan_item) => {
+                    if !(#callback)(__incan_item) {
+                        break false;
+                    }
+                }
+                None => break true,
+            }
+        }
+    }}
+}
+
+/// Emit `.find(f)`, returning the first item whose cloned value satisfies the predicate.
+fn emit_find(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        loop {
+            match #next {
+                Some(__incan_item) => {
+                    if (#callback)(__incan_item.clone()) {
+                        break Some(__incan_item);
+                    }
+                }
+                None => break None,
+            }
+        }
+    }}
+}
+
+/// Emit `.for_each(f)` as a side-effecting drain of the receiver.
+fn emit_for_each(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        loop {
+            match #next {
+                Some(__incan_item) => (#callback)(__incan_item),
+                None => break (),
+            }
+        }
+    }}
 }
 
 /// Emit the positional argument at `index`, returning `None` for malformed already-diagnosed calls.
@@ -208,21 +352,66 @@ fn emit_count_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<TokenSt
 
 /// Emit `.sum()` for primitive numeric iterators and newtypes over primitive numeric values.
 ///
-/// Rust's `Iterator::sum` supplies the primitive zero and accumulation semantics. For newtypes, generated code unwraps
-/// to the underlying carrier, sums that carrier, then reconstructs the newtype. Checked newtypes intentionally route
-/// through the selected checked constructor so an invalid empty-iterator zero or invalid accumulated value fails at
-/// runtime.
+/// The loop consumes the Incan iterator protocol directly. For newtypes, generated code unwraps to the underlying
+/// carrier, sums that carrier, then reconstructs the newtype. Checked newtypes intentionally route through the selected
+/// checked constructor so an invalid empty-iterator zero or invalid accumulated value fails at runtime.
 fn emit_sum(emitter: &IrEmitter<'_>, receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
     let Some(item_ty) = iterator_element_type(&receiver.ty) else {
-        return quote! { (#r).sum::<i64>() };
+        return emit_primitive_sum_loop(r, quote! { i64 }, quote! { 0i64 });
     };
     if let Some((newtype_name, underlying_ty)) = newtype_sum_underlying(emitter, item_ty) {
         let sum_ty = emitter.emit_type(underlying_ty);
-        let underlying_sum = quote! { (#r).map(|__incan_item| __incan_item.0).sum::<#sum_ty>() };
-        return emit_newtype_from_underlying_sum(emitter, newtype_name, underlying_sum);
+        let zero = sum_zero_for_type(underlying_ty);
+        return emit_newtype_sum_loop(emitter, r, newtype_name, sum_ty, zero);
     }
     let sum_ty = emitter.emit_type(item_ty);
-    quote! { (#r).sum::<#sum_ty>() }
+    let zero = sum_zero_for_type(item_ty);
+    emit_primitive_sum_loop(r, sum_ty, zero)
+}
+
+/// Return the primitive zero literal used to seed an RFC 088 `.sum()` loop.
+fn sum_zero_for_type(ty: &IrType) -> TokenStream {
+    match ty {
+        IrType::Float => quote! { 0.0f64 },
+        _ => quote! { 0i64 },
+    }
+}
+
+/// Emit `.sum()` for primitive numeric item types.
+fn emit_primitive_sum_loop(receiver: &TokenStream, sum_ty: TokenStream, zero: TokenStream) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        let mut __incan_sum: #sum_ty = #zero;
+        loop {
+            match #next {
+                Some(__incan_item) => __incan_sum += __incan_item,
+                None => break __incan_sum,
+            }
+        }
+    }}
+}
+
+/// Emit `.sum()` for newtype item types by summing the carrier and reconstructing the wrapper.
+fn emit_newtype_sum_loop(
+    emitter: &IrEmitter<'_>,
+    receiver: &TokenStream,
+    newtype_name: &str,
+    sum_ty: TokenStream,
+    zero: TokenStream,
+) -> TokenStream {
+    let next = next_call(&quote! { __incan_iter });
+    let reconstructed = emit_newtype_from_underlying_sum(emitter, newtype_name, quote! { __incan_sum });
+    quote! {{
+        let mut __incan_iter = (#receiver);
+        let mut __incan_sum: #sum_ty = #zero;
+        loop {
+            match #next {
+                Some(__incan_item) => __incan_sum += __incan_item.0,
+                None => break #reconstructed,
+            }
+        }
+    }}
 }
 
 /// Return a newtype's primitive summation carrier when the item type is supported by RFC 088 `.sum()`.

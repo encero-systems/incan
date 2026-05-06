@@ -712,6 +712,11 @@ pub enum InternalMethodKind {
 }
 
 impl MethodKind {
+    /// Try to resolve an RFC 088 iterator method name without considering a receiver type.
+    pub fn for_iterator_method_name(name: &str) -> Option<Self> {
+        iterator_method_kind(name).map(Self::Iterator)
+    }
+
     /// Try to resolve a method name to a known method kind for the given receiver type.
     ///
     /// Returns `None` for unknown methods (which pass through as regular method calls).

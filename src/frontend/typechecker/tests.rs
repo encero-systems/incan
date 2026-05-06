@@ -4920,11 +4920,9 @@ def after_positive_prefix(items: Iterator[int]) -> list[int]:
 }
 
 #[test]
-fn test_rfc088_flat_map_accepts_iterable_callback_result() {
+fn test_rfc088_flat_map_accepts_list_callback_result() {
     let source = r#"
-from std.derives.collection import Iterable
-
-def words_for(_n: int) -> Iterable[str]:
+def words_for(_n: int) -> list[str]:
   return ["hello"]
 
 def flatten(items: Iterator[int]) -> list[str]:

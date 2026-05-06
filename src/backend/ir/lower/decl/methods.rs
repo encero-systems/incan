@@ -12,6 +12,8 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::ResolvedType;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::traits as core_traits;
+use incan_core::lang::traits::TraitId;
 
 impl AstLowering {
     /// Return whether a method carries a resolved builtin decorator.
@@ -114,10 +116,15 @@ impl AstLowering {
         if bound.type_args.is_empty() {
             return self.trait_impl_targets_for_adopted_trait(&bound.name, type_params);
         }
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
 
         vec![(
             bound.name.clone(),
-            bound.type_args.iter().map(|arg| self.lower_type(&arg.node)).collect(),
+            bound
+                .type_args
+                .iter()
+                .map(|arg| self.lower_type_with_type_params(&arg.node, Some(&type_param_names)))
+                .collect(),
         )]
     }
 
@@ -290,7 +297,10 @@ impl AstLowering {
                 });
             };
             let trait_type_params = trait_decl.type_params;
-            let trait_methods = trait_decl.methods;
+            let mut trait_methods = trait_decl.methods;
+            if trait_name == core_traits::as_str(TraitId::Iterator) {
+                trait_methods.retain(|method| method.node.name == "__next__");
+            }
 
             let mut methods: Vec<IrFunction> = Vec::new();
             for trait_method in &trait_methods {

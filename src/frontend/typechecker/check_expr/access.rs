@@ -729,7 +729,7 @@ impl TypeChecker {
     ///
     /// This keeps field access on `Named(Type)` and `Generic(Type[...])` owners on the same path instead of letting
     /// generic owners fall through to "missing field" diagnostics despite having declared fields.
-    fn resolve_nominal_field_type(
+    pub(in crate::frontend::typechecker) fn resolve_nominal_field_type(
         &mut self,
         type_name: &str,
         type_args: Option<&[ResolvedType]>,

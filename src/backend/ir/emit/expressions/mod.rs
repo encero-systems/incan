@@ -1607,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn known_iterator_adapter_methods_emit_rust_iterator_chains() -> Result<(), String> {
+    fn known_iterator_adapter_methods_emit_incan_stdlib_models() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
 
@@ -1657,67 +1657,71 @@ mod tests {
 
         let map_rendered = render(IteratorMethodKind::Map, callback())?;
         assert!(
-            map_rendered.contains("(items) . map (transform)"),
+            map_rendered.contains("collection :: MapIterator") && map_rendered.contains("f : transform"),
             "unexpected map emission: {map_rendered}"
         );
 
         let filter_rendered = render(IteratorMethodKind::Filter, callback())?;
         assert!(
-            filter_rendered.contains("(items) . filter") && filter_rendered.contains("(transform)"),
+            filter_rendered.contains("collection :: FilterIterator") && filter_rendered.contains("f : transform"),
             "unexpected filter emission: {filter_rendered}"
         );
 
         let enumerate_rendered = render(IteratorMethodKind::Enumerate, Vec::new())?;
         assert!(
-            enumerate_rendered.contains(". enumerate () . map"),
+            enumerate_rendered.contains("collection :: EnumerateIterator")
+                && enumerate_rendered.contains("index : 0i64"),
             "unexpected enumerate emission: {enumerate_rendered}"
         );
 
         let zip_rendered = render(IteratorMethodKind::Zip, other())?;
         assert!(
-            zip_rendered.contains("(items) . zip ((others) . into_iter ())"),
+            zip_rendered.contains("collection :: ZipIterator") && zip_rendered.contains("right : (others)"),
             "unexpected zip emission: {zip_rendered}"
         );
 
         let take_rendered = render(IteratorMethodKind::Take, count(3))?;
         assert!(
-            take_rendered.contains("incan_stdlib :: iter :: nonnegative_count (3"),
+            take_rendered.contains("collection :: TakeIterator") && take_rendered.contains("remaining : 3"),
             "unexpected take emission: {take_rendered}"
         );
 
         let skip_rendered = render(IteratorMethodKind::Skip, count(-2))?;
         assert!(
-            skip_rendered.contains("incan_stdlib :: iter :: nonnegative_count (- 2"),
+            skip_rendered.contains("collection :: SkipIterator") && skip_rendered.contains("remaining : - 2"),
             "unexpected skip emission: {skip_rendered}"
         );
 
         let take_while_rendered = render(IteratorMethodKind::TakeWhile, callback())?;
         assert!(
-            take_while_rendered.contains("(items) . take_while") && take_while_rendered.contains("(transform)"),
+            take_while_rendered.contains("collection :: TakeWhileIterator")
+                && take_while_rendered.contains("f : transform"),
             "unexpected take_while emission: {take_while_rendered}"
         );
 
         let skip_while_rendered = render(IteratorMethodKind::SkipWhile, callback())?;
         assert!(
-            skip_while_rendered.contains("(items) . skip_while") && skip_while_rendered.contains("(transform)"),
+            skip_while_rendered.contains("collection :: SkipWhileIterator")
+                && skip_while_rendered.contains("f : transform"),
             "unexpected skip_while emission: {skip_while_rendered}"
         );
 
         let chain_rendered = render(IteratorMethodKind::Chain, other())?;
         assert!(
-            chain_rendered.contains("(items) . chain ((others) . into_iter ())"),
+            chain_rendered.contains("collection :: ChainIterator") && chain_rendered.contains("second : (others)"),
             "unexpected chain emission: {chain_rendered}"
         );
 
         let flat_map_rendered = render(IteratorMethodKind::FlatMap, callback())?;
         assert!(
-            flat_map_rendered.contains("(items) . flat_map (transform)"),
+            flat_map_rendered.contains("collection :: FlatMapIterator")
+                && flat_map_rendered.contains("current : Vec :: new ()"),
             "unexpected flat_map emission: {flat_map_rendered}"
         );
 
         let batch_rendered = render(IteratorMethodKind::Batch, count(2))?;
         assert!(
-            batch_rendered.contains("incan_stdlib :: iter :: batch ((items) , 2"),
+            batch_rendered.contains("collection :: BatchIterator") && batch_rendered.contains("size : 2"),
             "unexpected batch emission: {batch_rendered}"
         );
 
@@ -1725,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn known_iterator_terminal_methods_emit_rust_consumers() -> Result<(), String> {
+    fn known_iterator_terminal_methods_emit_incan_next_loops() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
 
@@ -1754,13 +1758,15 @@ mod tests {
 
         let collect_rendered = render(IteratorMethodKind::Collect, Vec::new())?;
         assert!(
-            collect_rendered.contains("(items) . collect :: < Vec < _ >> ()"),
+            collect_rendered.contains("collection :: Iterator :: __next__")
+                && collect_rendered.contains("__incan_items . push"),
             "unexpected collect emission: {collect_rendered}"
         );
 
         let count_rendered = render(IteratorMethodKind::Count, Vec::new())?;
         assert!(
-            count_rendered.contains(":: std :: convert :: identity ((items) . count () as i64)"),
+            count_rendered.contains("collection :: Iterator :: __next__")
+                && count_rendered.contains("__incan_total += 1"),
             "unexpected count emission: {count_rendered}"
         );
 
@@ -1780,7 +1786,8 @@ mod tests {
             ],
         )?;
         assert!(
-            reduce_rendered.contains("(items) . fold (0 , predicate)"),
+            reduce_rendered.contains("collection :: Iterator :: __next__")
+                && reduce_rendered.contains("__incan_acc = (predicate) (__incan_acc , __incan_item)"),
             "unexpected reduce emission: {reduce_rendered}"
         );
 
@@ -1800,37 +1807,40 @@ mod tests {
             ],
         )?;
         assert!(
-            fold_rendered.contains("(items) . fold (0 , predicate)"),
+            fold_rendered.contains("collection :: Iterator :: __next__")
+                && fold_rendered.contains("__incan_acc = (predicate) (__incan_acc , __incan_item)"),
             "unexpected fold emission: {fold_rendered}"
         );
 
         let any_rendered = render(IteratorMethodKind::Any, callback())?;
         assert!(
-            any_rendered.contains("(items) . any") && any_rendered.contains("(predicate)"),
+            any_rendered.contains("collection :: Iterator :: __next__") && any_rendered.contains("(predicate)"),
             "unexpected any emission: {any_rendered}"
         );
 
         let all_rendered = render(IteratorMethodKind::All, callback())?;
         assert!(
-            all_rendered.contains("(items) . all") && all_rendered.contains("(predicate)"),
+            all_rendered.contains("collection :: Iterator :: __next__") && all_rendered.contains("(predicate)"),
             "unexpected all emission: {all_rendered}"
         );
 
         let find_rendered = render(IteratorMethodKind::Find, callback())?;
         assert!(
-            find_rendered.contains("(items) . find") && find_rendered.contains("(predicate)"),
+            find_rendered.contains("collection :: Iterator :: __next__") && find_rendered.contains("(predicate)"),
             "unexpected find emission: {find_rendered}"
         );
 
         let for_each_rendered = render(IteratorMethodKind::ForEach, callback())?;
         assert!(
-            for_each_rendered.contains("(items) . for_each (predicate)"),
+            for_each_rendered.contains("collection :: Iterator :: __next__")
+                && for_each_rendered.contains("(predicate) (__incan_item)"),
             "unexpected for_each emission: {for_each_rendered}"
         );
 
         let sum_rendered = render(IteratorMethodKind::Sum, Vec::new())?;
         assert!(
-            sum_rendered.contains("(items) . sum :: < i64 > ()"),
+            sum_rendered.contains("collection :: Iterator :: __next__")
+                && sum_rendered.contains("__incan_sum += __incan_item"),
             "unexpected sum emission: {sum_rendered}"
         );
 
