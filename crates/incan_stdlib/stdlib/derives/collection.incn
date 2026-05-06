@@ -1,6 +1,11 @@
 """
 Collection-related traits: Bool, Len, Contains, Iterable, Iterator
 These traits enable Python-like collection behavior for custom types.
+
+`Iterable[T]` names values that can create an iterator. `Iterator[T]` names
+single-pass values that produce items through `__next__`. The adapter defaults
+below are ordinary Incan implementations so custom iterator types inherit the
+same lazy pipeline surface as built-in iterators.
 """
 
 from rust::incan_stdlib::errors import raise_value_error
@@ -135,6 +140,13 @@ pub trait Iterable[T]:
     def __iter__(self) -> Iterator[T]: ...
 
     def iter(self) -> Iterator[T]:
+        """
+        Return a fresh iterator for this iterable value.
+
+        This convenience method mirrors the protocol hook used by `for` loops.
+        Implementors normally override `__iter__`; this method forwards to that
+        hook so adapter chains can start with `value.iter()`.
+        """
         return self.__iter__()
 
 
@@ -166,42 +178,112 @@ pub trait Iterator[T]:
     def __next__(self) -> Option[T]: ...
 
     def iter(self) -> Iterator[T]:
+        """
+        Return this iterator.
+
+        Iterators are already their own iteration state. Calling `iter()` does
+        not clone or rewind the iterator.
+        """
         return self
 
     def map[U](self, f: (T) -> U) -> Iterator[U]:
+        """
+        Lazily transform each remaining item with `f`.
+
+        The source iterator is consumed only as the returned iterator is
+        advanced.
+        """
         return MapIterator[T, U](source=self, f=f)
 
     def filter(self, f: (T) -> bool) -> Iterator[T]:
+        """
+        Lazily keep only items for which `f(item)` returns `true`.
+
+        Rejected items are consumed from the source and not yielded.
+        """
         return FilterIterator[T](source=self, f=f)
 
     def flat_map[U](self, f: (T) -> Iterable[U]) -> Iterator[U]:
+        """
+        Lazily expand each source item into another iterable and flatten it.
+
+        The current nested iterator is exhausted before the next source item is
+        requested.
+        """
         return FlatMapIterator[T, U](source=self, f=f, current=None)
 
     def take(self, n: int) -> Iterator[T]:
+        """
+        Lazily yield at most `n` remaining items.
+
+        Non-positive counts produce an empty iterator.
+        """
         return TakeIterator[T](source=self, remaining=n)
 
     def skip(self, n: int) -> Iterator[T]:
+        """
+        Lazily discard up to `n` remaining items, then yield the rest.
+
+        Non-positive counts skip nothing.
+        """
         return SkipIterator[T](source=self, remaining=n)
 
     def chain(self, other: Iterator[T]) -> Iterator[T]:
+        """
+        Yield the rest of this iterator, then yield from `other`.
+
+        The second iterator is not polled until the first iterator is exhausted.
+        """
         return ChainIterator[T](first=self, second=other, in_second=false)
 
     def enumerate(self) -> Iterator[tuple[int, T]]:
+        """
+        Pair each item with its zero-based index.
+
+        Indices are assigned when items are requested, so enumeration preserves
+        laziness.
+        """
         return EnumerateIterator[T](source=self, index=0)
 
     def zip[U](self, other: Iterator[U]) -> Iterator[tuple[T, U]]:
+        """
+        Lazily pair items from this iterator and `other`.
+
+        Iteration stops as soon as either side is exhausted.
+        """
         return ZipIterator[T, U](left=self, right=other)
 
     def take_while(self, f: (T) -> bool) -> Iterator[T]:
+        """
+        Yield items while `f(item)` returns `true`.
+
+        The first item that fails the predicate is consumed and terminates the
+        iterator.
+        """
         return TakeWhileIterator[T](source=self, f=f, done=false)
 
     def skip_while(self, f: (T) -> bool) -> Iterator[T]:
+        """
+        Discard items while `f(item)` returns `true`, then yield the rest.
+
+        The first item that fails the predicate is yielded.
+        """
         return SkipWhileIterator[T](source=self, f=f, skipping=true)
 
     def batch(self, size: int) -> Iterator[list[T]]:
+        """
+        Group remaining items into lists of up to `size` items.
+
+        The final batch is yielded when it is non-empty, even if it contains
+        fewer than `size` items. A size less than or equal to zero raises
+        `ValueError`.
+        """
         return BatchIterator[T](source=self, size=size)
 
     def collect(self) -> list[T]:
+        """
+        Consume the iterator and return all remaining items as a list.
+        """
         mut items: list[T] = []
         while true:
             match self.__next__():
@@ -209,6 +291,9 @@ pub trait Iterator[T]:
                 None => return items
 
     def count(self) -> int:
+        """
+        Consume the iterator and return the number of remaining items.
+        """
         mut total = 0
         while true:
             match self.__next__():
@@ -217,9 +302,19 @@ pub trait Iterator[T]:
                 None => return total
 
     def reduce[U](self, init: U, f: (U, T) -> U) -> U:
+        """
+        Consume the iterator by repeatedly combining an accumulator and item.
+
+        This is an alias for `fold(init, f)` in the RFC 088 surface.
+        """
         return self.fold(init, f)
 
     def fold[U](self, init: U, f: (U, T) -> U) -> U:
+        """
+        Consume the iterator into an accumulator.
+
+        `init` is returned unchanged when the iterator is empty.
+        """
         mut acc = init
         while true:
             match self.__next__():
@@ -228,6 +323,11 @@ pub trait Iterator[T]:
                 None => return acc
 
     def any(self, f: (T) -> bool) -> bool:
+        """
+        Consume items until `f(item)` returns `true`, or the iterator ends.
+
+        Returns `false` for an empty iterator.
+        """
         while true:
             match self.__next__():
                 Some(item) =>
@@ -236,6 +336,11 @@ pub trait Iterator[T]:
                 None => return false
 
     def all(self, f: (T) -> bool) -> bool:
+        """
+        Consume items until `f(item)` returns `false`, or the iterator ends.
+
+        Returns `true` for an empty iterator.
+        """
         while true:
             match self.__next__():
                 Some(item) =>
@@ -244,6 +349,12 @@ pub trait Iterator[T]:
                 None => return true
 
     def find(self, f: (T) -> bool) -> Option[T]:
+        """
+        Consume items until one satisfies `f`.
+
+        Returns `Some(item)` for the first matching item, or `None` when no
+        remaining item matches.
+        """
         while true:
             match self.__next__():
                 Some(item) =>
@@ -252,12 +363,24 @@ pub trait Iterator[T]:
                 None => return None
 
     def for_each(self, f: (T) -> None) -> None:
+        """
+        Consume every remaining item, calling `f(item)` for side effects.
+        """
         while true:
             match self.__next__():
                 Some(item) => f(item)
                 None => return None
 
-    def sum(self) -> T: ...
+    def sum(self) -> T:
+        """
+        Consume the iterator and return the sum of all remaining items.
+
+        Valid item types are numeric primitives and newtypes over summable
+        primitives. Empty iterators use the item type's zero value; checked
+        newtypes may still fail at runtime if that zero cannot construct a valid
+        value.
+        """
+        ...
 
 
 pub trait Sum[T]:
@@ -271,24 +394,49 @@ pub trait Sum[T]:
     newtype construction.
     """
     @classmethod
-    def sum(cls, items: Iterator[T]) -> Self: ...
+    def sum(cls, items: Iterator[T]) -> Self:
+        """
+        Produce `Self` from all remaining items in `items`.
+
+        This trait names the type-level summation capability used by
+        `Iterator.sum()`.
+        """
+        ...
 
 
 model MapIterator[T, U] with Iterator[U]:
+    """
+    Lazy state for `Iterator.map()`.
+
+    Stores the source iterator and callback until the consumer requests the next
+    mapped item.
+    """
     source: Iterator[T]
     f: (T) -> U
 
     def __next__(self) -> Option[U]:
+        """
+        Pull one source item and return its mapped value.
+        """
         match self.source.__next__():
             Some(item) => return Some(self.f(item))
             None => return None
 
 
 model FilterIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.filter()`.
+
+    Source items are requested until one satisfies the predicate or the source is
+    exhausted.
+    """
     source: Iterator[T]
     f: (T) -> bool
 
     def __next__(self) -> Option[T]:
+        """
+        Return the next source item accepted by the predicate.
+        """
         while true:
             match self.source.__next__():
                 Some(item) =>
@@ -298,11 +446,20 @@ model FilterIterator[T] with Iterator[T]:
 
 
 model FlatMapIterator[T, U] with Iterator[U]:
+    """
+    Lazy state for `Iterator.flat_map()`.
+
+    Maintains the currently active nested iterator so nested values are yielded
+    before another source item is expanded.
+    """
     source: Iterator[T]
     f: (T) -> Iterable[U]
     current: Option[Iterator[U]]
 
     def __next__(self) -> Option[U]:
+        """
+        Return the next item from the current nested iterator, or open a new one.
+        """
         while true:
             match self.current:
                 Some(current) =>
@@ -318,10 +475,16 @@ model FlatMapIterator[T, U] with Iterator[U]:
 
 
 model TakeIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.take()`.
+    """
     source: Iterator[T]
     remaining: int
 
     def __next__(self) -> Option[T]:
+        """
+        Yield one item while the remaining count is positive.
+        """
         if self.remaining <= 0:
             return None
         match self.source.__next__():
@@ -332,10 +495,16 @@ model TakeIterator[T] with Iterator[T]:
 
 
 model SkipIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.skip()`.
+    """
     source: Iterator[T]
     remaining: int
 
     def __next__(self) -> Option[T]:
+        """
+        Discard source items until the remaining skip count reaches zero.
+        """
         while self.remaining > 0:
             match self.source.__next__():
                 Some(_) =>
@@ -345,11 +514,17 @@ model SkipIterator[T] with Iterator[T]:
 
 
 model ChainIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.chain()`.
+    """
     first: Iterator[T]
     second: Iterator[T]
     in_second: bool
 
     def __next__(self) -> Option[T]:
+        """
+        Yield from the first iterator until exhausted, then from the second.
+        """
         if not self.in_second:
             match self.first.__next__():
                 Some(item) => return Some(item)
@@ -359,10 +534,16 @@ model ChainIterator[T] with Iterator[T]:
 
 
 model EnumerateIterator[T] with Iterator[tuple[int, T]]:
+    """
+    Lazy state for `Iterator.enumerate()`.
+    """
     source: Iterator[T]
     index: int
 
     def __next__(self) -> Option[tuple[int, T]]:
+        """
+        Return the current index with the next source item.
+        """
         match self.source.__next__():
             Some(item) =>
                 current = self.index
@@ -372,10 +553,16 @@ model EnumerateIterator[T] with Iterator[tuple[int, T]]:
 
 
 model ZipIterator[T, U] with Iterator[tuple[T, U]]:
+    """
+    Lazy state for `Iterator.zip()`.
+    """
     left: Iterator[T]
     right: Iterator[U]
 
     def __next__(self) -> Option[tuple[T, U]]:
+        """
+        Pull one item from each side and return the pair.
+        """
         match self.left.__next__():
             Some(left_item) =>
                 match self.right.__next__():
@@ -385,11 +572,17 @@ model ZipIterator[T, U] with Iterator[tuple[T, U]]:
 
 
 model TakeWhileIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.take_while()`.
+    """
     source: Iterator[T]
     f: (T) -> bool
     done: bool
 
     def __next__(self) -> Option[T]:
+        """
+        Yield source items until the predicate rejects one.
+        """
         if self.done:
             return None
         match self.source.__next__():
@@ -404,11 +597,17 @@ model TakeWhileIterator[T] with Iterator[T]:
 
 
 model SkipWhileIterator[T] with Iterator[T]:
+    """
+    Lazy state for `Iterator.skip_while()`.
+    """
     source: Iterator[T]
     f: (T) -> bool
     skipping: bool
 
     def __next__(self) -> Option[T]:
+        """
+        Discard source items until the predicate rejects one, then yield normally.
+        """
         while self.skipping:
             match self.source.__next__():
                 Some(item) =>
@@ -420,10 +619,19 @@ model SkipWhileIterator[T] with Iterator[T]:
 
 
 model BatchIterator[T] with Iterator[list[T]]:
+    """
+    Lazy state for `Iterator.batch()`.
+
+    Each yielded item is a list with at most `size` elements. The final short
+    list is yielded when it is non-empty.
+    """
     source: Iterator[T]
     size: int
 
     def __next__(self) -> Option[list[T]]:
+        """
+        Build and return the next non-empty batch.
+        """
         if self.size <= 0:
             return raise_value_error("iterator batch size must be greater than zero")
         mut items: list[T] = []

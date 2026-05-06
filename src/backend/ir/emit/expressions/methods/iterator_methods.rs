@@ -1,4 +1,9 @@
 //! Emit Rust code for RFC 088 iterator adapter and terminal methods.
+//!
+//! The typechecker and stdlib define the user-facing protocol surface, but this module is the final Rust emission
+//! boundary for known iterator methods. It keeps the generated code lazy by mapping RFC 088 methods onto Rust iterator
+//! adapters where the semantics line up, and delegates only the Incan-specific runtime gaps (`batch`, signed counts,
+//! checked-newtype `sum`) to `incan_stdlib::iter` or generated helper code.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -128,6 +133,10 @@ fn emit_iter_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
     }
 }
 
+/// Return the receiver type after removing transparent borrow wrappers.
+///
+/// Method classification and `.iter()` emission care about the underlying surface collection or protocol type, not
+/// whether lowering happened to borrow it for a particular use site.
 fn receiver_type_for_iterator_dispatch(receiver_ty: &IrType) -> &IrType {
     let mut receiver_ty = receiver_ty;
     while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
@@ -136,10 +145,19 @@ fn receiver_type_for_iterator_dispatch(receiver_ty: &IrType) -> &IrType {
     receiver_ty
 }
 
+/// Return whether a nominal IR type name denotes the standard `Iterator` protocol.
+///
+/// Lowering may preserve a short stdlib name or a qualified path. Only the final path segment is semantically relevant
+/// for routing RFC 088 known methods through this emitter.
 fn is_iterator_protocol_type_name(name: &str) -> bool {
     name.rsplit("::").next() == Some(core_traits::as_str(TraitId::Iterator))
 }
 
+/// Emit `.reduce(init, f)` as Rust's explicit-accumulator iterator fold.
+///
+/// RFC 088 keeps `reduce` and `fold` aligned for now: both require an initial accumulator and both consume the
+/// receiver. Keeping this as a separate helper makes it straightforward to diverge later if a no-initial-value
+/// reduction is standardized.
 fn emit_reduce(emitter: &IrEmitter<'_>, receiver: &TokenStream, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
     match (args.first(), args.get(1)) {
         (Some(init), Some(callback)) => {
@@ -163,10 +181,15 @@ fn emit_fold(emitter: &IrEmitter<'_>, receiver: &TokenStream, args: &[TypedExpr]
     }
 }
 
+/// Emit the positional argument at `index`, returning `None` for malformed already-diagnosed calls.
 fn emit_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr], index: usize) -> Result<Option<TokenStream>, EmitError> {
     args.get(index).map(|arg| emitter.emit_expr(arg)).transpose()
 }
 
+/// Emit a count argument for `take`, `skip`, and `batch`.
+///
+/// The frontend typechecks these arguments as Incan `int`. Emission keeps integer literals direct so generated code
+/// stays readable, and casts non-literals to `i64` before delegating final boundary behavior to `incan_stdlib::iter`.
 fn emit_count_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
     let Some(arg) = args.first() else {
         return Ok(quote! { 0i64 });
@@ -178,6 +201,12 @@ fn emit_count_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<TokenSt
     })
 }
 
+/// Emit `.sum()` for primitive numeric iterators and newtypes over primitive numeric values.
+///
+/// Rust's `Iterator::sum` supplies the primitive zero and accumulation semantics. For newtypes, generated code unwraps
+/// to the underlying carrier, sums that carrier, then reconstructs the newtype. Checked newtypes intentionally route
+/// through the selected checked constructor so an invalid empty-iterator zero or invalid accumulated value fails at
+/// runtime.
 fn emit_sum(emitter: &IrEmitter<'_>, receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
     let Some(item_ty) = iterator_element_type(&receiver.ty) else {
         return quote! { (#r).sum::<i64>() };
@@ -191,6 +220,7 @@ fn emit_sum(emitter: &IrEmitter<'_>, receiver: &TypedExpr, r: &TokenStream) -> T
     quote! { (#r).sum::<#sum_ty>() }
 }
 
+/// Return a newtype's primitive summation carrier when the item type is supported by RFC 088 `.sum()`.
 fn newtype_sum_underlying<'a>(emitter: &'a IrEmitter<'_>, item_ty: &'a IrType) -> Option<(&'a str, &'a IrType)> {
     let name = match item_ty {
         IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.as_str(),
@@ -204,6 +234,10 @@ fn newtype_sum_underlying<'a>(emitter: &'a IrEmitter<'_>, item_ty: &'a IrType) -
     }
 }
 
+/// Reconstruct a newtype after summing its primitive carrier.
+///
+/// Unchecked tuple newtypes are emitted as direct tuple-struct construction. Checked newtypes go through the
+/// constructor chosen during lowering so runtime validation remains the single source of truth.
 fn emit_newtype_from_underlying_sum(
     emitter: &IrEmitter<'_>,
     newtype_name: &str,
@@ -223,6 +257,7 @@ fn emit_newtype_from_underlying_sum(
     quote! { #newtype_path(#underlying_sum) }
 }
 
+/// Emit a possibly qualified Rust path as identifiers instead of a string.
 fn emit_path_ident(path: &str) -> TokenStream {
     if !path.contains("::") {
         let ident = format_ident!("{}", path);
@@ -238,6 +273,7 @@ fn emit_path_ident(path: &str) -> TokenStream {
     segments.fold(first, |acc, segment| quote! { #acc :: #segment })
 }
 
+/// Return the element type for a receiver that is statically typed as `Iterator[T]`.
 fn iterator_element_type(receiver_ty: &IrType) -> Option<&IrType> {
     let receiver_ty = receiver_type_for_iterator_dispatch(receiver_ty);
     match receiver_ty {
