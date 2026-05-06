@@ -538,6 +538,40 @@ def MixedName() -> int:
     }
 
     #[test]
+    fn test_format_source_preserves_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter|PrismNodeKind.OrderBy|_=>return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter | PrismNodeKind.OrderBy | _ => return str("passthrough")
+"#;
+        assert_eq!(format_source(source)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_wraps_long_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.FilterStageWithLongName | PrismNodeKind.OrderByStageWithLongName | PrismNodeKind.LimitStageWithLongName => return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        (
+            PrismNodeKind.FilterStageWithLongName
+            | PrismNodeKind.OrderByStageWithLongName
+            | PrismNodeKind.LimitStageWithLongName
+        ) => return str("passthrough")
+"#;
+        let config = FormatConfig::new().with_line_length(80);
+        assert_eq!(format_source_with_config(source, config.clone())?, expected);
+        assert_eq!(format_source_with_config(expected, config)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_normalizes_blank_after_match_arm_arrow() -> Result<(), FormatError> {
         let source = r#"def f(result: Result[int, str]) -> int:
     match result:

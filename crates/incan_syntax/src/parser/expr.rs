@@ -1362,7 +1362,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a full match-pattern grammar node, including top-level `|` alternation.
     fn pattern(&mut self) -> Result<Spanned<Pattern>, CompileError> {
+        let start = self.current_span().start;
+        let first = self.pattern_atom()?;
+
+        if !self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe)) {
+            return Ok(first);
+        }
+
+        let mut patterns = vec![first];
+        loop {
+            patterns.push(self.pattern_atom()?);
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe)) {
+                break;
+            }
+        }
+
+        let end = patterns.last().map(|pattern| pattern.span.end).unwrap_or(start);
+        Ok(Spanned::new(Pattern::Or(patterns), Span::new(start, end)))
+    }
+
+    /// Parse one non-alternation pattern atom.
+    ///
+    /// Grouped patterns recurse through [`Self::pattern`] so `(A | B)` remains one grouped alternation rather than a
+    /// tuple pattern.
+    fn pattern_atom(&mut self) -> Result<Spanned<Pattern>, CompileError> {
         let start = self.current_span().start;
 
         // Wildcard
@@ -1382,7 +1407,27 @@ impl<'a> Parser<'a> {
 
         // Tuple pattern
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+            if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                self.advance();
+                let end = self.tokens[self.pos - 1].span.end;
+                return Ok(Spanned::new(Pattern::Tuple(Vec::new()), Span::new(start, end)));
+            }
+
+            let first = self.pattern()?;
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.expect(
+                    &TokenKind::Punctuation(PunctuationId::RParen),
+                    "Expected ')' after grouped pattern",
+                )?;
+                let end = self.tokens[self.pos - 1].span.end;
+                return Ok(Spanned::new(
+                    Pattern::Group(Box::new(first)),
+                    Span::new(start, end),
+                ));
+            }
+
             let mut patterns = Vec::new();
+            patterns.push(first);
             if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                 loop {
                     patterns.push(self.pattern()?);

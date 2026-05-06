@@ -95,12 +95,21 @@ impl AstLowering {
             }
         }
 
-        self.lower_pattern(p)
+        match p {
+            ast::Pattern::Or(items) => Pattern::Or(
+                items
+                    .iter()
+                    .map(|item| self.lower_pattern_for_expected_type(&item.node, expected_ty))
+                    .collect(),
+            ),
+            ast::Pattern::Group(inner) => self.lower_pattern_for_expected_type(&inner.node, expected_ty),
+            _ => self.lower_pattern(p),
+        }
     }
 
     /// Lower a pattern to IR.
     ///
-    /// Handles wildcard, binding, literal, constructor, and tuple patterns.
+    /// Handles wildcard, binding, literal, constructor, tuple, and alternation patterns.
     ///
     /// # Parameters
     ///
@@ -157,6 +166,8 @@ impl AstLowering {
                 }
             }
             ast::Pattern::Tuple(items) => Pattern::Tuple(items.iter().map(|i| self.lower_pattern(&i.node)).collect()),
+            ast::Pattern::Group(pattern) => self.lower_pattern(&pattern.node),
+            ast::Pattern::Or(items) => Pattern::Or(items.iter().map(|item| self.lower_pattern(&item.node)).collect()),
         }
     }
 }

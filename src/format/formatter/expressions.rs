@@ -562,6 +562,7 @@ impl Formatter {
         true
     }
 
+    /// Format a pattern in match-arm, `if let`, and nested constructor-pattern positions.
     pub(super) fn format_pattern(&mut self, pattern: &Pattern) {
         match pattern {
             Pattern::Wildcard => self.writer.write("_"),
@@ -599,6 +600,68 @@ impl Formatter {
                 }
                 self.writer.write(")");
             }
+            Pattern::Group(pattern) => {
+                if let Pattern::Or(patterns) = &pattern.node {
+                    self.format_grouped_or_pattern(patterns);
+                } else {
+                    self.writer.write("(");
+                    self.format_pattern(&pattern.node);
+                    self.writer.write(")");
+                }
+            }
+            Pattern::Or(patterns) => {
+                self.format_or_pattern(patterns);
+            }
+        }
+    }
+
+    /// Format pattern alternation inline first, then fall back to a grouped multiline layout when needed.
+    fn format_or_pattern(&mut self, patterns: &[Spanned<Pattern>]) {
+        let checkpoint = self.writer.checkpoint();
+        self.format_or_pattern_inline(patterns);
+        if !self.writer.line_length_exceeded() {
+            return;
+        }
+
+        self.writer.restore(checkpoint);
+        self.format_grouped_or_pattern(patterns);
+    }
+
+    /// Format alternation inside one pair of grouping parentheses.
+    ///
+    /// This helper preserves idempotence for already-grouped alternations: reformatting `(A | B)` must not produce
+    /// nested parentheses just because the inner alternation is long.
+    fn format_grouped_or_pattern(&mut self, patterns: &[Spanned<Pattern>]) {
+        let checkpoint = self.writer.checkpoint();
+        self.writer.write("(");
+        self.format_or_pattern_inline(patterns);
+        self.writer.write(")");
+        if !self.writer.line_length_exceeded() {
+            return;
+        }
+
+        self.writer.restore(checkpoint);
+        self.writer.write("(");
+        self.writer.newline();
+        self.writer.indent();
+        for (i, pattern) in patterns.iter().enumerate() {
+            if i > 0 {
+                self.writer.write("| ");
+            }
+            self.format_pattern(&pattern.node);
+            self.writer.newline();
+        }
+        self.writer.dedent();
+        self.writer.write(")");
+    }
+
+    /// Write alternation alternatives on the current line without adding grouping parentheses.
+    fn format_or_pattern_inline(&mut self, patterns: &[Spanned<Pattern>]) {
+        for (i, pattern) in patterns.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(" | ");
+            }
+            self.format_pattern(&pattern.node);
         }
     }
 

@@ -336,6 +336,10 @@ pub enum Pattern {
     Constructor(Ident, Vec<PatternArg>),
     /// Tuple: `(a, b)`
     Tuple(Vec<Spanned<Pattern>>),
+    /// Parenthesized pattern used for grouping: `(A | B)`
+    Group(Box<Spanned<Pattern>>),
+    /// Alternation: `A | B`
+    Or(Vec<Spanned<Pattern>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

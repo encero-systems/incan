@@ -1097,6 +1097,13 @@ fn test_control_flow_codegen() {
 }
 
 #[test]
+fn test_pattern_alternation_codegen() {
+    let source = load_test_file("pattern_alternation");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("pattern_alternation", rust_code);
+}
+
+#[test]
 fn test_rfc049_if_let_while_let_codegen() {
     let source = load_test_file("rfc049_if_let_while_let");
     let rust_code = generate_rust(&source);
