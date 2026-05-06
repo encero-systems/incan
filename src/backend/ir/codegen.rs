@@ -103,12 +103,8 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
-    if module_path
-        == [
-            stdlib::INCAN_STD_NAMESPACE.to_string(),
-            "derives".to_string(),
-            "collection".to_string(),
-        ]
+    if module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "derives", "collection"])
+        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "result"])
     {
         return true;
     }
@@ -119,6 +115,15 @@ fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_
         module_path.first().map(String::as_str),
         Some(stdlib::INCAN_STD_NAMESPACE)
     )
+}
+
+/// Return whether a generated module path exactly matches a static path literal.
+fn module_path_matches(module_path: &[String], expected: &[&str]) -> bool {
+    module_path.len() == expected.len()
+        && module_path
+            .iter()
+            .zip(expected.iter())
+            .all(|(actual, expected)| actual == expected)
 }
 
 /// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.

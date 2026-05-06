@@ -29,7 +29,10 @@ use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
-use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
+use incan_core::lang::{
+    stdlib::{self, StdlibExtraCrateSource},
+    surface::result_methods,
+};
 #[cfg(feature = "rust_inspect")]
 use sha2::{Digest, Sha256};
 
@@ -887,6 +890,14 @@ fn uses_iterator_adapter_surface(program: &Program) -> bool {
     })
 }
 
+/// Return whether a parsed module uses RFC 070 Result combinators backed by std.result helpers.
+fn uses_result_combinator_surface(program: &Program) -> bool {
+    ast_walk::any_expr_in_program(program, |expr| match expr {
+        crate::frontend::ast::Expr::MethodCall(_, method, _, _) => result_methods::from_str(method).is_some(),
+        _ => false,
+    })
+}
+
 /// Collect and parse the entry file and all its dependencies.
 ///
 /// # Note on Prelude
@@ -958,6 +969,21 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                 "derives".to_string(),
                 "collection".to_string(),
             ];
+            let source_path = resolve_stdlib_module_source_path(&module_path)?;
+            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+            module_segments.extend(module_path.iter().skip(1).cloned());
+            let module_name = module_segments.join("_");
+            let dep_path_str = source_path.to_string_lossy().to_string();
+            if !processed.contains(&dep_path_str) {
+                to_process.push((dep_path_str.clone(), module_name, module_segments));
+            }
+            dependency_edges
+                .entry(file_path.clone())
+                .or_default()
+                .insert(dep_path_str);
+        }
+        if uses_result_combinator_surface(&ast) {
+            let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
             let source_path = resolve_stdlib_module_source_path(&module_path)?;
             let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
             module_segments.extend(module_path.iter().skip(1).cloned());

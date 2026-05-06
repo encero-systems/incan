@@ -2786,6 +2786,131 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.result import map as result_map, map_err as result_map_err
+from std.result import and_then as result_and_then, or_else as result_or_else
+
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    even_value: Result[int, str] = Ok(4)
+    missing_value: Result[int, str] = Err("missing")
+    match result_map(ok_value, double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_map_err(err_value, prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_and_then(even_value, keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_or_else(missing_value, recover):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "4", "7"],
+            "unexpected std.result helper output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_methods_dogfood_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    missing_value: Result[int, str] = Err("missing")
+    match ok_value.map(double).and_then(keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match err_value.map_err(prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match missing_value.or_else(recover).map(double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result method std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "14"],
+            "unexpected Result method std.result helper output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

@@ -667,12 +667,12 @@ def main(result: Result[int, str]) -> Result[int, str]:
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains(".map(|__incan_result_value| double(__incan_result_value))"),
-        "map should route through a compiler-owned callback closure:\n{rust_code}"
+        rust_code.contains("crate::__incan_std::result::map(result, double)"),
+        "map with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains(".and_then(|__incan_result_value| keep_positive(__incan_result_value))"),
-        "and_then should route through a compiler-owned callback closure:\n{rust_code}"
+        rust_code.contains("crate::__incan_std::result::and_then"),
+        "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
         rust_code.contains(".inspect(|__incan_result_value|"),

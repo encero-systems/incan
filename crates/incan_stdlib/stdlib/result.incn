@@ -1,0 +1,43 @@
+"""
+Result combinator helpers.
+
+These functions are the Incan-authored implementation of the value-transforming
+`Result[T, E]` combinator surface. Method syntax such as `value.map(f)` uses the
+same semantics; direct imports are useful when a function-shaped API is clearer.
+"""
+
+
+pub def map[T, E, U](result: Result[T, E], f: Callable[T, U]) -> Result[U, E]:
+    """
+    Transform an `Ok(T)` payload with `f`, preserving `Err(E)` unchanged.
+    """
+    match result:
+        Ok(value) => return Ok(f(value))
+        Err(error) => return Err(error)
+
+
+pub def map_err[T, E, F](result: Result[T, E], f: Callable[E, F]) -> Result[T, F]:
+    """
+    Transform an `Err(E)` payload with `f`, preserving `Ok(T)` unchanged.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return Err(f(error))
+
+
+pub def and_then[T, E, U](result: Result[T, E], f: Callable[T, Result[U, E]]) -> Result[U, E]:
+    """
+    Chain a fallible operation after an `Ok(T)`, preserving `Err(E)` unchanged.
+    """
+    match result:
+        Ok(value) => return f(value)
+        Err(error) => return Err(error)
+
+
+pub def or_else[T, E, F](result: Result[T, E], f: Callable[E, Result[T, F]]) -> Result[T, F]:
+    """
+    Recover from an `Err(E)` with a fallible operation, preserving `Ok(T)` unchanged.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return f(error)

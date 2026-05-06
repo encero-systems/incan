@@ -140,6 +140,12 @@ impl<'a> IrEmitter<'a> {
         let method_ident = Self::rust_ident(method_name);
         let call = match method {
             ResultMethodId::Map | ResultMethodId::MapErr | ResultMethodId::AndThen | ResultMethodId::OrElse => {
+                if self.result_value_combinator_can_use_stdlib_helper(callback) {
+                    let callback_tokens = self.emit_expr(callback)?;
+                    return Ok(quote! {
+                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
+                }
                 let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;
                 quote! {
                     #receiver_tokens.#method_ident(|__incan_result_value| #body)
@@ -160,6 +166,22 @@ impl<'a> IrEmitter<'a> {
             }
         };
         Ok(call)
+    }
+
+    /// Return whether a value-transforming Result combinator can dogfood the pure Incan std.result helper.
+    ///
+    /// The helpers currently take ordinary function-pointer callbacks, so keep callable objects and closure-shaped
+    /// values on the direct Rust combinator path. That preserves the RFC surface while still routing plain named
+    /// function references through stdlib-authored Incan code.
+    fn result_value_combinator_can_use_stdlib_helper(&self, callback: &TypedExpr) -> bool {
+        match &callback.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } if matches!(callback.ty, IrType::Function { .. }) => self.function_registry.get(name).is_some(),
+            _ => false,
+        }
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.

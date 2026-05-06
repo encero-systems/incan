@@ -232,6 +232,7 @@ Recommended approach is to model combinators as stdlib-visible methods on `Resul
 ### Stdlib / tooling
 
 - [x] Expose the `Result` method surface where the stdlib/runtime bridge requires it.
+- [x] Dogfood value-transforming combinator semantics through `std.result` Incan helpers where current callable typing can express the contract.
 - [x] Confirm no separate LSP hover/completion registry exists for compiler-owned collection methods today.
 
 ### Tests
@@ -245,6 +246,7 @@ Recommended approach is to model combinators as stdlib-visible methods on `Resul
 ### Docs / release
 
 - [x] Update authored error-handling docs with combinator guidance.
+- [x] Add a `std.result` reference page for the Incan-authored helper surface.
 - [x] Add a release notes entry for issue #386 / RFC 070.
 - [x] Bump the active development version by one dev increment.
 
@@ -253,3 +255,4 @@ Recommended approach is to model combinators as stdlib-visible methods on `Resul
 - `inspect` and `inspect_err` are included in this RFC. They are branch-observation methods that call a one-argument observer through an implicit borrow of the branch payload and return the original `Result[T, E]` unchanged.
 - The RFC uses `Callable[...]` as the callable vocabulary instead of introducing `Fn[...]`. Callable objects that satisfy the relevant fixed-arity callable hook contract are in scope wherever existing call checking already accepts them.
 - Method names remain Rust-shaped: `map`, `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err`. This RFC does not add language-level aliases.
+- The value-transforming helpers in `std.result` are authored in Incan for the contracts that are expressible today. `inspect` and `inspect_err` still need compiler-owned borrowed observer adaptation because borrowed callback payloads are not yet a user-spellable source type.
