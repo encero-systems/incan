@@ -121,6 +121,21 @@ def main() -> None:
 
 Because classes don’t support field aliases/metadata (the way a `model` would), member access always uses the canonical field name. Private fields can only be read or written from methods on the declaring class; use `pub` for fields that are part of the public object surface.
 
+For derived field-like values, use a computed property:
+
+```incan
+class Counter:
+    value: int
+
+    property doubled -> int:
+        return self.value * 2
+
+def demo(c: Counter) -> int:
+    return c.doubled
+```
+
+Computed properties read like fields but execute a body on each read. See: [Computed properties](../../reference/computed_properties.md).
+
 ## Methods and receivers (`self` vs `mut self`)
 
 Use `self` for read-only methods and `mut self` for methods that modify the object.

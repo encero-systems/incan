@@ -1332,6 +1332,40 @@ def main() -> None:
 }
 
 #[test]
+fn rfc046_computed_properties_run_as_getters() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Named:
+  property label -> str
+
+model Money with Named:
+  cents: int
+
+  pub property adjusted -> int:
+    return self.cents + 1
+
+  property label -> str:
+    return "money"
+
+def main() -> None:
+  value = Money(cents=250)
+  println(value.adjusted)
+  println(value.label)
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected computed property program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "251\nmoney\n");
+    Ok(())
+}
+
+#[test]
 fn runtime_error_missing_dict_key_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
     assert_runtime_error_cli(
         "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",
@@ -10346,6 +10380,78 @@ def main() -> None:\n  println(describe(parse_value(False)))\n  println(describe
             String::from_utf8_lossy(&project_build.stdout),
             String::from_utf8_lossy(&project_build.stderr)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_and_run_rfc088_iterator_adapter_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc088_iterator_pipeline\"\nversion = \"0.1.0\"\n",
+            "def is_even(n: int) -> bool:\n  return n % 2 == 0\n\n\
+def double(n: int) -> int:\n  return n * 2\n\n\
+def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).map(double).take(2).collect()\n  batches = xs.iter().batch(2).collect()\n  println(len(ys))\n  println(ys[0])\n  println(len(batches))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected RFC 088 iterator pipeline to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected RFC 088 iterator pipeline to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_and_run_list_comprehension_stays_eager_after_rfc088() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc088_comprehension_regression\"\nversion = \"0.1.0\"\n",
+            "def main() -> None:\n  xs = [1, 2, 3]\n  ys = [n * 2 for n in xs if n > 1]\n  println(len(ys))\n  println(ys[0])\n  println(len(xs))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected eager list comprehension regression to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected eager list comprehension regression to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
 
         Ok(())
     }

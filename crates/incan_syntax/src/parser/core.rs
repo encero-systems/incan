@@ -9,6 +9,7 @@
 type FieldsAndMethods = (
     Vec<Spanned<FieldDecl>>,
     Vec<Spanned<MethodAliasDecl>>,
+    Vec<Spanned<PropertyDecl>>,
     Vec<Spanned<MethodDecl>>,
 );
 

@@ -613,6 +613,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                     supertraits,
                     methods,
                     method_aliases: std::collections::HashMap::new(),
+                    properties: std::collections::HashMap::new(),
                     requires: Vec::new(),
                 },
             ));
@@ -643,6 +644,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&model.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),
@@ -663,6 +665,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),
@@ -1496,6 +1499,7 @@ pub type File = rusttype RustFile:
     // ---- Phase 6: Derive trait extraction tests ----
 
     use incan_core::lang::derives::{self as derive_reg, DeriveId};
+    use incan_core::lang::traits::{self as core_traits, TraitId};
 
     /// Helper: canonical derive name from the registry (avoids stringly-typed vocab checks).
     fn derive_name(id: DeriveId) -> &'static str {
@@ -1626,6 +1630,40 @@ pub type File = rusttype RustFile:
             !display_info.methods["__str__"].has_body,
             "__str__ is abstract (no body)"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_derives_collection_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let module = module.ok_or("failed to load stdlib/derives/collection.incn")?;
+
+        for name in [
+            "Contains",
+            "Bool",
+            "Len",
+            core_traits::as_str(TraitId::Iterable),
+            core_traits::as_str(TraitId::Iterator),
+            core_traits::as_str(TraitId::Sum),
+        ] {
+            assert!(
+                module.traits.iter().any(|(trait_name, _)| trait_name == name),
+                "should find {name} trait"
+            );
+        }
+
+        let iterator_info = module
+            .traits
+            .iter()
+            .find(|(name, _)| name == core_traits::as_str(TraitId::Iterator))
+            .ok_or("Iterator not found")?
+            .1
+            .clone();
+        assert!(iterator_info.methods.contains_key("map"));
+        assert!(iterator_info.methods.contains_key("flat_map"));
+        assert!(iterator_info.methods.contains_key("sum"));
 
         Ok(())
     }

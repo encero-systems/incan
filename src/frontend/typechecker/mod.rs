@@ -54,9 +54,9 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo,
+    ComputedPropertyAccessInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall,
+    ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
 };
 #[cfg(test)]
 mod tests;
@@ -132,6 +132,8 @@ pub struct TypeChecker {
     pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
+    /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
+    pub(crate) consumed_iterator_bindings: HashMap<String, Span>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
     /// Active declaration-level interpretation for `yield` expressions.
@@ -142,6 +144,8 @@ pub struct TypeChecker {
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
+    /// Active trait computed-property contract for default member bodies.
+    pub(crate) current_trait_properties: Option<HashMap<String, PropertyInfo>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
     /// Active nominal owner while checking a method body.
@@ -238,11 +242,13 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            consumed_iterator_bindings: HashMap::new(),
             current_return_error_type: None,
             current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
             loop_stack: Vec::new(),
             current_trait_requires: None,
+            current_trait_properties: None,
             current_trait_name: None,
             current_method_owner: None,
             current_classmethod_self_ty: None,
@@ -821,6 +827,16 @@ impl TypeChecker {
         }
     }
 
+    /// Return a Rust generic type-parameter name when the display is the simple identifier form rust-analyzer uses
+    /// for params like `T` or `U`.
+    pub(crate) fn rust_display_type_var_name(normalized: &str) -> Option<&str> {
+        if normalized.len() == 1 && normalized.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+            Some(normalized)
+        } else {
+            None
+        }
+    }
+
     /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
     ///
     /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
@@ -830,6 +846,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
+            return ResolvedType::TypeVar(name.to_string());
+        }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
@@ -949,41 +968,56 @@ impl TypeChecker {
         self.generic_placeholder_name(ty).is_some()
     }
 
+    /// Return declared type parameters and explicit trait adoptions for a semantic type.
+    fn semantic_type_params_and_adoptions(&self, type_name: &str) -> Option<(&[String], &[TypeBoundInfo])> {
+        match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Model(model) => Some((&model.type_params, &model.trait_adoptions)),
+            TypeInfo::Class(class) => Some((&class.type_params, &class.trait_adoptions)),
+            TypeInfo::Enum(enum_info) => Some((&enum_info.type_params, &enum_info.trait_adoptions)),
+            _ => None,
+        }
+    }
+
     /// Infer the concrete instantiation of `trait_name` for `type_name`, if the type adopts that trait.
     ///
-    /// RFC 042 currently uses the same implicit positional mapping as trait-annotation compatibility: a concrete
-    /// adopter's leading type arguments instantiate the adopted trait's type parameters, and transitive supertrait
-    /// arguments are substituted through the recorded closure.
+    /// Explicit `with Trait[...]` arguments are authoritative. The older positional mapping remains as a fallback for
+    /// nullary adoption metadata and derives.
     fn instantiated_trait_args_for_type(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],
         trait_name: &str,
     ) -> Option<Vec<ResolvedType>> {
-        let adopted = match self.lookup_semantic_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => &model.traits,
-            Some(TypeInfo::Class(class)) => &class.traits,
-            _ => return None,
-        };
+        let (type_params, adopted) = self.semantic_type_params_and_adoptions(type_name)?;
+        let concrete_subst =
+            crate::frontend::resolved_type_subst::type_param_subst_map(type_params, concrete_type_args);
 
         for adopted_trait in adopted {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(adopted_trait) else {
+            let Some(adopted_info) = self.lookup_semantic_trait_info(&adopted_trait.name) else {
                 continue;
             };
-            let direct_args: Vec<ResolvedType> = concrete_type_args
-                .iter()
-                .take(adopted_info.type_params.len())
-                .cloned()
-                .collect();
+            let direct_args: Vec<ResolvedType> = if adopted_trait.type_args.is_empty() {
+                concrete_type_args
+                    .iter()
+                    .take(adopted_info.type_params.len())
+                    .cloned()
+                    .collect()
+            } else {
+                adopted_trait
+                    .type_args
+                    .iter()
+                    .map(|arg| crate::frontend::resolved_type_subst::substitute_resolved_type(arg, &concrete_subst))
+                    .collect()
+            };
             if direct_args.len() != adopted_info.type_params.len() {
                 continue;
             }
 
-            if adopted_trait == trait_name {
+            if adopted_trait.name == trait_name {
                 return Some(direct_args);
             }
 
-            let closure = self.semantic_supertrait_closure(adopted_trait);
+            let closure = self.semantic_supertrait_closure(&adopted_trait.name);
             let subst =
                 crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
             for (supertrait_name, supertrait_args) in closure {
@@ -2341,16 +2375,47 @@ impl TypeChecker {
                     }
                 }
                 Declaration::Model(model) => {
-                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods)
+                    self.validate_member_name_collisions(
+                        &model.name,
+                        &model.fields,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &model.name,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    )
                 }
                 Declaration::Class(class) => {
-                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods)
+                    self.validate_member_name_collisions(
+                        &class.name,
+                        &class.fields,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &class.name,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    )
                 }
                 Declaration::Trait(tr) => {
-                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
+                    self.validate_member_name_collisions(
+                        &tr.name,
+                        &[],
+                        &tr.method_aliases,
+                        &tr.properties,
+                        &tr.methods,
+                    );
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
                 }
                 Declaration::Newtype(nt) => {
-                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
                 }
                 _ => {}
             }
@@ -2387,14 +2452,19 @@ impl TypeChecker {
         &mut self,
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
         let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
         let mut alias_targets = HashMap::new();
         let mut alias_names = HashSet::new();
 
         for alias in aliases {
-            if !alias_names.insert(alias.node.name.as_str()) || method_names.contains(alias.node.name.as_str()) {
+            if !alias_names.insert(alias.node.name.as_str())
+                || method_names.contains(alias.node.name.as_str())
+                || property_names.contains(alias.node.name.as_str())
+            {
                 self.errors.push(CompileError::type_error(
                     format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
                     alias.span,
@@ -2413,6 +2483,62 @@ impl TypeChecker {
         }
 
         self.validate_method_alias_cycles(owner, &alias_targets);
+    }
+
+    /// Reject computed property names that collide with storage fields, aliases, properties, or methods.
+    fn validate_member_name_collisions(
+        &mut self,
+        owner: &str,
+        fields: &[Spanned<FieldDecl>],
+        aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let mut seen: HashMap<&str, (&str, Span)> = HashMap::new();
+        for field in fields {
+            seen.entry(field.node.name.as_str()).or_insert(("field", field.span));
+        }
+        for alias in aliases {
+            seen.entry(alias.node.name.as_str())
+                .or_insert(("method alias", alias.span));
+        }
+        let mut method_seen: HashMap<&str, Span> = HashMap::new();
+        for method in methods {
+            if method_seen.insert(method.node.name.as_str(), method.span).is_none()
+                && !seen.contains_key(method.node.name.as_str())
+            {
+                seen.insert(method.node.name.as_str(), ("method", method.span));
+            }
+        }
+        for property in properties {
+            self.validate_one_member_name(owner, "property", property.node.name.as_str(), property.span, &mut seen);
+        }
+    }
+
+    /// Validate one property name against the member names already used in the same owner declaration.
+    fn validate_one_member_name<'a>(
+        &mut self,
+        owner: &str,
+        kind: &'static str,
+        name: &'a str,
+        span: Span,
+        seen: &mut HashMap<&'a str, (&'static str, Span)>,
+    ) {
+        if let Some((previous_kind, previous_span)) = seen.insert(name, (kind, span)) {
+            self.errors.push(
+                CompileError::type_error(
+                    format!(
+                        "Duplicate member '{}.{}' declared as both {} and {}",
+                        owner, name, previous_kind, kind
+                    ),
+                    span,
+                )
+                .with_note(format!(
+                    "First declaration span: {}..{}",
+                    previous_span.start, previous_span.end
+                )),
+            );
+        }
     }
 
     /// Reject direct and indirect cycles between method aliases on one owner type.
@@ -2603,6 +2729,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2621,6 +2748,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2636,6 +2764,7 @@ impl TypeChecker {
                         type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         methods: HashMap::new(),
                         method_aliases: HashMap::new(),
+                        properties: HashMap::new(),
                         requires: Vec::new(),
                         supertraits: Vec::new(),
                     }),
@@ -2773,6 +2902,11 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
+                if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
+            {
+                true
+            }
             (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
@@ -2853,6 +2987,35 @@ impl TypeChecker {
                     .iter()
                     .zip(instantiated.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
+            }
+
+            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable)
+                    && expected_args.len() == 1
+                    && actual_args.len() == 1 =>
+            {
+                let actual_is_iterable = actual_name == builtin_traits::as_str(TraitId::Iterator)
+                    || matches!(
+                        collection_type_id(actual_name.as_str()),
+                        Some(
+                            CollectionTypeId::List
+                                | CollectionTypeId::Set
+                                | CollectionTypeId::FrozenList
+                                | CollectionTypeId::FrozenSet
+                        )
+                    );
+                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+            }
+            (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
+            }
+            (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).

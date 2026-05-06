@@ -96,6 +96,7 @@ impl SymbolTable {
                     type_params: vec![],
                     methods: HashMap::new(),
                     method_aliases: HashMap::new(),
+                    properties: HashMap::new(),
                     requires: vec![],
                     supertraits: vec![],
                 }),
@@ -389,6 +390,8 @@ pub enum SymbolKind {
     Variant(VariantInfo),
     /// Field
     Field(FieldInfo),
+    /// Computed property
+    Property(PropertyInfo),
     /// Rust dependency import (`import rust::...` / `from rust::... import ...`, RFC 005 / RFC 041).
     RustItem(RustItemInfo),
 }
@@ -493,6 +496,7 @@ pub struct ClassInfo {
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub methods: HashMap<String, MethodInfo>,
     pub method_overloads: HashMap<String, Vec<MethodInfo>>,
     pub method_aliases: HashMap<String, String>,
@@ -506,6 +510,7 @@ pub struct ModelInfo {
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub methods: HashMap<String, MethodInfo>,
     pub method_overloads: HashMap<String, Vec<MethodInfo>>,
     pub method_aliases: HashMap<String, String>,
@@ -604,6 +609,7 @@ pub struct TraitInfo {
     pub supertraits: Vec<(String, Vec<ResolvedType>)>,
     pub methods: HashMap<String, MethodInfo>,
     pub method_aliases: HashMap<String, String>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub requires: Vec<(String, ResolvedType)>, // Required fields
 }
 
@@ -630,6 +636,16 @@ pub struct FieldInfo {
     pub has_default: bool,
     pub alias: Option<String>,
     pub description: Option<String>,
+}
+
+/// Computed property information.
+#[derive(Debug, Clone)]
+pub struct PropertyInfo {
+    pub return_type: ResolvedType,
+    pub visibility: crate::frontend::ast::Visibility,
+    pub owner: Option<String>,
+    /// False for abstract trait property requirements.
+    pub has_body: bool,
 }
 
 /// Method information

@@ -43,6 +43,7 @@ use crate::frontend::decorator_resolution;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 // Re-export error types
@@ -82,6 +83,8 @@ pub struct AstLowering {
     pub(super) trait_methods: HashMap<String, Vec<String>>,
     /// Track full trait declarations for default-method expansion into impl blocks.
     pub(super) trait_decls: HashMap<String, ast::TraitDecl>,
+    /// Concrete nominal types that explicitly adopt the stdlib Iterator protocol.
+    pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Newtype -> chosen validated constructor method name (e.g. "from_underlying", "from_str"),
@@ -216,6 +219,7 @@ impl AstLowering {
             class_decls: HashMap::new(),
             trait_methods: HashMap::new(),
             trait_decls: HashMap::new(),
+            iterator_adopter_names: HashSet::new(),
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
             current_impl_type: None,
@@ -503,12 +507,24 @@ impl AstLowering {
                 }
             }
             if let ast::Declaration::Model(ref m) = decl.node {
+                if m.traits
+                    .iter()
+                    .any(|bound| bound.node.name == core_traits::as_str(TraitId::Iterator))
+                {
+                    self.iterator_adopter_names.insert(m.name.clone());
+                }
                 let aliases = Self::method_alias_rebindings(&m.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(m.name.clone(), aliases);
                 }
             }
             if let ast::Declaration::Class(ref c) = decl.node {
+                if c.traits
+                    .iter()
+                    .any(|bound| bound.node.name == core_traits::as_str(TraitId::Iterator))
+                {
+                    self.iterator_adopter_names.insert(c.name.clone());
+                }
                 let aliases = Self::method_alias_rebindings(&c.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(c.name.clone(), aliases);
@@ -551,6 +567,7 @@ impl AstLowering {
                 }
             }
         }
+        ir_program.newtype_checked_ctor = self.newtype_checked_ctor.clone();
 
         // Pass 1.5: register module-level const names into the root scope for lookups.
         // (Type inference/refinement happens later; Unknown is fine for non-const contexts.)
@@ -630,7 +647,13 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
 
                             // Generate impl block (may be empty if no methods, serde methods added during emission)
-                            match self.lower_model_methods(&struct_ir.name, &m.type_params, &m.methods, &m.traits) {
+                            match self.lower_model_methods(
+                                &struct_ir.name,
+                                &m.type_params,
+                                &m.methods,
+                                &m.properties,
+                                &m.traits,
+                            ) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
@@ -653,6 +676,7 @@ impl AstLowering {
                                         &trait_name,
                                         trait_type_args,
                                         &m.methods,
+                                        &m.properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
@@ -684,11 +708,20 @@ impl AstLowering {
                             if let Err(e) = self.collect_inherited_methods(&c.name, &mut all_methods) {
                                 errors.push(e);
                             }
+                            let mut all_properties = Vec::new();
+                            if let Err(e) = self.collect_inherited_properties(&c.name, &mut all_properties) {
+                                errors.push(e);
+                            }
 
-                            // Generate impl block for all methods (inherited + own)
-                            if !all_methods.is_empty() {
-                                match self.lower_class_methods(&struct_ir.name, &c.type_params, &all_methods, &c.traits)
-                                {
+                            // Generate impl block for all methods/properties (inherited + own)
+                            if !all_methods.is_empty() || !all_properties.is_empty() {
+                                match self.lower_class_methods(
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                    &all_methods,
+                                    &all_properties,
+                                    &c.traits,
+                                ) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -712,6 +745,7 @@ impl AstLowering {
                                         &trait_name,
                                         trait_type_args,
                                         &all_methods,
+                                        &all_properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
@@ -745,7 +779,7 @@ impl AstLowering {
 
                             // Generate impl block for newtype methods (if any).
                             if !n.methods.is_empty() {
-                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[]) {
+                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[], &[]) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -788,6 +822,7 @@ impl AstLowering {
                                     &trait_name,
                                     trait_type_args,
                                     &e.methods,
+                                    &[],
                                 ) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));

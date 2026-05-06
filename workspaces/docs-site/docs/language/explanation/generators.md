@@ -49,7 +49,7 @@ Both forms produce `Generator[T]`. The difference is how much structure the prod
 
 ## Laziness and helper chains
 
-`map`, `filter`, and `take` preserve laziness. They build another generator pipeline instead of building intermediate lists.
+Iterator adapters such as `map`, `filter`, and `take` preserve laziness. They build another iterator pipeline instead of building intermediate lists.
 
 ```incan
 def square(n: int) -> int:
@@ -65,6 +65,8 @@ def main() -> None:
 ```
 
 In this example, the generator does not compute every square. It computes only as many values as `take(4)` needs, then `collect()` materializes those four items into a list.
+
+Generators use the same iterator adapter surface as other iterator values. That means broader chains can combine helpers such as `flat_map`, `skip`, `enumerate`, `zip`, `batch`, and terminal consumers such as `count`, `fold`, `any`, `all`, `find`, `for_each`, and `sum`.
 
 ## Fixture `yield` and generator `yield`
 

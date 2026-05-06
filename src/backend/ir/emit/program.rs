@@ -1411,6 +1411,7 @@ impl<'a> IrEmitter<'a> {
             self.rust_module_path = program.rust_module_path.clone();
         }
         self.seed_nominal_metadata_from_program(program);
+        self.newtype_checked_ctor = program.newtype_checked_ctor.clone();
 
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();

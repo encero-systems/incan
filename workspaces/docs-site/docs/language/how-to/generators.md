@@ -22,7 +22,7 @@ The loop consumes one yielded item at a time. The function does not allocate a l
 
 ## Transform and collect
 
-Use `map`, `filter`, and `take` to keep the pipeline lazy until the final `collect()`.
+Use iterator adapters such as `map`, `filter`, and `take` to keep the pipeline lazy until the final `collect()`.
 
 ```incan
 def square(n: int) -> int:
@@ -38,6 +38,8 @@ def main() -> None:
 ```
 
 Use named functions for callbacks when the operation is shared or worth naming. Use a short closure when the logic is local and obvious.
+
+Generators support the same adapter and consumer surface as other iterator values, including `flat_map`, `skip`, `enumerate`, `zip`, `batch`, `count`, `fold`, `any`, `all`, `find`, `for_each`, and `sum`.
 
 ## Limit an unbounded producer
 

@@ -3702,6 +3702,161 @@ def f(i: Intl) -> str:
 }
 
 #[test]
+fn test_computed_property_read_typechecks_and_records_access() -> Result<(), String> {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    assert_eq!(checker.type_info.computed_property_accesses.len(), 1);
+    let access = checker
+        .type_info
+        .computed_property_accesses
+        .values()
+        .next()
+        .ok_or_else(|| "expected computed property access metadata".to_string())?;
+    assert_eq!(access.owner_type, "Account");
+    assert_eq!(access.property, "dollars");
+    Ok(())
+}
+
+#[test]
+fn test_computed_property_call_syntax_is_rejected() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars()
+"#;
+    let errors = check_str_err(source, "expected computed property call error");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Computed property 'dollars' is not callable")),
+        "expected property call diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_computed_property_body_return_type_is_checked() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return "free"
+"#;
+    let errors = check_str_err(source, "expected computed property return mismatch");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type mismatch: expected 'int', found 'str'")),
+        "expected property return mismatch diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_must_be_implemented() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+"#;
+    let errors = check_str_err(source, "expected missing trait property error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires property 'label' to be implemented")),
+        "expected missing trait property diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_accepts_matching_property() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+
+  property label -> str:
+    return self.name
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_trait_computed_property_body_is_rejected() {
+    let source = r#"
+trait Named:
+  property label -> str:
+    return "name"
+"#;
+    let errors = check_str_err(source, "expected trait property body error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' property 'label' cannot define a body")),
+        "expected trait property body diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_member_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  property cents -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.cents' declared as both field and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_method_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  def total(self) -> int:
+    return self.cents
+
+  property total -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property method member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.total' declared as both method and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
 fn test_alias_self_keyword() {
     let source = r#"
 model Data:
@@ -4890,6 +5045,180 @@ def main() -> Result[None, SessionError]:
         .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
         .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
     Ok(())
+}
+
+#[test]
+fn test_rfc088_iterator_adapter_chain_types_collect_as_list() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def label(n: int) -> str:
+  return str(n)
+
+def pairs(items: Iterator[int], labels: Iterator[str]) -> list[tuple[int, str]]:
+  return items.filter(keep).take(10).skip(1).zip(labels).collect()
+
+def indexed(items: Iterator[int]) -> list[tuple[int, int]]:
+  return items.enumerate().collect()
+
+def labels(items: Iterator[int]) -> list[str]:
+  return items.map(label).collect()
+
+def leading_positive(items: Iterator[int]) -> list[int]:
+  return items.take_while(keep).collect()
+
+def after_positive_prefix(items: Iterator[int]) -> list[int]:
+  return items.skip_while(keep).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_flat_map_accepts_list_callback_result() {
+    let source = r#"
+def words_for(_n: int) -> list[str]:
+  return ["hello"]
+
+def flatten(items: Iterator[int]) -> list[str]:
+  return items.flat_map(words_for).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_terminal_methods_have_frontend_types() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def add(acc: int, n: int) -> int:
+  return acc + n
+
+def visit(_n: int) -> None:
+  pass
+
+def count_items(items: Iterator[int]) -> int:
+  return items.count()
+
+def any_item(items: Iterator[int]) -> bool:
+  return items.any(keep)
+
+def all_items(items: Iterator[int]) -> bool:
+  return items.all(keep)
+
+def find_item(items: Iterator[int]) -> Option[int]:
+  return items.find(keep)
+
+def reduce_items(items: Iterator[int]) -> int:
+  return items.reduce(0, add)
+
+def fold_items(items: Iterator[int]) -> int:
+  return items.fold(0, add)
+
+def visit_items(items: Iterator[int]) -> None:
+  return items.for_each(visit)
+
+def sum_items(items: Iterator[int]) -> int:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_sum_accepts_numeric_items_only() {
+    let source = r#"
+def sum_ints(items: Iterator[int]) -> int:
+  return items.sum()
+
+def sum_floats(items: Iterator[float]) -> float:
+  return items.sum()
+
+type Money = newtype int
+
+def sum_money(items: Iterator[Money]) -> Money:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+
+    let bad_source = r#"
+def sum_strings(items: Iterator[str]) -> str:
+  return items.sum()
+"#;
+    let errs = check_str_err(bad_source, "sum over string iterator should be rejected");
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Iterator.sum() requires int, float, or a newtype over a summable type; found str")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_builtin_list_iter_enters_iterator_surface() {
+    let source = r#"
+from std.derives.collection import Iterable
+
+def keep(n: int) -> bool:
+  return n > 0
+
+def collect_positive(items: list[int]) -> list[int]:
+  return items.iter().filter(keep).batch(2).flat_map(identity_batch).collect()
+
+def identity_batch(batch: list[int]) -> list[int]:
+  return batch
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_filter_callback_return_mismatch_is_rejected() {
+    let source = r#"
+def bad(_n: int) -> str:
+  return "no"
+
+def collect_bad(items: Iterator[int]) -> list[int]:
+  return items.filter(bad).collect()
+"#;
+    let errs = check_str_err(source, "filter callback returning str should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected '(int) -> bool', found '(int) -> str'")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_batch_rejects_static_non_positive_size() {
+    let source = r#"
+def collect_bad(items: Iterator[int]) -> list[list[int]]:
+  return items.batch(0).collect()
+"#;
+    let errs = check_str_err(source, "batch(0) should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Iterator.batch() size must be greater than zero")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_terminal_consumption_rejects_obvious_same_binding_reuse() {
+    let source = r#"
+def consume_twice(items: Iterator[int]) -> int:
+  first = items.count()
+  return first + items.count()
+"#;
+    let errs = check_str_err(source, "same iterator binding reused after terminal method");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("iterator binding `items` was consumed")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

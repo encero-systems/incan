@@ -1078,6 +1078,13 @@ fn test_collections_codegen() {
 }
 
 #[test]
+fn test_rfc088_iterator_adapters_codegen() {
+    let source = load_test_file("rfc088_iterator_adapters");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc088_iterator_adapters", rust_code);
+}
+
+#[test]
 fn test_empty_list_string_arg_codegen() {
     let source = load_test_file("empty_list_string_arg");
     let rust_code = generate_rust(&source);
@@ -1513,6 +1520,21 @@ fn test_models_codegen() {
     let source = load_test_file("models");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("models", rust_code);
+}
+
+#[test]
+fn test_rfc046_computed_properties_codegen() {
+    let source = load_test_file("rfc046_computed_properties");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub fn dollars(&self) -> i64"),
+        "public computed properties should emit as Rust methods:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("value.dollars() + value.cents"),
+        "computed property reads must emit getter calls, not field reads:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc046_computed_properties", rust_code);
 }
 
 #[test]
@@ -2338,6 +2360,17 @@ fn test_std_derives_string_compiled_codegen() {
     };
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_derives_string_compiled", rust_code);
+}
+
+/// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
+#[test]
+fn test_std_derives_collection_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/collection.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_collection_compiled", rust_code);
 }
 
 /// RFC 023: compile `std.serde.json` (Serialize, Deserialize) from `.incn` source.
