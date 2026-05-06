@@ -324,6 +324,7 @@ impl AstLowering {
                             receiver_ty.clone(),
                         )),
                         method: "__incan_new".to_string(),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: Vec::new(),
                         callable_signature: None,

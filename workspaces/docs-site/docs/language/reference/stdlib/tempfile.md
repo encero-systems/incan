@@ -3,10 +3,10 @@
 `std.tempfile` creates temporary filesystem locations with automatic cleanup. Once a path exists, use `std.fs.Path` and `std.fs.File` for ordinary reads, writes, metadata, joins, and explicit cleanup.
 
 ```incan
-from std.tempfile import NamedTemporaryFile, TemporaryDirectory
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 ```
 
-Creation is fallible because it reserves real host filesystem entries. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API.
+Named file and directory creation is fallible because it reserves real host filesystem entries. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible because it starts in memory and creates a temporary file only when it rolls over.
 
 ## NamedTemporaryFile
 
@@ -52,6 +52,35 @@ def stage_artifact(name: str, data: bytes) -> Result[Path, IoError]:
 
 Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. Use `persist()` for outputs that intentionally survive the current scope.
 
+## SpooledTemporaryFile
+
+| API | Returns | Description |
+| --- | --- | --- |
+| `SpooledTemporaryFile(max_size: int = 0)` | `_SpooledTemporaryFile` | Construct a memory-backed binary stream that rolls to disk after the buffer grows beyond `max_size`. |
+| `spool.write(data: bytes)` | `Result[int, IoError]` | Write bytes and roll over when needed. |
+| `spool.read(size: int = -1)` | `Result[bytes, IoError]` | Read bytes from the active memory or file backing. |
+| `spool.seek(offset: int, whence: int = 0)` | `Result[int, IoError]` | Move the stream cursor. |
+| `spool.tell()` | `Result[int, IoError]` | Return the current cursor offset. |
+| `spool.rolled_to_disk()` | `bool` | Report whether rollover has happened. |
+| `spool.rollover()` | `Result[Path, IoError]` | Force rollover and return the temporary file path. |
+| `spool.path()` | `Result[Path, IoError]` | Return the temporary file path after rollover. |
+| `spool.persist()` | `Result[Path, IoError]` | Roll over if needed, keep the file, and disable automatic deletion. |
+
+```incan
+from std.fs import IoError, Path
+from std.tempfile import SpooledTemporaryFile
+
+def collect_payload(chunks: list[bytes]) -> Result[Path, IoError]:
+    spool = SpooledTemporaryFile(max_size=1024 * 1024)
+    for chunk in chunks:
+        spool.write(chunk)?
+    return spool.persist()
+```
+
+Before rollover, data lives in `std.io.BytesIO` and `path()` returns `Err(IoError)` because there is no filesystem path.
+After rollover, the stream uses a `std.fs.File` handle and the `NamedTemporaryFile` cleanup contract. Dropping an
+unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
+
 ## Parent Directory
 
 Pass `dir` when temporary locations must live under a specific parent:
@@ -62,14 +91,12 @@ from std.tempfile import NamedTemporaryFile
 
 def scratch_under(root: Path) -> Result[Path, IoError]:
     temp = NamedTemporaryFile.try_new_with("scratch-", ".bin", Some(root))?
-    return Ok(temp.path())
+    path = temp.path()
+    path.write_bytes(b"scratch")?
+    return temp.persist()
 ```
 
 The `dir` argument accepts `Option[Path]`. Wrap string parents with `Path("...")` before passing them. Failure details are returned as `IoError` with the requested parent path when creation fails.
-
-## Follow-up Surface
-
-`SpooledTemporaryFile` is intentionally not part of this initial surface. It remains a follow-up RFC or issue so the in-memory-to-disk rollover contract can be designed against `std.fs.File` and streaming APIs without expanding the first tempfile slice.
 
 ## See Also
 

@@ -143,6 +143,6 @@ Builder methods are `read`, `write`, `append`, `truncate`, `create`, and `create
 
 `std.tempfile` owns temporary location creation and cleanup. Once a temporary path exists, use `std.fs` for path joins, reads, writes, opens, metadata, copy/move, and cleanup.
 
-See [std.tempfile](tempfile.md) for `NamedTemporaryFile.try_new()`, `TemporaryDirectory.try_new()`, configured `try_new_with(...)` creation, path access, and persistence.
+See [std.tempfile](tempfile.md) for `NamedTemporaryFile.try_new()`, `TemporaryDirectory.try_new()`, configured `try_new_with(...)` creation, spooled temporary streams, path access, and persistence.
 
-`std.tempfile.SpooledTemporaryFile` remains planned for the temporary-file library rather than part of `std.fs`.
+`std.tempfile.SpooledTemporaryFile` starts in memory and rolls over to a named temporary file while still using `std.fs.File` for disk-backed reads, writes, seeking, and flushing.

@@ -11325,7 +11325,7 @@ def main() -> None:
     fn test_std_tempfile_compile_and_run_named_file_and_directory() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 from std.fs import IoError, Path
-from std.tempfile import NamedTemporaryFile, TemporaryDirectory
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 
 def run() -> Result[None, IoError]:
     file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
@@ -11337,6 +11337,22 @@ def run() -> Result[None, IoError]:
     child = directory.path() / "child.txt"
     child.write_text("world", "utf-8", "strict", None)?
     println(child.read_text("utf-8", "strict")?)
+
+    mut memory = SpooledTemporaryFile(max_size=64)
+    memory.write(b"memory")?
+    println(memory.rolled_to_disk())
+    memory.seek(0, 0)?
+    println(len(memory.read(-1)?))
+
+    mut spool = SpooledTemporaryFile(max_size=4)
+    spool.write(b"rolled")?
+    println(spool.rolled_to_disk())
+    println(spool.path()?.exists())
+    spool.seek(0, 0)?
+    println(len(spool.read(-1)?))
+    kept_spool = spool.persist()?
+    println(kept_spool.exists())
+    kept_spool.unlink()?
 
     kept_file = file.persist()?
     println(kept_file.exists())
@@ -11367,7 +11383,9 @@ def main() -> None:
         let lines = stdout.lines().collect::<Vec<_>>();
         assert_eq!(
             lines,
-            vec!["hello", "world", "true", "true"],
+            vec![
+                "hello", "world", "false", "6", "true", "true", "6", "true", "true", "true",
+            ],
             "unexpected std.tempfile output:\n{stdout}"
         );
         Ok(())

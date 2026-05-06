@@ -1030,6 +1030,10 @@ fn test_std_tempfile_import_codegen() {
         "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
     );
     assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
+        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
         rust_code.contains("pub use crate::__incan_std::fs::Path;"),
         "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
     );
