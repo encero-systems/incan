@@ -845,6 +845,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#iterator-adapter-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator adapter chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#comprehensions-quick-transforms" class="md-nav__link">
     <span class="md-ellipsis">
       Comprehensions (quick transforms)
@@ -4759,6 +4768,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#iterator-adapter-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator adapter chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#comprehensions-quick-transforms" class="md-nav__link">
     <span class="md-ellipsis">
       Comprehensions (quick transforms)
@@ -4856,6 +4874,48 @@
         <span class="nb">println</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
 </code></pre></div>
 <p>When you iterate a list stored in a variable, the compiler picks a Rust iteration strategy that matches Incan’s element type. Scalars such as <code>int</code> are stepped by value. For <strong>enums</strong>, the loop variable is the enum type itself (the compiler uses clone-backed iteration under the hood), so you can compare it to another value of the same enum with <code>==</code> without extra cloning in your source.</p>
+<h2 id="iterator-adapter-chains">Iterator adapter chains<a class="headerlink" href="#iterator-adapter-chains" title="Permanent link">&para;</a></h2>
+<p>Use iterator adapters when you want to describe a lazy pipeline and only build the final list at the end:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">is_ready</span><span class="p">(</span><span class="n">job</span><span class="p">:</span> <span class="nc">Job</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">job</span><span class="o">.</span><span class="n">ready</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">job_name</span><span class="p">(</span><span class="n">job</span><span class="p">:</span> <span class="nc">Job</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">job</span><span class="o">.</span><span class="n">name</span>
+
+<span class="n">ready_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">job_name</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<p>The adapter calls above do not build intermediate lists. <code>.filter(...)</code> and <code>.map(...)</code> return new iterators; <code>.collect()</code> is the terminal step that consumes the iterator and returns a <code>list[T]</code>.</p>
+<p>Short-circuiting consumers are useful when you need a summary instead of a list:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">has_blocked_job</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">is_blocked</span><span class="p">)</span>
+<span class="n">all_ready</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span>
+<span class="n">first_failed</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Job</span><span class="p">]</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">is_failed</span><span class="p">)</span>
+</code></pre></div>
+<p>Terminal methods consume the iterator they are called on. If you need to keep the iterator for a later pass, clone it before the terminal method:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">job_iter</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+<span class="n">ready_count</span> <span class="o">=</span> <span class="n">job_iter</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
+
+<span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">job_iter</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>Some adapters combine or reshape streams:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="n">names</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">zip</span><span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="n">iter</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+
+<span class="n">chunks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Job</span><span class="p">]]</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">batch</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<p>Use <code>.flat_map(...)</code> when each input item expands into another iterable value:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">documents</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">flat_map</span><span class="p">(</span><span class="n">document_words</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_searchable</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<p>Here <code>document_words</code> can return any <code>Iterable[str]</code>, including a list or another iterator. <code>.collect()</code> still returns only <code>list[T]</code>; use an explicit conversion after collection if another container type is needed.</p>
 <h2 id="comprehensions-quick-transforms">Comprehensions (quick transforms)<a class="headerlink" href="#comprehensions-quick-transforms" title="Permanent link">&para;</a></h2>
 <p>Use comprehensions to build a new list/dict from an existing collection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
