@@ -19,7 +19,7 @@ use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    list_methods, set_methods,
+    list_methods, result_methods, set_methods,
 };
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -61,10 +61,7 @@ fn rust_receiver_display(path: &str) -> String {
 impl TypeChecker {
     /// Return whether `method` names an RFC 070 `Result[T, E]` combinator.
     fn result_combinator_name(method: &str) -> bool {
-        matches!(
-            method,
-            "map" | "map_err" | "and_then" | "or_else" | "inspect" | "inspect_err"
-        )
+        result_methods::from_str(method).is_some()
     }
 
     /// Resolve a callable function or callable object to its parameter and return types.
@@ -159,16 +156,19 @@ impl TypeChecker {
         let Some(callback_ty) = arg_types.first() else {
             return ResolvedType::Unknown;
         };
-        match method {
-            "map" => {
+        let Some(method_id) = result_methods::from_str(method) else {
+            return ResolvedType::Unknown;
+        };
+        match method_id {
+            result_methods::ResultMethodId::Map => {
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, None, span);
                 ResolvedType::Generic("Result".to_string(), vec![ret, err_ty])
             }
-            "map_err" => {
+            result_methods::ResultMethodId::MapErr => {
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, None, span);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, ret])
             }
-            "and_then" => {
+            result_methods::ResultMethodId::AndThen => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty.clone()]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&expected), span);
                 let ResolvedType::Generic(name, args) = ret else {
@@ -179,7 +179,7 @@ impl TypeChecker {
                 }
                 ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty])
             }
-            "or_else" => {
+            result_methods::ResultMethodId::OrElse => {
                 let expected = ResolvedType::Generic("Result".to_string(), vec![ok_ty.clone(), ResolvedType::Unknown]);
                 let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&expected), span);
                 let ResolvedType::Generic(name, args) = ret else {
@@ -190,15 +190,14 @@ impl TypeChecker {
                 }
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown])
             }
-            "inspect" => {
+            result_methods::ResultMethodId::Inspect => {
                 self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&ResolvedType::Unit), span);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
-            "inspect_err" => {
+            result_methods::ResultMethodId::InspectErr => {
                 self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&ResolvedType::Unit), span);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
-            _ => ResolvedType::Unknown,
         }
     }
 

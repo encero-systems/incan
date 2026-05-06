@@ -23,6 +23,7 @@ use crate::frontend::ast::{self, Spanned};
 use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
+use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
@@ -521,6 +522,11 @@ impl AstLowering {
                 } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
                     if self.receiver_adopts_iterator_protocol(&receiver.ty) {
                         MethodKind::for_iterator_method_name(&method_name)
+                    } else if matches!(
+                        MethodKind::for_result_method_name(&method_name),
+                        Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
+                    ) {
+                        MethodKind::for_result_method_name(&method_name)
                     } else {
                         None
                     }

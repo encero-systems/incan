@@ -22,12 +22,13 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
+use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::{conventions, magic_methods};
 
 use super::super::decl::{
     IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrTraitBound, IrTypeParam, Visibility,
 };
-use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, VarRefKind};
+use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use super::super::stmt::AssignTarget;
 use super::super::types::IrType;
 use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
@@ -716,7 +717,6 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 ..
             } => {
                 self.scan_expr(receiver);
-                self.record_result_observer_callback(method, &receiver.ty, args.first().map(|arg| &arg.expr));
                 self.mark_rust_extension_trait_imports(receiver, method);
                 self.mark_stdlib_error_trait_import(receiver, method);
                 if let Some(type_name) = Self::nominal_type_name(&receiver.ty) {
@@ -738,8 +738,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_expr(&arg.expr);
                 }
             }
-            IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            IrExprKind::KnownMethodCall { receiver, kind, args } => {
                 self.scan_expr(receiver);
+                if let MethodKind::Result(kind @ (ResultMethodId::Inspect | ResultMethodId::InspectErr)) = kind {
+                    self.record_result_observer_callback(*kind, &receiver.ty, args.first().map(|arg| &arg.expr));
+                }
                 for arg in args {
                     self.scan_expr(&arg.expr);
                 }
@@ -897,7 +900,12 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     }
 
     /// Record non-Copy observer callbacks that need generated borrowed helper items.
-    fn record_result_observer_callback(&mut self, method: &str, receiver_ty: &IrType, callback: Option<&TypedExpr>) {
+    fn record_result_observer_callback(
+        &mut self,
+        method: ResultMethodId,
+        receiver_ty: &IrType,
+        callback: Option<&TypedExpr>,
+    ) {
         let Some(callback) = callback else {
             return;
         };
@@ -928,11 +936,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     }
 
     /// Return the branch payload type observed by `inspect` or `inspect_err` during generated-use analysis.
-    fn result_observed_type(method: &str, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
+    fn result_observed_type(method: ResultMethodId, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
         match (method, receiver_ty) {
-            ("inspect", IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
-            ("inspect_err", IrType::Result(_, err)) => Some(err.as_ref().clone()),
-            ("inspect" | "inspect_err", _) => match &callback.ty {
+            (ResultMethodId::Inspect, IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
+            (ResultMethodId::InspectErr, IrType::Result(_, err)) => Some(err.as_ref().clone()),
+            (ResultMethodId::Inspect | ResultMethodId::InspectErr, _) => match &callback.ty {
                 IrType::Function { params, .. } => params.first().cloned(),
                 _ => None,
             },

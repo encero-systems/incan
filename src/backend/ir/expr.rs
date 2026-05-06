@@ -17,7 +17,7 @@ use super::decl::IrInteropAdapterKind;
 use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_core::interop::CoercionPolicy;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
-use incan_core::lang::surface::{dict_methods, list_methods, set_methods, string_methods};
+use incan_core::lang::surface::{dict_methods, list_methods, result_methods, set_methods, string_methods};
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -609,6 +609,8 @@ pub enum MethodKind {
     Collection(CollectionMethodKind),
     /// Iterator adapter and terminal methods recognized for `Iterator[T]` receivers.
     Iterator(IteratorMethodKind),
+    /// Result combinators recognized for `Result[T, E]` receivers.
+    Result(result_methods::ResultMethodId),
     /// Internal helper methods that lower to dedicated runtime support.
     Internal(InternalMethodKind),
 }
@@ -726,6 +728,11 @@ impl MethodKind {
         iterator_method_kind(name).map(Self::Iterator)
     }
 
+    /// Try to resolve an RFC 070 result-combinator method name without considering a receiver type.
+    pub fn for_result_method_name(name: &str) -> Option<Self> {
+        result_methods::from_str(name).map(Self::Result)
+    }
+
     /// Try to resolve a method name to a known method kind for the given receiver type.
     ///
     /// Returns `None` for unknown methods (which pass through as regular method calls).
@@ -743,6 +750,7 @@ impl MethodKind {
         }
 
         match receiver_ty {
+            IrType::Result(_, _) => result_methods::from_str(name).map(Self::Result),
             IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef => {
                 let id = string_methods::from_str(name)?;
                 use string_methods::StringMethodId as S;
@@ -908,5 +916,25 @@ mod tests {
             MethodKind::for_receiver(&IrType::Struct("Dataset".to_string()), "map"),
             None
         );
+    }
+
+    #[test]
+    fn result_method_kind_for_receiver_classifies_rfc070_surface() {
+        let result_ty = IrType::Result(Box::new(IrType::Int), Box::new(IrType::String));
+        for (name, expected) in [
+            ("map", result_methods::ResultMethodId::Map),
+            ("map_err", result_methods::ResultMethodId::MapErr),
+            ("and_then", result_methods::ResultMethodId::AndThen),
+            ("or_else", result_methods::ResultMethodId::OrElse),
+            ("inspect", result_methods::ResultMethodId::Inspect),
+            ("inspect_err", result_methods::ResultMethodId::InspectErr),
+        ] {
+            assert_eq!(
+                MethodKind::for_receiver(&result_ty, name),
+                Some(MethodKind::Result(expected)),
+                "expected Result method classification for `{name}`"
+            );
+        }
+        assert_eq!(MethodKind::for_receiver(&result_ty, "unwrap"), None);
     }
 }

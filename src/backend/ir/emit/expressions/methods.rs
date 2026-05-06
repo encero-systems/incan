@@ -15,6 +15,7 @@ use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::interop::RustCollectionFamily;
+use incan_core::lang::surface::result_methods::{self, ResultMethodId};
 
 mod collection_methods;
 mod iterator_methods;
@@ -61,14 +62,6 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Return whether `method` is one of RFC 070's compiler-owned `Result` combinators.
-    fn is_result_combinator(method: &str) -> bool {
-        matches!(
-            method,
-            "map" | "map_err" | "and_then" | "or_else" | "inspect" | "inspect_err"
-        )
-    }
-
     /// Emit a one-argument callback invocation for a `Result` combinator payload.
     fn emit_result_callback_call(
         &self,
@@ -123,11 +116,11 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Return the branch payload type observed by `inspect` or `inspect_err`.
-    fn result_observed_type(method: &str, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
+    fn result_observed_type(method: ResultMethodId, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
         match (method, receiver_ty) {
-            ("inspect", IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
-            ("inspect_err", IrType::Result(_, err)) => Some(err.as_ref().clone()),
-            ("inspect" | "inspect_err", _) => match &callback.ty {
+            (ResultMethodId::Inspect, IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
+            (ResultMethodId::InspectErr, IrType::Result(_, err)) => Some(err.as_ref().clone()),
+            (ResultMethodId::Inspect | ResultMethodId::InspectErr, _) => match &callback.ty {
                 IrType::Function { params, .. } => params.first().cloned(),
                 _ => None,
             },
@@ -140,35 +133,33 @@ impl<'a> IrEmitter<'a> {
         &self,
         receiver_tokens: &TokenStream,
         receiver_ty: &IrType,
-        method: &str,
+        method: ResultMethodId,
         callback: &TypedExpr,
-    ) -> Result<Option<TokenStream>, EmitError> {
-        if !Self::is_result_combinator(method) {
-            return Ok(None);
-        }
+    ) -> Result<TokenStream, EmitError> {
+        let method_name = result_methods::as_str(method);
+        let method_ident = Self::rust_ident(method_name);
         let call = match method {
-            "map" | "map_err" | "and_then" | "or_else" => {
+            ResultMethodId::Map | ResultMethodId::MapErr | ResultMethodId::AndThen | ResultMethodId::OrElse => {
                 let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;
-                let m = Self::rust_ident(method);
                 quote! {
-                    #receiver_tokens.#m(|__incan_result_value| #body)
+                    #receiver_tokens.#method_ident(|__incan_result_value| #body)
                 }
             }
-            "inspect" | "inspect_err" => {
+            ResultMethodId::Inspect | ResultMethodId::InspectErr => {
                 let Some(observed_ty) = Self::result_observed_type(method, receiver_ty, callback) else {
-                    return Ok(None);
+                    return Err(EmitError::Unsupported(format!(
+                        "cannot infer observed payload type for Result.{method_name}"
+                    )));
                 };
                 let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
-                let m = Self::rust_ident(method);
                 quote! {
-                    #receiver_tokens.#m(|__incan_result_value| {
+                    #receiver_tokens.#method_ident(|__incan_result_value| {
                         #body;
                     })
                 }
             }
-            _ => unreachable!("result combinator name checked above"),
         };
-        Ok(Some(call))
+        Ok(call)
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -481,6 +472,15 @@ impl<'a> IrEmitter<'a> {
             MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
+            MethodKind::Result(kind) => {
+                let Some(callback) = arg_exprs.first() else {
+                    return Err(EmitError::Unsupported(format!(
+                        "Result.{} expects one callback argument",
+                        result_methods::as_str(*kind)
+                    )));
+                };
+                self.emit_result_combinator_call(&info.r, &receiver.ty, *kind, callback)
+            }
             MethodKind::Internal(InternalMethodKind::Slice) => self.emit_runtime_str_slice(&info, &arg_exprs),
         }
     }
@@ -525,14 +525,6 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
-        if (matches!(receiver.ty, IrType::Result(_, _)) || matches!(method, "inspect" | "inspect_err"))
-            && args.len() == 1
-            && type_args.is_empty()
-            && dispatch.is_none()
-            && let Some(tokens) = self.emit_result_combinator_call(r, &receiver.ty, method, &args[0].expr)?
-        {
-            return Ok(tokens);
-        }
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {
