@@ -2274,12 +2274,14 @@ impl TypeChecker {
         let prev_in_async_body = self.in_async_body;
         let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
         self.in_async_body = func.is_async();
+        let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
 
         // Check body
         for stmt in &func.body {
             self.check_statement(stmt);
         }
 
+        self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.in_async_body = prev_in_async_body;
         self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
@@ -2447,9 +2449,11 @@ impl TypeChecker {
             let prev_in_async_body = self.in_async_body;
             let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();
+            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
             for stmt in body {
                 self.check_statement(stmt);
             }
+            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.in_async_body = prev_in_async_body;
             self.current_yield_context = prev_yield_context;
         }

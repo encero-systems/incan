@@ -82,6 +82,9 @@ pub const RFC_057: RfcId = "RFC 057";
 /// RFC 083 — symbol and method aliases.
 pub const RFC_083: RfcId = "RFC 083";
 
+/// RFC 088 — iterator adapter surface.
+pub const RFC_088: RfcId = "RFC 088";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -129,6 +132,8 @@ impl RFC {
     pub const _057: RfcId = RFC_057;
     /// RFC 083 — symbol and method aliases.
     pub const _083: RfcId = RFC_083;
+    /// RFC 088 — iterator adapter surface.
+    pub const _088: RfcId = RFC_088;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

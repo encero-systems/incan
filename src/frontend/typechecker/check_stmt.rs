@@ -641,6 +641,7 @@ impl TypeChecker {
                     assign.value.span,
                 ));
             }
+            self.consumed_iterator_bindings.remove(&assign.name);
             return;
         }
 
@@ -712,6 +713,7 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        self.consumed_iterator_bindings.remove(&assign.name);
     }
 
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {

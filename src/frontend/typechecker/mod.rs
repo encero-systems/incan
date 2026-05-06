@@ -131,6 +131,8 @@ pub struct TypeChecker {
     pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
+    /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
+    pub(crate) consumed_iterator_bindings: HashMap<String, Span>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
     /// Active declaration-level interpretation for `yield` expressions.
@@ -237,6 +239,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            consumed_iterator_bindings: HashMap::new(),
             current_return_error_type: None,
             current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
@@ -2852,6 +2855,35 @@ impl TypeChecker {
                     .iter()
                     .zip(instantiated.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
+            }
+
+            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable)
+                    && expected_args.len() == 1
+                    && actual_args.len() == 1 =>
+            {
+                let actual_is_iterable = actual_name == builtin_traits::as_str(TraitId::Iterator)
+                    || matches!(
+                        collection_type_id(actual_name.as_str()),
+                        Some(
+                            CollectionTypeId::List
+                                | CollectionTypeId::Set
+                                | CollectionTypeId::FrozenList
+                                | CollectionTypeId::FrozenSet
+                        )
+                    );
+                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+            }
+            (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
+            }
+            (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).

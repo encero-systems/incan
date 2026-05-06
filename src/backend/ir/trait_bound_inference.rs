@@ -2282,6 +2282,7 @@ mod tests {
             entry_point: None,
             function_registry: FunctionRegistry::new(),
             rust_module_path: None,
+            newtype_checked_ctor: Default::default(),
         }
     }
 

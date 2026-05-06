@@ -551,6 +551,7 @@ impl AstLowering {
                 }
             }
         }
+        ir_program.newtype_checked_ctor = self.newtype_checked_ctor.clone();
 
         // Pass 1.5: register module-level const names into the root scope for lookups.
         // (Type inference/refinement happens later; Unknown is fine for non-const contexts.)

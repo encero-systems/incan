@@ -1051,6 +1051,13 @@ fn test_collections_codegen() {
 }
 
 #[test]
+fn test_rfc088_iterator_adapters_codegen() {
+    let source = load_test_file("rfc088_iterator_adapters");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc088_iterator_adapters", rust_code);
+}
+
+#[test]
 fn test_empty_list_string_arg_codegen() {
     let source = load_test_file("empty_list_string_arg");
     let rust_code = generate_rust(&source);

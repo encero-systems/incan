@@ -18,6 +18,8 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_core::interop::CoercionPolicy;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::surface::{dict_methods, list_methods, set_methods, string_methods};
+use incan_core::lang::traits::{self as core_traits, TraitId};
+use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
 /// A typed expression in IR
 #[derive(Debug, Clone)]
@@ -596,6 +598,8 @@ pub enum MethodKind {
     String(StringMethodKind),
     /// Collection methods recognized for builtin list/dict/set receivers.
     Collection(CollectionMethodKind),
+    /// Iterator adapter and terminal methods recognized for `Iterator[T]` receivers.
+    Iterator(IteratorMethodKind),
     /// Internal helper methods that lower to dedicated runtime support.
     Internal(InternalMethodKind),
 }
@@ -653,6 +657,53 @@ pub enum CollectionMethodKind {
     ReserveExact,
 }
 
+/// Known iterator-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IteratorMethodKind {
+    /// `iterable.iter()` returns an iterator over owned Incan surface items.
+    Iter,
+    /// `iter.map(f)` lazily maps each item through `f`.
+    Map,
+    /// `iter.filter(f)` lazily keeps items where `f(item)` returns true.
+    Filter,
+    /// `iter.enumerate()` yields `(index, item)` pairs.
+    Enumerate,
+    /// `iter.zip(other)` yields pairs until either input is exhausted.
+    Zip,
+    /// `iter.take(n)` yields at most `n` items.
+    Take,
+    /// `iter.skip(n)` discards at most `n` items.
+    Skip,
+    /// `iter.take_while(f)` yields items until `f(item)` first returns false.
+    TakeWhile,
+    /// `iter.skip_while(f)` discards items while `f(item)` returns true.
+    SkipWhile,
+    /// `iter.chain(other)` yields receiver items followed by `other` items.
+    Chain,
+    /// `iter.flat_map(f)` maps each item to an iterable and flattens the result.
+    FlatMap,
+    /// `iter.batch(size)` yields fixed-size lists with a final short list included.
+    Batch,
+    /// `iter.collect()` consumes into a list.
+    Collect,
+    /// `iter.count()` consumes and returns the count as Incan `int`.
+    Count,
+    /// `iter.reduce(init, f)` consumes and folds with an explicit initial accumulator.
+    Reduce,
+    /// `iter.fold(init, f)` consumes and folds with an explicit initial accumulator.
+    Fold,
+    /// `iter.any(f)` short-circuits when `f(item)` is true.
+    Any,
+    /// `iter.all(f)` short-circuits when `f(item)` is false.
+    All,
+    /// `iter.find(f)` returns the first item where `f(item)` is true.
+    Find,
+    /// `iter.for_each(f)` consumes the iterator for side effects.
+    ForEach,
+    /// `iter.sum()` consumes and sums numeric items.
+    Sum,
+}
+
 /// Internal compiler-only method variants handled during emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InternalMethodKind {
@@ -696,6 +747,9 @@ impl MethodKind {
                 }))
             }
             IrType::List(_) => {
+                if name == "iter" {
+                    return Some(Self::Iterator(IteratorMethodKind::Iter));
+                }
                 let id = list_methods::from_str(name)?;
                 use list_methods::ListMethodId as L;
                 Some(Self::Collection(match id {
@@ -722,12 +776,123 @@ impl MethodKind {
                 }))
             }
             IrType::Set(_) => {
+                if name == "iter" {
+                    return Some(Self::Iterator(IteratorMethodKind::Iter));
+                }
                 if set_methods::from_str(name).is_some() {
                     return Some(Self::Collection(CollectionMethodKind::Contains));
                 }
                 None
             }
+            IrType::NamedGeneric(type_name, _)
+                if matches!(
+                    collection_types::from_str(type_name),
+                    Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
+                ) && name == "iter" =>
+            {
+                Some(Self::Iterator(IteratorMethodKind::Iter))
+            }
+            IrType::NamedGeneric(type_name, _) | IrType::Struct(type_name)
+                if is_iterator_protocol_type_name(type_name) =>
+            {
+                iterator_method_kind(name).map(Self::Iterator)
+            }
             _ => None,
         }
+    }
+}
+
+/// Return whether a nominal IR type name denotes the standard `Iterator` protocol.
+///
+/// Lowering can preserve either short stdlib names (`Iterator`) or qualified paths, depending on import and metadata
+/// context. Method classification only needs the nominal protocol family, so it accepts the final path segment.
+fn is_iterator_protocol_type_name(name: &str) -> bool {
+    name.rsplit("::").next() == Some(core_traits::as_str(TraitId::Iterator))
+}
+
+/// Classify an RFC 088 iterator method name into the structured backend method family.
+fn iterator_method_kind(name: &str) -> Option<IteratorMethodKind> {
+    Some(match name {
+        "map" => IteratorMethodKind::Map,
+        "filter" => IteratorMethodKind::Filter,
+        "enumerate" => IteratorMethodKind::Enumerate,
+        "zip" => IteratorMethodKind::Zip,
+        "take" => IteratorMethodKind::Take,
+        "skip" => IteratorMethodKind::Skip,
+        "take_while" => IteratorMethodKind::TakeWhile,
+        "skip_while" => IteratorMethodKind::SkipWhile,
+        "chain" => IteratorMethodKind::Chain,
+        "flat_map" => IteratorMethodKind::FlatMap,
+        "batch" => IteratorMethodKind::Batch,
+        "collect" => IteratorMethodKind::Collect,
+        "count" => IteratorMethodKind::Count,
+        "reduce" => IteratorMethodKind::Reduce,
+        "fold" => IteratorMethodKind::Fold,
+        "any" => IteratorMethodKind::Any,
+        "all" => IteratorMethodKind::All,
+        "find" => IteratorMethodKind::Find,
+        "for_each" => IteratorMethodKind::ForEach,
+        "sum" => IteratorMethodKind::Sum,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iterator_method_kind_for_receiver_classifies_rfc088_surface() {
+        let iterator_ty = IrType::NamedGeneric(core_traits::as_str(TraitId::Iterator).to_string(), vec![IrType::Int]);
+        for (name, expected) in [
+            ("map", IteratorMethodKind::Map),
+            ("filter", IteratorMethodKind::Filter),
+            ("enumerate", IteratorMethodKind::Enumerate),
+            ("zip", IteratorMethodKind::Zip),
+            ("take", IteratorMethodKind::Take),
+            ("skip", IteratorMethodKind::Skip),
+            ("take_while", IteratorMethodKind::TakeWhile),
+            ("skip_while", IteratorMethodKind::SkipWhile),
+            ("chain", IteratorMethodKind::Chain),
+            ("flat_map", IteratorMethodKind::FlatMap),
+            ("batch", IteratorMethodKind::Batch),
+            ("collect", IteratorMethodKind::Collect),
+            ("count", IteratorMethodKind::Count),
+            ("reduce", IteratorMethodKind::Reduce),
+            ("fold", IteratorMethodKind::Fold),
+            ("any", IteratorMethodKind::Any),
+            ("all", IteratorMethodKind::All),
+            ("find", IteratorMethodKind::Find),
+            ("for_each", IteratorMethodKind::ForEach),
+            ("sum", IteratorMethodKind::Sum),
+        ] {
+            assert_eq!(
+                MethodKind::for_receiver(&iterator_ty, name),
+                Some(MethodKind::Iterator(expected)),
+                "expected iterator method classification for `{name}`"
+            );
+        }
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::List(Box::new(IrType::Int)), "iter"),
+            Some(MethodKind::Iterator(IteratorMethodKind::Iter))
+        );
+    }
+
+    #[test]
+    fn iterator_method_kind_for_receiver_does_not_capture_iterable_or_plain_structs() {
+        assert_eq!(
+            MethodKind::for_receiver(
+                &IrType::NamedGeneric(
+                    core_traits::as_str(TraitId::IntoIterator).to_string(),
+                    vec![IrType::Int]
+                ),
+                "map"
+            ),
+            None
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::Struct("Dataset".to_string()), "map"),
+            None
+        );
     }
 }

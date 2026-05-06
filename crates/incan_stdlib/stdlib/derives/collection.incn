@@ -3,8 +3,10 @@ Collection-related traits: Bool, Len, Contains, Iterable, Iterator
 These traits enable Python-like collection behavior for custom types.
 """
 
+from rust::incan_stdlib::errors import raise_value_error
 
-trait Contains[T]:
+
+pub trait Contains[T]:
     """
     Contains trait - Enables `item in collection` membership testing
     Python equivalent: __contains__
@@ -36,7 +38,7 @@ trait Contains[T]:
     def __contains__(self, item: T) -> bool: ...
 
 
-trait Bool:
+pub trait Bool:
     """
     Bool trait - Names the truthiness capability for custom types
     Hook: __bool__(self) -> bool
@@ -72,7 +74,7 @@ trait Bool:
     def __bool__(self) -> bool: ...
 
 
-trait Len:
+pub trait Len:
     """
     Len trait - Enables len() builtin for custom types
     Python equivalent: __len__
@@ -108,7 +110,7 @@ trait Len:
     def __len__(self) -> int: ...
 
 
-trait Iterable[T]:
+pub trait Iterable[T]:
     """
     Iterable trait - Enables `for item in obj:` syntax
     Python equivalent: __iter__
@@ -132,8 +134,11 @@ trait Iterable[T]:
     """
     def __iter__(self) -> Iterator[T]: ...
 
+    def iter(self) -> Iterator[T]:
+        return self.__iter__()
 
-trait Iterator[T]:
+
+pub trait Iterator[T]:
     """
     Iterator trait - The actual iteration mechanism
     Python equivalent: __next__
@@ -159,3 +164,274 @@ trait Iterator[T]:
     This is more Rust-like and avoids exception overhead.
     """
     def __next__(self) -> Option[T]: ...
+
+    def iter(self) -> Iterator[T]:
+        return self
+
+    def map[U](self, f: (T) -> U) -> Iterator[U]:
+        return MapIterator[T, U](source=self, f=f)
+
+    def filter(self, f: (T) -> bool) -> Iterator[T]:
+        return FilterIterator[T](source=self, f=f)
+
+    def flat_map[U](self, f: (T) -> Iterable[U]) -> Iterator[U]:
+        return FlatMapIterator[T, U](source=self, f=f, current=None)
+
+    def take(self, n: int) -> Iterator[T]:
+        return TakeIterator[T](source=self, remaining=n)
+
+    def skip(self, n: int) -> Iterator[T]:
+        return SkipIterator[T](source=self, remaining=n)
+
+    def chain(self, other: Iterator[T]) -> Iterator[T]:
+        return ChainIterator[T](first=self, second=other, in_second=false)
+
+    def enumerate(self) -> Iterator[tuple[int, T]]:
+        return EnumerateIterator[T](source=self, index=0)
+
+    def zip[U](self, other: Iterator[U]) -> Iterator[tuple[T, U]]:
+        return ZipIterator[T, U](left=self, right=other)
+
+    def take_while(self, f: (T) -> bool) -> Iterator[T]:
+        return TakeWhileIterator[T](source=self, f=f, done=false)
+
+    def skip_while(self, f: (T) -> bool) -> Iterator[T]:
+        return SkipWhileIterator[T](source=self, f=f, skipping=true)
+
+    def batch(self, size: int) -> Iterator[list[T]]:
+        return BatchIterator[T](source=self, size=size)
+
+    def collect(self) -> list[T]:
+        mut items: list[T] = []
+        while true:
+            match self.__next__():
+                Some(item) => items.append(item)
+                None => return items
+
+    def count(self) -> int:
+        mut total = 0
+        while true:
+            match self.__next__():
+                Some(_) =>
+                    total += 1
+                None => return total
+
+    def reduce[U](self, init: U, f: (U, T) -> U) -> U:
+        return self.fold(init, f)
+
+    def fold[U](self, init: U, f: (U, T) -> U) -> U:
+        mut acc = init
+        while true:
+            match self.__next__():
+                Some(item) =>
+                    acc = f(acc, item)
+                None => return acc
+
+    def any(self, f: (T) -> bool) -> bool:
+        while true:
+            match self.__next__():
+                Some(item) =>
+                    if f(item):
+                        return true
+                None => return false
+
+    def all(self, f: (T) -> bool) -> bool:
+        while true:
+            match self.__next__():
+                Some(item) =>
+                    if not f(item):
+                        return false
+                None => return true
+
+    def find(self, f: (T) -> bool) -> Option[T]:
+        while true:
+            match self.__next__():
+                Some(item) =>
+                    if f(item):
+                        return Some(item)
+                None => return None
+
+    def for_each(self, f: (T) -> None) -> None:
+        while true:
+            match self.__next__():
+                Some(item) => f(item)
+                None => return None
+
+    def sum(self) -> T: ...
+
+
+pub trait Sum[T]:
+    """
+    Sum trait - Names the capability to produce a value from summing iterator items.
+
+    This mirrors Rust's `std::iter::Sum`: types opt into zero-argument
+    iterator summation by defining how an iterator of items becomes `Self`.
+    Built-in numeric types provide the primitive implementation, and newtypes
+    over summable underlying types lift that implementation through normal
+    newtype construction.
+    """
+    @classmethod
+    def sum(cls, items: Iterator[T]) -> Self: ...
+
+
+model MapIterator[T, U] with Iterator[U]:
+    source: Iterator[T]
+    f: (T) -> U
+
+    def __next__(self) -> Option[U]:
+        match self.source.__next__():
+            Some(item) => return Some(self.f(item))
+            None => return None
+
+
+model FilterIterator[T] with Iterator[T]:
+    source: Iterator[T]
+    f: (T) -> bool
+
+    def __next__(self) -> Option[T]:
+        while true:
+            match self.source.__next__():
+                Some(item) =>
+                    if self.f(item):
+                        return Some(item)
+                None => return None
+
+
+model FlatMapIterator[T, U] with Iterator[U]:
+    source: Iterator[T]
+    f: (T) -> Iterable[U]
+    current: Option[Iterator[U]]
+
+    def __next__(self) -> Option[U]:
+        while true:
+            match self.current:
+                Some(current) =>
+                    match current.__next__():
+                        Some(item) => return Some(item)
+                        None =>
+                            self.current = None
+                None =>
+                    match self.source.__next__():
+                        Some(item) =>
+                            self.current = Some(self.f(item).iter())
+                        None => return None
+
+
+model TakeIterator[T] with Iterator[T]:
+    source: Iterator[T]
+    remaining: int
+
+    def __next__(self) -> Option[T]:
+        if self.remaining <= 0:
+            return None
+        match self.source.__next__():
+            Some(item) =>
+                self.remaining -= 1
+                return Some(item)
+            None => return None
+
+
+model SkipIterator[T] with Iterator[T]:
+    source: Iterator[T]
+    remaining: int
+
+    def __next__(self) -> Option[T]:
+        while self.remaining > 0:
+            match self.source.__next__():
+                Some(_) =>
+                    self.remaining -= 1
+                None => return None
+        return self.source.__next__()
+
+
+model ChainIterator[T] with Iterator[T]:
+    first: Iterator[T]
+    second: Iterator[T]
+    in_second: bool
+
+    def __next__(self) -> Option[T]:
+        if not self.in_second:
+            match self.first.__next__():
+                Some(item) => return Some(item)
+                None =>
+                    self.in_second = true
+        return self.second.__next__()
+
+
+model EnumerateIterator[T] with Iterator[tuple[int, T]]:
+    source: Iterator[T]
+    index: int
+
+    def __next__(self) -> Option[tuple[int, T]]:
+        match self.source.__next__():
+            Some(item) =>
+                current = self.index
+                self.index += 1
+                return Some((current, item))
+            None => return None
+
+
+model ZipIterator[T, U] with Iterator[tuple[T, U]]:
+    left: Iterator[T]
+    right: Iterator[U]
+
+    def __next__(self) -> Option[tuple[T, U]]:
+        match self.left.__next__():
+            Some(left_item) =>
+                match self.right.__next__():
+                    Some(right_item) => return Some((left_item, right_item))
+                    None => return None
+            None => return None
+
+
+model TakeWhileIterator[T] with Iterator[T]:
+    source: Iterator[T]
+    f: (T) -> bool
+    done: bool
+
+    def __next__(self) -> Option[T]:
+        if self.done:
+            return None
+        match self.source.__next__():
+            Some(item) =>
+                if self.f(item):
+                    return Some(item)
+                self.done = true
+                return None
+            None =>
+                self.done = true
+                return None
+
+
+model SkipWhileIterator[T] with Iterator[T]:
+    source: Iterator[T]
+    f: (T) -> bool
+    skipping: bool
+
+    def __next__(self) -> Option[T]:
+        while self.skipping:
+            match self.source.__next__():
+                Some(item) =>
+                    if not self.f(item):
+                        self.skipping = false
+                        return Some(item)
+                None => return None
+        return self.source.__next__()
+
+
+model BatchIterator[T] with Iterator[list[T]]:
+    source: Iterator[T]
+    size: int
+
+    def __next__(self) -> Option[list[T]]:
+        if self.size <= 0:
+            return raise_value_error("iterator batch size must be greater than zero")
+        mut items: list[T] = []
+        while len(items) < self.size:
+            match self.source.__next__():
+                Some(item) => items.append(item)
+                None =>
+                    if len(items) > 0:
+                        return Some(items)
+                    return None
+        return Some(items)

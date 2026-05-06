@@ -1,6 +1,6 @@
 # RFC 088: Iterator adapter surface
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-05-04
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -128,7 +128,7 @@ If `events` contains 250 elements, the result contains two batches of 100 and on
 ```incan
 def map[U](self, f: (T) -> U) -> Iterator[U]
 def filter(self, f: (T) -> bool) -> Iterator[T]
-def flat_map[U](self, f: (T) -> Iterator[U]) -> Iterator[U]
+def flat_map[U](self, f: (T) -> Iterable[U]) -> Iterator[U]
 def take(self, n: int) -> Iterator[T]
 def skip(self, n: int) -> Iterator[T]
 def chain(self, other: Iterator[T]) -> Iterator[T]
@@ -153,16 +153,31 @@ def count(self) -> int
 def any(self, f: (T) -> bool) -> bool
 def all(self, f: (T) -> bool) -> bool
 def find(self, f: (T) -> bool) -> Option[T]
+def reduce[U](self, init: U, f: (U, T) -> U) -> U
 def fold[U](self, init: U, f: (U, T) -> U) -> U
+def for_each(self, f: (T) -> None) -> None
+def sum(self) -> T  # when T supports Sum[T]
 ```
 
 Terminal methods consume the receiver. After a terminal method consumes an iterator value, the program must not rely on that same iterator value yielding additional elements unless the iterator type documents reusable iteration separately.
+
+If code needs to preserve an iterator value for later use, clone it before the terminal call:
+
+```incan
+remaining = rows.iter()
+copy = remaining.clone()
+
+error_count: int = copy.filter(is_error).count()
+
+for row in remaining:
+    handle(row)
+```
 
 ### Callback typing
 
 Callback arguments must type-check against the element type yielded by the receiver at that point in the chain.
 
-`map` callbacks must return the output element type. `filter`, `any`, `all`, `find`, `take_while`, and `skip_while` callbacks must return `bool`. `flat_map` callbacks must return `Iterator[U]` or a type that is accepted as an iterator value under the iteration protocol. `fold` callbacks must accept the accumulator and current element and must return the next accumulator value.
+`map` callbacks must return the output element type. `filter`, `any`, `all`, `find`, `take_while`, and `skip_while` callbacks must return `bool`. `flat_map` callbacks must return `Iterable[U]`, including iterator values and collection-like values that satisfy the iteration protocol. `reduce` and `fold` callbacks must accept the accumulator and current element and must return the next accumulator value.
 
 When callback arity or return type is incompatible with the method contract, the compiler must emit a type error at the adapter call site.
 
@@ -178,7 +193,7 @@ For `.any()`, `.all()`, `.find()`, `.take_while()`, and `.skip_while()`, evaluat
 
 `.filter(f)` yields each input item for which `f(item)` returns `true`.
 
-`.flat_map(f)` applies `f` to each input item and yields all elements from each returned iterator before advancing to the next input item.
+`.flat_map(f)` applies `f` to each input item and yields all elements from each returned iterable before advancing to the next input item.
 
 `.take(n)` yields at most the first `n` elements. If `n` is less than or equal to zero, it yields no elements.
 
@@ -196,9 +211,13 @@ For `.any()`, `.all()`, `.find()`, `.take_while()`, and `.skip_while()`, evaluat
 
 `.batch(size)` yields adjacent `list[T]` batches with at most `size` elements. The final batch is yielded when it is non-empty even if it contains fewer than `size` elements. A `size` less than or equal to zero must be rejected statically when known at compile time and otherwise must produce the same user-facing error category as other invalid numeric standard-library arguments.
 
-`.collect()` consumes all remaining elements into a `list[T]`.
+`.collect()` consumes all remaining elements into a `list[T]`. This RFC does not define target-collection overloads for `.collect()`.
 
 `.count()` consumes all remaining elements and returns the number of elements consumed.
+
+`.sum()` consumes all remaining summable elements and returns their sum. This RFC supports `int`, `float`, and newtypes over summable underlying types.
+
+The capability is named by `Sum[T]`, mirroring Rust's `std::iter::Sum`: a type can produce `Self` from an iterator of `T` items. For this RFC's implemented surface, primitive numeric types provide the base behavior. Newtypes lift the underlying summation result through normal construction, so checked newtypes still run their selected `from_underlying`/`from_*` validation hook and may fail at runtime if the summed underlying value violates the newtype invariant.
 
 `.any(f)` returns `true` after the first item for which `f(item)` returns `true`; otherwise it returns `false`.
 
@@ -206,7 +225,11 @@ For `.any()`, `.all()`, `.find()`, `.take_while()`, and `.skip_while()`, evaluat
 
 `.find(f)` returns `Some(item)` for the first item for which `f(item)` returns `true`; otherwise it returns `None`.
 
+`.reduce(init, f)` starts with `init`, applies `f(acc, item)` for each item, and returns the final accumulator.
+
 `.fold(init, f)` starts with `init`, applies `f(acc, item)` for each item, and returns the final accumulator.
+
+`.for_each(f)` calls `f(item)` for each remaining item and returns `None`.
 
 ## Design details
 
@@ -256,7 +279,7 @@ This feature is additive. Existing `for` loops, comprehensions, collection metho
 
 ## Implementation architecture
 
-*(Non-normative.)* A practical implementation should model these methods as stdlib-visible iterator protocol methods with compiler support only where needed for method resolution, type substitution, laziness, and backend emission. The Rust backend should lower straightforward adapter chains to Rust iterator chains when doing so preserves Incan evaluation order, callback behavior, item typing, and error behavior.
+*(Non-normative.)* The stdlib iterator protocol should be the source of truth for this surface. `Iterator[T]` should expose Incan default methods and Incan adapter carrier types for the common lazy adapters and terminal consumers, with compiler support only where needed for method resolution, type substitution, consumption diagnostics, builtin collection `.iter()` bridging, and backend emission. The Rust backend may lower straightforward adapter chains to Rust iterator chains when doing so preserves Incan evaluation order, callback behavior, item typing, and error behavior; that lowering is an optimization/bridge, not a second semantic definition.
 
 ## Layers affected
 
@@ -267,11 +290,94 @@ This feature is additive. Existing `for` loops, comprehensions, collection metho
 - **LSP / Tooling**: completions, hovers, and diagnostics should expose the adapter signatures and explain callback mismatch errors.
 - **Documentation**: iterator, generator, collection, and data-transformation docs should teach lazy adapters separately from eager comprehensions.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should `.batch()` remain in the core iterator adapter RFC, or should it move to a smaller follow-up for data-processing-specific helpers?
-- Should `.collect()` eventually support explicit target collection types, or should this RFC keep it fixed to `list[T]`?
-- Should `flat_map` accept `Iterable[U]` in addition to `Iterator[U]`, or should callers explicitly call `.iter()` on iterable results?
-- Should terminal methods consume the iterator linearly in the type system once ownership tracking is strong enough to express that distinction?
+### Phase 1: Iterator contract and stdlib surface
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Add the RFC 088 adapter and terminal method declarations to the `Iterator[T]` trait surface.
+- Dogfood the protocol by providing Incan default bodies and Incan adapter carrier types wherever the behavior can be expressed directly in stdlib code.
+- Keep `.batch()` in the core iterator adapter surface with final partial-batch preservation and invalid-size behavior defined by this RFC.
+- Keep `.collect()` fixed to `list[T]`; target-specific collection is deferred.
+- Treat `flat_map` callbacks as returning `Iterable[U]`, with iterator conversion handled by the normal iteration protocol.
+
+### Phase 2: Typechecker and diagnostics
+
+- Resolve RFC 088 methods on iterator values and values accepted through the iteration protocol.
+- Substitute generic method types through adapter chains so each chained receiver has the expected element type.
+- Validate callback arity and return type for every adapter and terminal consumer.
+- Enforce terminal consumption semantics at the language contract level and reject obvious same-binding reuse when the compiler can do so without broader linear ownership machinery.
+- Emit focused diagnostics at the adapter call site for missing iterator capability, incompatible callback shape, invalid batch size, and invalid terminal reuse when detected.
+
+### Phase 3: Lowering, emission, and runtime support
+
+- Lower adapter and terminal calls so lazy adapters stay lazy and terminal consumers consume the iterator.
+- Treat compiler-recognized RFC 088 methods as the optimized lowering path for canonical stdlib iterator defaults, not as the sole implementation of the protocol.
+- Emit Rust iterator chains when they preserve Incan evaluation order, callback behavior, ownership behavior, and error behavior.
+- Add runtime or generated helper support for behavior that is not covered directly by Rust iterator adapters, especially `.batch()`.
+- Preserve current `for` loop, comprehension, builtin collection, and generator behavior while adding the adapter surface.
+
+### Phase 4: Tests, docs, and release readiness
+
+- Add typechecker coverage for valid chains, element-type propagation, callback mismatch diagnostics, invalid batch sizes, and terminal consumption behavior.
+- Add codegen snapshot and integration coverage for representative adapter chains, terminal consumers, `flat_map` over iterable callback results, and batching.
+- Update authored user-facing docs for iterator pipelines and how they differ from eager comprehensions.
+- Update release notes and bump the active `0.3.0-dev.N` version when implementation lands.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Keep `.batch()` in the core RFC 088 surface.
+- [x] Keep `.collect()` fixed to `list[T]` for this RFC.
+- [x] Accept `Iterable[U]` results from `flat_map` callbacks.
+- [x] Define terminal methods as consuming iterators and defer full linear ownership enforcement beyond obvious compiler-detectable reuse.
+- [x] Make the stdlib iterator protocol carry default Incan implementations for the RFC 088 adapter/consumer surface where possible.
+
+### Stdlib / trait surface
+
+- [x] Add lazy adapter declarations to `Iterator[T]`.
+- [x] Add terminal consumer declarations to `Iterator[T]`.
+- [x] Expose `.batch()` with final partial-batch behavior.
+- [x] Keep `flat_map` typed against iterable callback results.
+
+### Typechecker / diagnostics
+
+- [x] Resolve RFC 088 methods on iterator values.
+- [x] Propagate element types through adapter chains.
+- [x] Validate callback arity and return types.
+- [x] Validate `.batch(size)` rejects invalid known sizes and reports runtime invalid sizes consistently.
+- [x] Detect and reject obvious same-binding reuse after terminal consumption where feasible.
+- [x] Emit adapter-specific diagnostics instead of generic missing-method errors.
+
+### Lowering / emission / runtime
+
+- [x] Lower lazy adapters without intermediate list materialization.
+- [x] Lower terminal consumers as consuming operations.
+- [x] Emit Rust iterator chains for standard adapters where equivalent.
+- [x] Add runtime/generated support for `.batch()`.
+- [x] Preserve existing collection iteration, comprehensions, and `for` loops.
+
+### Tests
+
+- [x] Typechecker tests for every adapter and terminal consumer.
+- [x] Typechecker tests for callback mismatch diagnostics.
+- [x] Typechecker tests for adapter chain element-type propagation.
+- [x] Tests for `flat_map` callbacks returning iterable values.
+- [x] Tests for `.batch()` partial final batch and invalid size.
+- [x] Codegen/emission tests for representative lazy chains.
+- [x] Integration tests for end-to-end iterator pipelines.
+- [x] Regression tests proving eager list comprehensions keep existing behavior.
+
+### Docs / release
+
+- [x] Update iterator or collection user docs with lazy pipeline examples.
+- [ ] Update generator docs only where RFC 088 changes cross-references or examples.
+- [x] Add release notes for the active `0.3` development line.
+- [x] Bump the active `0.3.0-dev.N` version.
+
+## Design Decisions
+
+- `.batch()` remains part of RFC 088 because fixed-size batching is a first-order data-processing use case and the RFC defines a narrow, predictable contract: preserve a final partial batch and reject invalid sizes.
+- `.collect()` returns `list[T]` in this RFC. Target-specific collection, such as collecting into sets, maps, or custom containers, is deferred until the collection-construction story is mature enough to specify cleanly.
+- `flat_map` accepts callbacks returning `Iterable[U]`. Requiring callbacks to return only `Iterator[U]` would force noisy `.iter()` calls in ordinary cases such as flattening lists or custom iterable fields.
+- Terminal consumers consume the iterator. Authors who need to preserve a reusable value should clone or otherwise create a separate iterator source before consuming. Full linear type-system enforcement is deferred; this RFC still allows the compiler to reject obvious same-binding reuse after a terminal consumer.
