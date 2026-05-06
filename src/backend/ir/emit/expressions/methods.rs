@@ -17,11 +17,9 @@ use super::super::{EmitError, IrEmitter};
 use incan_core::interop::RustCollectionFamily;
 
 mod collection_methods;
-mod iterator_methods;
 mod string_methods;
 
 use collection_methods::emit_collection_method;
-use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
 
 /// Compute common receiver setup for method emission.
@@ -362,7 +360,6 @@ impl<'a> IrEmitter<'a> {
         match kind {
             MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
-            MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Internal(InternalMethodKind::Slice) => self.emit_runtime_str_slice(&info, &arg_exprs),
         }
     }

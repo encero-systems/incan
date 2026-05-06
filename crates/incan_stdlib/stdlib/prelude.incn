@@ -6,7 +6,7 @@ To view the implementation of any trait, Cmd+click on the import
 from std.derives.string import Debug, Display
 from std.derives.comparison import Eq, Ord, Hash
 from std.derives.copying import Clone, Copy, Default
-from std.derives.collection import Contains, Bool, Len, Iterable, Iterator, Sum
+from std.derives.collection import Contains, Bool, Len, Iterable, Iterator
 from std.traits.convert import From, Into, TryFrom, TryInto
 from std.traits.ops import Add, Sub, Mul, Div, Neg, Mod
 from std.traits.error import Error

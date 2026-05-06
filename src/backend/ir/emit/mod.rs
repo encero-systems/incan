@@ -141,11 +141,6 @@ pub struct IrEmitter<'a> {
     /// Used by derive passthrough and newtype emission to locate the original Rust crate path for
     /// imported types.
     rust_import_paths: RefCell<std::collections::HashMap<String, Vec<String>>>,
-    /// Newtype -> selected checked constructor method.
-    ///
-    /// Backend-generated newtype construction, such as lifted iterator sums, uses this to preserve normal checked
-    /// construction behavior instead of directly invoking the tuple-struct constructor.
-    newtype_checked_ctor: HashMap<String, String>,
     /// Whether the currently emitted module contains any local `static` declarations.
     module_has_local_statics: RefCell<bool>,
     /// Whether expression emission is currently inside a static initializer.
@@ -207,7 +202,6 @@ impl<'a> IrEmitter<'a> {
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
-            newtype_checked_ctor: HashMap::new(),
             module_has_local_statics: RefCell::new(false),
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),

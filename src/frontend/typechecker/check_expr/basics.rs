@@ -4,7 +4,7 @@
 //! name resolution against the [`SymbolTable`], literal typing, and resolving `self` inside methods.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -16,16 +16,6 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker::check_expr) fn check_ident(&mut self, name: &str, span: Span) -> ResolvedType {
         // Note: `math` module requires `import math` (like Python).
         // When imported, it's registered as a Module symbol and found via normal lookup.
-
-        if let Some(consumed_span) = self.consumed_iterator_bindings.get(name).copied() {
-            self.errors.push(CompileError::type_error(
-                format!(
-                    "iterator binding `{name}` was consumed by a terminal iterator method at byte range {}..{}; clone or recreate the iterator before reusing it",
-                    consumed_span.start, consumed_span.end
-                ),
-                span,
-            ));
-        }
 
         let Some(sym) = self.lookup_symbol(name) else {
             self.errors.push(errors::unknown_symbol(name, span));

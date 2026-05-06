@@ -102,22 +102,15 @@ pub struct IrProgram {
     /// When present, `@rust.extern` functions in this program emit delegation calls to this Rust module path instead
     /// of compiling their Incan bodies. See RFC 023 for full design.
     pub rust_module_path: Option<String>,
-    /// Newtype -> selected checked constructor method.
-    ///
-    /// Backend-generated code uses this when it must construct a newtype while preserving normal
-    /// `from_underlying`/`from_*` validation semantics.
-    pub newtype_checked_ctor: std::collections::HashMap<String, String>,
 }
 
 impl IrProgram {
-    /// Create an empty IR program with no declarations and default metadata.
     pub fn new() -> Self {
         Self {
             declarations: Vec::new(),
             entry_point: None,
             function_registry: FunctionRegistry::new(),
             rust_module_path: None,
-            newtype_checked_ctor: std::collections::HashMap::new(),
         }
     }
 }

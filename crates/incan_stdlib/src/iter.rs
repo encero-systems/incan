@@ -2,7 +2,7 @@
 //!
 //! This module provides small iterator utilities with Python-like behavior.
 
-use crate::errors::{raise, raise_value_error};
+use crate::errors::raise;
 use incan_core::errors::IncanError;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
@@ -190,70 +190,6 @@ pub fn range(start: i64, end: i64, step: i64) -> PyRange {
     PyRange { cur: start, end, step }
 }
 
-/// Convert an Incan iterator count argument to a Rust `usize` for nonnegative-count adapters.
-///
-/// RFC 088 defines `take(n)` and `skip(n)` so values less than or equal to zero do not create large wrapped counts.
-/// This helper centralizes the signed-to-`usize` boundary for generated Rust.
-#[inline]
-pub fn nonnegative_count(n: i64) -> usize {
-    if n <= 0 {
-        return 0;
-    }
-    match usize::try_from(n) {
-        Ok(value) => value,
-        Err(_) => usize::MAX,
-    }
-}
-
-/// Lazy fixed-size batch adapter used by generated Rust for RFC 088 `.batch(size)`.
-#[derive(Debug, Clone)]
-pub struct Batch<I> {
-    iter: I,
-    size: usize,
-}
-
-impl<I> Iterator for Batch<I>
-where
-    I: Iterator,
-{
-    type Item = Vec<I::Item>;
-
-    /// Yield the next non-empty batch, including a final short batch when the source iterator is exhausted.
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut items = Vec::with_capacity(self.size);
-        for _ in 0..self.size {
-            let Some(item) = self.iter.next() else {
-                break;
-            };
-            items.push(item);
-        }
-        if items.is_empty() { None } else { Some(items) }
-    }
-}
-
-/// Create a lazy fixed-size batch adapter.
-///
-/// The final non-empty batch is yielded even when it contains fewer than `size` items. Invalid sizes raise
-/// `ValueError: iterator batch size must be greater than zero`.
-#[inline]
-pub fn batch<I>(iter: I, size: i64) -> Batch<I::IntoIter>
-where
-    I: IntoIterator,
-{
-    if size <= 0 {
-        raise_value_error("iterator batch size must be greater than zero");
-    }
-    let size = match usize::try_from(size) {
-        Ok(value) => value,
-        Err(_) => raise_value_error("iterator batch size is too large"),
-    };
-    Batch {
-        iter: iter.into_iter(),
-        size,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,31 +258,5 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(values.next(), Some(1));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn nonnegative_count_clamps_negative_values_to_zero() {
-        assert_eq!(nonnegative_count(-3), 0);
-        assert_eq!(nonnegative_count(0), 0);
-        assert_eq!(nonnegative_count(4), 4);
-    }
-
-    #[test]
-    fn batch_yields_fixed_size_batches_with_final_short_batch() {
-        let batches: Vec<Vec<i64>> = batch(0..5, 2).collect();
-        assert_eq!(batches, vec![vec![0, 1], vec![2, 3], vec![4]]);
-    }
-
-    #[test]
-    fn batch_is_lazy() {
-        let mut batches = batch(0.., 3);
-        assert_eq!(batches.next(), Some(vec![0, 1, 2]));
-        assert_eq!(batches.next(), Some(vec![3, 4, 5]));
-    }
-
-    #[test]
-    #[should_panic(expected = "ValueError: iterator batch size must be greater than zero")]
-    fn batch_zero_size_panics_with_value_error() {
-        let _ = batch(0..5, 0);
     }
 }
