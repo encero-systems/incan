@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::*;
-use crate::frontend::symbols::{CallableParam, FieldInfo, MethodInfo, ResolvedType, TypeBoundInfo};
+use crate::frontend::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::derives::{self, DeriveId};
 
@@ -287,6 +287,34 @@ pub(super) fn collect_fields(
                     has_default: f.node.default.is_some(),
                     alias: f.node.metadata.alias.clone(),
                     description: f.node.metadata.description.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Collect computed properties from property declarations into a `HashMap`.
+pub(super) fn collect_properties(
+    properties: &[Spanned<PropertyDecl>],
+    checker: &mut TypeChecker,
+    owner_name: Option<&str>,
+    owner_type_params: &[TypeParam],
+) -> HashMap<String, PropertyInfo> {
+    let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
+    properties
+        .iter()
+        .map(|property| {
+            (
+                property.node.name.clone(),
+                PropertyInfo {
+                    return_type: resolve_owner_self_reference(
+                        checker.resolve_type_checked(&property.node.return_type),
+                        owner_name,
+                        owner_self_ty.as_ref(),
+                    ),
+                    visibility: property.node.visibility,
+                    owner: owner_name.map(str::to_string),
+                    has_body: property.node.body.is_some(),
                 },
             )
         })

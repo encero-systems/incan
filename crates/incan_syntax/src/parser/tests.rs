@@ -6,6 +6,7 @@
 mod tests {
     use super::*;
     use crate::lexer;
+    use incan_core::lang::types::collections::{self, CollectionTypeId};
 
     fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;
@@ -1167,6 +1168,131 @@ def value(async: int) -> int:
 "#;
         parse_str(source)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_property_identifier_without_member_context_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def value(property: int) -> int:
+  return property
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.params[0].node.name, "property");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Dataset:
+  property schema_fields -> list[str]:
+    return self._fields
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.properties.len(), 1);
+        let property = &class.properties[0];
+        assert_eq!(property.node.name, "schema_fields");
+        assert!(matches!(property.node.visibility, Visibility::Private));
+        assert!(
+            matches!(property.node.return_type.node, Type::Generic(ref name, _) if collections::from_str(name) == Some(CollectionTypeId::List))
+        );
+        assert!(property.node.body.is_some());
+        assert!(
+            property.span.start < property.node.return_type.span.start
+                && property.node.return_type.span.end <= property.span.end,
+            "property span should enclose return type span"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_pub_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model User:
+  name: str
+
+  pub property display_name -> str:
+    return self.name
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.fields.len(), 1);
+        assert_eq!(model.properties.len(), 1);
+        let property = &model.properties[0].node;
+        assert_eq!(property.name, "display_name");
+        assert!(matches!(property.visibility, Visibility::Public));
+        assert!(property.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        let property = &trait_decl.properties[0].node;
+        assert_eq!(property.name, "area");
+        assert!(matches!(property.return_type.node, Type::Simple(ref name) if name == "float"));
+        assert!(property.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property_without_ellipsis() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        assert!(trait_decl.properties[0].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_abstract_property_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area -> float\n",
+            "bodyless properties outside traits should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected ':' after property return type")),
+            "expected property body diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_parameter_list_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area(self) -> float:\n    return 0.0\n",
+            "property declarations with parameter lists should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Computed properties do not accept parameter lists")),
+            "expected property parameter diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_declaration_modifier_is_focused_error() {
+        let errs = parse_str_err(
+            "import std.async\n\nclass Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
+            "property declarations with async modifiers should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Declaration modifiers are not supported on properties")),
+            "expected property modifier diagnostic, got: {errs:?}"
+        );
     }
 
     #[test]

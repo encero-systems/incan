@@ -1993,6 +1993,51 @@ pub def allocate_prism_store_id() -> int:
     }
 
     #[test]
+    fn test_format_source_computed_properties() -> Result<(), FormatError> {
+        let source = r#"class Dataset:
+  fields: list[str]
+  property schema_fields -> list[str]:
+    return self.fields
+  def len(self) -> int:
+    return 0
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"class Dataset:
+    fields: list[str]
+
+    property schema_fields -> list[str]:
+        return self.fields
+
+    def len(self) -> int:
+        return 0
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_trait_abstract_properties_stay_tight() -> Result<(), FormatError> {
+        let source = r#"trait HasShape:
+  property area -> float: ...
+  property perimeter -> float: ...
+  def describe(self) -> str:
+    return "shape"
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"trait HasShape:
+    property area -> float
+    property perimeter -> float
+
+    def describe(self) -> str:
+        return "shape"
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_with_custom_config_keeps_rfc053_spacing() -> Result<(), FormatError> {
         let source = r#"model User:
   def connect(self) -> None: ...

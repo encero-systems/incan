@@ -259,6 +259,35 @@ pub fn decorators_on_fields_not_supported(span: Span) -> CompileError {
     CompileError::syntax("Decorators on fields are not supported".to_string(), span)
 }
 
+/// Report decorators on a computed property declaration.
+pub fn decorators_on_properties_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Decorators on properties are not supported".to_string(), span)
+        .with_hint("Remove the decorator or use a `def` method")
+}
+
+/// Report declaration modifiers such as `async` or `static` before a computed property.
+pub fn property_modifiers_not_supported(span: Span) -> CompileError {
+    CompileError::syntax(
+        "Declaration modifiers are not supported on properties".to_string(),
+        span,
+    )
+    .with_hint("Declare the property as `property name -> Type:`")
+}
+
+/// Report a parameter list on a computed property declaration.
+pub fn property_parameters_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Computed properties do not accept parameter lists".to_string(), span)
+        .with_hint("Declare the property as `property name -> Type:`")
+}
+
+/// Report a concrete computed property declaration that is missing its body marker.
+pub fn property_decl_expected_body(span: Span) -> CompileError {
+    CompileError::syntax(
+        "Expected ':' after property return type or ': ...' for abstract property".to_string(),
+        span,
+    )
+}
+
 pub fn unknown_field_metadata_key(key: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Unknown field metadata key '{key}'"), span)
 }

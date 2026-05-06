@@ -17,11 +17,12 @@ mod stdlib_imports;
 
 use self::decl_helpers::{
     collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
-    inject_json_methods, inject_validate_methods,
+    collect_properties, inject_json_methods, inject_validate_methods,
 };
 
 type InheritedMembers = (
     HashMap<String, FieldInfo>,
+    HashMap<String, PropertyInfo>,
     HashMap<String, MethodInfo>,
     HashMap<String, Vec<MethodInfo>>,
 );
@@ -237,6 +238,7 @@ impl TypeChecker {
     /// Register a model declaration with its fields, methods, and derived traits.
     fn collect_model(&mut self, model: &ModelDecl, span: Span) {
         let fields = collect_fields(&model.fields, self, &model.name);
+        let properties = collect_properties(&model.properties, self, Some(&model.name), &model.type_params);
         let mut method_overloads =
             collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
@@ -264,6 +266,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                properties,
                 methods,
                 method_overloads,
                 method_aliases,
@@ -275,10 +278,16 @@ impl TypeChecker {
 
     /// Register a class declaration, inheriting from parent if present.
     fn collect_class(&mut self, class: &ClassDecl, span: Span) {
-        let (mut fields, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
+        let (mut fields, mut properties, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
         fields.extend(collect_fields(&class.fields, self, &class.name));
+        properties.extend(collect_properties(
+            &class.properties,
+            self,
+            Some(&class.name),
+            &class.type_params,
+        ));
 
         // Add own methods (can override inherited ones)
         let own_method_overloads =
@@ -301,6 +310,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                properties,
                 methods,
                 method_overloads,
                 method_aliases,
@@ -313,13 +323,14 @@ impl TypeChecker {
     /// Inherit fields and methods from a parent class if present.
     fn inherit_from_parent(&self, extends: &Option<String>) -> InheritedMembers {
         let Some(parent_name) = extends else {
-            return (HashMap::new(), HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
         };
         let Some(TypeInfo::Class(parent_info)) = self.lookup_type_info(parent_name) else {
-            return (HashMap::new(), HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
         };
         (
             parent_info.fields.clone(),
+            parent_info.properties.clone(),
             parent_info.methods.clone(),
             parent_info.method_overloads.clone(),
         )
@@ -345,6 +356,7 @@ impl TypeChecker {
     fn collect_trait(&mut self, tr: &TraitDecl, span: Span) {
         let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
+        let properties = collect_properties(&tr.properties, self, None, &tr.type_params);
         let method_aliases = collect_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
         let requires = self.extract_requires(&tr.decorators);
         if !tr.traits.is_empty() {
@@ -359,6 +371,7 @@ impl TypeChecker {
                 supertraits: Vec::new(),
                 methods,
                 method_aliases,
+                properties,
                 requires,
             }),
             span,

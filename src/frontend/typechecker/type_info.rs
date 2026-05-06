@@ -52,6 +52,11 @@ pub struct TypeCheckInfo {
     pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// RFC 046 computed property reads keyed by the full field-access expression span.
+    ///
+    /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while
+    /// still consuming the same resolved expression type map for the property return type.
+    pub computed_property_accesses: HashMap<(usize, usize), ComputedPropertyAccessInfo>,
     /// RFC 038: unpack operands whose static shape has been proven by call binding.
     ///
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
@@ -140,6 +145,13 @@ pub struct ProtocolIterationInfo {
     pub next_method: String,
     /// Element type unwrapped from `__next__() -> Option[T]`.
     pub item_type: ResolvedType,
+}
+
+/// Lowering metadata for one RFC 046 computed property read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputedPropertyAccessInfo {
+    pub owner_type: String,
+    pub property: String,
 }
 
 /// Operator expression shape for a resolved user-defined operator call.
@@ -234,6 +246,22 @@ impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
+    pub fn computed_property_access(&self, span: Span) -> Option<&ComputedPropertyAccessInfo> {
+        self.computed_property_accesses.get(&(span.start, span.end))
+    }
+
+    /// Record that a field-access expression resolved to a computed property read.
+    pub(crate) fn record_computed_property_access(&mut self, span: Span, owner_type: &str, property: &str) {
+        self.computed_property_accesses.insert(
+            (span.start, span.end),
+            ComputedPropertyAccessInfo {
+                owner_type: owner_type.to_string(),
+                property: property.to_string(),
+            },
+        );
     }
 
     /// Return the RFC 038 fixed/static unpack plan recorded for an unpack operand, if any.

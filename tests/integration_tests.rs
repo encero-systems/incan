@@ -1332,6 +1332,40 @@ def main() -> None:
 }
 
 #[test]
+fn rfc046_computed_properties_run_as_getters() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Named:
+  property label -> str
+
+model Money with Named:
+  cents: int
+
+  pub property adjusted -> int:
+    return self.cents + 1
+
+  property label -> str:
+    return "money"
+
+def main() -> None:
+  value = Money(cents=250)
+  println(value.adjusted)
+  println(value.label)
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected computed property program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "251\nmoney\n");
+    Ok(())
+}
+
+#[test]
 fn runtime_error_missing_dict_key_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
     assert_runtime_error_cli(
         "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",

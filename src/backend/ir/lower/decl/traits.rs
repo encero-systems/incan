@@ -9,6 +9,7 @@ use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
+use super::methods::PropertyLoweringMode;
 use crate::frontend::ast;
 use crate::frontend::symbols::ResolvedType;
 
@@ -48,7 +49,7 @@ impl AstLowering {
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
         let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let methods: Vec<IrFunction> = t
+        let mut methods: Vec<IrFunction> = t
             .methods
             .iter()
             .map(|m| {
@@ -138,6 +139,14 @@ impl AstLowering {
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+
+        for property in &t.properties {
+            methods.push(self.lower_property_with_type_params(
+                &property.node,
+                Some(&type_param_names),
+                PropertyLoweringMode::TraitDecl,
+            )?);
+        }
 
         let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info

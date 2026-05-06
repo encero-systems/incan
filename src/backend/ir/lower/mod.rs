@@ -630,7 +630,7 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
 
                             // Generate impl block (may be empty if no methods, serde methods added during emission)
-                            match self.lower_model_methods(&struct_ir.name, &m.type_params, &m.methods) {
+                            match self.lower_model_methods(&struct_ir.name, &m.type_params, &m.methods, &m.properties) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
@@ -653,6 +653,7 @@ impl AstLowering {
                                         &trait_name,
                                         trait_type_args,
                                         &m.methods,
+                                        &m.properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
@@ -684,10 +685,19 @@ impl AstLowering {
                             if let Err(e) = self.collect_inherited_methods(&c.name, &mut all_methods) {
                                 errors.push(e);
                             }
+                            let mut all_properties = Vec::new();
+                            if let Err(e) = self.collect_inherited_properties(&c.name, &mut all_properties) {
+                                errors.push(e);
+                            }
 
-                            // Generate impl block for all methods (inherited + own)
-                            if !all_methods.is_empty() {
-                                match self.lower_class_methods(&struct_ir.name, &c.type_params, &all_methods) {
+                            // Generate impl block for all methods/properties (inherited + own)
+                            if !all_methods.is_empty() || !all_properties.is_empty() {
+                                match self.lower_class_methods(
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                    &all_methods,
+                                    &all_properties,
+                                ) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -711,6 +721,7 @@ impl AstLowering {
                                         &trait_name,
                                         trait_type_args,
                                         &all_methods,
+                                        &all_properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
@@ -744,7 +755,7 @@ impl AstLowering {
 
                             // Generate impl block for newtype methods (if any).
                             if !n.methods.is_empty() {
-                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods) {
+                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[]) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -787,6 +798,7 @@ impl AstLowering {
                                     &trait_name,
                                     trait_type_args,
                                     &e.methods,
+                                    &[],
                                 ) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));

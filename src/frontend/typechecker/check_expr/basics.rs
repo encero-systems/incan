@@ -38,6 +38,7 @@ impl TypeChecker {
             SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
+            SymbolKind::Property(info) => (IdentKind::Value, info.return_type.clone()),
             SymbolKind::Module(info) => {
                 // Some `from rust::... import ...` forms are represented as module symbols instead of dedicated
                 // Rust-module placeholders. Keep them on the external-Rust path, but do not guess a concrete type from

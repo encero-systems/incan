@@ -546,22 +546,46 @@ impl AstLowering {
                 // Prefer spanned lowering so typechecker output can drive the receiver type.
                 // This is important for RFC 021 alias-aware field access, especially for `self.<alias>`.
                 let obj = self.lower_expr_spanned(o)?;
-                // RFC 021: resolve field alias to canonical name if object is a known struct type
-                let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
-                    IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
-                    _ => None,
-                });
-                let field = match struct_name {
-                    Some(struct_name) => self.resolve_field_alias(struct_name, f),
-                    None => f.clone(),
-                };
-                (
-                    IrExprKind::Field {
-                        object: Box::new(obj),
-                        field,
-                    },
-                    IrType::Unknown,
-                )
+                if let Some(access) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.computed_property_access(expr_span))
+                {
+                    let result_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(obj),
+                            method: access.property.clone(),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        result_ty,
+                    )
+                } else {
+                    // RFC 021: resolve field alias to canonical name if object is a known struct type
+                    let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
+                        IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
+                        _ => None,
+                    });
+                    let field = match struct_name {
+                        Some(struct_name) => self.resolve_field_alias(struct_name, f),
+                        None => f.clone(),
+                    };
+                    (
+                        IrExprKind::Field {
+                            object: Box::new(obj),
+                            field,
+                        },
+                        IrType::Unknown,
+                    )
+                }
             }
 
             // ---- Surface expressions (routed through semantics registry) ----

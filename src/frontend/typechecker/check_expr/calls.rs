@@ -62,6 +62,11 @@ impl TypeChecker {
                 self.check_call_args(args);
                 return ResolvedType::Named(enum_name.clone());
             }
+            if self.receiver_has_computed_property(&base_ty, member_name, span) {
+                self.check_call_args(args);
+                self.errors.push(errors::property_called_as_method(member_name, span));
+                return ResolvedType::Unknown;
+            }
         }
 
         // Imported module function calls whose signatures are known via the stdlib AST cache

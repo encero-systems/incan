@@ -20,7 +20,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (mut fields, method_aliases, methods) = self.fields_and_methods()?;
+        let (mut fields, method_aliases, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after model body")?;
 
@@ -40,6 +40,7 @@ impl<'a> Parser<'a> {
             docstring,
             fields,
             method_aliases,
+            properties,
             methods,
         })
     }
@@ -72,7 +73,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (fields, method_aliases, methods) = self.fields_and_methods()?;
+        let (fields, method_aliases, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after class body")?;
 
@@ -86,6 +87,7 @@ impl<'a> Parser<'a> {
             docstring,
             fields,
             method_aliases,
+            properties,
             methods,
         })
     }
@@ -111,6 +113,7 @@ impl<'a> Parser<'a> {
         let docstring = self.optional_leading_block_docstring();
 
         let mut method_aliases = Vec::new();
+        let mut properties = Vec::new();
         let mut methods = Vec::new();
         // Allow empty trait body with just 'pass'
         if self.match_keyword(KeywordId::Pass) {
@@ -129,6 +132,8 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     method_aliases.push(self.method_alias_decl()?);
+                } else if self.starts_property_decl() {
+                    properties.push(self.property_decl(method_decorators, true)?);
                 } else {
                     methods.push(self.method_decl(method_decorators)?);
                 }
@@ -146,6 +151,7 @@ impl<'a> Parser<'a> {
             traits,
             docstring,
             method_aliases,
+            properties,
             methods,
         })
     }
@@ -154,6 +160,7 @@ impl<'a> Parser<'a> {
     fn fields_and_methods(&mut self) -> Result<FieldsAndMethods, CompileError> {
         let mut fields = Vec::new();
         let mut method_aliases = Vec::new();
+        let mut properties = Vec::new();
         let mut methods = Vec::new();
 
         self.skip_newlines();
@@ -173,6 +180,8 @@ impl<'a> Parser<'a> {
             // Check if it's a method (`def` or surface-modifier-prefixed `def`).
             if self.starts_surface_function_decl() {
                 methods.push(self.method_decl(decorators)?);
+            } else if self.starts_surface_property_decl() {
+                properties.push(self.property_decl(decorators, false)?);
             } else if self.starts_method_alias_decl() {
                 if !decorators.is_empty() {
                     return Err(CompileError::syntax(
@@ -191,7 +200,48 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
 
-        Ok((fields, method_aliases, methods))
+        Ok((fields, method_aliases, properties, methods))
+    }
+
+    /// Return whether the current tokens start a contextual RFC 046 property declaration.
+    fn starts_property_decl(&self) -> bool {
+        self.peek_ident_text("property")
+    }
+
+    /// Return whether the current tokens start either a plain property or a modifier-prefixed property declaration.
+    fn starts_surface_property_decl(&self) -> bool {
+        let mut idx = self.pos;
+        if matches!(
+            self.tokens.get(idx).map(|token| &token.kind),
+            Some(TokenKind::Keyword(KeywordId::Pub))
+        ) {
+            idx += 1;
+        }
+
+        let mut saw_modifier = false;
+        while let Some(token) = self.tokens.get(idx) {
+            let id = match &token.kind {
+                TokenKind::Keyword(id) => Some(*id),
+                TokenKind::Ident(name) => incan_core::lang::keywords::from_str(name),
+                _ => None,
+            };
+            let Some(id) = id else {
+                break;
+            };
+            if !self.active_soft_keywords.contains(&id)
+                || !self.keyword_supports_surface_usage(id, KeywordSurfaceKind::DeclarationModifier)
+            {
+                break;
+            }
+            saw_modifier = true;
+            idx += 1;
+        }
+
+        (idx == self.pos || saw_modifier || self.check_keyword(KeywordId::Pub))
+            && matches!(
+                self.tokens.get(idx).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "property"
+            )
     }
 
     /// Return whether the current token pair starts a same-type method alias declaration.
