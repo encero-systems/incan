@@ -178,6 +178,8 @@ nav:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
+          - Compile time and runtime: language/explanation/compile_time_and_runtime.md
+          - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
