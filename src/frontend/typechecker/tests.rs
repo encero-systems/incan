@@ -3702,6 +3702,161 @@ def f(i: Intl) -> str:
 }
 
 #[test]
+fn test_computed_property_read_typechecks_and_records_access() -> Result<(), String> {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    assert_eq!(checker.type_info.computed_property_accesses.len(), 1);
+    let access = checker
+        .type_info
+        .computed_property_accesses
+        .values()
+        .next()
+        .ok_or_else(|| "expected computed property access metadata".to_string())?;
+    assert_eq!(access.owner_type, "Account");
+    assert_eq!(access.property, "dollars");
+    Ok(())
+}
+
+#[test]
+fn test_computed_property_call_syntax_is_rejected() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars()
+"#;
+    let errors = check_str_err(source, "expected computed property call error");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Computed property 'dollars' is not callable")),
+        "expected property call diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_computed_property_body_return_type_is_checked() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return "free"
+"#;
+    let errors = check_str_err(source, "expected computed property return mismatch");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type mismatch: expected 'int', found 'str'")),
+        "expected property return mismatch diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_must_be_implemented() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+"#;
+    let errors = check_str_err(source, "expected missing trait property error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires property 'label' to be implemented")),
+        "expected missing trait property diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_accepts_matching_property() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+
+  property label -> str:
+    return self.name
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_trait_computed_property_body_is_rejected() {
+    let source = r#"
+trait Named:
+  property label -> str:
+    return "name"
+"#;
+    let errors = check_str_err(source, "expected trait property body error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' property 'label' cannot define a body")),
+        "expected trait property body diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_member_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  property cents -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.cents' declared as both field and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_method_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  def total(self) -> int:
+    return self.cents
+
+  property total -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property method member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.total' declared as both method and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
 fn test_alias_self_keyword() {
     let source = r#"
 model Data:

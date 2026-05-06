@@ -740,6 +740,33 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
+/// Report a concrete type that has not implemented a required trait property.
+pub fn missing_trait_property(trait_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait '{}' requires property '{}' to be implemented",
+            trait_name, property
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Add the required property: property {} -> ReturnType:",
+        property
+    ))
+    .with_note("All required trait properties must be implemented")
+}
+
+/// Report a body on a trait property requirement.
+pub fn trait_property_body_not_supported(trait_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{}' property '{}' cannot define a body", trait_name, property),
+        span,
+    )
+    .with_hint(
+        "Declare the abstract requirement as `property name -> Type` and provide the body in each implementation",
+    )
+}
+
 pub fn trait_method_signature_mismatch(
     trait_name: &str,
     type_name: &str,
@@ -758,6 +785,60 @@ pub fn trait_method_signature_mismatch(
     .with_note(format!("Expected: {expected_sig}"))
     .with_note(format!("Found:    {found_sig}"))
     .with_hint("Update the method signature to match the trait requirement")
+}
+
+/// Report a computed property whose return type does not match the adopted trait requirement.
+pub fn trait_property_signature_mismatch(
+    trait_name: &str,
+    type_name: &str,
+    property: &str,
+    expected: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait '{}' requires '{}'::{} to match its property type",
+            trait_name, type_name, property
+        ),
+        span,
+    )
+    .with_note(format!("Expected: property {property} -> {expected}"))
+    .with_note(format!("Found:    property {property} -> {found}"))
+    .with_hint("Update the property return type to match the trait requirement")
+}
+
+/// Report incompatible same-name property requirements from two adopted traits.
+pub fn trait_property_conflict(trait_a: &str, trait_b: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Conflicting implementations: both {} and {} define property '{}'",
+            trait_a, trait_b, property
+        ),
+        span,
+    )
+    .with_hint("Resolve the conflict by declaring a compatible property on the adopting trait or concrete type")
+}
+
+/// Report an ambiguous property requirement inherited through multiple supertraits.
+pub fn supertrait_property_ambiguity(
+    adopted_trait: &str,
+    property: &str,
+    via_a: &str,
+    via_b: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Ambiguous trait property '{}' when adopting '{}' — supertraits '{}' and '{}' disagree",
+            property, adopted_trait, via_a, via_b
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Declare `property {property} -> Type:` on '{}' or on the concrete type to disambiguate",
+        adopted_trait
+    ))
 }
 
 pub fn trait_required_field_type_mismatch(
@@ -962,6 +1043,19 @@ pub fn missing_field(type_name: &str, field: &str, span: Span) -> CompileError {
 pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)
         .with_hint("Access this field from a method on the declaring class, or mark the field `pub`")
+}
+
+/// Report access to a class computed property that is not visible from the current member-access context.
+pub fn private_property(type_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Property '{property}' on '{type_name}' is private"), span)
+        .with_hint("Access this property from a method on the declaring class, or mark the property `pub`")
+}
+
+/// Report a computed property selected with method-call syntax.
+pub fn property_called_as_method(property: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Computed property '{}' is not callable", property), span)
+        .with_hint(format!("Use `.{property}` without parentheses"))
+        .with_note("Computed properties are read with field-like syntax")
 }
 
 pub fn missing_method(type_name: &str, method: &str, span: Span) -> CompileError {

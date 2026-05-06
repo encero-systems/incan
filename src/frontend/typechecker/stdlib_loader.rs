@@ -613,6 +613,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                     supertraits,
                     methods,
                     method_aliases: std::collections::HashMap::new(),
+                    properties: std::collections::HashMap::new(),
                     requires: Vec::new(),
                 },
             ));
@@ -643,6 +644,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&model.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),
@@ -663,6 +665,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),

@@ -1496,6 +1496,21 @@ fn test_models_codegen() {
 }
 
 #[test]
+fn test_rfc046_computed_properties_codegen() {
+    let source = load_test_file("rfc046_computed_properties");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub fn dollars(&self) -> i64"),
+        "public computed properties should emit as Rust methods:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("value.dollars() + value.cents"),
+        "computed property reads must emit getter calls, not field reads:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc046_computed_properties", rust_code);
+}
+
+#[test]
 fn test_list_pop_clone_only_model_codegen() {
     let source = load_test_file("list_pop_clone_only_model");
     let rust_code = generate_rust(&source);

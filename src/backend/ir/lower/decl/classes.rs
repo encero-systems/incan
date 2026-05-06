@@ -123,4 +123,23 @@ impl AstLowering {
         }
         Ok(())
     }
+
+    /// Recursively collect all computed properties from this class and parent classes.
+    pub(in crate::backend::ir::lower) fn collect_inherited_properties(
+        &self,
+        class_name: &str,
+        properties: &mut Vec<Spanned<ast::PropertyDecl>>,
+    ) -> Result<(), LoweringError> {
+        if let Some(class) = self.class_decls.get(class_name) {
+            if let Some(parent_name) = &class.extends {
+                self.collect_inherited_properties(parent_name, properties)?;
+            }
+
+            for property in &class.properties {
+                properties.retain(|existing| existing.node.name != property.node.name);
+                properties.push(property.clone());
+            }
+        }
+        Ok(())
+    }
 }

@@ -851,6 +851,95 @@ impl TypeChecker {
         Some(field_info)
     }
 
+    /// Resolve a declared computed property on a nominal user-defined type, applying generic substitutions.
+    fn resolve_nominal_property_type(
+        &mut self,
+        type_name: &str,
+        type_args: Option<&[ResolvedType]>,
+        property: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let type_info = self.lookup_semantic_type_info(type_name)?;
+        match type_info {
+            TypeInfo::Model(model) => {
+                let info = model.properties.get(property)?;
+                let return_type = if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&model.type_params, args);
+                    substitute_resolved_type(&info.return_type, &subst)
+                } else {
+                    info.return_type.clone()
+                };
+                self.type_info
+                    .record_computed_property_access(span, type_name, property);
+                Some(return_type)
+            }
+            TypeInfo::Class(class) => {
+                let info = class.properties.get(property)?;
+                let owner = info.owner.as_deref().unwrap_or(type_name);
+                if matches!(info.visibility, Visibility::Private) && self.current_method_owner.as_deref() != Some(owner)
+                {
+                    self.errors.push(errors::private_property(type_name, property, span));
+                    return Some(ResolvedType::Unknown);
+                }
+                let return_type = if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&class.type_params, args);
+                    substitute_resolved_type(&info.return_type, &subst)
+                } else {
+                    info.return_type.clone()
+                };
+                self.type_info
+                    .record_computed_property_access(span, type_name, property);
+                Some(return_type)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return whether the receiver has a computed property with this name.
+    pub(in crate::frontend::typechecker::check_expr) fn receiver_has_computed_property(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        property: &str,
+        span: Span,
+    ) -> bool {
+        match receiver_ty {
+            ResolvedType::Named(type_name) => self
+                .resolve_nominal_property_type(type_name, None, property, span)
+                .is_some(),
+            ResolvedType::Generic(type_name, type_args) => self
+                .resolve_nominal_property_type(type_name, Some(type_args.as_slice()), property, span)
+                .is_some(),
+            ResolvedType::TypeVar(name) => self
+                .resolve_generic_placeholder_property(name, property, span)
+                .is_some(),
+            _ => false,
+        }
+    }
+
+    /// Resolve a computed property on an active generic placeholder bound (`T with Trait[...]`).
+    fn resolve_generic_placeholder_property(
+        &mut self,
+        placeholder_name: &str,
+        property: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let mut active_bounds = Vec::new();
+        for frame in self.current_type_param_bound_details.iter().rev() {
+            if let Some(bounds) = frame.get(placeholder_name) {
+                active_bounds = bounds.clone();
+                break;
+            }
+        }
+        for bound in &active_bounds {
+            if let Some(info) = self.trait_property_info_resolved_for_adoption(bound, property, span) {
+                self.type_info
+                    .record_computed_property_access(span, &bound.name, property);
+                return Some(info.return_type);
+            }
+        }
+        None
+    }
+
     /// Resolve and validate a method call on a rust-inspect-backed path.
     ///
     /// Returns:
@@ -1738,7 +1827,14 @@ impl TypeChecker {
                 // Trait default methods typecheck against `Self`, but field access must be declared via
                 // `@requires(...)` on the trait.
                 ResolvedType::SelfType => checker
-                    .trait_required_field_type(field, span)
+                    .current_trait_properties
+                    .as_ref()
+                    .and_then(|properties| properties.get(field))
+                    .map(|info| {
+                        checker.type_info.record_computed_property_access(span, "Self", field);
+                        info.return_type.clone()
+                    })
+                    .or_else(|| checker.trait_required_field_type(field, span))
                     .unwrap_or(ResolvedType::Unknown),
                 ResolvedType::Tuple(elements) => {
                     if let Ok(idx) = field.parse::<usize>()
@@ -1753,6 +1849,9 @@ impl TypeChecker {
                     if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
                         return field_ty;
                     }
+                    if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
+                        return property_ty;
+                    }
                     checker.errors.push(errors::missing_field(type_name, field, span));
                     ResolvedType::Unknown
                 }
@@ -1762,7 +1861,19 @@ impl TypeChecker {
                     {
                         return field_ty;
                     }
+                    if let Some(property_ty) =
+                        checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
+                    {
+                        return property_ty;
+                    }
                     checker.errors.push(errors::missing_field(type_name, field, span));
+                    ResolvedType::Unknown
+                }
+                ResolvedType::TypeVar(name) => {
+                    if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
+                        return property_ty;
+                    }
+                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
                     ResolvedType::Unknown
                 }
                 _ => {
@@ -1944,6 +2055,11 @@ impl TypeChecker {
                 | CallArg::KeywordUnpack(e) => self.check_expr(e),
             })
             .collect();
+
+        if self.receiver_has_computed_property(&base_ty, method, span) {
+            self.errors.push(errors::property_called_as_method(method, span));
+            return ResolvedType::Unknown;
+        }
 
         if let Some(ret) = self.resolve_iterator_protocol_method_call(&base_ty, method, args, &arg_types, span) {
             self.mark_direct_iterator_binding_consumed(base, method, span);

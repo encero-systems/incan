@@ -54,9 +54,9 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo,
+    ComputedPropertyAccessInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall,
+    ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
 };
 #[cfg(test)]
 mod tests;
@@ -144,6 +144,8 @@ pub struct TypeChecker {
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
+    /// Active trait computed-property contract for default member bodies.
+    pub(crate) current_trait_properties: Option<HashMap<String, PropertyInfo>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
     /// Active nominal owner while checking a method body.
@@ -246,6 +248,7 @@ impl TypeChecker {
             in_async_body: false,
             loop_stack: Vec::new(),
             current_trait_requires: None,
+            current_trait_properties: None,
             current_trait_name: None,
             current_method_owner: None,
             current_classmethod_self_ty: None,
@@ -2359,16 +2362,47 @@ impl TypeChecker {
                     }
                 }
                 Declaration::Model(model) => {
-                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods)
+                    self.validate_member_name_collisions(
+                        &model.name,
+                        &model.fields,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &model.name,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    )
                 }
                 Declaration::Class(class) => {
-                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods)
+                    self.validate_member_name_collisions(
+                        &class.name,
+                        &class.fields,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &class.name,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    )
                 }
                 Declaration::Trait(tr) => {
-                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
+                    self.validate_member_name_collisions(
+                        &tr.name,
+                        &[],
+                        &tr.method_aliases,
+                        &tr.properties,
+                        &tr.methods,
+                    );
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
                 }
                 Declaration::Newtype(nt) => {
-                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
                 }
                 _ => {}
             }
@@ -2405,14 +2439,19 @@ impl TypeChecker {
         &mut self,
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
         let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
         let mut alias_targets = HashMap::new();
         let mut alias_names = HashSet::new();
 
         for alias in aliases {
-            if !alias_names.insert(alias.node.name.as_str()) || method_names.contains(alias.node.name.as_str()) {
+            if !alias_names.insert(alias.node.name.as_str())
+                || method_names.contains(alias.node.name.as_str())
+                || property_names.contains(alias.node.name.as_str())
+            {
                 self.errors.push(CompileError::type_error(
                     format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
                     alias.span,
@@ -2431,6 +2470,62 @@ impl TypeChecker {
         }
 
         self.validate_method_alias_cycles(owner, &alias_targets);
+    }
+
+    /// Reject computed property names that collide with storage fields, aliases, properties, or methods.
+    fn validate_member_name_collisions(
+        &mut self,
+        owner: &str,
+        fields: &[Spanned<FieldDecl>],
+        aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let mut seen: HashMap<&str, (&str, Span)> = HashMap::new();
+        for field in fields {
+            seen.entry(field.node.name.as_str()).or_insert(("field", field.span));
+        }
+        for alias in aliases {
+            seen.entry(alias.node.name.as_str())
+                .or_insert(("method alias", alias.span));
+        }
+        let mut method_seen: HashMap<&str, Span> = HashMap::new();
+        for method in methods {
+            if method_seen.insert(method.node.name.as_str(), method.span).is_none()
+                && !seen.contains_key(method.node.name.as_str())
+            {
+                seen.insert(method.node.name.as_str(), ("method", method.span));
+            }
+        }
+        for property in properties {
+            self.validate_one_member_name(owner, "property", property.node.name.as_str(), property.span, &mut seen);
+        }
+    }
+
+    /// Validate one property name against the member names already used in the same owner declaration.
+    fn validate_one_member_name<'a>(
+        &mut self,
+        owner: &str,
+        kind: &'static str,
+        name: &'a str,
+        span: Span,
+        seen: &mut HashMap<&'a str, (&'static str, Span)>,
+    ) {
+        if let Some((previous_kind, previous_span)) = seen.insert(name, (kind, span)) {
+            self.errors.push(
+                CompileError::type_error(
+                    format!(
+                        "Duplicate member '{}.{}' declared as both {} and {}",
+                        owner, name, previous_kind, kind
+                    ),
+                    span,
+                )
+                .with_note(format!(
+                    "First declaration span: {}..{}",
+                    previous_span.start, previous_span.end
+                )),
+            );
+        }
     }
 
     /// Reject direct and indirect cycles between method aliases on one owner type.
@@ -2621,6 +2716,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2639,6 +2735,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2654,6 +2751,7 @@ impl TypeChecker {
                         type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         methods: HashMap::new(),
                         method_aliases: HashMap::new(),
+                        properties: HashMap::new(),
                         requires: Vec::new(),
                         supertraits: Vec::new(),
                     }),

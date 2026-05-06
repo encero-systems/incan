@@ -483,6 +483,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Model(model) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&model.name, &model.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: model.name.clone(),
                     kind: "model".to_string(),
@@ -491,6 +494,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Class(class) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&class.name, &class.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: class.name.clone(),
                     kind: "class".to_string(),
@@ -499,6 +505,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Trait(tr) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&tr.name, &tr.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: tr.name.clone(),
                     kind: "trait".to_string(),
@@ -1164,6 +1173,51 @@ enum HttpStatus(int):
 }
 
 #[cfg(test)]
+mod lsp_computed_property_tests {
+    use super::{find_property_symbol_info, format_property_signature};
+    use crate::frontend::ast::Declaration;
+    use crate::frontend::{lexer, parser};
+
+    #[test]
+    fn computed_property_hover_surfaces_owner_and_type() -> Result<(), String> {
+        let source = r#"
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let model = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model declaration".to_string())?;
+        let property = model
+            .properties
+            .first()
+            .ok_or_else(|| "expected computed property".to_string())?;
+
+        assert_eq!(
+            format_property_signature(&model.name, &property.node),
+            "property Account.dollars -> int"
+        );
+        let offset = source
+            .find("dollars")
+            .ok_or_else(|| "expected property name in source".to_string())?;
+        let info = find_property_symbol_info(&model.name, &model.properties, offset)
+            .ok_or_else(|| "expected property hover symbol".to_string())?;
+        assert_eq!(info.kind, "property");
+        assert_eq!(info.detail, "property Account.dollars -> int");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod lsp_contract_model_command_tests {
     use super::{
         ContractModelCommandFormat, emit_contract_model_command_payload, parse_emit_contract_model_command_args,
@@ -1281,6 +1335,35 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     sig.push_str(&format_type(&func.return_type.node));
 
     sig
+}
+
+/// Format a computed property declaration for hover and completion details.
+fn format_property_signature(owner: &str, property: &crate::frontend::ast::PropertyDecl) -> String {
+    format!(
+        "property {}.{} -> {}",
+        owner,
+        property.name,
+        format_type(&property.return_type.node)
+    )
+}
+
+/// Return symbol information when an offset falls inside a computed property declaration.
+fn find_property_symbol_info(
+    owner: &str,
+    properties: &[crate::frontend::ast::Spanned<crate::frontend::ast::PropertyDecl>],
+    offset: usize,
+) -> Option<SymbolInfo> {
+    for property in properties {
+        if property.span.start <= offset && offset < property.span.end {
+            return Some(SymbolInfo {
+                name: property.node.name.clone(),
+                kind: "property".to_string(),
+                detail: format_property_signature(owner, &property.node),
+                span: property.span,
+            });
+        }
+    }
+    None
 }
 
 /// Format a Type for display
@@ -3162,6 +3245,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &model.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&model.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Class(class) => {
                         push_completion(
@@ -3196,6 +3289,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &class.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&class.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Trait(tr) => {
                         push_completion(
@@ -3206,6 +3309,16 @@ impl LanguageServer for IncanLanguageServer {
                             Some(format!("trait {}", tr.name)),
                             None,
                         );
+                        for property in &tr.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&tr.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Enum(en) => {
                         push_completion(

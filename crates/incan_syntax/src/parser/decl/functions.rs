@@ -103,6 +103,83 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse an RFC 046 computed property declaration in a member-bearing type body.
+    fn property_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        allow_abstract: bool,
+    ) -> Result<Spanned<PropertyDecl>, CompileError> {
+        let start = self.current_span().start;
+        if !decorators.is_empty() {
+            return Err(errors::decorators_on_properties_not_supported(decorators[0].span));
+        }
+
+        let visibility = if self.match_keyword(KeywordId::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+
+        let modifier_start = self.current_span();
+        let mut has_surface_modifier = false;
+        while self
+            .match_surface_keyword(KeywordSurfaceKind::DeclarationModifier)
+            .is_some()
+        {
+            has_surface_modifier = true;
+        }
+        if has_surface_modifier {
+            return Err(errors::property_modifiers_not_supported(modifier_start));
+        }
+
+        if !self.match_ident_text("property") {
+            return Err(errors::expected_token_message(
+                "Expected 'property'",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let name = self.identifier_or_from_keyword()?;
+        if self.check_punct(PunctuationId::LParen) {
+            return Err(errors::property_parameters_not_supported(self.current_span()));
+        }
+        self.expect_punct(PunctuationId::Arrow, "Expected '->' before property return type")?;
+        let return_type = self.type_expr()?;
+
+        let body = if self.check(&TokenKind::Newline) {
+            if !allow_abstract {
+                return Err(errors::property_decl_expected_body(self.current_span()));
+            }
+            None
+        } else if self.match_punct(PunctuationId::Colon) {
+            if self.match_punct(PunctuationId::Ellipsis) {
+                if !allow_abstract {
+                    return Err(errors::property_decl_expected_body(self.current_span()));
+                }
+                None
+            } else {
+                self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+                self.expect_suite_indent("Expected indented block")?;
+                let body = self.block()?;
+                self.expect(&TokenKind::Dedent, "Expected dedent after property body")?;
+                Some(body)
+            }
+        } else {
+            return Err(errors::property_decl_expected_body(self.current_span()));
+        };
+
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            PropertyDecl {
+                visibility,
+                name,
+                return_type,
+                body,
+            },
+            Span::new(start, end),
+        ))
+    }
+
     /// Parse a receiver and parameters.
     fn receiver_and_params(
         &mut self,
