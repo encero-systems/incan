@@ -916,11 +916,11 @@ impl<'a> IrEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::expr::{
         CollectionMethodKind, IrCallArg, IrCallArgKind, IteratorMethodKind, MethodCallArgPolicy, MethodKind, VarAccess,
         VarRefKind,
     };
+    use crate::backend::ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
     use incan_core::lang::traits::{self as core_traits, TraitId};
 
     #[test]
@@ -1086,7 +1086,17 @@ mod tests {
                         expr: TypedExpr::new(IrExprKind::Bool(true), IrType::Bool),
                     },
                 ],
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "k".to_string(),
+                        ty: IrType::Ref(Box::new(IrType::Generic("Q".to_string()))),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Option(Box::new(IrType::Ref(Box::new(IrType::Int)))),
+                }),
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("Dataset".to_string()),
