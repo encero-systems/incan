@@ -2,6 +2,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
@@ -446,6 +447,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate assignment to an object field and check the assigned value against the resolved field type.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
@@ -481,6 +483,41 @@ impl TypeChecker {
                 let field_type = match type_info {
                     TypeInfo::Model(model) => model.fields.get(field).map(|f| f.ty.clone()),
                     TypeInfo::Class(class) => class.fields.get(field).map(|f| f.ty.clone()),
+                    _ => None,
+                };
+
+                match field_type {
+                    Some(expected_ty) => {
+                        let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
+                        if !self.types_compatible(&value_ty, &expected_ty) {
+                            self.errors.push(errors::field_type_mismatch(
+                                field,
+                                &expected_ty.to_string(),
+                                &value_ty.to_string(),
+                                field_assign.value.span,
+                            ));
+                        }
+                    }
+                    None => {
+                        self.errors.push(errors::missing_field(type_name, field, span));
+                    }
+                }
+            }
+            ResolvedType::Generic(type_name, type_args) => {
+                let Some(type_info) = self.lookup_type_info(type_name) else {
+                    // Type not found — already reported elsewhere
+                    return;
+                };
+
+                let field_type = match type_info {
+                    TypeInfo::Model(model) => model.fields.get(field).map(|f| {
+                        let subst = type_param_subst_map(&model.type_params, type_args);
+                        substitute_resolved_type(&f.ty, &subst)
+                    }),
+                    TypeInfo::Class(class) => class.fields.get(field).map(|f| {
+                        let subst = type_param_subst_map(&class.type_params, type_args);
+                        substitute_resolved_type(&f.ty, &subst)
+                    }),
                     _ => None,
                 };
 

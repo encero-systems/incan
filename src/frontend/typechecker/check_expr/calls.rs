@@ -10,6 +10,7 @@ use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 use super::TypeChecker;
@@ -126,6 +127,9 @@ impl TypeChecker {
 
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
+                    SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
+                        return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                    }
                     SymbolKind::Function(func_info) => {
                         return self.validate_function_call(name, &func_info, type_args, args, span);
                     }
@@ -246,5 +250,44 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Type-check RFC 047 graph direct constructors (`DiGraph[T]()`, `Dag[T]()`, `MultiDiGraph[T]()`).
+    fn check_graph_constructor_call(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity(name, 0, args.len(), span));
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
+
+        let type_params = match type_info {
+            TypeInfo::Newtype(info) => info.type_params.as_slice(),
+            TypeInfo::Class(info) => info.type_params.as_slice(),
+            TypeInfo::Model(info) => info.type_params.as_slice(),
+            TypeInfo::Enum(info) => info.type_params.as_slice(),
+            TypeInfo::TypeAlias | TypeInfo::Builtin => &[],
+        };
+        if type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        let resolved_args = type_args
+            .iter()
+            .map(|ty| self.resolve_type_checked(ty))
+            .collect::<Vec<_>>();
+        ResolvedType::Generic(name.to_string(), resolved_args)
     }
 }

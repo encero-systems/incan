@@ -15,6 +15,7 @@ use crate::frontend::symbols::{CallableParam, ResolvedType};
 use crate::frontend::typechecker::ResolvedOperatorKind;
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
@@ -305,6 +306,32 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
+                let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
+                let receiver_ty = if lowered_type_args.is_empty() {
+                    IrType::Struct(constructor_name.clone())
+                } else {
+                    IrType::NamedGeneric(constructor_name.clone(), lowered_type_args.clone())
+                };
+                return Ok((
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: constructor_name,
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::TypeName,
+                            },
+                            receiver_ty.clone(),
+                        )),
+                        method: "__incan_new".to_string(),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    receiver_ty,
+                ));
+            }
             if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
                 && matches!(self.lookup_var(name), IrType::Unknown)
                 && let Some(owner_name) = self.current_classmethod_constructor.clone()
