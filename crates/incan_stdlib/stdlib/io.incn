@@ -1,0 +1,788 @@
+from rust::std::cell import RefCell
+from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
+from rust::std::rc import Rc
+from rust::std::vec import Vec
+from rust::byteorder @ "1" import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from std.traits.error import Error
+
+
+@derive(Clone)
+pub model IoError with Error:
+    """
+    In-memory binary I/O failure.
+
+    `operation` names the failed `std.io` action. `kind` is stable enough for branching on common failures such as
+    `invalid_input`, `unexpected_eof`, and `other`. `detail` keeps the human-readable context.
+
+    Example:
+
+    ```incan
+    match BytesIO(b"AB").read_exact(4):
+        Ok(data) => println(len(data))
+        Err(err) => println(f"{err.operation}: {err.kind}")
+    ```
+    """
+
+    pub operation: str
+    pub kind: str
+    pub detail: str
+    pub position: int
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+
+        Returns:
+            The detail text attached to the failed operation.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Return the optional source error.
+
+        Returns:
+            `None`; `IoError` stores operation, kind, detail, and cursor position directly.
+        """
+        return None
+
+
+pub trait BinaryRead[T]:
+    """
+    Trait-backed typed binary reads from a byte stream.
+
+    `read` is overloaded by expected result type. Callers should provide static type context for reads, for example
+    `value: u32 = buf.read(Endian.Little)?`.
+
+    Example:
+
+    ```incan
+    from std.io import BytesIO, Endian
+
+    buf = BytesIO(b"\x02\0\0\0")
+    value: u32 = buf.read(Endian.Little)?
+    ```
+    """
+
+    def read(self, endian: Endian) -> Result[T, IoError]: ...
+
+
+pub trait BinaryWrite[T]:
+    """
+    Trait-backed typed binary writes to a byte stream.
+
+    `write` is overloaded by value argument type.
+
+    Example:
+
+    ```incan
+    from std.io import BytesIO, Endian
+
+    out = BytesIO()
+    value: u32 = 2
+    out.write(value, Endian.Little)?
+    ```
+    """
+
+    def write(self, value: T, endian: Endian) -> Result[None, IoError]: ...
+
+
+pub enum Endian:
+    """
+    Byte order for exact-width numeric I/O.
+    """
+
+    Little
+    Big
+
+
+pub class _BytesIO with BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryRead[i16], BinaryRead[u32], BinaryRead[i32], BinaryRead[u64], BinaryRead[i64], BinaryRead[u128], BinaryRead[i128], BinaryRead[f32], BinaryRead[f64], BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], BinaryWrite[i16], BinaryWrite[u32], BinaryWrite[i32], BinaryWrite[u64], BinaryWrite[i64], BinaryWrite[u128], BinaryWrite[i128], BinaryWrite[f32], BinaryWrite[f64]:
+    """
+    Writable and seekable byte stream over an in-memory buffer.
+
+    Construct values with `BytesIO(initial=b"...")` or `BytesIO(b"...")`. Reads advance the cursor. Writes overwrite
+    from the current cursor position unless the caller seeks to the end first.
+
+    Example:
+
+    ```incan
+    from std.io import BytesIO, Endian
+
+    buf = BytesIO(b"GGUF\x03\0\0\0")
+    magic = buf.read_exact(4)?
+    version: u32 = buf.read(Endian.Little)?
+    ```
+    """
+
+    handle: Rc[RefCell[Cursor[bytes]]]
+
+    def read(self, size: int = -1) -> Result[bytes, IoError]:
+        """
+        Read up to `size` bytes from the current cursor.
+
+        Args:
+            size: Maximum bytes to read. Use a negative value to read through EOF.
+
+        Returns:
+            The bytes read, or `Err(IoError)`.
+
+        Example:
+            `BytesIO(b"abc").read(2)?` returns `b"ab"`.
+        """
+        mut out: bytes = b""
+        mut cursor = self.handle.borrow_mut()
+        if size < 0:
+            match cursor.read_to_end(out):
+                Ok(_) => return Ok(out)
+                Err(err) => return Err(_rust_io_error("read", int(cursor.position()), err))
+        match Read.by_ref(cursor).take(size).read_to_end(out):
+            Ok(_) => return Ok(out)
+            Err(err) => return Err(_rust_io_error("read", int(cursor.position()), err))
+
+    def read_exact(self, size: int) -> Result[bytes, IoError]:
+        """
+        Read exactly `size` bytes.
+
+        Args:
+            size: Number of bytes required.
+
+        Returns:
+            Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the buffer ends early.
+
+        Example:
+            `BytesIO(b"ABCD").read_exact(4)?` returns `b"ABCD"`.
+        """
+        if size < 0:
+            return Err(_invalid_input("read_exact", self.tell(), "read_exact size must be non-negative"))
+        chunk = self.read(size)?
+        if len(chunk) != size:
+            return Err(
+                IoError(
+                    operation="read_exact",
+                    kind="unexpected_eof",
+                    detail="buffer ended before read_exact size",
+                    position=self.tell(),
+                ),
+            )
+        return Ok(chunk)
+
+    def read_until(self, byte: u8) -> Result[bytes, IoError]:
+        """
+        Read through `byte` or EOF.
+
+        Args:
+            byte: Delimiter byte to include when found.
+
+        Returns:
+            Bytes up to and including the delimiter, or the remaining bytes at EOF.
+
+        Example:
+            `BytesIO(b"name\0rest").read_until(0)?` returns `b"name\0"`.
+        """
+        out = _empty_stream()
+        while self.remaining() > 0:
+            value = self._read_u8()?
+            out._write_u8(value)?
+            if value == byte:
+                return Ok(out.getvalue())
+        return Ok(out.getvalue())
+
+    def skip_until(self, byte: u8) -> Result[int, IoError]:
+        """
+        Discard bytes through `byte` or EOF.
+
+        Args:
+            byte: Delimiter byte to include in the skipped count when found.
+
+        Returns:
+            Number of discarded bytes, including the delimiter when present.
+
+        Example:
+            `BytesIO(b"header\nbody").skip_until(10)?` returns `7`.
+        """
+        mut count = 0
+        while self.remaining() > 0:
+            value = self._read_u8()?
+            count = count + 1
+            if value == byte:
+                return Ok(count)
+        return Ok(count)
+
+    def tell(self) -> int:
+        """
+        Return the current byte cursor position.
+
+        Returns:
+            Current offset from the start of the buffer.
+        """
+        cursor = self.handle.borrow()
+        return int(cursor.position())
+
+    def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
+        """
+        Move the cursor and return the new position.
+
+        Args:
+            offset: Byte offset interpreted relative to `whence`.
+            whence: `0` for start, `1` for current position, and `2` for end.
+
+        Returns:
+            New cursor position, or `Err(IoError)` for invalid positions or `whence` values.
+
+        Example:
+            `buf.seek(0, 2)?` moves to the end of the buffer.
+        """
+        mut cursor = self.handle.borrow_mut()
+        if whence == 0:
+            match cursor.position():
+                pos =>
+                    delta = offset - int(pos)
+                    match cursor.seek(SeekFrom.Current(delta)):
+                        Ok(new_pos) => return Ok(int(new_pos))
+                        Err(err) => return Err(_rust_io_error("seek", int(cursor.position()), err))
+        elif whence == 1:
+            match cursor.seek(SeekFrom.Current(offset)):
+                Ok(new_pos) => return Ok(int(new_pos))
+                Err(err) => return Err(_rust_io_error("seek", int(cursor.position()), err))
+        elif whence == 2:
+            match cursor.seek(SeekFrom.End(offset)):
+                Ok(new_pos) => return Ok(int(new_pos))
+                Err(err) => return Err(_rust_io_error("seek", int(cursor.position()), err))
+        return Err(_invalid_input("seek", int(cursor.position()), "whence must be 0, 1, or 2"))
+
+    def rewind(self) -> Result[None, IoError]:
+        """
+        Move the cursor to the start of the buffer.
+
+        Returns:
+            `Ok(None)` after rewinding, or `Err(IoError)`.
+        """
+        self.seek(0, 0)?
+        return Ok(None)
+
+    def seek_relative(self, offset: int) -> Result[None, IoError]:
+        """
+        Move the cursor relative to its current position.
+
+        Args:
+            offset: Relative byte offset.
+
+        Returns:
+            `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.
+        """
+        self.seek(offset, 1)?
+        return Ok(None)
+
+    def write_bytes(self, data: bytes) -> Result[int, IoError]:
+        """
+        Write bytes at the current cursor position.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            Number of bytes written, or `Err(IoError)`.
+
+        Example:
+            `BytesIO().write(b"ok")?` returns `2`.
+        """
+        mut cursor = self.handle.borrow_mut()
+        match cursor.write_all(data):
+            Ok(_) => return Ok(len(data))
+            Err(err) => return Err(_rust_io_error("write", int(cursor.position()), err))
+
+    def write(self, data: bytes) -> Result[int, IoError]:
+        """
+        Write bytes at the current cursor position.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            Number of bytes written, or `Err(IoError)`.
+
+        Example:
+            `BytesIO().write(b"ok")?` returns `2`.
+        """
+        return self.write_bytes(data)
+
+    def truncate(self, size: Option[int] = None) -> Result[int, IoError]:
+        """
+        Resize the buffer.
+
+        Args:
+            size: Target size, or `None` to truncate at the current cursor.
+
+        Returns:
+            The new buffer size, or `Err(IoError)`.
+
+        Example:
+            After reading two bytes from `BytesIO(b"abcd")`, `truncate()?` leaves `b"ab"`.
+        """
+        position = self.tell()
+        mut target = position
+        if let Some(value) = size:
+            target = value
+        if target < 0:
+            return Err(_invalid_input("truncate", position, "truncate size must be non-negative"))
+        mut cursor = self.handle.borrow_mut()
+
+        # `Vec.resize` needs host `usize`, while `Cursor.set_position` needs `u64`; validate both before mutating.
+        target_usize = _truncate_target_usize(target, position)?
+        target_u64 = _truncate_target_u64(target, position)?
+        cursor.get_mut().resize(target_usize, 0)
+
+        # Shrinking past the current cursor leaves the cursor outside the logical buffer unless we clamp it.
+        if int(cursor.position()) > target:
+            cursor.set_position(target_u64)
+        return Ok(target)
+
+    def getvalue(self) -> bytes:
+        """
+        Return a snapshot of the buffer contents.
+
+        Returns:
+            Current buffer bytes without changing the cursor.
+        """
+        cursor = self.handle.borrow()
+        return cursor.get_ref().clone()
+
+    def into_bytes(self) -> bytes:
+        """
+        Return the buffer bytes.
+
+        Returns:
+            Current buffer bytes without changing the cursor. The current implementation returns a snapshot because
+            `BytesIO` uses shared interior mutability for method calls.
+        """
+        return self.getvalue()
+
+    def remaining(self) -> int:
+        """
+        Return the unread byte count from the current cursor to the end.
+
+        Returns:
+            Number of bytes remaining in the buffer.
+        """
+        cursor = self.handle.borrow()
+        total = len(cursor.get_ref())
+        pos = int(cursor.position())
+        if pos >= total:
+            return 0
+        return total - pos
+
+    # --- Internal byte helpers used by delimiter reads/skips ---
+    def _read_u8(self) -> Result[u8, IoError]:
+        return _read_u8_value(self, "read")
+
+    def _write_u8(self, value: u8) -> Result[None, IoError]:
+        return _write_u8_value(self, value, "write")
+
+    # --- One-byte numeric overloads: endianness is intentionally ignored ---
+    def read(self, _endian: Endian) -> Result[u8, IoError]:
+        return _read_u8_value(self, "read")
+
+    def read(self, _endian: Endian) -> Result[i8, IoError]:
+        return _read_i8_value(self, "read")
+
+    def write(self, value: u8, _endian: Endian) -> Result[None, IoError]:
+        return _write_u8_value(self, value, "write")
+
+    def write(self, value: i8, _endian: Endian) -> Result[None, IoError]:
+        return _write_i8_value(self, value, "write")
+
+    # --- 16-bit integer overloads ---
+    def read(self, endian: Endian) -> Result[u16, IoError]:
+        return _read_u16_value(self, endian, "read")
+
+    def write(self, value: u16, endian: Endian) -> Result[None, IoError]:
+        return _write_u16_value(self, value, endian, "write")
+
+    def read(self, endian: Endian) -> Result[i16, IoError]:
+        return _read_i16_value(self, endian, "read")
+
+    def write(self, value: i16, endian: Endian) -> Result[None, IoError]:
+        return _write_i16_value(self, value, endian, "write")
+
+    # --- 32-bit integer overloads ---
+    def read(self, endian: Endian) -> Result[u32, IoError]:
+        return _read_u32_value(self, endian, "read")
+
+    def write(self, value: u32, endian: Endian) -> Result[None, IoError]:
+        return _write_u32_value(self, value, endian, "write")
+
+    def read(self, endian: Endian) -> Result[i32, IoError]:
+        return _read_i32_value(self, endian, "read")
+
+    def write(self, value: i32, endian: Endian) -> Result[None, IoError]:
+        return _write_i32_value(self, value, endian, "write")
+
+    # --- 64-bit integer overloads ---
+    def read(self, endian: Endian) -> Result[u64, IoError]:
+        return _read_u64_value(self, endian, "read")
+
+    def write(self, value: u64, endian: Endian) -> Result[None, IoError]:
+        return _write_u64_value(self, value, endian, "write")
+
+    def read(self, endian: Endian) -> Result[i64, IoError]:
+        return _read_i64_value(self, endian, "read")
+
+    def write(self, value: i64, endian: Endian) -> Result[None, IoError]:
+        return _write_i64_value(self, value, endian, "write")
+
+    # --- 128-bit integer overloads ---
+    def read(self, endian: Endian) -> Result[u128, IoError]:
+        return _read_u128_value(self, endian, "read")
+
+    def write(self, value: u128, endian: Endian) -> Result[None, IoError]:
+        return _write_u128_value(self, value, endian, "write")
+
+    def read(self, endian: Endian) -> Result[i128, IoError]:
+        return _read_i128_value(self, endian, "read")
+
+    def write(self, value: i128, endian: Endian) -> Result[None, IoError]:
+        return _write_i128_value(self, value, endian, "write")
+
+    # --- Floating-point overloads ---
+    def read(self, endian: Endian) -> Result[f32, IoError]:
+        return _read_f32_value(self, endian, "read")
+
+    def write(self, value: f32, endian: Endian) -> Result[None, IoError]:
+        return _write_f32_value(self, value, endian, "write")
+
+    def read(self, endian: Endian) -> Result[f64, IoError]:
+        return _read_f64_value(self, endian, "read")
+
+    def write(self, value: f64, endian: Endian) -> Result[None, IoError]:
+        return _write_f64_value(self, value, endian, "write")
+
+
+@rust.allow("non_snake_case")
+pub def BytesIO(initial: bytes = b"") -> _BytesIO:
+    """
+    Construct a writable, seekable in-memory byte stream.
+
+    Args:
+        initial: Initial buffer contents. The cursor starts at `0`.
+
+    Returns:
+        A `BytesIO` stream over `initial`.
+
+    Example:
+        `BytesIO(b"abc").read(1)?` returns `b"a"`.
+    """
+    return _BytesIO(handle=Rc.new(RefCell.new(Cursor.new(initial))))
+
+
+def _empty_stream() -> _BytesIO:
+    """
+    Construct an internal empty stream without using the public PascalCase factory.
+    """
+    return _BytesIO(handle=Rc.new(RefCell.new(Cursor.new(b""))))
+
+
+def _zeros(size: int) -> bytes:
+    """
+    Build a zero-filled byte vector for numeric writes.
+    """
+    mut out = Vec.new()
+    mut i = 0
+    while i < size:
+        out.push(0)
+        i = i + 1
+    return out
+
+
+def _finish_numeric_write(stream: _BytesIO, cursor: Cursor[bytes]) -> Result[None, IoError]:
+    """
+    Write a numeric helper's temporary cursor contents to the target stream.
+    """
+    stream.write_bytes(cursor.into_inner())?
+    return Ok(None)
+
+
+# --- Numeric byteorder helpers used by the overloaded BinaryRead/BinaryWrite surface ---
+def _read_u8_value(stream: _BytesIO, operation: str) -> Result[u8, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(1)?)
+    match cursor.read_u8():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_i8_value(stream: _BytesIO, operation: str) -> Result[i8, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(1)?)
+    match cursor.read_i8():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_u8_value(stream: _BytesIO, value: u8, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(1))
+    match cursor.write_u8(value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_i8_value(stream: _BytesIO, value: i8, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(1))
+    match cursor.write_i8(value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_u16_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[u16, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(2)?)
+    if endian == Endian.Little:
+        match cursor.read_u16[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_u16[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_i16_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[i16, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(2)?)
+    if endian == Endian.Little:
+        match cursor.read_i16[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_i16[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_u16_value(stream: _BytesIO, value: u16, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(2))
+    if endian == Endian.Little:
+        match cursor.write_u16[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_u16[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_i16_value(stream: _BytesIO, value: i16, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(2))
+    if endian == Endian.Little:
+        match cursor.write_i16[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_i16[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_u32_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[u32, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(4)?)
+    if endian == Endian.Little:
+        match cursor.read_u32[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_u32[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_i32_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[i32, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(4)?)
+    if endian == Endian.Little:
+        match cursor.read_i32[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_i32[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_u32_value(stream: _BytesIO, value: u32, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(4))
+    if endian == Endian.Little:
+        match cursor.write_u32[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_u32[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_i32_value(stream: _BytesIO, value: i32, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(4))
+    if endian == Endian.Little:
+        match cursor.write_i32[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_i32[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_u64_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[u64, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(8)?)
+    if endian == Endian.Little:
+        match cursor.read_u64[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_u64[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_i64_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[i64, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(8)?)
+    if endian == Endian.Little:
+        match cursor.read_i64[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_i64[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_u64_value(stream: _BytesIO, value: u64, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(8))
+    if endian == Endian.Little:
+        match cursor.write_u64[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_u64[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_i64_value(stream: _BytesIO, value: i64, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(8))
+    if endian == Endian.Little:
+        match cursor.write_i64[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_i64[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_u128_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[u128, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(16)?)
+    if endian == Endian.Little:
+        match cursor.read_u128[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_u128[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_i128_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[i128, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(16)?)
+    if endian == Endian.Little:
+        match cursor.read_i128[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_i128[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_u128_value(stream: _BytesIO, value: u128, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(16))
+    if endian == Endian.Little:
+        match cursor.write_u128[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_u128[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_i128_value(stream: _BytesIO, value: i128, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(16))
+    if endian == Endian.Little:
+        match cursor.write_i128[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_i128[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_f32_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[f32, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(4)?)
+    if endian == Endian.Little:
+        match cursor.read_f32[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_f32[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _read_f64_value(stream: _BytesIO, endian: Endian, operation: str) -> Result[f64, IoError]:
+    mut cursor = Cursor.new(stream.read_exact(8)?)
+    if endian == Endian.Little:
+        match cursor.read_f64[LittleEndian]():
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.read_f64[BigEndian]():
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_f32_value(stream: _BytesIO, value: f32, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(4))
+    if endian == Endian.Little:
+        match cursor.write_f32[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_f32[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _write_f64_value(stream: _BytesIO, value: f64, endian: Endian, operation: str) -> Result[None, IoError]:
+    mut cursor = Cursor.new(_zeros(8))
+    if endian == Endian.Little:
+        match cursor.write_f64[LittleEndian](value):
+            Ok(_) => return _finish_numeric_write(stream, cursor)
+            Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+    match cursor.write_f64[BigEndian](value):
+        Ok(_) => return _finish_numeric_write(stream, cursor)
+        Err(err) => return Err(_rust_io_error(operation, stream.tell(), err))
+
+
+def _truncate_target_usize(target: int, position: int) -> Result[usize, IoError]:
+    """
+    Convert a validated truncate target into the host vector size type.
+    """
+    maybe_target: Option[usize] = target.try_resize()
+    match maybe_target:
+        Some(value) => return Ok(value)
+        None => return Err(_invalid_input("truncate", position, "truncate size does not fit host usize"))
+
+
+def _truncate_target_u64(target: int, position: int) -> Result[u64, IoError]:
+    """
+    Convert a validated truncate target into the cursor position type.
+    """
+    maybe_target: Option[u64] = target.try_resize()
+    match maybe_target:
+        Some(value) => return Ok(value)
+        None => return Err(_invalid_input("truncate", position, "truncate size does not fit u64"))
+
+
+def _invalid_input(operation: str, position: int, detail: str) -> IoError:
+    """
+    Create a stable invalid-input error.
+    """
+    return IoError(operation=operation, kind="invalid_input", detail=detail, position=position)
+
+
+def _rust_io_error(operation: str, position: int, detail: str) -> IoError:
+    """
+    Convert host I/O error text into a `std.io` error.
+    """
+    if detail.contains("invalid"):
+        return IoError(operation=operation, kind="invalid_input", detail=detail, position=position)
+    elif detail.contains("failed to fill whole buffer") or detail.contains("early eof"):
+        return IoError(operation=operation, kind="unexpected_eof", detail=detail, position=position)
+    return IoError(operation=operation, kind="other", detail=detail, position=position)

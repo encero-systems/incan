@@ -446,7 +446,7 @@ impl TypeChecker {
         }
     }
 
-    /// Validate assignment to a nominal field, including generic-owner field substitution.
+    /// Validate assignment to an object field, including generic-owner field substitution.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);

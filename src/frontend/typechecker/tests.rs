@@ -7440,6 +7440,35 @@ fn test_known_stdlib_module_is_accepted() {
 }
 
 #[test]
+fn test_std_graph_imports_and_direct_constructors_typecheck() {
+    let source = r#"
+from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+
+def exercise() -> None:
+    mut graph = DiGraph[str]()
+    a: NodeId = graph.add_node("a")
+    b: NodeId = graph.add_node("b")
+    edge_result: Result[None, GraphError] = graph.add_edge(a, b)
+    removed: Result[None, GraphError] = graph.remove_edge(a, b)
+    successors: Result[list[NodeId], GraphError] = graph.successors(a)
+    topo: Result[list[NodeId], GraphError] = graph.topological_order()
+
+    mut dag = Dag[str]()
+    root: NodeId = dag.add_node("root")
+    leaf: NodeId = dag.add_node("leaf")
+    dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    dag_order: list[NodeId] = dag.topological_order()
+
+    mut multi = MultiDiGraph[str]()
+    left: NodeId = multi.add_node("left")
+    right: NodeId = multi.add_node("right")
+    multi_edge: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    between: Result[list[EdgeId], GraphError] = multi.edges_between(left, right)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_std_testing_marker_runtime_call_is_rejected() {
     let source = r#"
 from std.testing import skip

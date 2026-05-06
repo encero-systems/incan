@@ -537,7 +537,7 @@ impl AstLowering {
                                 .or_else(|| self.callable_signature_for_call_span(expr_span)),
                             arg_policy,
                         },
-                        IrType::Unknown,
+                        expr_ty,
                     )
                 }
             }

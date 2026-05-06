@@ -2364,6 +2364,42 @@ fn test_std_serde_json_import_codegen() {
     insta::assert_snapshot!("std_serde_json_import", rust_code);
 }
 
+/// RFC 047: compile `std.graph` declarations from `.incn` source.
+#[test]
+fn test_std_graph_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/graph.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_graph_compiled", rust_code);
+}
+
+/// RFC 047: verify `std.graph` imports, direct constructors, DAGs, and multigraph edge ids lower to Rust.
+#[test]
+fn test_std_graph_import_codegen() {
+    let source = load_test_file("std_graph_import");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("DiGraph::<String>::__incan_new()"),
+        "expected DiGraph constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Dag::<String>::__incan_new()"),
+        "expected Dag constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("MultiDiGraph::<String>::__incan_new()"),
+        "expected MultiDiGraph constructor syntax to lower through __incan_new; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Result<EdgeId,GraphError>"),
+        "expected multigraph add_edge to preserve EdgeId result; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_graph_import", rust_code);
+}
+
 /// RFC 023 (#303): explicit `with Serialize` adoption should expand the stdlib default `to_json` body into the
 /// generated impl while also forwarding the Rust serde derive.
 #[test]

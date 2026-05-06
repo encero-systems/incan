@@ -25,8 +25,12 @@ pub const STDLIB_THIS: &str = "this";
 
 /// `std.async` module name.
 pub const STDLIB_ASYNC: &str = "async";
+/// `std.graph` module name.
+pub const STDLIB_GRAPH: &str = "graph";
 /// `std.rust` module name for capability bounds (RFC 041).
 pub const STDLIB_RUST: &str = "rust";
+
+const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
 
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
@@ -40,6 +44,12 @@ pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
 /// `IrImportQualifier::None` — bypassing this check entirely.
 pub fn is_any_stdlib_path(path: &[String]) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT
+}
+
+/// Return whether `name` is an RFC 047 graph type with direct constructor syntax.
+#[must_use]
+pub fn is_graph_constructor_type(name: &str) -> bool {
+    STDLIB_GRAPH_CONSTRUCTOR_TYPES.contains(&name)
 }
 
 /// A top-level stdlib namespace with optional metadata.
@@ -253,6 +263,23 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "graph",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "io",
+        feature: None,
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "byteorder",
+            source: StdlibExtraCrateSource::Version("1"),
+        }],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "rust",
         feature: None,
         extra_crate_deps: &[],
@@ -407,7 +434,17 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
         assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
+    }
+
+    #[test]
+    fn graph_constructor_types_are_registry_owned() {
+        assert!(is_graph_constructor_type("DiGraph"));
+        assert!(is_graph_constructor_type("Dag"));
+        assert!(is_graph_constructor_type("MultiDiGraph"));
+        assert!(!is_graph_constructor_type("NodeId"));
+        assert!(!is_graph_constructor_type("EdgeId"));
     }
 
     #[test]
@@ -443,6 +480,10 @@ mod tests {
             stdlib_stub_path(&segs(&["std", "fs", "path"])),
             Some("stdlib/fs/path.incn".to_string())
         );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "graph"])),
+            Some("stdlib/graph.incn".to_string())
+        );
     }
 
     #[test]
@@ -462,6 +503,7 @@ mod tests {
         assert!(hint.contains(&"std.fs".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+        assert!(hint.contains(&"std.graph".to_string()));
         assert!(hint.contains(&"std.rust".to_string()));
     }
 
@@ -523,6 +565,7 @@ mod tests {
         let fs_ns = find_namespace("fs");
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
+        let graph_ns = find_namespace("graph");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
@@ -534,6 +577,14 @@ mod tests {
                 .and_then(|ns| ns.extra_crate_deps.first())
                 .map(|dep| dep.crate_name),
             Some("libm")
+        );
+        assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(
+            find_namespace("io")
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.crate_name),
+            Some("byteorder")
         );
     }
 }

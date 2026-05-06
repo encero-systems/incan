@@ -12,9 +12,10 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::ResolvedOperatorKind;
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
+use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
@@ -305,6 +306,32 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
+                let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
+                let receiver_ty = if lowered_type_args.is_empty() {
+                    IrType::Struct(constructor_name.clone())
+                } else {
+                    IrType::NamedGeneric(constructor_name.clone(), lowered_type_args.clone())
+                };
+                return Ok((
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: constructor_name,
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::TypeName,
+                            },
+                            receiver_ty.clone(),
+                        )),
+                        method: "__incan_new".to_string(),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    receiver_ty,
+                ));
+            }
             if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
                 && matches!(self.lookup_var(name), IrType::Unknown)
                 && let Some(owner_name) = self.current_classmethod_constructor.clone()
@@ -312,17 +339,16 @@ impl AstLowering {
                 return self.lower_constructor_call(&owner_name, args);
             }
 
-            // Use two strategies for constructor detection:
-            // 1. Known struct from current file (in struct_names map)
-            // 2. Uppercase identifier heuristic (works cross-file like old codegen)
+            // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
+            // still available through `struct_names`; imported constructors are marked as `TypeName` on the callee
+            // span by the typechecker.
             let is_known_struct = self.struct_names.contains_key(&constructor_name);
-            let is_uppercase = constructor_name
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false);
+            let is_resolved_type_name = self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
 
-            if is_known_struct || is_uppercase {
+            if is_known_struct || is_resolved_type_name {
                 return self.lower_constructor_call(&constructor_name, args);
             }
         }
