@@ -378,6 +378,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: Vec::new(),
                     callable_signature: self.callable_signature_for_call_span(call_span),
@@ -448,6 +449,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(func),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: args_ir,
                     callable_signature: self.callable_signature_for_call_span(call_span),
@@ -517,6 +519,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: ctor.clone(),
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: vec![IrCallArg {
                         name: None,

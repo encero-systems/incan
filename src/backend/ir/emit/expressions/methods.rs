@@ -8,8 +8,8 @@ use quote::{format_ident, quote};
 
 use super::super::super::FunctionSignature;
 use super::super::super::expr::{
-    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, MethodCallArgPolicy, MethodKind, TypedExpr,
-    VarAccess, VarRefKind,
+    CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
+    TypedExpr, VarAccess, VarRefKind,
 };
 use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
@@ -378,9 +378,9 @@ impl<'a> IrEmitter<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn emit_method_call_expr(
         &self,
-        result_ty: &IrType,
         receiver: &TypedExpr,
         method: &str,
+        dispatch: Option<&IrMethodDispatch>,
         type_args: &[IrType],
         args: &[IrCallArg],
         callable_signature: Option<&FunctionSignature>,
@@ -390,9 +390,9 @@ impl<'a> IrEmitter<'a> {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
             let inner = self.emit_method_call_expr(
-                result_ty,
                 &rewritten_receiver,
                 method,
+                dispatch,
                 type_args,
                 &rewritten_args,
                 callable_signature,
@@ -496,36 +496,25 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        if method == "read"
-            && args.len() == 1
-            && args[0].expr.ty.nominal_type_name() == Some("Endian")
-            && !matches!(
-                result_ty,
-                IrType::Unknown | IrType::Bytes | IrType::FrozenBytes | IrType::StaticBytes
-            )
-        {
-            let trait_value_ty = match result_ty {
-                IrType::Result(ok, _) => ok.as_ref(),
-                other => other,
+        if let Some(IrMethodDispatch::Trait { trait_path, type_args }) = dispatch {
+            let path_tokens: Vec<TokenStream> = trait_path
+                .split("::")
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect();
+            let trait_tokens = super::super::decls::join_path_tokens(&path_tokens);
+            let trait_type_args: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            let trait_tokens = if trait_type_args.is_empty() {
+                quote! { #trait_tokens }
+            } else {
+                quote! { #trait_tokens :: < #(#trait_type_args),* > }
             };
-            let result_type = self.emit_type(trait_value_ty);
+            let m = Self::rust_ident(method);
             let arg_tokens =
                 self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
-            return Ok(quote! { crate::__incan_std::io::BinaryRead::<#result_type>::read(&#r, #(#arg_tokens),*) });
-        }
-
-        if method == "write"
-            && args.len() == 2
-            && args[1].expr.ty.nominal_type_name() == Some("Endian")
-            && !matches!(
-                args[0].expr.ty,
-                IrType::Bytes | IrType::FrozenBytes | IrType::StaticBytes
-            )
-        {
-            let value_type = self.emit_type(&args[0].expr.ty);
-            let arg_tokens =
-                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
-            return Ok(quote! { crate::__incan_std::io::BinaryWrite::<#value_type>::write(&#r, #(#arg_tokens),*) });
+            return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
         }
 
         // Regular method call

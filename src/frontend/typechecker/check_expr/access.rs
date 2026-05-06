@@ -27,6 +27,12 @@ use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
 
+#[derive(Debug, Clone)]
+struct MethodCandidate {
+    info: MethodInfo,
+    dispatch: Option<crate::frontend::typechecker::ResolvedMethodDispatch>,
+}
+
 struct ValueEnumGeneratedCall<'a> {
     enum_name: &'a str,
     value_enum: &'a ValueEnumInfo,
@@ -52,6 +58,36 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    fn explicit_trait_dispatch_for_backend(
+        &self,
+        trait_name: &str,
+        type_args: Vec<ResolvedType>,
+    ) -> Option<crate::frontend::typechecker::ResolvedMethodDispatch> {
+        let module_path = self.stdlib_cache.loaded_trait_module_path(trait_name)?;
+        let is_std_io_binary_trait = module_path.len() == 2
+            && module_path[0] == "std"
+            && module_path[1] == "io"
+            && matches!(trait_name, "BinaryRead" | "BinaryWrite");
+        is_std_io_binary_trait.then(|| self.resolved_trait_dispatch(trait_name, type_args))
+    }
+
+    fn resolved_trait_dispatch(
+        &self,
+        trait_name: &str,
+        type_args: Vec<ResolvedType>,
+    ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
+        let trait_path = self
+            .stdlib_cache
+            .loaded_trait_module_path(trait_name)
+            .filter(|segments| segments.first().is_some_and(|segment| segment == "std"))
+            .map(|segments| {
+                let module_path = segments.into_iter().skip(1).collect::<Vec<_>>().join("::");
+                format!("crate::__incan_std::{module_path}::{trait_name}")
+            })
+            .unwrap_or_else(|| trait_name.to_string());
+        crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args }
+    }
+
     /// Return whether an expression names an enum type rather than an enum value.
     fn is_enum_type_name_expr(&self, expr: &Spanned<Expr>) -> bool {
         let Expr::Ident(name) = &expr.node else {
@@ -641,9 +677,38 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
         if let Some(overloads) = method_overloads.and_then(|overloads| overloads.get(method)) {
+            let trait_entries = trait_adoptions
+                .map(|trait_adoptions| {
+                    trait_adoptions
+                        .iter()
+                        .filter_map(|adoption| {
+                            self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let candidates = overloads
+                .iter()
+                .cloned()
+                .map(|info| {
+                    let dispatch = trait_entries
+                        .iter()
+                        .find(|entry| {
+                            self.method_sigs_compatible(&info, &entry.info)
+                                && self.method_sigs_compatible(&entry.info, &info)
+                        })
+                        .and_then(|entry| {
+                            self.explicit_trait_dispatch_for_backend(
+                                &entry.origin_trait,
+                                entry.origin_type_args.clone(),
+                            )
+                        });
+                    MethodCandidate { info, dispatch }
+                })
+                .collect::<Vec<_>>();
             return self.resolve_method_overload(
                 method,
-                overloads,
+                &candidates,
                 explicit_type_args,
                 args,
                 arg_types,
@@ -666,10 +731,13 @@ impl TypeChecker {
         if let Some(trait_adoptions) = trait_adoptions {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
-                if let Some(method_info) =
-                    self.trait_method_info_resolved_for_adoption(adoption, method, call_site_span)
-                {
-                    candidates.push(method_info);
+                if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
+                    let dispatch =
+                        self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                    candidates.push(MethodCandidate {
+                        info: entry.info,
+                        dispatch,
+                    });
                 }
             }
             if !candidates.is_empty() {
@@ -693,7 +761,7 @@ impl TypeChecker {
     fn resolve_method_overload(
         &mut self,
         method: &str,
-        candidates: &[MethodInfo],
+        candidates: &[MethodCandidate],
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
@@ -701,10 +769,10 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
-        let mut viable: Vec<(usize, MethodInfo)> = candidates
+        let mut viable: Vec<(usize, MethodCandidate)> = candidates
             .iter()
             .filter_map(|candidate| {
-                self.method_candidate_match_score(candidate, args, arg_types, receiver_ty, expected_return_ty)
+                self.method_candidate_match_score(&candidate.info, args, arg_types, receiver_ty, expected_return_ty)
                     .map(|score| (score, candidate.clone()))
             })
             .collect();
@@ -713,17 +781,21 @@ impl TypeChecker {
             viable = candidates
                 .iter()
                 .filter_map(|candidate| {
-                    self.method_candidate_match_score(candidate, args, arg_types, receiver_ty, None)
+                    self.method_candidate_match_score(&candidate.info, args, arg_types, receiver_ty, None)
                         .map(|score| (score, candidate.clone()))
                 })
                 .collect();
         }
 
         if viable.is_empty() {
-            return candidates.first().map(|method_info| {
+            return candidates.first().map(|candidate| {
+                if let Some(dispatch) = candidate.dispatch.clone() {
+                    self.type_info
+                        .record_resolved_method_call(call_site_span, method, dispatch);
+                }
                 self.check_generic_method_call(
                     method,
-                    method_info.clone(),
+                    candidate.info.clone(),
                     explicit_type_args,
                     args,
                     arg_types,
@@ -741,9 +813,14 @@ impl TypeChecker {
             .collect::<Vec<_>>();
 
         if best.len() == 1 {
+            let candidate = best.remove(0);
+            if let Some(dispatch) = candidate.dispatch.clone() {
+                self.type_info
+                    .record_resolved_method_call(call_site_span, method, dispatch);
+            }
             return Some(self.check_generic_method_call(
                 method,
-                best.remove(0),
+                candidate.info,
                 explicit_type_args,
                 args,
                 arg_types,
@@ -909,8 +986,13 @@ impl TypeChecker {
         }
         let mut candidates = Vec::new();
         for bound in &active_bounds {
-            if let Some(method_info) = self.trait_method_info_resolved_for_adoption(bound, method, call_site_span) {
-                candidates.push(method_info);
+            if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
+                let dispatch =
+                    self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                candidates.push(MethodCandidate {
+                    info: entry.info,
+                    dispatch,
+                });
             }
         }
         if candidates.is_empty() {

@@ -109,6 +109,11 @@ pub struct TypeCheckInfo {
     /// Lowering consumes this map so `a + b`, `-a`, and `a[b]` can become direct dunder method calls without
     /// re-running backend-side infix/index semantics. Primitive operators are intentionally absent from this map.
     pub resolved_operator_calls: HashMap<(usize, usize), ResolvedOperatorCall>,
+    /// Trait-backed method dispatch selected by overload resolution.
+    ///
+    /// Lowering consumes this for calls whose selected method lives in a trait impl rather than an inherent Rust impl.
+    /// This keeps codegen from re-deriving dispatch from method names or argument shapes.
+    pub resolved_method_calls: HashMap<(usize, usize), ResolvedMethodCall>,
     /// `std.testing.fixture` declarations resolved during typechecking.
     ///
     /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
@@ -127,6 +132,28 @@ pub struct ResolvedOperatorCall {
     pub method: String,
     /// The AST operator shape this call replaces.
     pub kind: ResolvedOperatorKind,
+}
+
+/// A typechecker-resolved method call consumed by IR lowering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedMethodCall {
+    /// The concrete source-level method name selected by frontend method/trait dispatch.
+    pub method: String,
+    /// How the backend should emit this method call.
+    pub dispatch: ResolvedMethodDispatch,
+}
+
+/// Backend-relevant dispatch target for a resolved method call.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedMethodDispatch {
+    /// Emit as a fully-qualified trait call, e.g. `Trait::<T>::method(&receiver, ...)`.
+    Trait {
+        /// Rust-visible trait path. Local traits use their source name; imported stdlib traits use a fully-qualified
+        /// `crate::__incan_std::...` path so callers do not need to import implementation traits explicitly.
+        trait_path: String,
+        /// Concrete trait type arguments selected by overload resolution.
+        type_args: Vec<ResolvedType>,
+    },
 }
 
 /// Typechecker-resolved custom iteration protocol consumed by IR lowering.
@@ -312,6 +339,11 @@ impl TypeCheckInfo {
         self.resolved_operator_calls.get(&(span.start, span.end))
     }
 
+    /// Return a typechecker-resolved method call for `span`, if any.
+    pub fn resolved_method_call(&self, span: Span) -> Option<&ResolvedMethodCall> {
+        self.resolved_method_calls.get(&(span.start, span.end))
+    }
+
     /// Return custom iteration protocol metadata for `span`, if any.
     pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
         self.protocol_iterations.get(&(span.start, span.end))
@@ -329,6 +361,22 @@ impl TypeCheckInfo {
             ResolvedOperatorCall {
                 method: method.into(),
                 kind,
+            },
+        );
+    }
+
+    /// Record a resolved method dispatch that lowering should preserve explicitly.
+    pub(crate) fn record_resolved_method_call(
+        &mut self,
+        span: Span,
+        method: impl Into<String>,
+        dispatch: ResolvedMethodDispatch,
+    ) {
+        self.resolved_method_calls.insert(
+            (span.start, span.end),
+            ResolvedMethodCall {
+                method: method.into(),
+                dispatch,
             },
         );
     }
