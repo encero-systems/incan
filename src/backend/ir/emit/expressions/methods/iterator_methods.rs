@@ -2,8 +2,13 @@
 //!
 //! The typechecker and stdlib define the user-facing protocol surface, but this module is the final Rust emission
 //! boundary for known iterator methods. It keeps the generated code lazy by mapping RFC 088 methods onto Rust iterator
-//! adapters where the semantics line up, and delegates only the Incan-specific runtime gaps (`batch`, signed counts,
-//! checked-newtype `sum`) to `incan_stdlib::iter` or generated helper code.
+//! adapters where the semantics line up. That is a backend specialization choice: the Incan protocol defaults in
+//! `std.derives.collection` remain the semantic dogfooding surface for custom iterator models.
+//!
+//! The remaining calls into `incan_stdlib::iter` are artifacts of that native Rust iterator path: signed count
+//! conversion for `take`/`skip`, and `batch` for fixed-size grouping. Checked-newtype `sum` is emitted here so the
+//! backend can unwrap to the primitive carrier, use Rust's summation identity, and reconstruct through the selected
+//! checked constructor.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

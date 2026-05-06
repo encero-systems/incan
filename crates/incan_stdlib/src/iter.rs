@@ -1,14 +1,17 @@
 //! Iteration helpers for Incan-generated Rust code.
 //!
 //! Most RFC 088 iterator adapter semantics are dogfooded in `std.derives.collection` as Incan protocol defaults.
-//! This Rust module remains the runtime boundary for behavior that generated Rust still needs as concrete host support:
+//! This Rust module remains the runtime boundary for behavior that the current backend still emits directly as Rust
+//! support:
 //!
 //! - `Generator<T>` gives RFC 006 generator functions and generator expressions one stable emitted Rust return type.
 //! - [`range`] implements Python-like `range(start, end, step)` semantics, including negative steps and zero-step
 //!   diagnostics.
-//! - [`nonnegative_count`] centralizes the signed Incan `int` to Rust `usize` conversion used by count-limited
-//!   adapters.
-//! - [`batch`] provides the lazy RFC 088 batch adapter used by emission when lowering to native Rust iterator chains.
+//! - [`nonnegative_count`] centralizes the signed Incan `int` to Rust `usize` conversion used when the backend lowers
+//!   count-limited adapters to native Rust iterator chains.
+//! - [`batch`] provides the lazy RFC 088 batch adapter for the native Rust iterator path. The same semantics are also
+//!   represented in Incan by `BatchIterator[T]`; this helper exists because known iterator methods currently lower to
+//!   Rust iterator chains instead of calling the Incan protocol defaults.
 
 use crate::errors::{raise, raise_value_error};
 use incan_core::errors::IncanError;
