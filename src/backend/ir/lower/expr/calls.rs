@@ -327,7 +327,6 @@ impl AstLowering {
                         dispatch: None,
                         type_args: Vec::new(),
                         args: Vec::new(),
-                        dispatch: None,
                         callable_signature: None,
                         arg_policy: MethodCallArgPolicy::Default,
                     },
