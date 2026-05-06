@@ -298,7 +298,10 @@ impl TypeCheckInfo {
 
     /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
     pub(crate) fn record_call_site_callable_params(&mut self, span: Span, params: &[CallableParam]) {
-        if params.iter().any(|param| param.kind != ParamKind::Normal) {
+        if params
+            .iter()
+            .any(|param| param.kind != ParamKind::Normal || callable_param_needs_boundary_snapshot(&param.ty))
+        {
             self.call_site_callable_params
                 .insert((span.start, span.end), params.to_vec());
         }
@@ -333,5 +336,27 @@ impl TypeCheckInfo {
     /// Record a custom `for` iteration protocol route.
     pub(crate) fn record_protocol_iteration(&mut self, span: Span, info: ProtocolIterationInfo) {
         self.protocol_iterations.insert((span.start, span.end), info);
+    }
+}
+
+/// Return whether a callable parameter type carries borrow shape that lowering cannot recover from the callee alone.
+fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
+        ResolvedType::Function(params, ret) => {
+            params
+                .iter()
+                .any(|param| callable_param_needs_boundary_snapshot(&param.ty))
+                || callable_param_needs_boundary_snapshot(ret)
+        }
+        ResolvedType::Generic(_, args) => args.iter().any(callable_param_needs_boundary_snapshot),
+        ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+            callable_param_needs_boundary_snapshot(inner)
+        }
+        ResolvedType::FrozenDict(key, value) => {
+            callable_param_needs_boundary_snapshot(key) || callable_param_needs_boundary_snapshot(value)
+        }
+        ResolvedType::Tuple(items) => items.iter().any(callable_param_needs_boundary_snapshot),
+        _ => false,
     }
 }
