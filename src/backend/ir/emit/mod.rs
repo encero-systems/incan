@@ -61,6 +61,10 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) public_types: HashSet<String>,
     /// Whether emitted method calls require the stdlib `Error` trait in Rust scope.
     pub(super) uses_stdlib_error_trait: bool,
+    /// Top-level source functions used as non-Copy `Result.inspect` / `inspect_err` observers.
+    pub(super) result_observer_function_callbacks: HashSet<String>,
+    /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
+    pub(super) result_observer_callable_types: HashSet<String>,
 }
 
 /// Emit Rust source code from typed IR.
@@ -173,6 +177,10 @@ pub struct IrEmitter<'a> {
     /// `live.with_mut(...)` the local wrapper still must be declared `mut`. This stack is pushed per emitted
     /// statement slice so `emit_stmt` can make that decision without reintroducing blanket `mut` noise.
     storage_binding_mut_names: RefCell<Vec<HashSet<String>>>,
+    /// Top-level source functions used as non-Copy `Result.inspect` / `inspect_err` observers.
+    result_observer_function_callbacks: RefCell<HashSet<String>>,
+    /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
+    result_observer_callable_types: RefCell<HashSet<String>>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -215,6 +223,8 @@ impl<'a> IrEmitter<'a> {
             generated_union_types: HashMap::new(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
+            result_observer_function_callbacks: RefCell::new(HashSet::new()),
+            result_observer_callable_types: RefCell::new(HashSet::new()),
         }
     }
 
@@ -225,6 +235,32 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         }
+    }
+
+    /// Return the private helper name used to call a top-level observer through a borrowed payload.
+    pub(super) fn result_observer_borrowed_function_name(name: &str) -> String {
+        format!("__incan_result_observer_borrow_{name}")
+    }
+
+    /// Return the private helper method name used to call callable-object observers through a borrowed payload.
+    pub(super) fn result_observer_borrowed_method_name() -> &'static str {
+        "__incan_result_observer_borrow___call__"
+    }
+
+    /// Store pre-emission facts describing which observer callbacks need borrowed helper emission.
+    pub(super) fn set_result_observer_callbacks(&self, functions: HashSet<String>, callable_types: HashSet<String>) {
+        *self.result_observer_function_callbacks.borrow_mut() = functions;
+        *self.result_observer_callable_types.borrow_mut() = callable_types;
+    }
+
+    /// Return whether a top-level source function needs a borrowed observer helper.
+    pub(super) fn needs_result_observer_function_helper(&self, name: &str) -> bool {
+        self.result_observer_function_callbacks.borrow().contains(name)
+    }
+
+    /// Return whether a source-owned callable object type needs a borrowed observer helper.
+    pub(super) fn needs_result_observer_callable_helper(&self, type_name: &str) -> bool {
+        self.result_observer_callable_types.borrow().contains(type_name)
     }
 
     /// Set the internal module roots (top-level module names) for a multi-file compilation.

@@ -26,9 +26,16 @@ impl<'a> IrEmitter<'a> {
         let generics_bare = self.emit_type_params_bare(&impl_block.type_params);
 
         let mut regular_methods = Vec::new();
+        let mut borrowed_observer_methods = Vec::new();
         let mut trait_impls = Vec::new();
 
         for method in &impl_block.methods {
+            if self.needs_result_observer_callable_helper(&impl_block.target_type)
+                && let Some(helper) = self.emit_result_observer_borrowed_method(method)?
+            {
+                borrowed_observer_methods.push(helper);
+            }
+
             let method_is_needed = self.should_emit_method(&impl_block.target_type, &method.name, &method.visibility)
                 || !method.lint_allows.is_empty()
                 || !method.rust_attributes.is_empty();
@@ -214,8 +221,19 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        let borrowed_observer_impl = if borrowed_observer_methods.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                impl #generics #target_type #generics_bare {
+                    #(#borrowed_observer_methods)*
+                }
+            }
+        };
+
         Ok(quote! {
             #main_impl
+            #borrowed_observer_impl
             #(#trait_impls)*
         })
     }

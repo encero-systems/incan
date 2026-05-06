@@ -94,6 +94,64 @@ def import_user(path: Path, users: list[User]) -> Result[User, ImportError]:
 
 The `?` is visible in the body, and the fallibility is visible in the return type. There is no hidden exception path.
 
+## Compose `Result` with combinators
+
+Use `Result` combinators when the code is transforming one branch of a result rather than making a multi-branch decision. The six standard methods are Rust-shaped and keep the same names in Incan: `map`, `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err`.
+
+| Method | Callable argument | Use it when |
+| ------ | ----------------- | ----------- |
+| `map` | `Callable[T, U]` | transform an `Ok(T)` value into `Ok(U)` |
+| `map_err` | `Callable[E, F]` | transform an `Err(E)` value into `Err(F)` |
+| `and_then` | `Callable[T, Result[U, E]]` | chain another fallible operation after success |
+| `or_else` | `Callable[E, Result[T, F]]` | recover from or remap a failure with another fallible operation |
+| `inspect` | `Callable[T, None]` | observe or log a success value without changing the result |
+| `inspect_err` | `Callable[E, None]` | observe or log an error value without changing the result |
+
+`map` and `map_err` are good at API boundaries because they keep the success path and error path separated:
+
+```incan
+from std.fs import Path
+
+enum LoadError:
+    Io(str)
+    Parse(str)
+
+def parse_profile(data: bytes) -> Result[Profile, str]:
+    # Imagine a real parser here.
+    return Ok(Profile.from_bytes(data))
+
+def parse_profile_for_load(data: bytes) -> Result[Profile, LoadError]:
+    return parse_profile(data).map_err(LoadError.Parse)
+
+def load_profile(path: Path) -> Result[Profile, LoadError]:
+    return path.read_bytes().map_err(LoadError.Io).and_then(parse_profile_for_load)
+```
+
+`and_then` avoids nested `match` when the next step is also fallible. `or_else` keeps recovery explicit:
+
+```incan
+def read_default_profile(_err: LoadError) -> Result[Profile, LoadError]:
+    return Ok(Profile.guest())
+
+def load_profile_or_guest(path: Path) -> Result[Profile, LoadError]:
+    return load_profile(path).or_else(read_default_profile)
+```
+
+Use `inspect` and `inspect_err` for side effects such as logging, metrics, or debugging taps. They return the original `Result` unchanged, so they should not replace code that needs to transform the value or recover. The compiler passes the observed payload to the callable through an implicit borrow, which lets the original `Ok` or `Err` value continue through the pipeline.
+
+```incan
+def log_profile(profile: Profile) -> None:
+    println(f"loaded profile {profile.name}")
+
+def log_load_error(err: LoadError) -> None:
+    println(f"profile load failed: {err}")
+
+def load_profile_with_logging(path: Path) -> Result[Profile, LoadError]:
+    return load_profile(path).inspect(log_profile).inspect_err(log_load_error)
+```
+
+Prefer `match` when both branches matter, when you need multiple statements with local branching, or when the reader benefits from seeing every case explicitly. Prefer combinators when the intent is a single branch transformation, chain, recovery, or inspection tap.
+
 ## Convert at boundaries
 
 Low-level functions should usually return low-level errors. Boundary functions should convert those errors into the language of the caller.
@@ -155,6 +213,7 @@ Ask these in order:
 3. Is failure a bug in the caller or an impossible internal state? A panic may be acceptable.
 4. Is the current function the right place to decide? If yes, `match`; if no, `?`.
 5. Is this a public boundary? Convert low-level errors into the caller-facing error type.
+6. Is the code only transforming, chaining, recovering, or observing one `Result` branch? Use a Result combinator.
 
 ## Try it
 
@@ -162,6 +221,7 @@ Ask these in order:
 2. Write `def find_age(name: str, ages: dict[str, int]) -> Option[int]`.
 3. Write `def describe_age(name: str, ages: dict[str, int]) -> str` that handles `None` locally.
 4. Write `def require_age(name: str, ages: dict[str, int]) -> Result[int, str]` that converts `None` into `Err(...)`.
+5. Rewrite a nested `match` over `Result[int, str]` using `map`, `map_err`, or `and_then`.
 
 ## What to learn next
 

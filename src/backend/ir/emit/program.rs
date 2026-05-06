@@ -716,6 +716,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 ..
             } => {
                 self.scan_expr(receiver);
+                self.record_result_observer_callback(method, &receiver.ty, args.first().map(|arg| &arg.expr));
                 self.mark_rust_extension_trait_imports(receiver, method);
                 self.mark_stdlib_error_trait_import(receiver, method);
                 if let Some(type_name) = Self::nominal_type_name(&receiver.ty) {
@@ -892,6 +893,50 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson => {}
+        }
+    }
+
+    /// Record non-Copy observer callbacks that need generated borrowed helper items.
+    fn record_result_observer_callback(&mut self, method: &str, receiver_ty: &IrType, callback: Option<&TypedExpr>) {
+        let Some(callback) = callback else {
+            return;
+        };
+        let Some(observed_ty) = Self::result_observed_type(method, receiver_ty, callback) else {
+            return;
+        };
+        if observed_ty.is_copy() {
+            return;
+        }
+
+        match &callback.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } if matches!(callback.ty, IrType::Function { .. }) => {
+                self.analysis.result_observer_function_callbacks.insert(name.clone());
+            }
+            _ if !matches!(callback.ty, IrType::Function { .. }) => {
+                if let Some(type_name) = callback.ty.nominal_type_name() {
+                    self.analysis
+                        .result_observer_callable_types
+                        .insert(type_name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Return the branch payload type observed by `inspect` or `inspect_err` during generated-use analysis.
+    fn result_observed_type(method: &str, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
+        match (method, receiver_ty) {
+            ("inspect", IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
+            ("inspect_err", IrType::Result(_, err)) => Some(err.as_ref().clone()),
+            ("inspect" | "inspect_err", _) => match &callback.ty {
+                IrType::Function { params, .. } => params.first().cloned(),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -1502,6 +1547,9 @@ impl<'a> IrEmitter<'a> {
             &self.external_error_trait_types,
         );
         let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
+        let result_observer_function_callbacks = analysis.result_observer_function_callbacks.clone();
+        let result_observer_callable_types = analysis.result_observer_callable_types.clone();
+        self.set_result_observer_callbacks(result_observer_function_callbacks, result_observer_callable_types);
         self.set_generated_use_analysis(analysis);
 
         let emitted_declarations: Vec<&IrDecl> = program
@@ -1509,7 +1557,6 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .filter(|decl| self.should_emit_decl(decl))
             .collect();
-
         let static_names: Vec<String> = emitted_declarations
             .iter()
             .filter_map(|decl| match &decl.kind {
@@ -1593,6 +1640,11 @@ impl<'a> IrEmitter<'a> {
         let mut decl_items = Vec::new();
         for decl in emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
+            if let IrDeclKind::Function(func) = &decl.kind
+                && let Some(helper) = self.emit_result_observer_borrowed_function(func)?
+            {
+                decl_items.push(helper);
+            }
         }
 
         // Add the declarations after imports

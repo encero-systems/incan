@@ -61,6 +61,116 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Return whether `method` is one of RFC 070's compiler-owned `Result` combinators.
+    fn is_result_combinator(method: &str) -> bool {
+        matches!(
+            method,
+            "map" | "map_err" | "and_then" | "or_else" | "inspect" | "inspect_err"
+        )
+    }
+
+    /// Emit a one-argument callback invocation for a `Result` combinator payload.
+    fn emit_result_callback_call(
+        &self,
+        callback: &TypedExpr,
+        payload_tokens: TokenStream,
+    ) -> Result<TokenStream, EmitError> {
+        let callback_tokens = self.emit_expr(callback)?;
+        if matches!(callback.ty, IrType::Function { .. }) {
+            Ok(quote! { #callback_tokens(#payload_tokens) })
+        } else {
+            Ok(quote! { #callback_tokens.__call__(#payload_tokens) })
+        }
+    }
+
+    /// Emit a one-argument observer invocation for `Result.inspect` / `inspect_err`.
+    fn emit_result_observer_callback_call(
+        &self,
+        callback: &TypedExpr,
+        observed_ty: &IrType,
+    ) -> Result<TokenStream, EmitError> {
+        let borrowed_payload = quote! { __incan_result_value };
+        if observed_ty.is_copy() {
+            return self.emit_result_callback_call(callback, quote! { *#borrowed_payload });
+        }
+
+        match &callback.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } if matches!(callback.ty, IrType::Function { .. }) && self.needs_result_observer_function_helper(name) => {
+                let helper_name = Self::result_observer_borrowed_function_name(name);
+                let helper = Self::rust_ident(&helper_name);
+                Ok(quote! { #helper(#borrowed_payload) })
+            }
+            _ if matches!(callback.ty, IrType::Function { .. }) => {
+                let callback_tokens = self.emit_expr(callback)?;
+                Ok(quote! { #callback_tokens(#borrowed_payload) })
+            }
+            _ => {
+                let callback_tokens = self.emit_expr(callback)?;
+                let method_name = callback
+                    .ty
+                    .nominal_type_name()
+                    .filter(|type_name| self.needs_result_observer_callable_helper(type_name))
+                    .map(|_| Self::result_observer_borrowed_method_name())
+                    .unwrap_or("__call__");
+                let method = Self::rust_ident(method_name);
+                Ok(quote! { #callback_tokens.#method(#borrowed_payload) })
+            }
+        }
+    }
+
+    /// Return the branch payload type observed by `inspect` or `inspect_err`.
+    fn result_observed_type(method: &str, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
+        match (method, receiver_ty) {
+            ("inspect", IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
+            ("inspect_err", IrType::Result(_, err)) => Some(err.as_ref().clone()),
+            ("inspect" | "inspect_err", _) => match &callback.ty {
+                IrType::Function { params, .. } => params.first().cloned(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Emit Rust for an RFC 070 `Result` combinator call when `method` is in scope.
+    fn emit_result_combinator_call(
+        &self,
+        receiver_tokens: &TokenStream,
+        receiver_ty: &IrType,
+        method: &str,
+        callback: &TypedExpr,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if !Self::is_result_combinator(method) {
+            return Ok(None);
+        }
+        let call = match method {
+            "map" | "map_err" | "and_then" | "or_else" => {
+                let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;
+                let m = Self::rust_ident(method);
+                quote! {
+                    #receiver_tokens.#m(|__incan_result_value| #body)
+                }
+            }
+            "inspect" | "inspect_err" => {
+                let Some(observed_ty) = Self::result_observed_type(method, receiver_ty, callback) else {
+                    return Ok(None);
+                };
+                let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
+                let m = Self::rust_ident(method);
+                quote! {
+                    #receiver_tokens.#m(|__incan_result_value| {
+                        #body;
+                    })
+                }
+            }
+            _ => unreachable!("result combinator name checked above"),
+        };
+        Ok(Some(call))
+    }
+
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
     fn emit_method_call_args(
         &self,
@@ -415,6 +525,14 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        if (matches!(receiver.ty, IrType::Result(_, _)) || matches!(method, "inspect" | "inspect_err"))
+            && args.len() == 1
+            && type_args.is_empty()
+            && dispatch.is_none()
+            && let Some(tokens) = self.emit_result_combinator_call(r, &receiver.ty, method, &args[0].expr)?
+        {
+            return Ok(tokens);
+        }
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {

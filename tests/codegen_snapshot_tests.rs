@@ -642,6 +642,102 @@ fn test_function_references_codegen() {
 }
 
 #[test]
+fn test_rfc070_result_combinators_codegen() {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def observe_int(_value: int) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> Result[int, str]:
+  observer = Observer()
+  return result.map(double).and_then(keep_positive).inspect(observe_int).inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains(".map(|__incan_result_value| double(__incan_result_value))"),
+        "map should route through a compiler-owned callback closure:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains(".and_then(|__incan_result_value| keep_positive(__incan_result_value))"),
+        "and_then should route through a compiler-owned callback closure:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains(".inspect(|__incan_result_value|"),
+        "inspect should use Rust's borrowed Result observer surface:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observe_int(*__incan_result_value)"),
+        "inspect should copy Copy payloads from Rust's borrowed observer surface without cloning:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__call__(*__incan_result_value)"),
+        "callable objects should route through __call__ inside Result combinators:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("clone()"),
+        "Copy observer adaptation should not introduce clone calls:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() {
+    let source = r#"
+model Payload:
+  name: str
+
+def observe_payload(_payload: Payload) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model PayloadObserver with Callable1[Payload, None]:
+  def __call__(self, _payload: Payload) -> None:
+    pass
+
+pub def transform(result: Result[Payload, str]) -> Result[Payload, str]:
+  return result.inspect(observe_payload)
+
+pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload, str]:
+  observer = PayloadObserver()
+  return result.inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("fn __incan_result_observer_borrow_observe_payload(_: &Payload)"),
+        "non-Copy observer callbacks should get a generated borrowed helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("__incan_result_observer_borrow_observe_payload(__incan_result_value)"),
+        "inspect should pass Rust's borrowed payload directly into the borrowed helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("fn __incan_result_observer_borrow___call__(&self, _: &Payload)"),
+        "non-Copy callable observers should get a generated borrowed __call__ helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__incan_result_observer_borrow___call__(__incan_result_value)"),
+        "inspect should route non-Copy callable objects through the borrowed __call__ helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_value).clone()"),
+        "non-Copy inspect observers must not clone the payload:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_dict_operations_codegen() {
     let source = load_test_file("dict_operations");
     let rust_code = generate_rust(&source);
