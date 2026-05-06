@@ -108,6 +108,8 @@ wasmtime = { version = "44.0.1", default-features = false, features = ["cranelif
 wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
+# Runtime crate used by std.io generated-project offline smoke tests.
+byteorder = "1"
 # Snapshot testing for codegen
 insta = { version = "1.45", features = ["glob"] }
 # Property-based testing

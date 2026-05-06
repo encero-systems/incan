@@ -10,6 +10,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.derives.*`](derives.md) (curated)
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)
+- [`std.io`](io.md) (curated)
 - [`std.reflection`](reflection.md) (curated)
 - [`std.traits.*`](traits.md) (curated)
 - [`std.testing`](testing.md) (curated)

@@ -12,8 +12,8 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::ResolvedOperatorKind;
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
+use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -339,17 +339,16 @@ impl AstLowering {
                 return self.lower_constructor_call(&owner_name, args);
             }
 
-            // Use two strategies for constructor detection:
-            // 1. Known struct from current file (in struct_names map)
-            // 2. Uppercase identifier heuristic (works cross-file like old codegen)
+            // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
+            // still available through `struct_names`; imported constructors are marked as `TypeName` on the callee
+            // span by the typechecker.
             let is_known_struct = self.struct_names.contains_key(&constructor_name);
-            let is_uppercase = constructor_name
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false);
+            let is_resolved_type_name = self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
 
-            if is_known_struct || is_uppercase {
+            if is_known_struct || is_resolved_type_name {
                 return self.lower_constructor_call(&constructor_name, args);
             }
         }

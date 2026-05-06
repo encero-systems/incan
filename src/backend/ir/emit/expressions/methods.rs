@@ -132,6 +132,10 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .enumerate()
             .map(|(idx, (arg, from_default))| {
+                let external_method_shape = matches!(
+                    base_use_site,
+                    ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
+                );
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
@@ -167,9 +171,13 @@ impl<'a> IrEmitter<'a> {
                     return Ok(wrapped);
                 }
                 let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
-                    if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                    if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
+                    {
                         emitted = quote! { &mut #emitted };
-                    } else if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                    } else if external_method_shape
+                        && idx == 0
+                        && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                    {
                         emitted = quote! { &#emitted };
                     }
                     return Ok(emitted);
@@ -177,10 +185,10 @@ impl<'a> IrEmitter<'a> {
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
                     return Ok(quote! { &mut #emitted });
                 }
-                if idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
                     return Ok(quote! { &#emitted });
                 }
                 match &param.ty {
@@ -367,8 +375,10 @@ impl<'a> IrEmitter<'a> {
     /// Emit a method call expression that remains a regular Rust method call.
     ///
     /// This handles `IrExprKind::MethodCall` when lowering did not classify the method as a builtin-family method.
+    #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn emit_method_call_expr(
         &self,
+        result_ty: &IrType,
         receiver: &TypedExpr,
         method: &str,
         type_args: &[IrType],
@@ -380,6 +390,7 @@ impl<'a> IrEmitter<'a> {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
             let inner = self.emit_method_call_expr(
+                result_ty,
                 &rewritten_receiver,
                 method,
                 type_args,
@@ -483,6 +494,38 @@ impl<'a> IrEmitter<'a> {
                 let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
                 return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
             }
+        }
+
+        if method == "read"
+            && args.len() == 1
+            && args[0].expr.ty.nominal_type_name() == Some("Endian")
+            && !matches!(
+                result_ty,
+                IrType::Unknown | IrType::Bytes | IrType::FrozenBytes | IrType::StaticBytes
+            )
+        {
+            let trait_value_ty = match result_ty {
+                IrType::Result(ok, _) => ok.as_ref(),
+                other => other,
+            };
+            let result_type = self.emit_type(trait_value_ty);
+            let arg_tokens =
+                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
+            return Ok(quote! { crate::__incan_std::io::BinaryRead::<#result_type>::read(&#r, #(#arg_tokens),*) });
+        }
+
+        if method == "write"
+            && args.len() == 2
+            && args[1].expr.ty.nominal_type_name() == Some("Endian")
+            && !matches!(
+                args[0].expr.ty,
+                IrType::Bytes | IrType::FrozenBytes | IrType::StaticBytes
+            )
+        {
+            let value_type = self.emit_type(&args[0].expr.ty);
+            let arg_tokens =
+                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
+            return Ok(quote! { crate::__incan_std::io::BinaryWrite::<#value_type>::write(&#r, #(#arg_tokens),*) });
         }
 
         // Regular method call

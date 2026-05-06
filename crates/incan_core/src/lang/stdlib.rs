@@ -270,6 +270,16 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "io",
+        feature: None,
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "byteorder",
+            source: StdlibExtraCrateSource::Version("1"),
+        }],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "rust",
         feature: None,
         extra_crate_deps: &[],
@@ -570,5 +580,11 @@ mod tests {
         );
         assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(
+            find_namespace("io")
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.crate_name),
+            Some("byteorder")
+        );
     }
 }

@@ -201,6 +201,10 @@ impl TypeChecker {
                 });
             if let Some(fields) = ctor_fields {
                 let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
+                self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                self.type_info
+                    .ident_kinds
+                    .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                 if in_scope && let Some(tid) = surface_types::from_str(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
