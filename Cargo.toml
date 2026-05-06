@@ -22,7 +22,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.3.0-dev.35"
+version = "0.3.0-dev.36"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.92"

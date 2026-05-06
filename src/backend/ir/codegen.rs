@@ -2649,6 +2649,92 @@ pub def forward(value: Thing) -> None:
         Ok(())
     }
 
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_rust_backed_method_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import Builder
+
+model Payload:
+  name: str
+
+pub def forward(payload: Payload) -> int:
+  builder = Builder.new()
+  return builder.json(payload)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::Builder".to_string(),
+                    definition_path: Some("demo::Builder".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        methods: vec![
+                            RustMethodSig {
+                                name: "new".to_string(),
+                                signature: RustFunctionSig {
+                                    params: Vec::new(),
+                                    return_type: "demo::Builder".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                            RustMethodSig {
+                                name: "json".to_string(),
+                                signature: RustFunctionSig {
+                                    params: vec![RustParam {
+                                        name: Some("value".to_string()),
+                                        type_display: "&T".to_string(),
+                                    }],
+                                    return_type: "i64".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                        ],
+                        fields: Vec::new(),
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("builder.json(&payload);"),
+            "expected borrowed rust method arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown()
     -> Result<(), Box<dyn std::error::Error>> {
