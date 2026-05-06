@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../fs/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../reflection/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 087: Reusable field contracts and structural model composition - Incan Documentation</title>
+        <title>std.io - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-087-reusable-field-contracts-and-structural-model-composition" class="md-skip">
+        <a href="#stdio-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 087: Reusable field contracts and structural model composition
+              std.io
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -573,7 +579,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -606,7 +612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -627,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -648,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -669,7 +675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -690,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -711,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -732,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -753,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -774,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -795,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -816,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -837,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -858,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1029,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1050,7 +1056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1071,7 +1077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1092,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1113,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1134,7 +1140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1155,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1176,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1197,7 +1203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1218,7 +1224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1239,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1260,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1281,7 +1287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1302,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1323,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1344,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1370,8 +1376,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1414,11 +1422,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -1432,7 +1440,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1446,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1467,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1488,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1509,7 +1517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1530,7 +1538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1551,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1572,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1593,7 +1601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1614,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1635,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1656,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1677,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1698,7 +1706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1719,7 +1727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1737,6 +1745,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1767,16 +1777,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1793,7 +1803,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1809,7 +1819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1830,7 +1840,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1851,7 +1861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1869,10 +1879,30 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -1881,6 +1911,44 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bytesio" class="md-nav__link">
+    <span class="md-ellipsis">
+      BytesIO
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binary-numeric-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      Binary Numeric I/O
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1893,7 +1961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1914,7 +1982,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1935,7 +2003,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1956,7 +2024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2017,7 +2085,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2050,7 +2118,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2071,7 +2139,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2092,7 +2160,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2113,7 +2181,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2134,7 +2202,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2155,7 +2223,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2235,7 +2303,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2256,7 +2324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2277,7 +2345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2298,7 +2366,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2319,7 +2387,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2340,7 +2408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2452,7 +2520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2473,7 +2541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2494,7 +2562,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2515,7 +2583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2536,7 +2604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2557,7 +2625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2578,7 +2646,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2599,7 +2667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2620,7 +2688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2641,7 +2709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2662,7 +2730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2683,7 +2751,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2704,7 +2772,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2725,7 +2793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2746,7 +2814,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2791,7 +2859,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2824,7 +2892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2845,7 +2913,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2874,7 +2942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2895,7 +2963,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2962,7 +3030,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3040,7 +3108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3061,7 +3129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3082,7 +3150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3166,7 +3234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3187,7 +3255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3208,7 +3276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3229,7 +3297,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3250,7 +3318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3271,7 +3339,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3292,7 +3360,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3313,7 +3381,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3385,7 +3453,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3406,7 +3474,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3484,7 +3552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3505,7 +3573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3526,7 +3594,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3547,7 +3615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3568,7 +3636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3629,7 +3697,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3662,7 +3730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3730,7 +3798,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3840,7 +3908,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3873,7 +3941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3894,7 +3962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3915,7 +3983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3936,7 +4004,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3957,7 +4025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3978,7 +4046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3999,7 +4067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4020,7 +4088,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4106,7 +4174,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4127,7 +4195,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4148,7 +4216,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4169,7 +4237,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4190,7 +4258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4270,7 +4338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4291,7 +4359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4312,7 +4380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4333,7 +4401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4354,7 +4422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4375,7 +4443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4404,7 +4472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4461,7 +4529,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4494,7 +4562,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4515,7 +4583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4536,7 +4604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4564,7 +4632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4584,7 +4652,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4624,255 +4692,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#bytesio" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      BytesIO
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#binary-numeric-io" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Motivation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
-    <span class="md-ellipsis">
-      Syntax
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#module-scope-reusable-fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module-scope reusable fields
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#model-local-fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      Model-local fields
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reusable-field-references-inside-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reusable field references inside models
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#model-spreads" class="md-nav__link">
-    <span class="md-ellipsis">
-      Model spreads
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#duplicate-fields-and-conflicts" class="md-nav__link">
-    <span class="md-ellipsis">
-      Duplicate fields and conflicts
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#metadata-extraction" class="md-nav__link">
-    <span class="md-ellipsis">
-      Metadata extraction
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-rfc-085" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with RFC 085
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-rfc-086" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with RFC 086
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-top-level-field-is-required" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why top-level field is required
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-field-is-optional-inside-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why field is optional inside models
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-bare-identifiers-are-limited" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why bare identifiers are limited
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-model-composition-is-not-inheritance" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why model composition is not inheritance
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture-non-normative" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation architecture (non-normative)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design Decisions
+      Binary Numeric I/O
     </span>
   </a>
   
@@ -4896,294 +4727,149 @@
   
 
 
-<h1 id="rfc-087-reusable-field-contracts-and-structural-model-composition">RFC 087: Reusable field contracts and structural model composition<a class="headerlink" href="#rfc-087-reusable-field-contracts-and-structural-model-composition" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-04-29</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 017 (validated newtypes with implicit coercion)</li>
-<li>RFC 021 (model field metadata and schema-safe aliases)</li>
-<li>RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)</li>
-<li>RFC 085 (field metadata and type-shaped constraints)</li>
-<li>RFC 086 (schema descriptors and adapters)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> #474</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.3</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces reusable field contracts and structural model composition. A module-scope <code>field</code> declaration defines a named field contract once, including its canonical field name, metadata, type, defaulting, and extraction anchor. Inside a <code>model</code>, every model field is semantically a <code>field</code>; the <code>field</code> keyword is optional where the grammar can distinguish a local field declaration from a reusable field reference. Models may also compose larger row shapes by spreading existing model-shaped declarations. The result is a way to define common identifiers, audit fields, and joined row shapes without retyping rich field metadata while preserving checked provenance for metadata extraction and blast-radius analysis.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Every model field is semantically a field:</strong> <code>email: EmailAddress</code> inside a model is sugar for an explicit local field declaration.</li>
-<li><strong>Reusable field contracts are explicit at module scope:</strong> top-level reusable fields must use the <code>field</code> keyword.</li>
-<li><strong>Model-body <code>field</code> is optional where unambiguous:</strong> <code>field user_id</code> and <code>user_id</code> can both reference a reusable field contract inside a model when <code>user_id</code> resolves unambiguously to a reusable field.</li>
-<li><strong>Composition is structural, not inheritance:</strong> spreading a model-shaped declaration copies field contracts into a target model; it does not create subtyping, method inheritance, or runtime hierarchy.</li>
-<li><strong>Conflicts are explicit:</strong> duplicate fields introduced by local declarations, field references, or model spreads must either be identical under this RFC's compatibility rules or be rejected until a future RFC defines reconciliation syntax.</li>
-<li><strong>Provenance is preserved:</strong> metadata extraction must record both the original source field anchor and the composed target model-field anchor.</li>
-<li><strong>Schema overlays stay separate:</strong> RFC 086 can attach projection metadata to composed models, but schema metadata cannot add, remove, or retype fields.</li>
-</ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Large row-shaped systems repeat the same fields everywhere: <code>tenant_id</code>, <code>user_id</code>, <code>account_id</code>, <code>created_at</code>, <code>updated_at</code>, ingestion timestamps, external IDs, partition keys, and business identifiers. In realistic models those fields often carry metadata, descriptions, aliases, defaults, classifications, schema-adapter mappings, and stable extraction anchors. Repeating that contract by hand across many models is both noisy and dangerous.</p>
-<p>The problem becomes sharper when one row shape is derived from another. A query join, warehouse projection, API response model, or contract-backed row may absorb fields from multiple existing row definitions. Users should not have to retype <code>user_id [description="...", classification="...", ...]: UserId</code> in every derived shape. At the same time, the language must avoid hidden inheritance behavior and silent field conflicts.</p>
-<p>RFC 085 defines what individual fields can carry. RFC 086 defines how schema descriptors and overlays consume model metadata. This RFC defines how checked field contracts and row shapes can be reused before schema overlays or adapters enter the picture.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Add a module-scope <code>field</code> declaration for reusable single-field contracts.</li>
-<li>Make <code>field</code> an explicit semantic concept for all model fields.</li>
-<li>Allow <code>field name</code> inside a model to import a reusable field contract.</li>
-<li>Allow bare <code>name</code> inside a model as sugar for <code>field name</code> when <code>name</code> resolves unambiguously to a reusable field contract.</li>
-<li>Allow <code>field name: Type</code> inside a model as an explicit local field declaration equivalent to <code>name: Type</code>.</li>
-<li>Reserve spread syntax for model-shaped composition, such as <code>...AuditFields</code>.</li>
-<li>Preserve field metadata, defaults, aliases, type constraints, and source anchors when reusable fields are imported into models.</li>
-<li>Preserve provenance from source field contracts to target model fields in checked metadata extraction.</li>
-<li>Define strict duplicate-field and conflict behavior.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Defining schema overlays, schema imports, adapter interpretation, or descriptor projection. Those belong to RFC 086.</li>
-<li>Expanding the field metadata key set. RFC 085 owns field metadata keys and type-shaped constraints.</li>
-<li>Introducing class inheritance, model inheritance, method inheritance, or subtype relationships.</li>
-<li>Defining query syntax or query planner behavior.</li>
-<li>Defining field override or conflict reconciliation syntax beyond rejection.</li>
-<li>Allowing top-level implicit reusable field declarations without the <code>field</code> keyword.</li>
-<li>Allowing bare identifiers in model bodies to become arbitrary expressions.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>A reusable field contract is declared once at module scope:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">[</span><span class="n">pattern</span><span class="o">=</span><span class="s2">&quot;^usr_[a-zA-Z0-9]+$&quot;</span><span class="p">]</span>
-<span class="nb">type</span> <span class="nc">TenantId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span>
-<span class="nb">type</span> <span class="nc">AccountId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span>
+<h1 id="stdio-reference">std.io reference<a class="headerlink" href="#stdio-reference" title="Permanent link">&para;</a></h1>
+<p><code>std.io</code> provides in-memory binary streams for byte buffers that are already in memory.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
+</code></pre></div>
+<p>Use <code>BytesIO</code> for parser fixtures, protocol payloads, generated binary blobs, and format readers that should not depend on filesystem paths. <code>std.fs</code> gets bytes into or out of files; <code>std.io</code> moves a cursor through bytes that already exist.</p>
+<h2 id="bytesio">BytesIO<a class="headerlink" href="#bytesio" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BytesIO(initial: bytes = b"")</code></td>
+<td>BytesIO stream</td>
+<td>Construct a stream with its cursor at <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>buf.read(size: int = -1)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read at most <code>size</code> bytes, or the rest when <code>size</code> is negative.</td>
+</tr>
+<tr>
+<td><code>buf.read_exact(size: int)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read exactly <code>size</code> bytes or return <code>unexpected_eof</code>.</td>
+</tr>
+<tr>
+<td><code>buf.read_until(byte: u8)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Read through a delimiter byte or EOF.</td>
+</tr>
+<tr>
+<td><code>buf.skip_until(byte: u8)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Discard through a delimiter byte or EOF and return the skipped byte count.</td>
+</tr>
+<tr>
+<td><code>buf.tell()</code></td>
+<td><code>int</code></td>
+<td>Current cursor position.</td>
+</tr>
+<tr>
+<td><code>buf.seek(offset: int, whence: int = 0)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Move the cursor; <code>0</code> start, <code>1</code> current, <code>2</code> end.</td>
+</tr>
+<tr>
+<td><code>buf.rewind()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Move to the start.</td>
+</tr>
+<tr>
+<td><code>buf.seek_relative(offset: int)</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Move relative to the current cursor.</td>
+</tr>
+<tr>
+<td><code>buf.write(data: bytes)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Write bytes at the current cursor.</td>
+</tr>
+<tr>
+<td><code>buf.write_bytes(data: bytes)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Compatibility spelling for <code>write</code>.</td>
+</tr>
+<tr>
+<td><code>buf.truncate(size: Option[int] = None)</code></td>
+<td><code>Result[int, IoError]</code></td>
+<td>Resize to <code>size</code>, or to the cursor when omitted.</td>
+</tr>
+<tr>
+<td><code>buf.getvalue()</code></td>
+<td><code>bytes</code></td>
+<td>Return a snapshot of the buffer.</td>
+</tr>
+<tr>
+<td><code>buf.into_bytes()</code></td>
+<td><code>bytes</code></td>
+<td>Return the buffer bytes without changing the cursor.</td>
+</tr>
+<tr>
+<td><code>buf.remaining()</code></td>
+<td><code>int</code></td>
+<td>Unread bytes from the cursor to the end.</td>
+</tr>
+</tbody>
+</table>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
 
-<span class="n">field</span> <span class="n">user_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable user identifier&quot;</span><span class="p">,</span> <span class="n">classification</span><span class="o">=</span><span class="s2">&quot;restricted&quot;</span><span class="p">]:</span> <span class="nc">UserId</span>
-<span class="n">field</span> <span class="n">tenant_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable tenant identifier&quot;</span><span class="p">,</span> <span class="n">classification</span><span class="o">=</span><span class="s2">&quot;restricted&quot;</span><span class="p">]:</span> <span class="nc">TenantId</span>
-<span class="n">field</span> <span class="n">account_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable account identifier&quot;</span><span class="p">,</span> <span class="n">classification</span><span class="o">=</span><span class="s2">&quot;restricted&quot;</span><span class="p">]:</span> <span class="nc">AccountId</span>
-<span class="n">field</span> <span class="n">created_at</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Creation timestamp&quot;</span><span class="p">]:</span> <span class="nc">DateTime</span>
-<span class="n">field</span> <span class="n">updated_at</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Last update timestamp&quot;</span><span class="p">]:</span> <span class="nc">DateTime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">read_header</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">buf</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="n">magic</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_exact</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">magic</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">IoError</span><span class="p">(</span><span class="n">operation</span><span class="o">=</span><span class="s2">&quot;read_header&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;invalid_input&quot;</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;bad magic&quot;</span><span class="p">,</span> <span class="n">position</span><span class="o">=</span><span class="n">buf</span><span class="o">.</span><span class="n">tell</span><span class="p">()))</span>
+    <span class="n">version</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">version</span><span class="p">))</span>
 </code></pre></div>
-<p>Inside a model, those reusable fields can be referenced explicitly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">field</span> <span class="n">tenant_id</span>
-    <span class="n">field</span> <span class="n">user_id</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-    <span class="n">lifecycle_status</span><span class="p">:</span> <span class="nc">LifecycleStatus</span>
-    <span class="n">field</span> <span class="n">created_at</span>
-    <span class="n">field</span> <span class="n">updated_at</span>
-</code></pre></div>
-<p>Inside a model, the <code>field</code> keyword may be omitted when the line is a reusable field reference:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">tenant_id</span>
-    <span class="n">user_id</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-    <span class="n">lifecycle_status</span><span class="p">:</span> <span class="nc">LifecycleStatus</span>
-    <span class="n">created_at</span>
-    <span class="n">updated_at</span>
-</code></pre></div>
-<p>The same keyword can be used to make local field declarations explicit, though it is not required:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
-    <span class="n">tenant_id</span>
-    <span class="n">account_id</span>
-    <span class="n">field</span> <span class="n">display_name</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Human-readable account name&quot;</span><span class="p">]:</span> <span class="nb">str</span>
-    <span class="n">field</span> <span class="n">archived</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="k">false</span>
-    <span class="n">created_at</span>
-    <span class="n">updated_at</span>
-</code></pre></div>
-<p>Reusable fields remove the need to repeat large field contracts in derived row shapes:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">UserAccountRow</span><span class="p">:</span>
-    <span class="n">tenant_id</span>
-    <span class="n">user_id</span>
-    <span class="n">account_id</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-    <span class="n">account_name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">account_role</span><span class="p">:</span> <span class="nc">AccountRole</span>
-</code></pre></div>
-<p>For larger reusable groups, spread syntax remains model-shaped:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">AuditFields</span><span class="p">:</span>
-    <span class="n">created_at</span>
-    <span class="n">updated_at</span>
+<h2 id="binary-numeric-io">Binary Numeric I/O<a class="headerlink" href="#binary-numeric-io" title="Permanent link">&para;</a></h2>
+<p><code>BytesIO</code> uses trait-backed overloads for exact-width numeric reads and writes. Callers use
+<code>read(endian)</code> and <code>write(value, endian)</code> directly on the stream.</p>
+<p>Reads are selected by the expected result type, so provide static type context. Writes are selected by the value type.</p>
+<table>
+<thead>
+<tr>
+<th>Trait</th>
+<th>API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Endian</code></td>
+<td><code>Endian.Little</code>, <code>Endian.Big</code></td>
+</tr>
+<tr>
+<td><code>BinaryRead[T]</code></td>
+<td><code>read(endian: Endian) -&gt; Result[T, IoError]</code></td>
+</tr>
+<tr>
+<td><code>BinaryWrite[T]</code></td>
+<td><code>write(value: T, endian: Endian) -&gt; Result[None, IoError]</code></td>
+</tr>
+</tbody>
+</table>
+<p>Supported <code>T</code> values are <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u64</code>, <code>i64</code>, <code>u128</code>, <code>i128</code>, <code>f32</code>, and <code>f64</code>.
+Endianness is ignored for one-byte values.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
 
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">tenant_id</span>
-    <span class="n">user_id</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-    <span class="n">lifecycle_status</span><span class="p">:</span> <span class="nc">LifecycleStatus</span>
-    <span class="o">...</span><span class="nc">AuditFields</span>
-</code></pre></div>
-<p>Composition preserves provenance. A metadata-layer tool should be able to report that <code>User.user_id</code>, <code>UserAccountRow.user_id</code>, and <code>SomeApiUser.user_id</code> all came from the reusable <code>user_id</code> field contract, while also treating each target model field as its own checked field anchor.</p>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>This RFC adds reusable field declarations at module scope:</p>
-<div class="language-text highlight"><pre><span></span><code>module_field_decl = &quot;field&quot; IDENT field_meta? alias_sugar? &quot;:&quot; type_expr default? ;
-</code></pre></div>
-<p>Inside a model body, this RFC treats ordinary model fields as explicit <code>field</code> declarations semantically:</p>
-<div class="language-text highlight"><pre><span></span><code>model_field_decl = &quot;field&quot;? IDENT field_meta? alias_sugar? &quot;:&quot; type_expr default? ;
-</code></pre></div>
-<p>Inside a model body, a reusable field contract can be imported by reference:</p>
-<div class="language-text highlight"><pre><span></span><code>model_field_ref = &quot;field&quot;? IDENT ;
-</code></pre></div>
-<p>Inside a model body, a model-shaped declaration can be spread:</p>
-<div class="language-text highlight"><pre><span></span><code>model_spread = &quot;...&quot; type_path ;
-</code></pre></div>
-<p>The grammar must distinguish <code>IDENT ":"</code> as a local model field declaration and bare <code>IDENT</code> as a reusable field reference. A bare identifier in a model body must not be parsed as an arbitrary expression statement.</p>
-<h3 id="module-scope-reusable-fields">Module-scope reusable fields<a class="headerlink" href="#module-scope-reusable-fields" title="Permanent link">&para;</a></h3>
-<p>A module-scope <code>field</code> declaration defines a reusable field contract. The contract includes:</p>
-<ul>
-<li>canonical field name;</li>
-<li>field metadata from RFC 085;</li>
-<li>alias sugar from RFC 021 where allowed;</li>
-<li>type expression;</li>
-<li>default or default factory where allowed by RFC 085;</li>
-<li>source location and stable reusable-field anchor where available.</li>
-</ul>
-<p>Module-scope reusable fields are declarations. They do not allocate storage, emit runtime values, create callable constructors, or introduce top-level execution.</p>
-<p>Top-level field declarations must use the <code>field</code> keyword. A top-level declaration such as <code>user_id: UserId</code> must not be accepted as an implicit reusable field declaration under this RFC.</p>
-<h3 id="model-local-fields">Model-local fields<a class="headerlink" href="#model-local-fields" title="Permanent link">&para;</a></h3>
-<p>Every declared field inside a model is semantically a <code>field</code>, whether the keyword is present or omitted.</p>
-<p>These declarations are equivalent:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">field</span> <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">email</span> <span class="p">[</span><span class="n">classification</span><span class="o">=</span><span class="s2">&quot;personal&quot;</span><span class="p">]:</span> <span class="nc">EmailAddress</span>
-</code></pre></div>
-<p>The explicit <code>field</code> keyword may be used for clarity, generated source, or mixed models where users want to visually distinguish field declarations from other model members.</p>
-<h3 id="reusable-field-references-inside-models">Reusable field references inside models<a class="headerlink" href="#reusable-field-references-inside-models" title="Permanent link">&para;</a></h3>
-<p>Inside a model, <code>field name</code> imports the module-scope reusable field contract named <code>name</code>.</p>
-<p>Inside a model, bare <code>name</code> is sugar for <code>field name</code> only when <code>name</code> resolves unambiguously to a reusable field contract visible in that scope.</p>
-<p>This is valid:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">field</span> <span class="n">user_id</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Stable user identifier&quot;</span><span class="p">]:</span> <span class="nc">UserId</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">encode_count</span><span class="p">(</span><span class="nb">count</span><span class="p">:</span> <span class="kt">u32</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">()</span>
+    <span class="n">out</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">count</span><span class="p">,</span> <span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">())</span>
 
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">user_id</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">decode_count</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">u32</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">buf</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="nb">count</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
 </code></pre></div>
-<p>This is rejected:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">user_id</span>
-</code></pre></div>
-<p>unless a visible reusable field contract named <code>user_id</code> exists.</p>
-<p>Importing a reusable field contract into a model creates a model field with the reusable field's canonical name, metadata, alias, type, and defaulting behavior. The target model field has its own model-field anchor, and checked metadata must preserve a provenance edge back to the reusable field contract.</p>
-<h3 id="model-spreads">Model spreads<a class="headerlink" href="#model-spreads" title="Permanent link">&para;</a></h3>
-<p>Inside a model, <code>...ModelName</code> imports fields from a model-shaped declaration into the target model.</p>
-<p>The spread source must resolve to a model-shaped declaration whose fields are statically known. This RFC permits spreading ordinary models and model-shaped field groups written as models. It does not require subtyping or inheritance.</p>
-<p>Spreading a model-shaped declaration imports its fields as if each source field contract were referenced individually, while preserving source provenance for each imported field.</p>
-<p>Methods, associated functions, derives, implementations, constructors, runtime behavior, and schema overlays are not imported by a model spread under this RFC.</p>
-<h3 id="duplicate-fields-and-conflicts">Duplicate fields and conflicts<a class="headerlink" href="#duplicate-fields-and-conflicts" title="Permanent link">&para;</a></h3>
-<p>A model must not contain two fields with the same canonical field name unless they are identical field contracts under this RFC's compatibility rules.</p>
-<p>Two field contracts are identical only if they have the same:</p>
-<ul>
-<li>canonical field name;</li>
-<li>resolved type;</li>
-<li>nullability and optionality;</li>
-<li>alias metadata;</li>
-<li>default/default-factory behavior;</li>
-<li>compiler-semantic metadata;</li>
-<li>standard descriptive metadata;</li>
-<li>namespaced metadata that participates in the base model descriptor.</li>
-</ul>
-<p>If duplicate fields differ in any of those facts, the compiler must report a conflict. This RFC does not define local override or reconciliation syntax.</p>
-<p>If duplicate fields are identical, the compiler may accept them but must preserve provenance for all source contracts that contributed to the accepted target field.</p>
-<h3 id="metadata-extraction">Metadata extraction<a class="headerlink" href="#metadata-extraction" title="Permanent link">&para;</a></h3>
-<p>Checked metadata extraction must represent reusable field contracts and composed model fields without losing provenance.</p>
-<p>The extracted representation must preserve at least:</p>
-<ul>
-<li>reusable field identity and stable anchor where available;</li>
-<li>target model-field identity and stable anchor where available;</li>
-<li>provenance edge from target model field to reusable field or spread source field;</li>
-<li>whether the target field was declared locally, imported by <code>field name</code>, imported by bare <code>name</code>, or imported through <code>...Model</code>;</li>
-<li>normalized field metadata after composition;</li>
-<li>duplicate-field merge provenance when identical contracts are accepted;</li>
-<li>rejected conflict diagnostics where a tooling mode exposes failed extraction.</li>
-</ul>
-<p>Blast-radius tools can then answer questions such as which models would be affected by changing the reusable <code>tenant_id</code> contract, which query-derived row shapes absorbed <code>user_id</code>, or which schema overlays depend on a composed field anchor.</p>
-<h3 id="interaction-with-rfc-085">Interaction with RFC 085<a class="headerlink" href="#interaction-with-rfc-085" title="Permanent link">&para;</a></h3>
-<p>Reusable field contracts use the field metadata, defaulting, safe value, and type-shaped constraint rules from RFC 085. This RFC does not add new metadata keys.</p>
-<p>When a reusable field contract is imported into a model, its RFC 085 metadata is preserved as checked field metadata on the target model field. The target field also records that the metadata originated from a reusable field contract.</p>
-<h3 id="interaction-with-rfc-086">Interaction with RFC 086<a class="headerlink" href="#interaction-with-rfc-086" title="Permanent link">&para;</a></h3>
-<p>RFC 086 schema blocks and overlays may attach schema metadata to models built with reusable fields and model spreads. Schema metadata still cannot add, remove, reorder, or retype fields.</p>
-<p>Schema overlays target the composed model descriptor after field composition. Adapter projection should be able to trace from an overlay field back to the target model field and, where applicable, back to the reusable field contract or spread source field.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-top-level-field-is-required">Why top-level <code>field</code> is required<a class="headerlink" href="#why-top-level-field-is-required" title="Permanent link">&para;</a></h3>
-<p>Top-level declarations should remain explicit. Allowing <code>user_id: UserId</code> at module scope to declare a reusable field would make the language look like it accepts arbitrary top-level field-like code. Requiring <code>field user_id: UserId</code> keeps module scope declaration-only and makes reusable contracts visible in search, review, and docs.</p>
-<h3 id="why-field-is-optional-inside-models">Why <code>field</code> is optional inside models<a class="headerlink" href="#why-field-is-optional-inside-models" title="Permanent link">&para;</a></h3>
-<p>Inside a model body, field declarations are already the dominant syntax. Requiring <code>field</code> before every local field would make ordinary models noisy:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">field</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="nc">TenantId</span>
-    <span class="n">field</span> <span class="n">user_id</span><span class="p">:</span> <span class="nc">UserId</span>
-    <span class="n">field</span> <span class="n">email</span><span class="p">:</span> <span class="nc">EmailAddress</span>
-</code></pre></div>
-<p>The keyword is therefore optional inside models. The explicit form remains available where clarity matters:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-    <span class="n">field</span> <span class="n">tenant_id</span>
-    <span class="n">field</span> <span class="n">user_id</span>
-    <span class="n">field</span> <span class="n">email</span><span class="p">:</span> <span class="nc">EmailAddress</span>
-</code></pre></div>
-<h3 id="why-bare-identifiers-are-limited">Why bare identifiers are limited<a class="headerlink" href="#why-bare-identifiers-are-limited" title="Permanent link">&para;</a></h3>
-<p>A bare identifier in a model body is only valid as reusable field sugar. It must not become an expression statement or an implicit local declaration. This keeps model bodies declarative and prevents arbitrary top-level-like execution from entering model declarations.</p>
-<h3 id="why-model-composition-is-not-inheritance">Why model composition is not inheritance<a class="headerlink" href="#why-model-composition-is-not-inheritance" title="Permanent link">&para;</a></h3>
-<p>Rows often need structural reuse without a runtime object hierarchy. A derived row shape from a join or projection wants fields and metadata, not inherited methods, overridden constructors, implicit subtyping, or parent model identity. Treating composition as structural field import keeps the feature narrow and keeps model identity explicit.</p>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is additive. Existing model field declarations remain valid because <code>field</code> is optional inside model bodies.</p>
-<p>Projects can introduce reusable field contracts incrementally by extracting repeated fields into module-scope <code>field</code> declarations and replacing repeated local declarations with <code>field name</code> or bare <code>name</code> references inside models.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Use <code>...field_name</code> for reusable single fields</strong></li>
-<li>
-<p>Rejected because spread syntax visually suggests a larger structure. It is too loud for common scalar fields such as IDs and timestamps.</p>
-</li>
-<li>
-<p><strong>Allow top-level implicit field declarations</strong></p>
-</li>
-<li>
-<p>Rejected because module scope should remain explicit and declaration-only. <code>field user_id: UserId</code> is clearer than <code>user_id: UserId</code> at top level.</p>
-</li>
-<li>
-<p><strong>Use only model spreads and no reusable field declarations</strong></p>
-</li>
-<li>
-<p>Rejected because many reuse cases are one-field contracts. Requiring users to create tiny one-field models for every shared ID or timestamp is awkward and obscures intent.</p>
-</li>
-<li>
-<p><strong>Use inheritance</strong></p>
-</li>
-<li>
-<p>Rejected because the target use case is row-shape reuse and metadata provenance, not subtype polymorphism or runtime behavior inheritance.</p>
-</li>
-<li>
-<p><strong>Allow local overrides during composition immediately</strong></p>
-</li>
-<li>Rejected for this RFC because override semantics need careful interaction with RFC 085 metadata lanes, RFC 086 schema overrides, stable anchors, and blast-radius provenance.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<p>This RFC adds another declaration form and introduces a bare-identifier form inside model bodies. The grammar and diagnostics must be strict so users do not confuse reusable field references with arbitrary statements.</p>
-<p>Composition can hide field origins if tooling does not surface provenance well. The metadata extraction requirements are therefore not optional polish; they are part of the feature's correctness story.</p>
-<p>Rejecting local override syntax makes the first version simpler but may force users to define a new reusable field contract when they need a small variation.</p>
-<h2 id="implementation-architecture-non-normative">Implementation architecture (non-normative)<a class="headerlink" href="#implementation-architecture-non-normative" title="Permanent link">&para;</a></h2>
-<p>A useful implementation shape is to normalize model bodies into explicit field entries before downstream checking. Local declarations, explicit reusable field references, implicit bare references, and model spreads can all become checked model-field entries with a source kind and provenance edge.</p>
-<p>Reusable field contracts should participate in the same checked metadata extraction family as models. A composed model descriptor should expose both the final field contract and the source contract ancestry.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Parser / AST</strong>: must support module-scope <code>field</code> declarations, optional <code>field</code> in model-local field declarations, reusable field references in model bodies, and model spread entries.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: must resolve reusable field references, validate model spread sources, reject unresolved bare field references, detect duplicate-field conflicts, and preserve source provenance.</li>
-<li><strong>Checked metadata extractor</strong>: must preserve reusable field anchors, target model-field anchors, composition provenance, duplicate identical-source provenance, and conflict diagnostics where available.</li>
-<li><strong>IR Lowering / Emission</strong>: must lower composed models as ordinary models with explicit fields after composition, without introducing runtime inheritance or extra storage semantics.</li>
-<li><strong>Stdlib / Runtime</strong>: should expose composed model field metadata through the same reflection surfaces used for ordinary model fields.</li>
-<li><strong>Formatter</strong>: must format module-scope field declarations, explicit model-body <code>field</code> usage, bare field references, and model spreads deterministically.</li>
-<li><strong>LSP / Tooling</strong>: should provide completion for reusable fields inside models, go-to-definition from model fields to reusable source contracts, hover provenance, duplicate conflict diagnostics, and rename support that respects stable anchors.</li>
-<li><strong>Docs</strong>: should render reusable field contracts and composed fields without hiding where a field contract originated.</li>
-<li><strong>Build / Packaging</strong>: should preserve reusable field contracts and composition provenance in artifacts that claim checked metadata support.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Accept duplicate canonical fields introduced by multiple references or spreads only when the contracts are identical under this RFC's compatibility rules. Preserve provenance for every contributing source. Reject non-identical duplicates.</li>
-<li>Allow model spreads to target visible ordinary model-shaped declarations. A dedicated field-group declaration is not part of this RFC.</li>
-<li>Treat visibility as a property of the target model declaration, not the reusable field contract. Importing a reusable field contract into a model does not import standalone visibility.</li>
-<li>Do not define local override syntax in this RFC. Users who need a different contract should define a different reusable field or local field declaration. A future RFC may introduce explicit reconciliation syntax.</li>
-<li>Treat reusable field anchors and target model-field anchors as source identities. Renaming a reusable field contract creates a new identity unless a future migration or rename-marker feature explicitly preserves continuity. External aliases do not preserve the Incan anchor by themselves.</li>
-<li>Formatter behavior must preserve explicit <code>field name</code> references when written by the user and must not rewrite them to bare references. Generated source should prefer explicit <code>field name</code> for reusable field references in mixed model bodies.</li>
-</ul>
+<p><code>BytesIO</code> is in-memory only. Spill-to-disk behavior belongs to a future <code>std.tempfile.SpooledTemporaryFile</code> design rather than this module.</p>
 
 
 
@@ -5232,18 +4918,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
