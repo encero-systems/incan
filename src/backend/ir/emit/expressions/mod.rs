@@ -954,8 +954,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::SerdeFromJson(type_name) => {
                 let type_ident = format_ident!("{}", type_name);
                 Ok(quote! {
-                    serde_json::from_str::<#type_ident>(&s)
-                        .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
+                    incan_stdlib::json::__private::parse_or_error::<#type_ident>(&s)
                 })
             }
         }

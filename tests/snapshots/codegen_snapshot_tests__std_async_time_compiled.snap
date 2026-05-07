@@ -16,8 +16,8 @@ pub use incan_stdlib::r#async::time::clamp_seconds;
 pub use incan_stdlib::r#async::time::clamp_millis;
 pub use incan_stdlib::r#async::time::timeout_join as rust_timeout_join;
 pub use incan_stdlib::r#async::time::timeout_join_ms as rust_timeout_join_ms;
-use tokio::time::sleep as tokio_sleep;
-use tokio::time::timeout as tokio_timeout;
+pub use incan_stdlib::__private::tokio::time::sleep as tokio_sleep;
+pub use incan_stdlib::__private::tokio::time::timeout as tokio_timeout;
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct TimeoutError {}
 impl TimeoutError {

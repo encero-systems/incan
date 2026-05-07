@@ -3,7 +3,7 @@
 //! Provides convenient wrappers around serde_json for types that implement
 //! `Serialize` and `Deserialize`.
 
-use crate::errors::raise_json_serialization_error;
+use crate::errors::{json_decode_error_string, raise_json_serialization_error};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -54,7 +54,7 @@ impl<T: for<'de> Deserialize<'de>> FromJson for T {}
 /// Compiler-only JSON helpers used by generated Rust.
 #[doc(hidden)]
 pub mod __private {
-    use super::{Serialize, raise_json_serialization_error};
+    use super::{Deserialize, Serialize, json_decode_error_string, raise_json_serialization_error};
 
     /// Serialize a value to JSON or raise Incan's canonical runtime error.
     ///
@@ -81,6 +81,17 @@ pub mod __private {
             Ok(json) => json,
             Err(_) => raise_json_serialization_error(type_name),
         }
+    }
+
+    /// Decode JSON or return Incan's canonical JSON decode error string.
+    ///
+    /// This is used by compiler-generated `from_json` and `json_parse` paths so generated projects do not need to
+    /// reference `serde_json::from_str` directly for ordinary stdlib JSON decoding.
+    pub fn parse_or_error<T>(json: &str) -> Result<T, String>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        serde_json::from_str(json).map_err(json_decode_error_string)
     }
 }
 
@@ -110,5 +121,25 @@ mod tests {
     #[should_panic(expected = "TypeError: Object of type AlwaysFails is not JSON serializable")]
     fn stringify_or_raise_uses_canonical_runtime_error() {
         let _ = __private::stringify_or_raise(&AlwaysFails, "AlwaysFails");
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct DecodePayload {
+        value: i64,
+    }
+
+    #[test]
+    fn parse_or_error_decodes_successfully() {
+        let decoded = __private::parse_or_error::<DecodePayload>(r#"{"value":42}"#);
+        assert_eq!(decoded, Ok(DecodePayload { value: 42 }));
+    }
+
+    #[test]
+    fn parse_or_error_uses_canonical_error_string() {
+        let decoded = __private::parse_or_error::<DecodePayload>("not json");
+        assert_eq!(
+            decoded,
+            Err("JSONDecodeError: expected ident at line 1 column 2".to_string())
+        );
     }
 }

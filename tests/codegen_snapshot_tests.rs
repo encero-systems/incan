@@ -2687,8 +2687,16 @@ fn test_std_serde_json_import_codegen() {
         "expected JSON stringify emission to route through stdlib helper; generated:\n{rust_code}"
     );
     assert!(
+        compact.contains("incan_stdlib::json::__private::parse_or_error"),
+        "expected JSON decode emission to route through stdlib helper; generated:\n{rust_code}"
+    );
+    assert!(
         !compact.contains("serde_json::to_string"),
         "generated JSON stringify paths should no longer inline serde_json::to_string fallbacks; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde_json::from_str"),
+        "generated JSON decode paths should no longer inline serde_json::from_str fallbacks; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("std_serde_json_import", rust_code);
 }

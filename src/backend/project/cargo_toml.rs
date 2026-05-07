@@ -332,9 +332,92 @@ fn relative_path(from: &Path, to: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use crate::backend::project::generator::ProjectGenerator;
+    use crate::manifest::{DependencySource, DependencySpec};
+
+    fn parsed_manifest(toml: &str) -> Result<toml::Value, Box<dyn std::error::Error>> {
+        Ok(toml::from_str(toml)?)
+    }
+
+    fn dependency_keys(toml: &str) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+        let manifest = parsed_manifest(toml)?;
+        let dependencies = manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .ok_or("generated Cargo.toml missing [dependencies] table")?;
+
+        Ok(dependencies.keys().cloned().collect())
+    }
+
+    fn stdlib_features(toml: &str) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+        let manifest = parsed_manifest(toml)?;
+        let features = manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|dependencies| dependencies.get("incan_stdlib"))
+            .and_then(toml::Value::as_table)
+            .and_then(|stdlib| stdlib.get("features"))
+            .and_then(toml::Value::as_array)
+            .map(|features| {
+                features
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(features)
+    }
+
+    fn assert_dependency_contract(
+        toml: &str,
+        expected_dependencies: &[&str],
+        expected_stdlib_features: &[&str],
+        forbidden_dependencies: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let actual_dependencies = dependency_keys(toml)?;
+        let expected_dependencies = expected_dependencies.iter().map(|name| (*name).to_string()).collect();
+        assert_eq!(
+            actual_dependencies, expected_dependencies,
+            "generated Cargo.toml dependencies should match the contract, got:\n{toml}"
+        );
+
+        let actual_stdlib_features = stdlib_features(toml)?;
+        let expected_stdlib_features = expected_stdlib_features
+            .iter()
+            .map(|feature| (*feature).to_string())
+            .collect();
+        assert_eq!(
+            actual_stdlib_features, expected_stdlib_features,
+            "incan_stdlib features should match the generated-project contract, got:\n{toml}"
+        );
+
+        let actual_dependencies = dependency_keys(toml)?;
+        for forbidden in forbidden_dependencies {
+            assert!(
+                !actual_dependencies.contains(*forbidden),
+                "generated Cargo.toml should not expose `{forbidden}` as a direct dependency, got:\n{toml}"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn dependency_spec(crate_name: &str, version: &str, features: &[&str]) -> DependencySpec {
+        DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some(version.to_string()),
+            features: features.iter().map(|feature| (*feature).to_string()).collect(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+    }
 
     #[test]
     fn test_cargo_toml_generation() -> Result<(), Box<dyn std::error::Error>> {
@@ -356,12 +439,81 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn minimal_generated_manifest_exposes_only_base_direct_crates() -> Result<(), Box<dyn std::error::Error>> {
+        let generator = ProjectGenerator::new("/tmp/test_minimal_manifest_contract", "minimal_contract", true);
+        let toml = generator.generate_cargo_toml()?;
+
+        assert_dependency_contract(
+            &toml,
+            &["incan_derive", "incan_stdlib"],
+            &[],
+            &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
+        )
+    }
+
+    #[test]
+    fn json_generated_manifest_keeps_serde_json_behind_stdlib_feature() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_json_manifest_contract", "json_contract", true);
+        generator.set_stdlib_features(vec!["json".to_string()]);
+        generator.set_dependencies(vec![dependency_spec("serde", "1.0", &["derive"])]);
+        let toml = generator.generate_cargo_toml()?;
+
+        assert_dependency_contract(
+            &toml,
+            &["incan_derive", "incan_stdlib", "serde"],
+            &["json"],
+            &["axum", "incan_web_macros", "inventory", "serde_json", "tokio"],
+        )
+    }
+
+    #[test]
+    fn async_generated_manifest_keeps_tokio_behind_stdlib_feature() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_async_manifest_contract", "async_contract", true);
+        generator.set_stdlib_features(vec!["async".to_string()]);
+        let toml = generator.generate_cargo_toml()?;
+
+        assert_dependency_contract(
+            &toml,
+            &["incan_derive", "incan_stdlib"],
+            &["async"],
+            &["axum", "incan_web_macros", "inventory", "serde", "serde_json", "tokio"],
+        )
+    }
+
+    #[test]
+    fn web_generated_manifest_bounds_transitional_direct_deps() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_web_manifest_contract", "web_contract", true);
+        generator.set_stdlib_features(vec!["web".to_string()]);
+        generator.set_dependencies(vec![
+            dependency_spec("axum", "0.8", &[]),
+            dependency_spec("inventory", "0.3", &[]),
+            DependencySpec {
+                crate_name: "incan_web_macros".to_string(),
+                version: None,
+                features: vec![],
+                default_features: true,
+                source: DependencySource::Path {
+                    path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_web_macros"),
+                },
+                optional: false,
+                package: None,
+            },
+        ]);
+        let toml = generator.generate_cargo_toml()?;
+
+        assert_dependency_contract(
+            &toml,
+            &["axum", "incan_derive", "incan_stdlib", "incan_web_macros", "inventory"],
+            &["web"],
+            &["serde", "serde_json", "tokio"],
+        )
+    }
+
     // ---- Phase 1: version propagation to Cargo.toml ----
 
     #[test]
     fn test_cargo_toml_version_propagation() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::manifest::{DependencySource, DependencySpec};
-
         let mut generator = ProjectGenerator::new("/tmp/test_ver", "test_ver", true);
         generator.set_dependencies(vec![
             DependencySpec {

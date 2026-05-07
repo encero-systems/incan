@@ -9091,6 +9091,50 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
+    fn std_json_deserialize_from_json_runs_through_incan_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"std_json_deserialize_from_json\"\nversion = \"0.3.0-dev.1\"\n",
+            r#"from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+  label: str
+
+def main() -> None:
+  match Payload.from_json('{"value":7,"label":"dogfood"}'):
+    case Ok(payload):
+      println(payload.to_json())
+    case Err(err):
+      println(err)
+"#,
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected std JSON Deserialize.from_json to run successfully through Incan source.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.lines().next(),
+            Some("{\"value\":7,\"label\":\"dogfood\"}"),
+            "expected round-tripped JSON payload, got:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn generated_runtime_helpers_support_frozen_float_list_min_max() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(

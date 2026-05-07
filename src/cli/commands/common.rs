@@ -363,22 +363,6 @@ pub(crate) fn collect_project_requirements(
             serde,
             "std.serde usage in source".to_string(),
         )?;
-
-        let serde_json = DependencySpec {
-            crate_name: "serde_json".to_string(),
-            version: Some("1.0".to_string()),
-            features: vec![],
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: None,
-        }
-        .normalized();
-        merge_requirement_dependency(
-            &mut requirements.dependencies,
-            serde_json,
-            "std.serde usage in source".to_string(),
-        )?;
     }
 
     for spec in library_manifest_index.cargo_path_dependencies() {
@@ -1865,8 +1849,8 @@ model User:
             requirements
                 .dependencies
                 .iter()
-                .any(|dep| dep.crate_name == "serde_json"),
-            "serde usage should inject serde_json dependency"
+                .all(|dep| dep.crate_name != "serde_json"),
+            "serde_json should stay behind incan_stdlib's json feature"
         );
         Ok(())
     }
