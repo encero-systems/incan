@@ -494,6 +494,8 @@
       
         
       
+        
+      
     
     
       
@@ -891,6 +893,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
@@ -998,6 +1021,8 @@
       
         
       
+        
+      
     
     
       
@@ -1061,6 +1086,27 @@
   
   <span class="md-ellipsis">
     Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
   </span>
   
 
@@ -1820,6 +1866,8 @@
       
         
       
+        
+      
     
     
       
@@ -1914,6 +1962,27 @@
   
   <span class="md-ellipsis">
     std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
   </span>
   
 
@@ -2563,6 +2632,8 @@
       
         
       
+        
+      
     
     
       
@@ -2852,6 +2923,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -2997,7 +3089,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_19" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_20" >
         
           
           
@@ -3013,14 +3105,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_19" id="__nav_3_5_19_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_20" id="__nav_3_5_20_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_19_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_19">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_20">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4862,6 +4954,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-058-stddatetime" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 058 std.datetime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-088-iterator-adapter-surface" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 088 iterator adapter surface
@@ -5286,6 +5387,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-058-stddatetime" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 058 std.datetime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-088-iterator-adapter-surface" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 088 iterator adapter surface
@@ -5496,7 +5606,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, graph and collections stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, graph, collections, and datetime stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; and RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -5511,6 +5621,7 @@
 <li>enum-owned behavior should live on the enum itself, and enums should be able to adopt the same trait protocols as models and classes</li>
 <li>operator overloading should present traits as nominal capability contracts while keeping dunder methods as the explicit implementation hooks</li>
 <li>in-memory graph-shaped data should have one small stdlib vocabulary for node ids, edge ids, directed graphs, DAGs, multigraphs, adjacency, traversal, and cycle-aware ordering</li>
+<li>time-shaped data should have one stdlib vocabulary for Rust-backed runtime timing, civil dates and times, fixed UTC offsets, and calendar-aware intervals</li>
 <li>specialized collection semantics should have explicit stdlib types instead of forcing every queue, multiset, ordered map, sorted set, layered map, or priority queue through bare builtin containers</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>testing should feel like a first-class workflow, with inline unit tests, fixtures, parametrization, selection, scheduling, and machine-readable reports owned by Incan rather than delegated to ad hoc scripts</li>
@@ -5608,6 +5719,10 @@
 <h3 id="rfc-068-protocol-hooks-for-core-syntax">RFC 068 protocol hooks for core syntax<a class="headerlink" href="#rfc-068-protocol-hooks-for-core-syntax" title="Permanent link">&para;</a></h3>
 <p>Core syntax now resolves through static protocol hooks for user-defined types. Custom types can participate in truthiness, <code>len(...)</code>, membership, iteration, indexing, indexed assignment, and callable-object invocation by defining compatible hooks such as <code>__bool__</code>, <code>__len__</code>, <code>__contains__</code>, <code>__iter__</code>, <code>__next__</code>, <code>__getitem__</code>, <code>__setitem__</code>, and <code>__call__</code>.</p>
 <p>The hook surface remains statically checked. Dunder methods are implementation hooks, while traits such as <code>Bool</code>, <code>Len</code>, <code>Contains</code>, <code>Iterable</code>, <code>Iterator</code>, <code>Index</code>, <code>IndexMut</code>, and fixed-arity callable traits are the nominal capability vocabulary for explicit adoption, bounds, docs, and diagnostics. <code>Option</code> and <code>Result</code> remain intentionally non-truthy; use explicit pattern checks for optionality and fallibility.</p>
+<h3 id="rfc-058-stddatetime">RFC 058 <code>std.datetime</code><a class="headerlink" href="#rfc-058-stddatetime" title="Permanent link">&para;</a></h3>
+<p><code>std.datetime</code> now provides temporal value types for runtime timing, civil dates and times, fixed UTC offsets, and interval arithmetic. The module includes <code>Duration</code>, <code>Instant</code>, <code>SystemTime</code>, <code>Date</code>, <code>Time</code>, <code>DateTime</code>, <code>FixedOffset</code>, <code>DateTimeOffset</code>, <code>TimeDelta</code>, <code>YearMonthInterval</code>, and <code>DateTimeInterval</code>. UTC host-clock civil factories are available as <code>Date.utc_today()</code> and <code>DateTime.utc_now()</code>; timezone-aware local <code>today</code> / <code>now</code> semantics remain package-level functionality.</p>
+<p>The runtime timing layer uses Rust <code>std::time</code> through ordinary Incan Rust interop for <code>Duration</code>, <code>Instant</code>, and <code>SystemTime</code>. The civil calendar layer remains source-defined Incan, with ISO-style parsing/formatting, Python-shaped <code>strftime</code> / <code>strptime</code>, nanosecond <code>%f</code>, fixed-offset <code>%z</code> / <code>%:z</code>, comparison, date arithmetic, and interval normalization. Named timezone rule lookup is intentionally left to separately versioned packages.</p>
+<p>See also: <a href="../../language/tutorials/dates_and_times/">Dates and times</a>, <a href="../../language/how-to/dates_and_times/">Dates and times how-to</a>, <a href="../../language/reference/stdlib/datetime/">std.datetime reference</a>, <a href="/dev/RFCs/closed/implemented/058_std_datetime">RFC 058</a>.</p>
 <h3 id="rfc-088-iterator-adapter-surface">RFC 088 iterator adapter surface<a class="headerlink" href="#rfc-088-iterator-adapter-surface" title="Permanent link">&para;</a></h3>
 <p>Iterator values now expose the RFC 088 adapter surface for lazy pipelines: <code>.map()</code>, <code>.filter()</code>, <code>.flat_map()</code>, <code>.take()</code>, <code>.skip()</code>, <code>.chain()</code>, <code>.enumerate()</code>, <code>.zip()</code>, <code>.take_while()</code>, <code>.skip_while()</code>, and <code>.batch()</code>.</p>
 <p>Terminal consumers make realization or summarization explicit with <code>.collect()</code>, <code>.count()</code>, <code>.reduce()</code>, <code>.fold()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, <code>.for_each()</code>, and <code>.sum()</code>. Terminal methods consume the iterator, so code that needs to keep the iterator for another pass should call <code>.clone()</code> before the terminal operation. <code>.sum()</code> supports <code>int</code>, <code>float</code>, and newtypes over summable underlying types; checked newtypes go through their normal construction validation. For now, <code>.collect()</code> returns <code>list[T]</code>; it does not accept a target collection type.</p>
@@ -5726,6 +5841,7 @@
 <h3 id="parser-and-syntax">Parser and syntax<a class="headerlink" href="#parser-and-syntax" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Language/Stdlib</strong>: <code>std.graph</code> adds explicit in-memory graph values with direct <code>DiGraph[T]()</code>, <code>Dag[T]()</code>, and <code>MultiDiGraph[T]()</code> construction, acyclicity-enforcing DAGs, stable <code>EdgeId</code> values for parallel multigraph edges, stable <code>NodeId</code> values, typed node payloads, node and edge removal, adjacency queries, roots and sinks, BFS/DFS traversal helpers, and cycle-reporting topological order for dependency and plan graphs (#204, RFC 047).</li>
+<li><strong>Language/Stdlib</strong>: <code>std.datetime</code> adds Rust <code>std::time</code>-backed <code>Duration</code>, <code>Instant</code>, and <code>SystemTime</code>, plus source-defined Incan civil values for dates, times, naive datetimes, fixed UTC offsets, fixed-offset datetimes, UTC civil clock factories, day/time intervals, year/month intervals, compound datetime intervals, ISO-style parsing/formatting, Python-shaped <code>strftime</code> / <code>strptime</code> with nanosecond <code>%f</code>, deterministic calendar arithmetic, and interval normalization (#292, RFC 058).</li>
 <li><strong>Language/Stdlib</strong>: <code>std.collections</code> adds explicit specialized collection types for double-ended queues, multisets, default-valued maps, ordered maps and sets, sorted maps and sets, layered maps, and priority queues. The namespace is registered as an ordinary source stdlib module with no feature gate, no extra Cargo dependencies, and no Rust-backed stdlib dispatch (#164, RFC 030).</li>
 <li><strong>Language/Compiler</strong>: RFC 029 adds anonymous closed union annotations with canonical <code>Union[A, B, ...]</code> and <code>A | B</code> syntax. The compiler normalizes duplicates, nested unions, ordering, and <code>None</code>-containing unions, accepts member-to-union and union-to-union assignability, lowers ordinary unions to generated closed Rust enums, preserves <code>None</code> unions on the existing <code>Option[...]</code> path, and supports <code>isinstance</code> narrowing for true branches, else branches, wider unions, chained <code>elif</code> branches, and <code>Option[Union[...]]</code>, plus <code>is None</code> / <code>is not None</code> narrowing and exhaustive <code>match</code> type patterns (#163, RFC 029).</li>
 <li><strong>Language/Stdlib</strong>: RFC 028 expands <code>std.traits.ops</code> into the nominal operator capability vocabulary for custom types, including <code>FloorDiv</code>, <code>Pow</code>, shifts, bitwise operators, pipe operators, <code>MatMul</code>, unary <code>Not</code>, <code>GetItem</code> / <code>SetItem</code>, and explicit in-place compound-assignment traits for <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code> (#162, RFC 028).</li>
@@ -5801,6 +5917,7 @@
 <li>Enum methods and enum trait adoption: <a href="/dev/RFCs/closed/implemented/050_enum_methods_and_trait_adoption">RFC 050</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Path-centric filesystem APIs: <a href="/dev/RFCs/closed/implemented/055_std_fs">RFC 055</a></li>
+<li><code>std.datetime</code> temporal values and intervals: <a href="/dev/RFCs/closed/implemented/058_std_datetime">RFC 058</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
 <li>Protocol hooks for core syntax: <a href="/dev/RFCs/closed/implemented/068_protocol_hooks_for_core_language_syntax">RFC 068</a></li>
 <li>Fixed-length list initialization with <code>list.repeat</code>: <a href="/dev/RFCs/closed/implemented/069_list_repeat_std_helper">RFC 069</a></li>
