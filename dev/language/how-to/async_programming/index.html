@@ -5840,8 +5840,8 @@ They're the primary way to communicate between async tasks without shared mutabl
 <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
 
 <span class="c1"># Clone sender for each producer</span>
-<span class="n">tx1</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
-<span class="n">tx2</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">tx1</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
+<span class="n">tx2</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
 
 <span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">await</span> <span class="n">tx1</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>

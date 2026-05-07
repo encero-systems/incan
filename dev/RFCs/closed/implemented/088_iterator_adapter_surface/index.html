@@ -5241,7 +5241,7 @@
 <p>Terminal methods consume the receiver. After a terminal method consumes an iterator value, the program must not rely on that same iterator value yielding additional elements unless the iterator type documents reusable iteration separately.</p>
 <p>If code needs to preserve an iterator value for later use, clone it before the terminal call:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">remaining</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-<span class="n">copy</span> <span class="o">=</span> <span class="n">remaining</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">copy</span> <span class="o">=</span> <span class="n">remaining</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
 
 <span class="n">error_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
 

@@ -5645,6 +5645,7 @@
 <li>Aliases: <code>list[T]</code>, <code>dict[K, V]</code>, <code>set[T]</code></li>
 <li>Rust interop alias: <code>Vec[T]</code> (accepted as <code>List[T]</code>)</li>
 </ul>
+<p>When passing a direct <code>list[T]</code> to an external Rust function or method that expects <code>Vec&lt;U&gt;</code>, Incan emits element-level <code>.into()</code> conversions and leaves Rust to validate the required <code>From&lt;T&gt;</code> implementation.</p>
 <p>The generated language reference shows the canonical name and aliases in one place:
 <a href="../language/">Language reference (generated)</a>.</p>
 <h3 id="built-in-functions-always-available">Built-in functions (always available)<a class="headerlink" href="#built-in-functions-always-available" title="Permanent link">&para;</a></h3>

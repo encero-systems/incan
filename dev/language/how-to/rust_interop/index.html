@@ -5766,6 +5766,11 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <td><code>Vec&lt;u8&gt;</code>, <code>&amp;[u8]</code></td>
 </tr>
 <tr>
+<td><code>List[T]</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
+<td><code>Vec&lt;U&gt;</code> when Rust accepts <code>U: From&lt;T&gt;</code></td>
+</tr>
+<tr>
 <td><code>None</code> / unit</td>
 <td><code>()</code></td>
 <td><code>()</code></td>
@@ -5773,6 +5778,7 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 </tbody>
 </table>
 <p>Exact-width numeric adaptation is intentionally narrow. <code>i8</code> can flow into an <code>i16</code>/<code>i32</code>/<code>i64</code> Rust parameter, <code>u8</code> can flow into a wider unsigned or strictly wider signed parameter, and <code>f32</code> can flow into <code>f64</code>. Narrowing, signed-to-unsigned conversion, and <code>float</code>/<code>f64</code> to <code>f32</code> are rejected unless the Incan code performs an explicit conversion first.</p>
+<p>For direct list arguments passed to external Rust functions or methods, Incan can adapt the element type at the boundary. If a Rust callable expects <code>Vec&lt;U&gt;</code> and the Incan value is <code>list[T]</code>, the generated Rust maps each element through <code>.into()</code> and lets Rust enforce that <code>U: From&lt;T&gt;</code>. This is intentionally one level deep; nested collection adaptation is not implied.</p>
 <p>Example (<code>f32 -&gt; f64</code> boundary adaptation):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">time</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Duration</span>
 
@@ -5930,6 +5936,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 </code></pre></div>
 <p>This keeps interop ergonomic without exposing Rust borrow syntax in Incan code.</p>
 </div>
+<p>Direct <code>list[T]</code> arguments lower to Rust <code>Vec&lt;T&gt;</code>. At external Rust call boundaries, a <code>list[T]</code> can also satisfy a <code>Vec&lt;U&gt;</code> parameter when Rust has the corresponding <code>From&lt;T&gt;</code> / <code>Into&lt;U&gt;</code> element conversion.</p>
 <h2 id="understanding-rust-types-optional">Understanding Rust types (optional)<a class="headerlink" href="#understanding-rust-types-optional" title="Permanent link">&para;</a></h2>
 <details class="tip">
 <summary>Coming from Python?</summary>

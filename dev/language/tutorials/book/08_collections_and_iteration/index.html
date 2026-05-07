@@ -4993,6 +4993,14 @@
 <p class="admonition-title">Coming from Python?</p>
 <p>Incan lists are close to Python’s: out-of-range indexing and empty <code>list.pop()</code> both surface as <a href="../../../reference/language/#indexerror"><code>IndexError</code></a> panics with the same canonical messages as CPython where applicable (including <code>pop from empty list</code>).</p>
 </div>
+<p>Use <code>clone()</code> when you need to keep the original list and work with a copy. The element type must satisfy <code>Clone</code>, so models and classes that are not plain scalar values should derive or implement that capability.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Clone</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Node</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="n">nodes</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Node</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="nc">Node</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">2</span><span class="p">)]</span>
+<span class="n">copy</span> <span class="o">=</span> <span class="n">nodes</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
+</code></pre></div>
 <p>Use <code>list.repeat(value, count)</code> for fixed-length initialization when every element should start from the same clone-derived value:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
 <span class="n">labels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="s2">&quot;pending&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
@@ -5038,7 +5046,7 @@
 </code></pre></div>
 <p>Terminal methods consume the iterator they are called on. If you need to keep the iterator for a later pass, clone it before the terminal method:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">job_iter</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-<span class="n">ready_count</span> <span class="o">=</span> <span class="n">job_iter</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
+<span class="n">ready_count</span> <span class="o">=</span> <span class="n">job_iter</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
 
 <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">job_iter</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">job</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
