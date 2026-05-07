@@ -34,6 +34,11 @@ fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     check(&ast)
 }
 
+fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
+    let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lex failed: {errs:?}"));
+    parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
+}
+
 fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,
@@ -9922,6 +9927,159 @@ def encode(payload: Payload) -> str:
   return payload.to_json()
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_json_adopts_traits_for_methods_and_bounds() {
+    let source = r#"
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_module_derive_adopts_imported_module_traits_for_methods_and_bounds() {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+
+def encode[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .unwrap_or_else(|errs| panic!("user derivable module should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
+    let source = r#"
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
+  value: int
+
+def encode[T with JsonSerialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_rejects_user_module_without_derives_metadata() {
+    let yaml_source = r#"
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .expect_err("module derive should require __derives__ metadata");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("does not declare `__derives__`")),
+        "Expected missing __derives__ diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_user_module_derive_reports_method_collision_between_derived_traits() {
+    let left_source = r#"
+__derives__ = [Readable]
+
+pub trait Readable:
+  def label(self) -> str:
+    return str("left")
+"#;
+    let right_source = r#"
+__derives__ = [Displayable]
+
+pub trait Displayable:
+  def label(self) -> str:
+    return str("right")
+"#;
+    let source = r#"
+import left
+import right
+
+@derive(left, right)
+model Item:
+  value: int
+"#;
+
+    let left_ast = parse_program(left_source, "left module");
+    let right_ast = parse_program(right_source, "right module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("left", &left_ast), ("right", &right_ast)])
+        .expect_err("derived traits with the same default method should be ambiguous");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method 'label'")),
+        "Expected derived trait method collision diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_derives_metadata_rejects_non_trait_entries() {
+    let source = r#"
+trait Good:
+  def ok(self) -> None: ...
+
+const Bad = 1
+__derives__ = [Good, Bad]
+"#;
+    let errs = check_str_err(source, "__derives__ metadata should reject non-trait entries");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("entry 'Bad' is not a trait")),
+        "Expected non-trait __derives__ diagnostic; got: {:?}",
+        errs
+    );
 }
 
 #[test]

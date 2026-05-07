@@ -864,6 +864,7 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.seed_dependency_trait_decls(&self.dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -1066,6 +1067,7 @@ impl<'a> IrCodegen<'a> {
                 }
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.seed_dependency_trait_decls(&self.dependency_modules);
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1247,6 +1249,7 @@ impl<'a> IrCodegen<'a> {
                     }
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.seed_dependency_trait_decls(&self.dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.

@@ -2641,6 +2641,41 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_implicit_derives_metadata_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+__derives__ = [Serialize, Deserialize]
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected __derives__ metadata as const declaration");
+        };
+        assert_eq!(c.name, "__derives__");
+        assert!(c.ty.is_none());
+        let Expr::List(entries) = &c.value.node else {
+            panic!("Expected __derives__ value to parse as list literal");
+        };
+        assert_eq!(entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_qualified_trait_bound() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.type_params[0].bounds.len(), 1);
+        assert_eq!(func.type_params[0].bounds[0].name, "json.Serialize");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_decimal_literal() -> Result<(), Vec<CompileError>> {
         let source = r#"
 const PRICE = 19.99d

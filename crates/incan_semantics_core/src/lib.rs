@@ -38,6 +38,7 @@ pub enum SurfaceFeatureKey {
 pub enum DecoratorFeature {
     RustExtern,
     RustAllow,
+    RustDerive,
     TestingMarker,
     Route,
     Derive,
@@ -316,6 +317,7 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
     match id {
         DecoratorId::RustExtern => DecoratorFeature::RustExtern,
         DecoratorId::RustAllow => DecoratorFeature::RustAllow,
+        DecoratorId::RustDerive => DecoratorFeature::RustDerive,
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
         DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,

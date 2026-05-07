@@ -2,7 +2,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::ast_walk::any_expr_in_body;
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::{
     substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
 };
@@ -887,6 +887,44 @@ impl TypeChecker {
 
         let instantiated = self.instantiate_trait_info(&trait_info, &resolved_args);
         Some((instantiated, resolved_args))
+    }
+
+    /// Resolve a previously collected trait adoption into instantiated trait metadata for validation.
+    fn resolve_collected_trait_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        adoption_span: Span,
+    ) -> Option<ResolvedTraitAdoption> {
+        let trait_info = self.lookup_trait_info(&adoption.name)?.clone();
+        if adoption.type_args.len() != trait_info.type_params.len() {
+            self.errors.push(errors::trait_adoption_bound_arity_mismatch(
+                &adoption.name,
+                trait_info.type_params.len(),
+                adoption.type_args.len(),
+                adoption_span,
+            ));
+            return None;
+        }
+        let info = if adoption.type_args.is_empty() {
+            trait_info
+        } else {
+            self.instantiate_trait_info(&trait_info, &adoption.type_args)
+        };
+        Some(ResolvedTraitAdoption {
+            name: adoption.name.clone(),
+            info,
+            args: adoption.type_args.clone(),
+            span: adoption_span,
+        })
+    }
+
+    /// Return the first `@derive` span for diagnostics tied to synthetic derive adoptions.
+    fn first_derive_span(decorators: &[Spanned<Decorator>]) -> Span {
+        decorators
+            .iter()
+            .find(|decorator| decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive))
+            .map(|decorator| decorator.span)
+            .unwrap_or_default()
     }
 
     /// Recursively collect abstract trait methods after applying any explicit adoption-time type arguments.
@@ -1785,9 +1823,61 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Check a const declaration, routing RFC 024 `__derives__` metadata through derive-specific validation.
     fn check_const(&mut self, konst: &ConstDecl, span: Span) {
+        if konst.name == "__derives__" {
+            self.check_derives_metadata(konst);
+            return;
+        }
         // RFC 008: const-eval (with cycle detection + category classification).
         self.check_and_resolve_const(konst, span);
+    }
+
+    /// Validate RFC 024 module-level `__derives__` metadata against the module's local trait declarations.
+    fn check_derives_metadata(&mut self, konst: &ConstDecl) {
+        let Expr::List(entries) = &konst.value.node else {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must be a list of trait names".to_string(),
+                konst.value.span,
+            ));
+            return;
+        };
+        if entries.is_empty() {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must list at least one trait".to_string(),
+                konst.value.span,
+            ));
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for entry in entries {
+            let crate::frontend::ast::ListEntry::Element(expr) = entry else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names, not spreads".to_string(),
+                    konst.value.span,
+                ));
+                continue;
+            };
+            let Expr::Ident(name) = &expr.node else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names".to_string(),
+                    expr.span,
+                ));
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                self.errors.push(CompileError::type_error(
+                    format!("Duplicate trait '{name}' in `__derives__`"),
+                    expr.span,
+                ));
+            }
+            if self.lookup_trait_info(name).is_none() {
+                self.errors.push(CompileError::type_error(
+                    format!("`__derives__` entry '{name}' is not a trait"),
+                    expr.span,
+                ));
+            }
+        }
     }
 
     fn check_static(&mut self, static_decl: &StaticDecl, span: Span) {
@@ -1872,6 +1962,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&model.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         let mut method_names = HashSet::new();
@@ -2071,6 +2168,7 @@ impl TypeChecker {
         self.validate_decorators(&class.decorators);
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
+        let derives = self.extract_derive_names(&class.decorators);
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -2108,6 +2206,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&class.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         // RFC 021: Field aliases are NOT supported on class declarations.
@@ -2403,6 +2508,7 @@ impl TypeChecker {
 
         self.validate_decorators(&en.decorators);
         self.validate_derives(&en.decorators);
+        let derives = self.extract_derive_names(&en.decorators);
 
         for param in &en.type_params {
             self.symbols.define(Symbol {
@@ -2441,6 +2547,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&en.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         self.check_value_enum_decl(en);

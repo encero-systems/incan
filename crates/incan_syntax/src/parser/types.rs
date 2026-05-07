@@ -80,9 +80,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a single trait bound: `Eq` or `From[U]`.
+    /// Parse a single trait bound: `Eq`, `From[U]`, or a module-qualified bound like `json.Serialize`.
     fn trait_bound(&mut self) -> Result<TraitBound, CompileError> {
-        let name = self.identifier_or_from_keyword()?;
+        let mut name = self.identifier_or_from_keyword()?;
+        while self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
+            let segment = self.identifier_or_from_keyword()?;
+            name.push('.');
+            name.push_str(&segment);
+        }
         let type_args = if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             let args = self.type_list()?;
             self.expect(

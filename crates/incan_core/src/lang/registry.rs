@@ -64,6 +64,9 @@ pub const RFC_022: RfcId = "RFC 022";
 /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
 pub const RFC_023: RfcId = "RFC 023";
 
+/// RFC 024 — extensible derive protocol.
+pub const RFC_024: RfcId = "RFC 024";
+
 /// RFC 028 — trait-based operator overloading.
 pub const RFC_028: RfcId = "RFC 028";
 
@@ -126,6 +129,8 @@ impl RFC {
     pub const _022: RfcId = RFC_022;
     /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
     pub const _023: RfcId = RFC_023;
+    /// RFC 024 — extensible derive protocol.
+    pub const _024: RfcId = RFC_024;
     /// RFC 028 — trait-based operator overloading.
     pub const _028: RfcId = RFC_028;
     /// RFC 029 — union types and narrowing predicates.

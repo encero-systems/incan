@@ -1,0 +1,11 @@
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
+    value: int
+
+def encode[T with JsonSerialize](value: T) -> str:
+    return value.to_json()
+
+def main() -> str:
+    return encode(Payload(value=1))

@@ -39,6 +39,10 @@ impl<'a> IrEmitter<'a> {
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
                 _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
                 _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
+                _ if d.contains("::") => {
+                    let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
+                    super::join_path_tokens(&segs)
+                }
                 _ => {
                     if let Some(module_path) = s.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path
@@ -218,6 +222,10 @@ impl<'a> IrEmitter<'a> {
                 Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
                 _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
                 _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
+                _ if d.contains("::") => {
+                    let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
+                    super::join_path_tokens(&segs)
+                }
                 _ => {
                     if let Some(module_path) = e.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path

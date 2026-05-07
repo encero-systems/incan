@@ -229,7 +229,11 @@ impl<'a> IrEmitter<'a> {
         }
 
         // Parse the trait path into segments.
-        let segments: Vec<_> = bound.trait_path.split("::").collect();
+        let segments: Vec<_> = bound
+            .trait_path
+            .split("::")
+            .flat_map(|segment| segment.split('.'))
+            .collect();
         let path_tokens: Vec<TokenStream> = segments
             .iter()
             .map(|seg| {

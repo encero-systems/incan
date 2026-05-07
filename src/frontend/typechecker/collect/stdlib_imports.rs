@@ -385,10 +385,31 @@ impl TypeChecker {
             self.define_from_import_symbol(item, SymbolKind::Type(TypeInfo::Builtin), span);
             return true;
         }
+        if self.materialize_stdlib_submodule_import(context.module, item, span) {
+            return true;
+        }
         if stdlib_context.has_stub {
             return self.materialize_stdlib_stub_import(context, item, testing_semantics, span);
         }
         false
+    }
+
+    /// Materialize `from std.namespace import submodule` as a module binding when the submodule is registered.
+    fn materialize_stdlib_submodule_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+        if module.segments.len() != 2 {
+            return false;
+        }
+        let mut submodule_path = module.segments.clone();
+        submodule_path.push(item.name.clone());
+        if !stdlib::is_known_stdlib_module(&submodule_path) {
+            return false;
+        }
+
+        let local_name = Self::import_item_local_name(item);
+        self.validate_root_namespace(&local_name, span);
+        let path = canonicalize_source_module_segments(&submodule_path);
+        self.define_import_symbol(local_name, path, false, span);
+        true
     }
 
     /// Materialize typechecker-only stdlib capability bounds as empty trait symbols.

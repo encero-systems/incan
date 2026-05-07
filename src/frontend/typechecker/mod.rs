@@ -76,6 +76,7 @@ use crate::frontend::symbols::*;
 use crate::rust_inspect::RustMetadataCache;
 use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
@@ -172,6 +173,12 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
+    pub(crate) dependency_derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_module_traits: HashMap<String, TraitInfo>,
+    /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
     pub(crate) library_manifests: Arc<LibraryManifestIndex>,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
@@ -262,6 +269,9 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            dependency_derivable_modules: HashMap::new(),
+            dependency_module_traits: HashMap::new(),
+            dependency_trait_rust_derive_paths: HashMap::new(),
             library_manifests: Arc::new(LibraryManifestIndex::default()),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
@@ -1084,17 +1094,17 @@ impl TypeChecker {
             return false;
         };
         let (adopted, derives) = match info {
-            TypeInfo::Model(m) => (m.traits.as_slice(), Some(m.derives.as_slice())),
-            TypeInfo::Class(c) => (c.traits.as_slice(), Some(c.derives.as_slice())),
-            TypeInfo::Enum(e) => (e.traits.as_slice(), Some(e.derives.as_slice())),
+            TypeInfo::Model(m) => (m.trait_adoptions.as_slice(), Some(m.derives.as_slice())),
+            TypeInfo::Class(c) => (c.trait_adoptions.as_slice(), Some(c.derives.as_slice())),
+            TypeInfo::Enum(e) => (e.trait_adoptions.as_slice(), Some(e.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
-            if t == trait_name {
+            if t.name == trait_name {
                 return true;
             }
             if self
-                .semantic_supertrait_closure(t)
+                .semantic_supertrait_closure(&t.name)
                 .iter()
                 .any(|(name, _)| name == trait_name)
             {
@@ -1258,6 +1268,8 @@ impl TypeChecker {
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.trait_direct_supertraits.clear();
         self.type_info.trait_type_params.clear();
+        self.type_info.derivable_modules = self.dependency_derivable_modules.clone();
+        self.type_info.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         for sym in self.symbols.all_symbols() {
             if let SymbolKind::Trait(info) = &sym.kind {
                 self.type_info
@@ -2678,6 +2690,7 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
     }
 
     /// Import all symbols from another module's AST into the symbol table.
@@ -2695,6 +2708,95 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
+    }
+
+    /// Register RFC 024 metadata exported by a dependency source module.
+    ///
+    /// `__derives__` is compiler metadata rather than a public const, so consumers need this side channel even when the
+    /// declaration itself is not imported as a symbol.
+    fn register_dependency_derivable_metadata(&mut self, module_name: &str, module_ast: &Program) {
+        let mut module_paths = vec![module_name.to_string()];
+        let dotted_module_path = module_name.replace('_', ".");
+        if dotted_module_path != module_name {
+            module_paths.push(dotted_module_path);
+        }
+        let traits = Self::derivable_traits_from_program(module_ast);
+        if !traits.is_empty() {
+            for module_path in &module_paths {
+                self.dependency_derivable_modules
+                    .insert(module_path.clone(), traits.clone());
+            }
+        }
+
+        for decl in &module_ast.declarations {
+            let Declaration::Trait(tr) = &decl.node else {
+                continue;
+            };
+            if let Some(info) = self.lookup_trait_info(&tr.name).cloned() {
+                for module_path in &module_paths {
+                    self.dependency_module_traits
+                        .insert(format!("{module_path}.{}", tr.name), info.clone());
+                }
+            }
+            let paths = Self::rust_derive_paths_from_trait(tr);
+            if paths.is_empty() {
+                continue;
+            }
+            for module_path in &module_paths {
+                let qualified = format!("{module_path}.{}", tr.name);
+                self.dependency_trait_rust_derive_paths.insert(qualified, paths.clone());
+            }
+        }
+    }
+
+    /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
+    fn derivable_traits_from_program(program: &Program) -> Vec<String> {
+        for decl in &program.declarations {
+            let Declaration::Const(konst) = &decl.node else {
+                continue;
+            };
+            if konst.name != "__derives__" {
+                continue;
+            }
+            let Expr::List(entries) = &konst.value.node else {
+                return Vec::new();
+            };
+            return entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    ListEntry::Element(expr) => match &expr.node {
+                        Expr::Ident(name) => Some(name.clone()),
+                        _ => None,
+                    },
+                    ListEntry::Spread(_) => None,
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
+    /// Extract `@rust.derive(...)` path strings from one imported trait declaration.
+    fn rust_derive_paths_from_trait(tr: &TraitDecl) -> Vec<String> {
+        let mut paths = Vec::new();
+        for decorator in &tr.decorators {
+            let path = decorator.node.path.segments.join(".");
+            if core_decorators::from_str(&path) != Some(DecoratorId::RustDerive) {
+                continue;
+            }
+            for arg in &decorator.node.args {
+                let DecoratorArg::Positional(expr) = arg else {
+                    continue;
+                };
+                let Expr::Literal(Literal::String(path)) = &expr.node else {
+                    continue;
+                };
+                if !paths.iter().any(|existing| existing == path) {
+                    paths.push(path.clone());
+                }
+            }
+        }
+        paths
     }
 
     /// Predeclare dependency interface names before collecting imported declarations.
@@ -2838,6 +2940,9 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         for (name, dep_ast) in dependencies {
             self.dependency_exports
                 .insert(name.to_string(), exported_symbols(dep_ast));
@@ -2863,6 +2968,9 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             self.import_module_all(dep_ast, name);

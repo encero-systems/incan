@@ -309,6 +309,15 @@ pub fn derive_wrong_kind(name: &str, kind: &str, span: Span) -> CompileError {
     .with_hint(format!("Did you mean: `with {}` to implement a trait?", name))
 }
 
+/// Report `@derive(module)` on an imported module that has no RFC 024 `__derives__` declaration.
+pub fn derive_module_missing_derives(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot derive module '{}' - it does not declare `__derives__`", name),
+        span,
+    )
+    .with_hint("Add module-level `__derives__ = [TraitName]` metadata or derive an imported trait directly")
+}
+
 // -- Functions & error handling ----------------------------------------------
 
 /// Type error for using a **generic** function name in **value** position.

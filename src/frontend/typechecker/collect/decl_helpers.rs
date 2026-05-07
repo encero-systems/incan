@@ -121,7 +121,10 @@ fn method_info_from_decl(
         .map(|tp| {
             (
                 tp.name.clone(),
-                tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                tp.bounds
+                    .iter()
+                    .map(|bound| checker.resolve_trait_bound_name(&bound.name, method.span))
+                    .collect(),
             )
         })
         .collect();
@@ -135,7 +138,7 @@ fn method_info_from_decl(
                 tp.bounds
                     .iter()
                     .map(|bound| TypeBoundInfo {
-                        name: bound.name.clone(),
+                        name: checker.resolve_trait_bound_name(&bound.name, method.span),
                         type_args: bound
                             .type_args
                             .iter()

@@ -190,7 +190,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         let main_impl = if let Some(trait_name) = &impl_block.trait_name {
-            let trait_methods: Vec<TokenStream> = impl_block
+            let mut trait_methods: Vec<TokenStream> = impl_block
                 .methods
                 .iter()
                 .filter(|m| {
@@ -206,6 +206,25 @@ impl<'a> IrEmitter<'a> {
                 })
                 .map(|m| self.emit_trait_method(m))
                 .collect::<Result<_, _>>()?;
+            if Self::is_serde_serialize_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "to_json")
+            {
+                trait_methods.push(quote! {
+                    fn to_json(&self) -> String {
+                        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(#target_type))
+                    }
+                });
+            }
+            if Self::is_serde_deserialize_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "from_json")
+            {
+                trait_methods.push(quote! {
+                    fn from_json(json_str: String) -> Result<Self, String> {
+                        serde_json::from_str(&json_str)
+                            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
+                    }
+                });
+            }
             let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
             quote! {
                 impl #generics #trait_tokens for #target_type #generics_bare {
@@ -237,6 +256,22 @@ impl<'a> IrEmitter<'a> {
             #borrowed_observer_impl
             #(#trait_impls)*
         })
+    }
+
+    /// Return whether a trait impl target names the stdlib JSON serialization trait or an imported alias of it.
+    fn is_serde_serialize_trait_name(trait_name: &str) -> bool {
+        matches!(
+            trait_name,
+            "Serialize" | "JsonSerialize" | "json.Serialize" | "std.serde.json.Serialize"
+        )
+    }
+
+    /// Return whether a trait impl target names the stdlib JSON deserialization trait or an imported alias of it.
+    fn is_serde_deserialize_trait_name(trait_name: &str) -> bool {
+        matches!(
+            trait_name,
+            "Deserialize" | "JsonDeserialize" | "json.Deserialize" | "std.serde.json.Deserialize"
+        )
     }
 
     /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
