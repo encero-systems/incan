@@ -1,6 +1,6 @@
 # Date and time model
 
-`std.datetime` has two layers: runtime timing values that map directly to Rust's `std::time`, and civil calendar values implemented in Incan source. Keeping those layers separate prevents elapsed-time measurement, host-clock timestamps, and calendar arithmetic from pretending to be the same problem.
+`std.datetime` has two layers: runtime timing values and civil calendar values. Keeping those layers separate prevents elapsed-time measurement, host-clock timestamps, and calendar arithmetic from pretending to be the same problem.
 
 ## Runtime timing
 
@@ -10,7 +10,8 @@ Runtime timing is for measuring or representing time as the host platform sees i
 - `Instant` is a monotonic clock reading for measuring work.
 - `SystemTime` is a host system-clock timestamp that can be converted to and from Unix seconds or nanoseconds.
 
-These types use Rust `std::time` through normal Incan Rust interop. That is the right boundary: the platform clock and monotonic timer already belong to Rust and the operating system, while Incan still owns the public API shape.
+??? info "Coming from Rust?"
+    `Duration`, `Instant`, and `SystemTime` mirror Rust's `std::time` vocabulary at the API boundary. Most Incan code only needs the `std.datetime` names; the Rust connection matters when you are reading stdlib source or bridging to Rust libraries.
 
 Use `Instant` for elapsed time:
 
