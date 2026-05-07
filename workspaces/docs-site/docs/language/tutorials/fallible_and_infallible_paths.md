@@ -4,8 +4,7 @@ This tutorial shows how to choose between plain return values, `Option`, `Result
 
 ## Coming from Python
 
-Python code often uses `None`, `raise`, `try`/`except`, and `assert` to describe paths that do not produce the ordinary
-value. Incan keeps those paths visible in signatures and at call sites.
+Python code often uses `None`, `raise`, `try`/`except`, and `assert` to describe paths that do not produce the ordinary value. Incan keeps those paths visible in signatures and at call sites.
 
 | Python habit                                               | Incan shape                         |
 | ---------------------------------------------------------- | ----------------------------------- |
@@ -16,8 +15,7 @@ value. Incan keeps those paths visible in signatures and at call sites.
 | Let an exception bubble to the caller                      | `?` propagates an `Err(...)`        |
 | `assert` for an impossible state or programmer mistake     | `panic()` or a narrowly proven path |
 
-In Python, an exception can skip the rest of the current block and search outward for a handler. In Incan, fallible paths
-are ordinary return values. Propagation is visible where it happens:
+In Python, an exception can skip the rest of the current block and search outward for a handler. In Incan, fallible paths are ordinary return values. Propagation is visible where it happens:
 
 ```python title="Python"
 def load_username(path: str) -> str:
@@ -53,8 +51,7 @@ def load_username(path: Path) -> str:
         Err(NameError.Empty) => return "guest"
 ```
 
-The important difference is not syntax. It is control flow: Incan makes recovery (`match`) and propagation (`?`) explicit
-instead of hiding them behind exception unwinding.
+The important difference is not syntax. It is control flow: Incan makes recovery (`match`) and propagation (`?`) explicit instead of hiding them behind exception unwinding.
 
 The short rule:
 
@@ -161,6 +158,18 @@ Use `Result` combinators when the code is transforming one branch of a result ra
 | `inspect` | `Callable[T, None]` | observe or log a success value without changing the result |
 | `inspect_err` | `Callable[E, None]` | observe or log an error value without changing the result |
 
+The method form is usually the clearest spelling because the value flows left to right. The same operations are also available from `std.result` when a function-shaped API reads better or when you need to pass a combinator as a named helper:
+
+```incan
+from std.result import map as result_map
+
+def double(value: int) -> int:
+    return value * 2
+
+def double_if_present(result: Result[int, str]) -> Result[int, str]:
+    return result_map(result, double)
+```
+
 `map` and `map_err` are good at API boundaries because they keep the success path and error path separated:
 
 ```incan
@@ -191,7 +200,7 @@ def load_profile_or_guest(path: Path) -> Result[Profile, LoadError]:
     return load_profile(path).or_else(read_default_profile)
 ```
 
-Use `inspect` and `inspect_err` for side effects such as logging, metrics, or debugging taps. They return the original `Result` unchanged, so they should not replace code that needs to transform the value or recover. The compiler passes the observed payload to the callable through an implicit borrow, which lets the original `Ok` or `Err` value continue through the pipeline.
+Use `inspect` and `inspect_err` for side effects such as logging, metrics, or debugging taps. They return the original `Result` unchanged, so they should not replace code that needs to transform the value or recover. The compiler passes the observed payload to the callable through an implicit borrow when preserving the branch requires it, which lets the original `Ok` or `Err` value continue through the pipeline without forcing a clone just because it was observed.
 
 ```incan
 def log_profile(profile: Profile) -> None:
