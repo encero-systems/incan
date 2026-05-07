@@ -1994,9 +1994,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#module-stdasyncselect" class="md-nav__link">
+  <a href="#module-stdasyncrace" class="md-nav__link">
     <span class="md-ellipsis">
-      Module: std.async.select
+      Module: std.async.race
     </span>
   </a>
   
@@ -2332,6 +2332,8 @@
       
         
       
+        
+      
     
     
       
@@ -2426,6 +2428,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -5072,9 +5095,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#module-stdasyncselect" class="md-nav__link">
+  <a href="#module-stdasyncrace" class="md-nav__link">
     <span class="md-ellipsis">
-      Module: std.async.select
+      Module: std.async.race
     </span>
   </a>
   
@@ -5142,11 +5165,11 @@ See the module source files for authoritative behavior:</p>
 <li><code>crates/incan_stdlib/stdlib/async/task.incn</code></li>
 <li><code>crates/incan_stdlib/stdlib/async/channel.incn</code></li>
 <li><code>crates/incan_stdlib/stdlib/async/sync.incn</code></li>
-<li><code>crates/incan_stdlib/stdlib/async/select.incn</code></li>
+<li><code>crates/incan_stdlib/stdlib/async/race.incn</code></li>
 <li><code>crates/incan_stdlib/stdlib/async/prelude.incn</code></li>
 </ul>
 <h2 id="interop-notes">Interop notes<a class="headerlink" href="#interop-notes" title="Permanent link">&para;</a></h2>
-<p><code>std.async.time</code> and <code>std.async.select</code> use direct Rust interop calls (for example <code>tokio::time</code>) for their timer-related
+<p><code>std.async.time</code> and <code>std.async.race</code> use direct Rust interop calls (for example <code>tokio::time</code>) for their timer-related
 operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged.
 <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.sync</code>, and <code>std.async.prelude</code> still retain wrapper-style surfaces where behavior
 depends on native Rust adapter contracts.</p>
@@ -5250,9 +5273,9 @@ until that exists, write the adapter in Rust and expose it through the stdlib/ru
 </tr>
 </tbody>
 </table>
-<h2 id="module-stdasyncselect">Module: <code>std.async.select</code><a class="headerlink" href="#module-stdasyncselect" title="Permanent link">&para;</a></h2>
+<h2 id="module-stdasyncrace">Module: <code>std.async.race</code><a class="headerlink" href="#module-stdasyncrace" title="Permanent link">&para;</a></h2>
 <p>Import with:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="nb">select_timeout</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.race</span><span class="w"> </span><span class="kn">import</span> <span class="kt">RaceArm</span><span class="p">,</span> <span class="n">arm</span><span class="p">,</span> <span class="n">race</span><span class="p">,</span> <span class="nb">race_timeout</span>
 </code></pre></div>
 <p><strong>Functions</strong>:</p>
 <table>
@@ -5265,9 +5288,34 @@ until that exists, write the adapter in Rust and expose it through the stdlib/ru
 </thead>
 <tbody>
 <tr>
-<td><code>select_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Option[T]</code></td>
+<td><code>arm[T, R, TaskFuture, OnWin](awaitable: TaskFuture, on_win: OnWin) -&gt; RaceArm[R]</code></td>
+<td><code>RaceArm[R]</code></td>
+<td>Packages one branch. <code>on_win</code> runs only if this branch wins.</td>
+</tr>
+<tr>
+<td><code>race[R](*arms: RaceArm[R]) -&gt; R</code></td>
+<td><code>R</code></td>
+<td>Polls all arms concurrently; drops losing arms when the first arm completes. Ready ties are resolved by source order.</td>
+</tr>
+<tr>
+<td><code>race_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -&gt; Option[T]</code></td>
 <td><code>Option[T]</code></td>
-<td>Cancels the supplied future when the deadline wins; cancelling the <code>select_timeout</code> wait also drops the supplied future.</td>
+<td>Cancels the supplied future when the deadline wins; cancelling the <code>race_timeout</code> wait also drops the supplied future.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Types</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RaceArm[R]</code></td>
+<td>A packaged awaitable branch for <code>race(*arms)</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -5385,7 +5433,7 @@ until that exists, write the adapter in Rust and expose it through the stdlib/ru
 <li><code>task</code>: <code>spawn</code>, <code>spawn_blocking</code>, <code>yield_now</code>, <code>JoinHandle</code>, <code>TaskJoinError</code></li>
 <li><code>channel</code>: <code>channel</code>, <code>unbounded_channel</code>, <code>oneshot</code>, <code>Sender</code>, <code>Receiver</code>, <code>OneshotSender</code>, <code>OneshotReceiver</code>, <code>SendError</code>, <code>RecvError</code></li>
 <li><code>sync</code>: <code>Mutex</code>, <code>MutexGuard</code>, <code>RwLock</code>, <code>RwLockReadGuard</code>, <code>RwLockWriteGuard</code>, <code>Semaphore</code>, <code>SemaphorePermit</code>, <code>SemaphoreAcquireError</code>, <code>Barrier</code></li>
-<li><code>select</code>: <code>select_timeout</code></li>
+<li><code>race</code>: <code>RaceArm</code>, <code>arm</code>, <code>race</code>, <code>race_timeout</code></li>
 </ul>
 
 

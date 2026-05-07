@@ -2214,6 +2214,8 @@
       
         
       
+        
+      
     
     
       
@@ -2308,6 +2310,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -5585,7 +5608,7 @@
 <li><strong>Compiler / Stdlib</strong>: <code>std.traits.*</code> now has a curated stdlib reference entry, and <code>std.traits.{convert,ops,error,indexing,callable,prelude}</code> now has compiled-source coverage proving they compile directly from <code>.incn</code> source without <code>rust.module()</code> / <code>@rust.extern</code> helper shims. <code>std.traits.convert</code> now closes through <code>@classmethod</code> conversion hooks for <code>from</code> / <code>try_from</code>; broader Rust trait-impl authoring on wrappers remains RFC 043 work. (#306, #344)</li>
 <li><strong>Testing / Stdlib</strong>: RFC 023’s remaining behavioral-equivalence lane is now covered by an integration fixture that exercises migrated source-defined stdlib behavior end-to-end: explicit <code>std.serde.json.Serialize</code> adoption, <code>std.reflection</code> metadata, and derive-backed <code>Clone</code> / <code>Eq</code> / <code>Ord</code> / <code>Default</code> behavior on the same model. (#158)</li>
 <li><strong>Runtime / Compiler</strong>: <code>std.math</code> closeout alignment now keeps direct Rust interop wrappers while ensuring the module contract is consistent across typechecking, codegen, and docs (including <code>round</code>, <code>log2</code>, <code>atan2</code>, and <code>hypot</code>; uppercase constants such as <code>math.PI</code>) (#307).</li>
-<li><strong>Runtime / Compiler</strong>: Issue #301 <code>std.async</code> direct-interoperability closeout for <code>std.async.time</code> and <code>std.async.select</code> is complete. These modules now expose their runtime-facing API via direct Rust imports (<code>clamp_seconds</code> / <code>clamp_millis</code> helpers, <code>tokio</code> time primitives) while preserving the public <code>std.async.*</code> contract and error/return behavior. Remaining async modules (<code>task</code>, <code>sync</code>, <code>channel</code>, <code>prelude</code>) are still under conversion to preserve behaviorful/native wrappers.</li>
+<li><strong>Runtime / Compiler</strong>: Issue #301 <code>std.async</code> direct-interoperability closeout for <code>std.async.time</code> and the then-current first-completion async helper is complete. These modules now expose their runtime-facing API via direct Rust imports (<code>clamp_seconds</code> / <code>clamp_millis</code> helpers, <code>tokio</code> time primitives) while preserving the public <code>std.async.*</code> contract and error/return behavior. RFC 039 later replaces the old helper name with <code>std.async.race</code>. Remaining async modules (<code>task</code>, <code>sync</code>, <code>channel</code>, <code>prelude</code>) are still under conversion to preserve behaviorful/native wrappers.</li>
 <li><strong>Compiler</strong>: Stdlib namespace registry (<code>STDLIB_NAMESPACES</code>) replaces the flat stdlib-module list — convention-based submodule discovery, registry-driven unknown-module diagnostics, and soft-keyword activation metadata.</li>
 <li><strong>Compiler</strong>: Reserved root namespaces — <code>std</code> and <code>rust</code> cannot be used as user declaration names.</li>
 <li><strong>Compiler</strong>: Stdlib types require explicit imports with actionable error messages when used without import.</li>

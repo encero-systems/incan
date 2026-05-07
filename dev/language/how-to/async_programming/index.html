@@ -1155,6 +1155,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#awaitable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Awaitable
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1199,6 +1208,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#racing-awaitables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Racing Awaitables
+    </span>
+  </a>
   
 </li>
       
@@ -1362,19 +1380,19 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#select-and-future-race" class="md-nav__link">
+  <a href="#race-and-timeout-helpers" class="md-nav__link">
     <span class="md-ellipsis">
-      Select and Future Race
+      Race and Timeout Helpers
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Select and Future Race">
+    <nav class="md-nav" aria-label="Race and Timeout Helpers">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#select_timeout" class="md-nav__link">
+  <a href="#race_timeout" class="md-nav__link">
     <span class="md-ellipsis">
-      select_timeout
+      race_timeout
     </span>
   </a>
   
@@ -2660,6 +2678,8 @@
       
         
       
+        
+      
     
     
       
@@ -2754,6 +2774,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -5418,6 +5459,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#awaitable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Awaitable
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5462,6 +5512,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#racing-awaitables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Racing Awaitables
+    </span>
+  </a>
   
 </li>
       
@@ -5625,19 +5684,19 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#select-and-future-race" class="md-nav__link">
+  <a href="#race-and-timeout-helpers" class="md-nav__link">
     <span class="md-ellipsis">
-      Select and Future Race
+      Race and Timeout Helpers
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Select and Future Race">
+    <nav class="md-nav" aria-label="Race and Timeout Helpers">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#select_timeout" class="md-nav__link">
+  <a href="#race_timeout" class="md-nav__link">
     <span class="md-ellipsis">
-      select_timeout
+      race_timeout
     </span>
   </a>
   
@@ -5869,6 +5928,25 @@ with Rust-level async performance.</p>
 <p class="admonition-title">Coming from Python?</p>
 <p>Incan's <code>await</code> follows the same rules as in Python: it is disallowed outside an <code>async</code> scope.</p>
 </div>
+<h3 id="awaitable">Awaitable<a class="headerlink" href="#awaitable" title="Permanent link">&para;</a></h3>
+<p><code>Awaitable[T]</code> is the protocol for values that can be awaited to produce <code>T</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_for</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]](</span><span class="n">task</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">task</span>
+</code></pre></div>
+<p>The compiler recognizes direct async calls, Rust-backed futures, <code>JoinHandle[T]</code>, and checked wrapper types. Awaiting a
+<code>JoinHandle[T]</code> produces <code>Result[T, TaskJoinError]</code>, not <code>T</code>, because the spawned task can fail to join.</p>
+<p>Wrapper types can adopt <code>Awaitable[T]</code> only when they contain a compatible awaitable field:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="kt">JoinHandle</span><span class="p">,</span> <span class="kt">TaskJoinError</span>
+
+<span class="k">model</span> <span class="nc">TaskBox</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="kt">TaskJoinError</span><span class="p">]]:</span>
+    <span class="n">handle</span><span class="p">:</span> <span class="kt">JoinHandle</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_for</span><span class="p">(</span><span class="n">box</span><span class="p">:</span> <span class="nc">TaskBox</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="kt">TaskJoinError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">box</span>
+</code></pre></div>
 <h2 id="time-primitives">Time Primitives<a class="headerlink" href="#time-primitives" title="Permanent link">&para;</a></h2>
 <h3 id="sleep">sleep<a class="headerlink" href="#sleep" title="Permanent link">&para;</a></h3>
 <p>Pause execution for a duration:</p>
@@ -5903,6 +5981,27 @@ with Rust-level async performance.</p>
         <span class="n">remember</span><span class="p">(</span><span class="n">live_handle</span><span class="p">)</span>
 </code></pre></div>
 <p>Use <code>timeout_join()</code> for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and <code>TimeoutJoinOutcome.TimedOut(handle)</code> carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. If an outer cancellation boundary cancels the <code>timeout_join()</code> call itself before it returns, the helper-owned handle is dropped and the task is detached unless you arranged another completion path. For <code>spawn_blocking()</code> handles, <code>abort()</code> can only prevent queued work from starting; blocking work that has already started must finish on its own.</p>
+<h2 id="racing-awaitables">Racing Awaitables<a class="headerlink" href="#racing-awaitables" title="Permanent link">&para;</a></h2>
+<p>Use <code>std.async.race</code> when several awaitables are valid ways to produce one result and the first completion should win:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.race</span><span class="w"> </span><span class="kn">import</span> <span class="n">arm</span><span class="p">,</span> <span class="n">race</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;winner:</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fast</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">1</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">slow</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">2</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">race</span><span class="p">(</span><span class="n">arm</span><span class="p">(</span><span class="n">slow</span><span class="p">(),</span> <span class="n">label</span><span class="p">),</span> <span class="n">arm</span><span class="p">(</span><span class="n">fast</span><span class="p">(),</span> <span class="n">label</span><span class="p">))</span>
+    <span class="nb">println</span><span class="p">(</span><span class="kt">result</span><span class="p">)</span>
+</code></pre></div>
+<p><code>arm(awaitable, on_win)</code> packages one branch and its callback. <code>race(*arms)</code> polls all arms concurrently, returns the
+winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.</p>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
@@ -6344,16 +6443,16 @@ More efficient than Mutex when reads are frequent.</p>
 <h3 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h3>
 <p>See <a href="https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn">examples/advanced/async_sync.incn</a>
 for a runnable demo of all four primitives.</p>
-<h2 id="select-and-future-race">Select and Future Race<a class="headerlink" href="#select-and-future-race" title="Permanent link">&para;</a></h2>
-<h3 id="select_timeout">select_timeout<a class="headerlink" href="#select_timeout" title="Permanent link">&para;</a></h3>
+<h2 id="race-and-timeout-helpers">Race and Timeout Helpers<a class="headerlink" href="#race-and-timeout-helpers" title="Permanent link">&para;</a></h2>
+<h3 id="race_timeout">race_timeout<a class="headerlink" href="#race_timeout" title="Permanent link">&para;</a></h3>
 <p>Simplified timeout returning Option:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.select</span><span class="w"> </span><span class="kn">import</span> <span class="nb">select_timeout</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.race</span><span class="w"> </span><span class="kn">import</span> <span class="nb">race_timeout</span>
 
-<span class="k">match</span> <span class="k">await</span> <span class="nb">select_timeout</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">):</span>
+<span class="k">match</span> <span class="k">await</span> <span class="nb">race_timeout</span><span class="p">(</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">slow_operation</span><span class="p">):</span>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Timed out, using default&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>select_timeout()</code> has the same cancellation contract as <code>timeout()</code>: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use <code>timeout_join()</code> instead.</p>
+<p><code>race_timeout()</code> has the same cancellation contract as <code>timeout()</code>: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use <code>timeout_join()</code> instead.</p>
 <p>Future <code>race</code> syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and use a handle-preserving wait such as <code>timeout_join()</code> when you still need the result.</p>
 <h2 id="runtime-integration">Runtime Integration<a class="headerlink" href="#runtime-integration" title="Permanent link">&para;</a></h2>
 <h3 id="automatic-tokio-main">Automatic Tokio Main<a class="headerlink" href="#automatic-tokio-main" title="Permanent link">&para;</a></h3>

@@ -2663,6 +2663,8 @@
       
         
       
+        
+      
     
     
       
@@ -2757,6 +2759,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -6487,7 +6510,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <tr>
 <td><code>std.async</code></td>
 <td><code>async</code></td>
-<td><code>std.async.time</code>, <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.select</code>, <code>std.async.sync</code>, <code>std.async.prelude</code></td>
+<td><code>std.async.time</code>, <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.race</code>, <code>std.async.sync</code>, <code>std.async.prelude</code></td>
 <td><code>async</code>, <code>await</code></td>
 </tr>
 <tr>
@@ -7308,6 +7331,15 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <td></td>
 <td>Trait for values that can be produced by summing iterator items.</td>
 <td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Awaitable</td>
+<td><code>Awaitable</code></td>
+<td></td>
+<td>Trait for values that can be awaited to produce a value.</td>
+<td>RFC 039</td>
 <td>0.3</td>
 <td>Stable</td>
 </tr>
@@ -8373,10 +8405,10 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <td>Stable</td>
 </tr>
 <tr>
-<td>SelectTimeout</td>
-<td><code>select_timeout</code></td>
+<td>RaceTimeout</td>
+<td><code>race_timeout</code></td>
 <td></td>
-<td>Select between futures with a timeout.</td>
+<td>Race async work against a timeout.</td>
 <td>RFC 000</td>
 <td>0.1</td>
 <td>Stable</td>
@@ -8672,6 +8704,16 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <td>Error returned when a spawned task fails to join.</td>
 <td>RFC 000</td>
 <td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>RaceArm</td>
+<td><code>RaceArm</code></td>
+<td></td>
+<td>Generic</td>
+<td>Packaged async race branch.</td>
+<td>RFC 039</td>
+<td>0.3</td>
 <td>Stable</td>
 </tr>
 <tr>

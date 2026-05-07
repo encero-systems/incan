@@ -2210,6 +2210,8 @@
       
         
       
+        
+      
     
     
       
@@ -2304,6 +2306,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -6386,7 +6409,7 @@ reserved for future use when <code>module</code> is introduced as a keyword.</p>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>std.web</code> response builders: pure Incan where possible, <code>@rust.extern</code> for framework I/O.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> All stdlib <code>.incn</code> files with <code>@rust.extern</code> carry <code>rust.module()</code> directives.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>std.async.*</code> behavior is runtime-backed via narrow <code>@rust.extern</code> leaves (no broad <code>fail_t</code> placeholder surface).
-    &gt; Note: remaining closeout is concentrated in the wrapper-style async modules (<code>std.async.task</code>, <code>std.async.sync</code>, <code>std.async.channel</code>, and <code>std.async.prelude</code>); <code>std.async.time</code> and <code>std.async.select</code> are already direct-interoperability modules.</li>
+    &gt; Note: remaining closeout is concentrated in the wrapper-style async modules (<code>std.async.task</code>, <code>std.async.sync</code>, <code>std.async.channel</code>, and <code>std.async.prelude</code>); <code>std.async.time</code> and the then-current first-completion async helper are already direct-interoperability modules. RFC 039 later replaces that helper surface with <code>std.async.race</code>.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>StdlibModuleInfo</code> fallback mapping removed (or marked deprecated).</li>
 </ul>
 <h3 id="diagnostics-checklist">Diagnostics checklist<a class="headerlink" href="#diagnostics-checklist" title="Permanent link">&para;</a></h3>

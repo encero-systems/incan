@@ -2210,6 +2210,8 @@
       
         
       
+        
+      
     
     
       
@@ -2304,6 +2306,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -5531,7 +5554,7 @@
     <span class="o">...</span>
 </code></pre></div>
 <p>That means variadics are a good fit when repeated inputs can be packaged into one homogeneous type. For example, RFC 039 can use:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">race</span><span class="p">[</span><span class="nc">R</span><span class="p">](</span><span class="o">*</span><span class="n">arms</span><span class="p">:</span> <span class="nc">RaceArm</span><span class="p">[</span><span class="nc">R</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">R</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">race</span><span class="p">[</span><span class="nc">R</span><span class="p">](</span><span class="o">*</span><span class="n">arms</span><span class="p">:</span> <span class="kt">RaceArm</span><span class="p">[</span><span class="nc">R</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">R</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
 <p>Each branch is first packaged as a <code>RaceArm[R]</code>, then the variadic parameter captures those arm values uniformly.</p>

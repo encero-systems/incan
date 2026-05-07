@@ -2214,6 +2214,8 @@
       
         
       
+        
+      
     
     
       
@@ -2308,6 +2310,27 @@
   
   <span class="md-ellipsis">
     Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
   </span>
   
 
@@ -5903,6 +5926,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li><strong>Runtime/Async</strong>: <code>std.async.sync.Barrier.wait()</code> now uses Incan-owned generation bookkeeping so cancelling a pending wait withdraws that participant and frees its arrival slot instead of corrupting barrier progress (#418).</li>
 <li><strong>Language/Compiler</strong>: Async semantic validation now warns when a direct async function or method call is not awaited, and the existing <code>await</code>-outside-async type error is routed through the same registry-backed async surface (#146).</li>
 <li><strong>Language/Compiler</strong>: RFC 044 lets abstract trait methods omit the trailing <code>: ...</code> marker while keeping the explicit spelling valid; body-less methods outside traits remain invalid (#201, RFC 044).</li>
+<li><strong>Language/Runtime/Async</strong>: RFC 039 adds <code>Awaitable[T]</code>, expression-position <code>race for value:</code> blocks, and the public <code>std.async.race</code> helper surface. <code>std.async.select</code> is removed rather than kept as a beta-era compatibility alias, <code>RaceArm</code>/<code>arm</code>/<code>race</code> cover helper-style composition, and ready ties resolve in source order (RFC 039, #173).</li>
 <li><strong>Language/Compiler</strong>: List and dict comprehensions now accept tuple-unpack iteration targets such as <code>for idx, name in enumerate(xs)</code>, matching ordinary <code>for</code> loop binding syntax (#483).</li>
 <li><strong>Language/Compiler</strong>: RFC 006 adds lazy <code>Generator[T]</code> values, including <code>yield</code>-based generator functions, full-clause generator expressions, iteration-protocol compatibility, and the minimum helper surface <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> (#324, RFC 006).</li>
 <li><strong>Language/Stdlib</strong>: RFC 069 adds import-free <code>list.repeat(value, count)</code> for fixed-length list initialization. The compiler infers <code>list[T]</code>, enforces clone-compatible repeated values and <code>count: int</code>, lowers recognized calls to the stdlib helper, and raises <code>ValueError</code> with the bad count for negative runtime counts (#385, RFC 069).</li>
@@ -5948,6 +5972,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li>Value enums: <a href="/dev/RFCs/032_value_enums">RFC 032</a></li>
 <li>Variadic positional arguments and keyword capture: <a href="/dev/RFCs/closed/implemented/038_variadic_positional_args_and_keyword_capture">RFC 038</a></li>
 <li>Open-ended trait methods: <a href="/dev/RFCs/closed/implemented/044_open_ended_trait_methods">RFC 044</a></li>
+<li>Async race and awaitability: <a href="../../RFCs/closed/implemented/039_race_for_awaitable_concurrency/">RFC 039</a></li>
 <li>Computed properties: <a href="/dev/RFCs/closed/implemented/046_computed_properties">RFC 046</a></li>
 <li>Checked contract metadata and interrogation tooling: <a href="/dev/RFCs/closed/implemented/048_contract_backed_models_emit_and_tooling">RFC 048</a></li>
 <li>Lightweight directed graph types: <a href="/dev/RFCs/closed/implemented/047_lightweight_directed_graph_stdlib">RFC 047</a></li>
