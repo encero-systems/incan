@@ -6702,6 +6702,33 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </tbody>
 </table>
 <h2 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h2>
+<p>User-defined decorators are valid on top-level <code>def</code> / <code>async def</code> declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">as_int</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">parse</span>
+
+<span class="nd">@as_int</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="s2">&quot;value&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="kt">result</span> <span class="o">=</span> <span class="n">label</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># int</span>
+</code></pre></div>
+<p>Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to <code>def</code> receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+<code>@logged("name")</code> are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.</p>
+<p>Method decorators receive an unbound callable shape with the receiver first. A decorator on
+<code>def label(self, value: int) -&gt; str</code> sees <code>(&amp;Box, int) -&gt; str</code>; a decorator on
+<code>def bump(mut self, value: int) -&gt; int</code> sees <code>(&amp;mut Box, int) -&gt; int</code>. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.</p>
+<p>Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as <code>@derive</code>, <code>@route</code>, <code>@rust.extern</code>, <code>@rust.allow</code>, <code>@staticmethod</code>, <code>@classmethod</code>,
+and <code>@requires</code> keep their existing special behavior.</p>
 <table>
 <thead>
 <tr>
