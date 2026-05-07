@@ -848,6 +848,22 @@ pub(crate) fn determine_conversion_for_incan_call(
     if matches!(
         context,
         ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+    ) {
+        match target_ty {
+            Some(IrType::Ref(_)) => match &expr.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ => return Conversion::Borrow,
+            },
+            Some(IrType::RefMut(_)) => match &expr.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ => return Conversion::MutBorrow,
+            },
+            _ => {}
+        }
+    }
+    if matches!(
+        context,
+        ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
     ) && callee_param.is_some_and(incan_mutable_param_skips_incan_value_conversions)
     {
         return Conversion::None;
@@ -1367,6 +1383,43 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
         assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_call_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(&expr, Some(&target), ConversionContext::IncanFunctionArg, None);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_return_call_context_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&target),
+            ConversionContext::IncanFunctionArgInReturn,
+            None,
+        );
+        assert_eq!(conv, Conversion::Borrow);
     }
 
     #[test]

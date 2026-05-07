@@ -773,6 +773,7 @@ impl AstLowering {
         {
             self.current_classmethod_constructor = Some(type_name);
         }
+        self.push_callable_param_scope(&params);
         let body_result = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)
         } else {
@@ -780,7 +781,24 @@ impl AstLowering {
             Ok(vec![])
         };
         self.current_classmethod_constructor = previous_classmethod_constructor;
-        let body = body_result?;
+        if body_result.is_ok() {
+            for param in &mut params {
+                if matches!(param.ty, IrType::Function { .. }) {
+                    let refined_ty = self.lookup_var(&param.name);
+                    if matches!(refined_ty, IrType::Function { .. }) {
+                        param.ty = refined_ty;
+                    }
+                }
+            }
+        }
+        self.pop_callable_param_scope();
+        let body = match body_result {
+            Ok(body) => body,
+            Err(err) => {
+                self.pop_scope();
+                return Err(err);
+            }
+        };
         self.pop_scope();
 
         // Incan methods are part of the type's public surface. Trait-impl methods are handled separately in

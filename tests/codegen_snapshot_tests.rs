@@ -647,6 +647,116 @@ fn test_function_references_codegen() {
 }
 
 #[test]
+fn test_rfc070_result_combinators_codegen() {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def observe_int(_value: int) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> Result[int, str]:
+  observer = Observer()
+  return result.map(double).and_then(keep_positive).inspect(observe_int).inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("crate::__incan_std::result::map(result, double)"),
+        "map with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::and_then"),
+        "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::inspect"),
+        "inspect with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observe_int"),
+        "inspect should pass Copy named observers through the std.result helper without cloning:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains(".inspect(|__incan_result_value|"),
+        "callable-object inspect should use Rust's borrowed Result observer surface:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__call__(*__incan_result_value)"),
+        "callable objects should route through __call__ inside Result combinators:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("clone()"),
+        "Copy observer adaptation should not introduce clone calls:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() {
+    let source = r#"
+model Payload:
+  name: str
+
+def observe_payload(_payload: Payload) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model PayloadObserver with Callable1[Payload, None]:
+  def __call__(self, _payload: Payload) -> None:
+    pass
+
+pub def transform(result: Result[Payload, str]) -> Result[Payload, str]:
+  return result.inspect(observe_payload)
+
+pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload, str]:
+  observer = PayloadObserver()
+  return result.inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("fn __incan_borrow_adapter_observe_payload_0(_: &Payload)"),
+        "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::inspect(")
+            && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
+        "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_observer_borrow_observe_payload"),
+        "named function observers should use the generic borrowed adapter, not the old Result-specific helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("fn __incan_result_observer_borrow___call__(&self, _: &Payload)"),
+        "non-Copy callable observers should get a generated borrowed __call__ helper:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("fn __incan_result_observer_borrow___call__").count(),
+        1,
+        "callable-object borrowed observer helper should be emitted once:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__incan_result_observer_borrow___call__(__incan_result_value)"),
+        "inspect should route non-Copy callable objects through the borrowed __call__ helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_value).clone()"),
+        "non-Copy inspect observers must not clone the payload:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_dict_operations_codegen() {
     let source = load_test_file("dict_operations");
     let rust_code = generate_rust(&source);
@@ -1023,6 +1133,33 @@ fn test_std_fs_import_codegen() {
 }
 
 #[test]
+fn test_std_tempfile_import_codegen() {
+    let source = load_test_file("std_tempfile_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
+        "std.tempfile NamedTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
+        "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
+        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.tempfile must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_tempfile_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
@@ -1053,6 +1190,13 @@ fn test_collections_codegen() {
         rust_code.contains("(2, \"two\".to_string())"),
         "expected dict[_, str] literal values to materialize owned String values"
     );
+}
+
+#[test]
+fn test_list_repeat_codegen() {
+    let source = load_test_file("list_repeat");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("list_repeat", rust_code);
 }
 
 #[test]
@@ -1099,6 +1243,13 @@ fn test_control_flow_codegen() {
     let source = load_test_file("control_flow");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("control_flow", rust_code);
+}
+
+#[test]
+fn test_pattern_alternation_codegen() {
+    let source = load_test_file("pattern_alternation");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("pattern_alternation", rust_code);
 }
 
 #[test]

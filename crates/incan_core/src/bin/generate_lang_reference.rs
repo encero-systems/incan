@@ -112,6 +112,7 @@ fn write_language_reference(path: &Path) {
     out.push_str("- [Builtin types](#builtin-types)\n");
     out.push_str("- [Surface constructors](#surface-constructors)\n");
     out.push_str("- [Surface functions](#surface-functions)\n");
+    out.push_str("- [Built-in collection helpers](#built-in-collection-helpers)\n");
     out.push_str("- [Surface string methods](#surface-string-methods)\n");
     out.push_str("- [Surface types](#surface-types)\n");
     out.push_str("- [Surface methods](#surface-methods)\n\n");
@@ -130,6 +131,7 @@ fn write_language_reference(path: &Path) {
 
     render_surface_constructors_section(&mut out);
     render_surface_functions_section(&mut out);
+    render_builtin_collection_helpers_section(&mut out);
     render_surface_string_methods_section(&mut out);
     render_surface_types_section(&mut out);
     render_surface_methods_section(&mut out);
@@ -612,6 +614,40 @@ fn render_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render import-free built-in collection helpers such as `list.repeat(...)`.
+fn render_builtin_collection_helpers_section(out: &mut String) {
+    start_section(out, "## Built-in collection helpers");
+
+    out.push_str("| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+
+    for helper in surface::collection_helpers::BUILTIN_COLLECTION_HELPERS {
+        let id = format!("{:?}", helper.item.id);
+        let receiver = format!("`{}`", helper.receiver);
+        let member = format!("`{}`", helper.member);
+        let signature = format!("`{}`", helper.signature);
+        let aliases = if helper.item.aliases.is_empty() {
+            String::new()
+        } else {
+            helper
+                .item
+                .aliases
+                .iter()
+                .map(|alias| format!("`{}`", alias))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = helper.item.description;
+        let rfc = helper.item.introduced_in_rfc;
+        let since = helper.item.since;
+        let stability = format!("{:?}", helper.item.stability);
+        out.push_str(&format!(
+            "| {id} | {receiver} | {member} | {signature} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+}
+
 /// Render compiler-recognized surface constructor metadata.
 fn render_surface_constructors_section(out: &mut String) {
     start_section(out, "## Surface constructors");
@@ -848,6 +884,31 @@ fn render_surface_methods_section(out: &mut String) {
     out.push_str("\n### Option methods\n\n");
     out.push_str(table_header());
     for m in surface::option_methods::OPTION_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
+    // Result
+    out.push_str("\n### Result methods\n\n");
+    out.push_str(table_header());
+    for m in surface::result_methods::RESULT_METHODS {
         let id = format!("{:?}", m.id);
         let canonical = format!("`{}`", m.canonical);
         let aliases = if m.aliases.is_empty() {

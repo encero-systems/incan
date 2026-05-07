@@ -52,7 +52,7 @@ impl AstLowering {
         let mut hidden_type_params = Vec::new();
         let mut hidden_counter = 0usize;
 
-        let params: Vec<FunctionParam> = f
+        let mut params: Vec<FunctionParam> = f
             .params
             .iter()
             .map(|p| {
@@ -94,7 +94,26 @@ impl AstLowering {
 
         let return_type = self.lower_callable_return_type(&f.return_type.node, Some(&type_param_names));
         let is_generator = return_type_is_generator(&return_type) && body_contains_yield(&f.body);
-        let body = self.lower_statements(&f.body)?;
+        self.push_callable_param_scope(&params);
+        let body_result = self.lower_statements(&f.body);
+        if body_result.is_ok() {
+            for param in &mut params {
+                if matches!(param.ty, IrType::Function { .. }) {
+                    let refined_ty = self.lookup_var(&param.name);
+                    if matches!(refined_ty, IrType::Function { .. }) {
+                        param.ty = refined_ty;
+                    }
+                }
+            }
+        }
+        self.pop_callable_param_scope();
+        let body = match body_result {
+            Ok(body) => body,
+            Err(err) => {
+                self.pop_scope();
+                return Err(err);
+            }
+        };
         self.pop_scope();
 
         // RFC 023: detect @rust.extern decorator to mark this function as externally-backed.

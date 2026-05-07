@@ -1927,6 +1927,95 @@ def normalize(value: int | str) -> str:
 }
 
 #[test]
+fn test_match_pattern_alternation_typechecks_and_counts_exhaustiveness() {
+    let source = r#"
+enum Status:
+  Pending
+  Retrying
+  Done
+
+def label(status: Status) -> str:
+  match status:
+    Status.Pending | Status.Retrying =>
+      return "waiting"
+    Status.Done =>
+      return "done"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_pattern_alternation_typechecks_common_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_pattern_alternation_rejects_missing_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(_) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(source, "pattern alternation with missing binding should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_names() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(error) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding names should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_types() {
+    let source = r#"
+def describe(value: int | str) -> str:
+  match value:
+    int(item) | str(item) =>
+      return str(item)
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding types should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("has incompatible types")),
+        "expected binding type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
 from rust::mail import EmailAddress as RustEmailAddress
@@ -4079,6 +4168,70 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
                 ))
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_infers_list_element_type() {
+    let source = r#"
+def main() -> None:
+  xs: List[int] = list.repeat(-1, 3)
+  ys: list[str] = list.repeat("seed", 2)
+  zs: list[int] = list.repeat(count=2, value=7)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_repeat_rejects_wrong_arity() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1)
+"#;
+    let errors = check_str_err(source, "expected list.repeat arity error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("list.repeat") && err.message.contains("expects 2")),
+        "expected list.repeat arity diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_rejects_non_int_count() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1, "two")
+"#;
+    let errors = check_str_err(source, "expected list.repeat count type error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'int'") && err.message.contains("found 'str'")),
+        "expected count type mismatch diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def make(value: Mutex) -> List[Mutex]:
+  return list.repeat(value, 2)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("list.repeat requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected list.repeat / Clone diagnostic for Rust element type; got {errs:?}"
     );
 }
 
@@ -8713,6 +8866,79 @@ def main() -> None:
             .any(|err| err.message.contains("expected 'str', found 'int'")),
         "expected __call__ argument mismatch diagnostic, got: {errs:?}"
     );
+}
+
+#[test]
+fn test_rfc070_result_combinators_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def prefix_error(err: str) -> str:
+  return "error: " + err
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def recover(_err: str) -> Result[int, int]:
+  return Ok(0)
+
+def observe_int(_value: int) -> None:
+  pass
+
+def observe_err(_err: str) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> None:
+  observer = Observer()
+  mapped: Result[int, str] = result.map(double)
+  mapped_err: Result[int, str] = result.map_err(prefix_error)
+  chained: Result[int, str] = result.and_then(keep_positive)
+  recovered: Result[int, int] = result.or_else(recover)
+  inspected: Result[int, str] = result.inspect(observe_int).inspect(observer)
+  inspected_err: Result[int, str] = result.inspect_err(observe_err)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc070_result_combinators_reject_bad_callbacks() {
+    let source = r#"
+def wrong_arg(value: str) -> int:
+  return 1
+
+def not_result(value: int) -> int:
+  return value
+
+def observes_with_value(value: int) -> int:
+  return value
+
+def main(result: Result[int, str]) -> None:
+  _mapped = result.map(wrong_arg)
+  _chained = result.and_then(not_result)
+  _inspected = result.inspect(observes_with_value)
+"#;
+
+    let errs = check_str_err(source, "bad Result combinator callbacks should fail");
+    for expected in [
+        "expected 'str', found 'int'",
+        "expected 'Result",
+        "expected 'Unit', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
 }
 
 #[test]

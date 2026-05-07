@@ -2739,6 +2739,232 @@ def main() -> None:
     }
 
     #[test]
+    fn test_result_inspect_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::fs import ReadDir
+from rust::std::path import Path as RustPath
+
+def observe_entries(_entries: ReadDir) -> None:
+    pass
+
+def main() -> None:
+    result = read_dir(RustPath.new(".")).inspect(observe_entries)
+    match result:
+        Ok(entries) =>
+            mut seen = False
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+            println(seen)
+        Err(err) => println(err.to_string())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.inspect Rust Result non-Clone regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true"],
+            "unexpected Result.inspect non-Clone Rust Result output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_user_authored_result_tap_borrows_callback_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::fs import ReadDir
+from rust::std::path import Path as RustPath
+
+def observe_entries(_entries: ReadDir) -> None:
+    pass
+
+def tap[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]:
+    match result:
+        Ok(value) =>
+            f(value)
+            return Ok(value)
+        Err(error) => return Err(error)
+
+def main() -> None:
+    result = tap(read_dir(RustPath.new(".")), observe_entries)
+    match result:
+        Ok(entries) =>
+            mut seen = False
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+            println(seen)
+        Err(err) => println(err.to_string())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "user-authored Result tap borrowed callback regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true"],
+            "unexpected user-authored Result tap output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.result import map as result_map, map_err as result_map_err
+from std.result import and_then as result_and_then, or_else as result_or_else
+
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    even_value: Result[int, str] = Ok(4)
+    missing_value: Result[int, str] = Err("missing")
+    match result_map(ok_value, double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_map_err(err_value, prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_and_then(even_value, keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_or_else(missing_value, recover):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "4", "7"],
+            "unexpected std.result helper output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_methods_dogfood_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    missing_value: Result[int, str] = Err("missing")
+    match ok_value.map(double).and_then(keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match err_value.map_err(prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match missing_value.or_else(recover).map(double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result method std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "14"],
+            "unexpected Result method std.result helper output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -11424,6 +11650,76 @@ def main() -> None:
             "expected conflicting crate name in test output, got:\n{test_stdout}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_tempfile_compile_and_run_named_file_and_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.fs import IoError, Path
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
+
+def run() -> Result[None, IoError]:
+    file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
+    path = file.path()
+    path.write_text("hello", "utf-8", "strict", None)?
+    println(path.read_text("utf-8", "strict")?)
+
+    directory = TemporaryDirectory.try_new_with("incan-dir-", "", None)?
+    child = directory.path() / "child.txt"
+    child.write_text("world", "utf-8", "strict", None)?
+    println(child.read_text("utf-8", "strict")?)
+
+    mut memory = SpooledTemporaryFile(max_size=64)
+    memory.write(b"memory")?
+    println(memory.rolled_to_disk())
+    memory.seek(0, 0)?
+    println(len(memory.read(-1)?))
+
+    mut spool = SpooledTemporaryFile(max_size=4)
+    spool.write(b"rolled")?
+    println(spool.rolled_to_disk())
+    println(spool.path()?.exists())
+    spool.seek(0, 0)?
+    println(len(spool.read(-1)?))
+    kept_spool = spool.persist()?
+    println(kept_spool.exists())
+    kept_spool.unlink()?
+
+    kept_file = file.persist()?
+    println(kept_file.exists())
+    kept_file.unlink()?
+
+    kept_directory = directory.persist()?
+    println(kept_directory.exists())
+    kept_directory.remove_tree()?
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.tempfile smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "hello", "world", "false", "6", "true", "true", "6", "true", "true", "true",
+            ],
+            "unexpected std.tempfile output:\n{stdout}"
+        );
         Ok(())
     }
 }

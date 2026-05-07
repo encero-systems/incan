@@ -100,6 +100,16 @@ match status:
     Cancelled => println("Aborted")
 ```
 
+When several variants share the same behavior, join their patterns with `|` instead of duplicating the branch:
+
+```incan
+match status:
+    Pending | Active => println("Still working")
+    Completed | Cancelled => println("No longer active")
+```
+
+Alternatives that bind names must bind the same names with the same types. `Ok(value) | Err(value)` is valid for `Result[int, int]`; `Some(value) | None` is rejected because only one alternative binds `value`.
+
 ### Enum with Data (Variants)
 
 Each variant can carry different types and amounts of data:

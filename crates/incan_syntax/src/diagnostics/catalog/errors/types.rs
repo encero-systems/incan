@@ -1386,6 +1386,31 @@ pub fn named_pattern_not_supported(name: &str, span: Span) -> CompileError {
         .with_hint("Use positional patterns for enum variants and builtins")
 }
 
+/// Report an alternation whose alternatives do not bind the same names.
+pub fn pattern_alternation_binding_mismatch(expected: &[String], found: &[String], span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding mismatch: expected bindings [{}], found [{}]",
+            expected.join(", "),
+            found.join(", ")
+        ),
+        span,
+    )
+    .with_hint("Every alternative in a pattern alternation must bind the same names")
+}
+
+/// Report an alternation whose same-named binding resolves to different types across alternatives.
+pub fn pattern_alternation_binding_type_mismatch(name: &str, expected: &str, found: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding '{}' has incompatible types: expected '{}', found '{}'",
+            name, expected, found
+        ),
+        span,
+    )
+    .with_hint("Use separate branches when alternatives bind the same name with different types")
+}
+
 pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(
@@ -1461,6 +1486,16 @@ pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     )
     .with_note("List.append clones non-Copy values before pushing")
     .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+}
+
+/// Report that `list.repeat(value, count)` requires cloneable element values.
+pub fn list_repeat_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("list.repeat requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("list.repeat preserves the source value, so non-Copy values are cloned into the new list")
+    .with_hint("Add @derive(Clone) to the element type or repeat a Copy type")
 }
 
 pub fn list_concat_requires_clone(elem_type: &str, span: Span) -> CompileError {

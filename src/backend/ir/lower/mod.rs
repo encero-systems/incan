@@ -113,6 +113,8 @@ pub struct AstLowering {
     pub(super) non_linear_context_depth: usize,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Function-typed parameters for the currently lowered callable body.
+    pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub(super) symbol_aliases: HashMap<String, String>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
@@ -228,6 +230,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
+            callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
             rusttype_underlying: HashMap::new(),
@@ -355,6 +358,49 @@ impl AstLowering {
         }
         if is_static_binding && let Some(scope) = self.static_binding_scopes.last_mut() {
             scope.insert(name);
+        }
+    }
+
+    /// Replace the nearest local binding type for `name` after lowering refines it.
+    pub(super) fn update_local_binding(&mut self, name: &str, ty: IrType) {
+        if let Some(scope) = self.scopes.iter_mut().rev().find(|scope| scope.contains_key(name)) {
+            scope.insert(name.to_string(), ty);
+        }
+    }
+
+    /// Track function-typed parameters for the callable body currently being lowered.
+    pub(super) fn push_callable_param_scope(&mut self, params: &[FunctionParam]) {
+        self.callable_param_scopes.push(
+            params
+                .iter()
+                .filter(|param| matches!(param.ty, IrType::Function { .. }))
+                .map(|param| param.name.clone())
+                .collect(),
+        );
+    }
+
+    /// Drop the current callable parameter tracking scope.
+    pub(super) fn pop_callable_param_scope(&mut self) {
+        let _ = self.callable_param_scopes.pop();
+    }
+
+    /// Return whether the current callable body has a function-typed parameter named `name`.
+    pub(super) fn current_callable_param_scope_contains(&self, name: &str) -> bool {
+        self.callable_param_scopes
+            .last()
+            .is_some_and(|params| params.contains(name))
+    }
+
+    /// Refresh the root-scope function binding after lowering has refined the function signature.
+    fn update_root_function_binding(&mut self, name: &str, params: &[FunctionParam], return_type: &IrType) {
+        if let Some(scope) = self.scopes.first_mut() {
+            scope.insert(
+                name.to_string(),
+                IrType::Function {
+                    params: params.iter().map(|param| param.ty.clone()).collect(),
+                    ret: Box::new(return_type.clone()),
+                },
+            );
         }
     }
 
@@ -647,6 +693,9 @@ impl AstLowering {
                 ir_program
                     .function_registry
                     .register(f.name.clone(), params, return_type);
+                if let Some(signature) = ir_program.function_registry.get(&f.name).cloned() {
+                    self.update_root_function_binding(&f.name, &signature.params, &signature.return_type);
+                }
             } else if let ast::Declaration::Alias(ref alias) = decl.node
                 && let [target] = alias.target.segments.as_slice()
                 && let Some(signature) = ir_program.function_registry.get(target).cloned()
@@ -901,6 +950,14 @@ impl AstLowering {
                                 && func.name == conventions::ENTRYPOINT_NAME
                             {
                                 ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
+                            }
+                            if let IrDeclKind::Function(ref func) = ir_decl.kind {
+                                ir_program.function_registry.register(
+                                    func.name.clone(),
+                                    func.params.clone(),
+                                    func.return_type.clone(),
+                                );
+                                self.update_root_function_binding(&func.name, &func.params, &func.return_type);
                             }
                             ir_program.declarations.push(ir_decl);
                         }

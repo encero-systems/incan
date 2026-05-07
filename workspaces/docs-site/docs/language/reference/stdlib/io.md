@@ -70,4 +70,4 @@ def decode_count(data: bytes) -> Result[u32, IoError]:
     return Ok(count)
 ```
 
-`BytesIO` is in-memory only. Spill-to-disk behavior belongs to a future `std.tempfile.SpooledTemporaryFile` design rather than this module.
+`BytesIO` is in-memory only. Use `std.tempfile.SpooledTemporaryFile` when a stream should start in memory and roll over to a temporary file after a size threshold.

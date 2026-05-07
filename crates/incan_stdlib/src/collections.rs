@@ -88,6 +88,22 @@ pub fn list_extend<T: Clone>(lhs: &mut Vec<T>, rhs: &[T]) {
     lhs.extend_from_slice(rhs);
 }
 
+/// Build a list containing `count` clone-derived copies of `value`.
+///
+/// This backs Incan's `list.repeat(value, count)` helper. Negative counts are runtime caller errors because the count
+/// may be computed dynamically even when the call type-checks.
+///
+/// ## Panics
+/// - `ValueError: list.repeat count must be non-negative, got {count}` if `count < 0`.
+#[inline]
+#[must_use]
+pub fn list_repeat<T: Clone>(value: T, count: i64) -> Vec<T> {
+    if count < 0 {
+        raise_value_error(&format!("list.repeat count must be non-negative, got {count}"));
+    }
+    vec![value; count as usize]
+}
+
 /// Count occurrences of a value in a list.
 #[inline]
 #[must_use]
@@ -363,6 +379,27 @@ mod tests {
         list_extend(&mut lhs, &rhs);
         assert_eq!(lhs, vec![1, 2, 3, 4]);
         assert_eq!(rhs, vec![3, 4]);
+    }
+
+    #[test]
+    fn list_repeat_clones_values() {
+        let repeated = list_repeat("seed".to_string(), 3);
+        assert_eq!(
+            repeated,
+            vec!["seed".to_string(), "seed".to_string(), "seed".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_repeat_zero_returns_empty_list() {
+        let repeated = list_repeat(42, 0);
+        assert_eq!(repeated, Vec::<i32>::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "ValueError: list.repeat count must be non-negative, got -2")]
+    fn list_repeat_negative_count_panics_with_value_error() {
+        let _ = list_repeat("x", -2);
     }
 
     #[test]
