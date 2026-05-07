@@ -1855,6 +1855,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#result-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Result methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#frozenlist-methods" class="md-nav__link">
     <span class="md-ellipsis">
       FrozenList methods
@@ -2210,6 +2219,8 @@
       
         
       
+        
+      
     
     
       
@@ -2388,6 +2399,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -5515,6 +5547,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#result-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Result methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#frozenlist-methods" class="md-nav__link">
     <span class="md-ellipsis">
       FrozenList methods
@@ -6273,6 +6314,12 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 </tr>
 <tr>
 <td><code>std.reflection</code></td>
+<td>-</td>
+<td>-</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.result</code></td>
 <td>-</td>
 <td>-</td>
 <td>-</td>
@@ -8940,6 +8987,76 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>Return the contained value or panic.</td>
 <td>RFC 000</td>
 <td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="result-methods">Result methods<a class="headerlink" href="#result-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Map</td>
+<td><code>map</code></td>
+<td></td>
+<td>Transform an Ok payload while preserving Err.</td>
+<td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>MapErr</td>
+<td><code>map_err</code></td>
+<td></td>
+<td>Transform an Err payload while preserving Ok.</td>
+<td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>AndThen</td>
+<td><code>and_then</code></td>
+<td></td>
+<td>Chain a Result-returning operation from an Ok payload.</td>
+<td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>OrElse</td>
+<td><code>or_else</code></td>
+<td></td>
+<td>Recover or remap through a Result-returning operation from an Err payload.</td>
+<td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Inspect</td>
+<td><code>inspect</code></td>
+<td></td>
+<td>Observe an Ok payload by implicit borrow while preserving the original Result.</td>
+<td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>InspectErr</td>
+<td><code>inspect_err</code></td>
+<td></td>
+<td>Observe an Err payload by implicit borrow while preserving the original Result.</td>
+<td>RFC 070</td>
+<td>0.3</td>
 <td>Stable</td>
 </tr>
 </tbody>

@@ -1766,6 +1766,8 @@
       
         
       
+        
+      
     
     
       
@@ -1944,6 +1946,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -4934,7 +4957,7 @@
 <p>Some language-shaped DSLs mix expression and declaration syntax:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">script</span><span class="p">:</span>
     <span class="k">const</span> <span class="n">name</span> <span class="o">=</span> <span class="n">user</span><span class="o">?.</span><span class="n">profile</span><span class="o">?.</span><span class="n">name</span> <span class="o">??</span> <span class="s2">&quot;Guest&quot;</span><span class="p">;</span>
-    <span class="k">const</span> <span class="n">view</span> <span class="o">=</span> <span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">item</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="err">`$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">id</span><span class="p">}:</span><span class="err">$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">name</span><span class="p">}</span><span class="err">`</span><span class="p">);</span>
+    <span class="k">const</span> <span class="n">view</span> <span class="o">=</span> <span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">items</span><span class="o">.</span><span class="nb">map</span><span class="p">((</span><span class="n">item</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="err">`$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">id</span><span class="p">}:</span><span class="err">$</span><span class="p">{</span><span class="n">item</span><span class="o">.</span><span class="n">name</span><span class="p">}</span><span class="err">`</span><span class="p">);</span>
 </code></pre></div>
 <p>For these surfaces, a descriptor must say which lexical forms are enabled, which positions admit them, and what typed artifact the DSL receives.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>

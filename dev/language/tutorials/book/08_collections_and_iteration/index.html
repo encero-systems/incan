@@ -1897,6 +1897,8 @@
       
         
       
+        
+      
     
     
       
@@ -2075,6 +2077,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -5004,7 +5027,7 @@
 
 <span class="n">ready_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">jobs</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
     <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_ready</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">job_name</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">job_name</span><span class="p">)</span>
     <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>The adapter calls above do not build intermediate lists. <code>.filter(...)</code> and <code>.map(...)</code> return new iterators; <code>.collect()</code> is the terminal step that consumes the iterator and returns a <code>list[T]</code>.</p>

@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../reflection/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../traits/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 082: Checked API documentation generation - Incan Documentation</title>
+        <title>std.result - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-082-checked-api-documentation-generation" class="md-skip">
+        <a href="#stdresult-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 082: Checked API documentation generation
+              std.result
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -573,7 +579,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -606,7 +612,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -627,7 +633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -648,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -669,7 +675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -690,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -711,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -732,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -753,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -774,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -795,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -816,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -837,7 +843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -858,7 +864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1029,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1050,7 +1056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1071,7 +1077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1092,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1113,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1134,7 +1140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1155,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1176,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1197,7 +1203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1218,7 +1224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1239,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1260,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1281,7 +1287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1302,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1323,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1344,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1370,8 +1376,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1414,11 +1422,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -1432,7 +1440,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1446,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1467,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1488,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1509,7 +1517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1530,7 +1538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1551,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1572,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1593,7 +1601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1614,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1635,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1656,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1677,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1698,7 +1706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1719,7 +1727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1737,6 +1745,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1773,16 +1783,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_15" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1799,7 +1809,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_15_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_15">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1815,7 +1825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1836,7 +1846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1857,7 +1867,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1878,7 +1888,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1899,7 +1909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1920,7 +1930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1941,7 +1951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1959,10 +1969,30 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -1971,6 +2001,53 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Functions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observer-borrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Observer Borrowing
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-method-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship To Method Syntax
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1983,7 +2060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2004,7 +2081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2025,7 +2102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2086,7 +2163,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2119,7 +2196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2140,7 +2217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2161,7 +2238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2182,7 +2259,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2203,7 +2280,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2224,7 +2301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2304,7 +2381,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2325,7 +2402,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2346,7 +2423,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2367,7 +2444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2388,7 +2465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2409,7 +2486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2525,7 +2602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2546,7 +2623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2567,7 +2644,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2588,7 +2665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2609,7 +2686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2630,7 +2707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2651,7 +2728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2672,7 +2749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2693,7 +2770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2714,7 +2791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2735,7 +2812,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2756,7 +2833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2777,7 +2854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2798,7 +2875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2819,7 +2896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2840,7 +2917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2861,7 +2938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2906,7 +2983,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2939,7 +3016,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2960,7 +3037,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2989,7 +3066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3010,7 +3087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3077,7 +3154,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3155,7 +3232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3176,7 +3253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3197,7 +3274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3281,7 +3358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3302,7 +3379,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3323,7 +3400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3344,7 +3421,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3365,7 +3442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3386,7 +3463,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3407,7 +3484,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3428,7 +3505,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3500,7 +3577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3521,7 +3598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3599,7 +3676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3620,7 +3697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3641,7 +3718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3662,7 +3739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3683,7 +3760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3744,7 +3821,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3777,7 +3854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3845,7 +3922,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3955,7 +4032,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3988,7 +4065,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4009,7 +4086,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4030,7 +4107,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4051,7 +4128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4072,7 +4149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4093,7 +4170,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4114,7 +4191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4135,7 +4212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4221,7 +4298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4242,7 +4319,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4263,7 +4340,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4284,7 +4361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4305,7 +4382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4385,7 +4462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4406,7 +4483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4427,7 +4504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4448,7 +4525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4469,7 +4546,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4490,7 +4567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4519,7 +4596,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4576,7 +4653,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4609,7 +4686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4630,7 +4707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4651,7 +4728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4679,7 +4756,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4699,7 +4776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4739,237 +4816,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#functions" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Functions
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#observer-borrowing" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Observer Borrowing
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#relationship-to-method-syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#inputs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inputs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documented-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documented surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#output-formats" class="md-nav__link">
-    <span class="md-ellipsis">
-      Output formats
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anchors-and-links" class="md-nav__link">
-    <span class="md-ellipsis">
-      Anchors and links
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#validation-modes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Validation modes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#package-artifacts" class="md-nav__link">
-    <span class="md-ellipsis">
-      Package artifacts
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#command-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Command model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#documentation-bundle" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation bundle
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-rfc-048" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to RFC 048
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-hosted-site-tooling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to hosted site tooling
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation architecture
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      Relationship To Method Syntax
     </span>
   </a>
   
@@ -4993,210 +4860,69 @@
   
 
 
-<h1 id="rfc-082-checked-api-documentation-generation">RFC 082: Checked API documentation generation<a class="headerlink" href="#rfc-082-checked-api-documentation-generation" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-04-28</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 015 (project lifecycle and CLI tooling)</li>
-<li>RFC 031 (library system phase 1)</li>
-<li>RFC 034 (<code>incan.pub</code> registry)</li>
-<li>RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)</li>
-<li>RFC 079 (<code>incan.pub</code> artifact graph)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> —</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.3</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines first-class Incan API documentation generation on top of RFC 048 checked API metadata. RFC 048 owns the compiler-checked metadata extraction contract; this RFC owns the user-facing documentation command, documentation bundle model, Markdown reference output, validation modes, deterministic anchors, and package-facing docs artifacts that can be consumed by local tooling, registries, package browsers, or downstream site tooling. Hosted documentation sites, MkDocs Material-style theming, publishing workflows, and product-specific navigation remain outside the compiler and belong to higher-level site tooling.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Checked metadata is the source of truth:</strong> documentation generation consumes RFC 048 checked API metadata, either from a source package after parsing and typechecking or from a built artifact that carries the same metadata.</li>
-<li><strong>Docs are derived artifacts:</strong> generated reference docs are projections of checked source structure. They must not become a second source of truth for declarations, signatures, decorators, aliases, field metadata, or docstrings.</li>
-<li><strong>The stable renderer is Markdown:</strong> the required output is deterministic Markdown reference documentation with stable anchors and enough structure for downstream site tooling to ingest.</li>
-<li><strong>HTML is a convenience renderer:</strong> implementations may provide local HTML output or preview, but HTML is not the normative interchange format and must not be required by packages, registries, or downstream consumers.</li>
-<li><strong>Validation is explicit:</strong> docs generation includes a check mode that validates mechanically checkable docstring claims against RFC 048 metadata and reports actionable diagnostics.</li>
-<li><strong>Package docs are artifact-aware:</strong> packages may carry documentation bundles or enough RFC 048 metadata for registries and local tools to regenerate the same reference docs without source scraping.</li>
-<li><strong>Site generation is downstream:</strong> a site tool may turn generated Markdown and metadata into a hosted site, search UI, theme, or multi-package portal, but those presentation concerns are not part of this RFC.</li>
-</ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan packages need trustworthy API reference documentation. The language already has enough structure to describe public functions, models, fields, decorators, aliases, constants, and docstrings, but handwritten docs drift unless the toolchain checks them against the compiled API surface. Source scraping is not good enough because it duplicates compiler behavior and breaks once packages are consumed as built artifacts rather than editable source trees.</p>
-<p>RFC 048 solves the first half of the problem by defining checked metadata extraction. That is deliberately a metadata contract, not a docs product. The next layer is still needed: users need a command that turns checked metadata into readable reference docs, package tooling needs a deterministic artifact it can publish or inspect, and downstream systems need a stable input that does not require them to parse Incan or generated Rust.</p>
-<p>The end-state should look closer to a compiler-backed reference docs pipeline than to a static-site theme. Incan should be able to produce accurate package reference docs from checked APIs. Downstream site tooling can decide how those docs become a polished website, product portal, search experience, or registry page.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Define a first-class docs generation command family for source packages and metadata-bearing artifacts.</li>
-<li>Require documentation generation to consume RFC 048 checked API metadata rather than source scraping or generated Rust.</li>
-<li>Define deterministic Markdown reference output as the stable documentation artifact.</li>
-<li>Define stable declaration anchors so generated docs can be linked by registries, package browsers, editors, and hosted sites.</li>
-<li>Define explicit validation modes for docstring drift, including parameters, returns, fields, aliases, and exposed decorator metadata where those are mechanically checkable.</li>
-<li>Allow local HTML preview as a convenience without making HTML the stable interchange contract.</li>
-<li>Define how package and registry flows may carry or regenerate documentation artifacts from checked metadata.</li>
-<li>Keep downstream site tooling responsible for hosted site generation, theming, navigation, search UI, publishing, and product-specific documentation composition.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Defining the RFC 048 checked metadata schema. This RFC consumes that metadata and may add documentation-bundle requirements, but it does not replace the extraction contract.</li>
-<li>Owning hosted documentation-site generation in the compiler or CLI.</li>
-<li>Standardizing MkDocs Material-style themes, product portals, hosted search pages, or publishing workflows.</li>
-<li>Replacing handwritten guides, tutorials, conceptual docs, release notes, or whitepapers.</li>
-<li>Defining query-language-specific catalogs or any other product-specific reference view.</li>
-<li>Executing user code to discover documentation facts.</li>
-<li>Guaranteeing source-compatible behavior with rustdoc, Griffe, MkDocs, or any other external documentation tool.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>A package author can generate API reference docs from checked source:</p>
-<div class="language-shell highlight"><pre><span></span><code>incan<span class="w"> </span>docs<span class="w"> </span>--format<span class="w"> </span>markdown<span class="w"> </span>--output<span class="w"> </span>docs/api
+<h1 id="stdresult-reference">std.result (reference)<a class="headerlink" href="#stdresult-reference" title="Permanent link">&para;</a></h1>
+<p><code>std.result</code> exposes Incan-authored helper functions for the <code>Result[T, E]</code> combinator surface.</p>
+<p>Each helper has the same branch behavior as the corresponding <code>Result</code> method. The method form is usually the clearest spelling for pipelines:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="n">read_config</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="nb">and_then</span><span class="p">(</span><span class="n">validate_config</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span>
 </code></pre></div>
-<p>The command parses and typechecks the package, asks the RFC 048 metadata layer for public API structure, validates docstrings according to the selected mode, and writes deterministic Markdown files. The generated files are readable in a repository, can be packaged as derived artifacts, and can be consumed by a site tool without that site tool needing to understand Incan typechecking.</p>
-<p>A stricter workflow can run documentation validation without producing a full reference tree:</p>
-<div class="language-shell highlight"><pre><span></span><code>incan<span class="w"> </span>docs<span class="w"> </span>--check
+<p>Direct helper imports are available when a function-shaped API is clearer:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.result</span><span class="w"> </span><span class="kn">import</span> <span class="nb">map</span> <span class="k">as</span> <span class="n">result_map</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="o">*</span> <span class="mi">2</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">value</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">Ok</span><span class="p">(</span><span class="mi">21</span><span class="p">)</span>
+    <span class="n">doubled</span> <span class="o">=</span> <span class="n">result_map</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="kt">double</span><span class="p">)</span>
 </code></pre></div>
-<p>If a public function documents a parameter that no longer exists, omits a required return section under the active policy, or describes a field that is not present in the checked model metadata, the command reports diagnostics against the source declaration or metadata-bearing artifact.</p>
-<p>The input source remains ordinary Incan:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@aggregate</span><span class="p">(</span><span class="s2">&quot;avg&quot;</span><span class="p">)</span>
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">avg</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Return the arithmetic mean.</span>
-
-<span class="sd">    Args:</span>
-<span class="sd">        values: Input values.</span>
-
-<span class="sd">    Returns:</span>
-<span class="sd">        Mean value.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="o">...</span>
-</code></pre></div>
-<p>The generated Markdown should be deterministic and linkable:</p>
-<div class="language-markdown highlight"><pre><span></span><code><span class="gu">## `avg(values: List[float]) -&gt; float` {#fn-avg}</span>
-
-Return the arithmetic mean.
-
-<span class="gs">**Decorator:**</span> <span class="sb">`aggregate(&quot;avg&quot;)`</span>
-
-<span class="gs">**Parameters**</span>
-
-<span class="k">-</span><span class="w"> </span><span class="sb">`values: List[float]`</span> — Input values.
-
-<span class="gs">**Returns**</span>
-
-<span class="k">-</span><span class="w"> </span><span class="sb">`float`</span> — Mean value.
-</code></pre></div>
-<p>That Markdown is not the authoritative API. It is a projection of checked metadata. If the function signature changes, the next docs run updates or rejects the projection according to the active validation mode.</p>
-<p>For a built package that carries RFC 048 metadata, a registry or package browser can generate the same reference docs without a source checkout:</p>
-<div class="language-shell highlight"><pre><span></span><code>incan<span class="w"> </span>docs<span class="w"> </span>--from-artifact<span class="w"> </span>dist/stats.incnlib<span class="w"> </span>--format<span class="w"> </span>markdown<span class="w"> </span>--output<span class="w"> </span>docs/api
-</code></pre></div>
-<p>A downstream site generator can then treat the generated Markdown and metadata as input to a richer site: navigation, search, cross-package landing pages, branding, publishing, and hosted previews are downstream presentation choices.</p>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="inputs">Inputs<a class="headerlink" href="#inputs" title="Permanent link">&para;</a></h3>
-<p>Documentation generation must consume checked API metadata as defined by RFC 048. The metadata may come from a source root after parsing and typechecking, from an in-memory compiler result, or from a supported built artifact that carries RFC 048 metadata.</p>
-<p>Documentation generation must not treat raw source text, generated Rust, or untyped sidecar files as authoritative for public declarations, signatures, decorator arguments, aliases, model fields, or type information.</p>
-<p>If the input artifact does not carry RFC 048 metadata, the command must report that checked documentation generation is unavailable for that artifact rather than inventing a best-effort API by scraping files.</p>
-<h3 id="documented-surface">Documented surface<a class="headerlink" href="#documented-surface" title="Permanent link">&para;</a></h3>
-<p>The default documented surface is the public package API exposed by RFC 048 metadata. That includes public functions and methods, public models/classes/traits/enums/newtypes/type aliases, exported constants or statics that RFC 048 exposes as safe metadata, public aliases, relevant decorators, checked signatures, model fields, field metadata, field documentation, docstrings, module paths, package identity, and stable anchors.</p>
-<p>Private declarations are not included in generated reference docs by default. A future extension may define private or internal docs generation, but it must be opt-in and must not weaken the default public API contract.</p>
-<h3 id="output-formats">Output formats<a class="headerlink" href="#output-formats" title="Permanent link">&para;</a></h3>
-<p>The required output format is Markdown. Markdown output must be deterministic for a fixed checked metadata document, documentation generator version, and configuration.</p>
-<p>Markdown output must preserve enough structure for downstream site tooling to identify packages, modules, declarations, anchors, signatures, prose, parameter documentation, return documentation, field documentation, decorators, aliases, and cross-links where available.</p>
-<p>Implementations may provide local HTML output, local preview, or other renderers. Those renderers must be treated as projections of the same checked documentation model and must not define additional API facts that are absent from RFC 048 metadata or the documentation bundle.</p>
-<h3 id="anchors-and-links">Anchors and links<a class="headerlink" href="#anchors-and-links" title="Permanent link">&para;</a></h3>
-<p>Generated declaration anchors must be stable across formatting-only source changes and should be derived from package identity, module path, declaration kind, public name, and signature disambiguators when needed.</p>
-<p>Anchors must not rely solely on source line numbers. Line numbers may be included as diagnostic context, but they are not stable documentation identity.</p>
-<p>If two public declarations would produce the same anchor, the generator must apply a documented deterministic disambiguation rule or emit a diagnostic if no stable disambiguation is possible.</p>
-<h3 id="validation-modes">Validation modes<a class="headerlink" href="#validation-modes" title="Permanent link">&para;</a></h3>
-<p>Docs generation must support a validation-only mode. Validation compares mechanically checkable docstring sections against RFC 048 metadata.</p>
-<p>Validation must detect documented parameters that do not exist, public parameters missing required documentation under strict policy, documented return sections that contradict the checked return type, documented fields that do not exist, and exposed decorator or alias claims that contradict checked metadata.</p>
-<p>Validation must not execute user code. It may rely on parsed docstrings, checked declarations, compiler-known safe constants, and safe metadata values exposed by RFC 048.</p>
-<p>The default severity policy is an unresolved design question. The command must nevertheless make strict validation available so CI and package publishing can reject stale docs.</p>
-<h3 id="package-artifacts">Package artifacts<a class="headerlink" href="#package-artifacts" title="Permanent link">&para;</a></h3>
-<p>A package may carry generated documentation artifacts, RFC 048 metadata sufficient to regenerate them, or both. When both are present, tooling should be able to validate that the generated docs match the carried metadata under the declared generator version.</p>
-<p>Registry and package-browser tooling should prefer checked metadata or declared documentation artifacts over source scraping. If a package contains neither, tooling must report that checked reference docs are unavailable.</p>
-<p>Generated docs are derived artifacts. Publishing them must not change the package's checked API identity.</p>
-<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
-<p>Diagnostics must point at the declaration, docstring section, artifact metadata entry, or generated documentation entry that caused the mismatch, depending on the available input.</p>
-<p>Diagnostics should use checked names and public API concepts rather than generated Rust names or backend implementation details.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="command-model">Command model<a class="headerlink" href="#command-model" title="Permanent link">&para;</a></h3>
-<p>The command family should fit RFC 015 project lifecycle conventions. This RFC uses <code>incan docs</code> examples to describe the user workflow; final command spelling remains an unresolved question until the CLI design is accepted.</p>
-<p>The command should support at least three user workflows: generate Markdown from a source package, validate docs without writing output, and generate Markdown from a metadata-bearing artifact.</p>
-<h3 id="documentation-bundle">Documentation bundle<a class="headerlink" href="#documentation-bundle" title="Permanent link">&para;</a></h3>
-<p>Implementations should define a documentation bundle as the handoff between checked metadata and renderers. The bundle may be persisted or in-memory, but it must be versioned when persisted and must not contain unchecked API facts.</p>
-<p>The bundle exists so Markdown generation, local HTML preview, package publishing, LSP previews, and downstream site tools can share one checked documentation model instead of each renderer reinterpreting RFC 048 metadata independently.</p>
-<h3 id="relationship-to-rfc-048">Relationship to RFC 048<a class="headerlink" href="#relationship-to-rfc-048" title="Permanent link">&para;</a></h3>
-<p>RFC 048 owns the checked metadata extraction contract. This RFC owns documentation-generation behavior that consumes that contract.</p>
-<p>If RFC 048 metadata cannot represent a fact, this RFC cannot make that fact authoritative by rendering it. The renderer may include plain prose from docstrings, but structured API facts must come from checked metadata or from mechanically validated documentation sections.</p>
-<h3 id="relationship-to-hosted-site-tooling">Relationship to hosted site tooling<a class="headerlink" href="#relationship-to-hosted-site-tooling" title="Permanent link">&para;</a></h3>
-<p>Hosted site tooling is the right layer for MkDocs Material-style site generation: hosted pages, themes, search interfaces, multi-package portals, landing pages, product branding, publishing destinations, and cross-project documentation composition.</p>
-<p>This RFC should give site tooling a stable, compiler-checked input rather than forcing it to scrape source or duplicate Incan's compiler semantics.</p>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is additive. Existing packages without checked docs generation continue to build.</p>
-<p>Packages adopting this RFC should treat generated Markdown as derived output. Hand-edited changes to generated reference files should either be overwritten on regeneration or moved into handwritten guide/tutorial docs.</p>
-<p>Packaging flows that already preserve RFC 048 metadata can enable artifact-time docs generation without shipping source.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Keep all documentation generation inside RFC 048</strong></li>
-<li>
-<p>Rejected because metadata extraction and documentation rendering have different consumers, stability promises, and implementation slices. RFC 048 should stay focused on checked facts.</p>
-</li>
-<li>
-<p><strong>Make MkDocs Material the Incan docs contract</strong></p>
-</li>
-<li>
-<p>Rejected because MkDocs Material is a site renderer and theme ecosystem, not the compiler-checked API model. It belongs in downstream site tooling.</p>
-</li>
-<li>
-<p><strong>Generate only HTML</strong></p>
-</li>
-<li>
-<p>Rejected because HTML is useful for preview but awkward as the stable artifact for registries, package diffs, source control review, and downstream composition.</p>
-</li>
-<li>
-<p><strong>Leave docs entirely to downstream tools</strong></p>
-</li>
-<li>
-<p>Rejected because downstream tools should not have to parse Incan, duplicate typechecking, or inspect generated Rust to produce accurate API reference docs.</p>
-</li>
-<li>
-<p><strong>Clone rustdoc or Griffe behavior wholesale</strong></p>
-</li>
-<li>Rejected because those tools are useful prior art, but Incan has its own package model, RFC 048 metadata layer, docstring validation needs, artifact story, and hosted-site boundary.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Adds another user-facing tooling surface that must be maintained alongside compiler and package workflows.</li>
-<li>Creates a new derived artifact that can become stale if projects check generated Markdown into source control without validation.</li>
-<li>Requires careful versioning between RFC 048 metadata, documentation bundles, and renderers.</li>
-<li>Risks confusing users if local HTML preview is mistaken for the hosted-site story that belongs to downstream site tooling.</li>
-<li>Increases pressure on docstring parsing and diagnostics before the language has a large documentation corpus.</li>
-</ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> The implementation should flow from checked package or artifact input to RFC 048 metadata, then to a documentation bundle, then to one or more renderers. Markdown is the required renderer. Local HTML can wrap the same bundle for preview. Package and registry integrations should consume the persisted bundle or regenerate it from RFC 048 metadata, while hosted site tooling consumes the generated Markdown and/or bundle for site generation.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Parser / frontend</strong>: must preserve docstrings and documentation-relevant source spans well enough for RFC 048 metadata extraction and diagnostics.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must provide checked public API facts through RFC 048 rather than requiring docs tooling to rediscover names, signatures, decorators, aliases, or fields.</li>
-<li><strong>Checked metadata extractor</strong>: must provide the public API metadata needed by the documentation bundle and must report unsupported or unsafe metadata values explicitly.</li>
-<li><strong>CLI / tooling</strong>: must expose documentation generation, validation-only mode, artifact input, output selection, and actionable diagnostics.</li>
-<li><strong>Formatter / docs renderer</strong>: must produce deterministic Markdown for a fixed checked metadata document and generator configuration.</li>
-<li><strong>Build / packaging</strong>: should preserve RFC 048 metadata, generated documentation bundles, or both when a package opts into checked documentation artifacts.</li>
-<li><strong>LSP / editor tooling</strong>: should be able to preview generated declaration docs and validation diagnostics from the same documentation bundle model.</li>
-<li><strong>Registry / package browser</strong>: should consume checked documentation artifacts or regenerate docs from carried RFC 048 metadata rather than scraping source.</li>
-<li><strong>Hosted site tooling</strong>: should consume generated Markdown and documentation bundles as checked inputs for hosted site generation, navigation, search, and product presentation.</li>
-</ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Should the accepted command spelling be <code>incan docs</code>, <code>incan docs build</code>, or a subcommand under a broader inspection namespace?</li>
-<li>Is Markdown the only required renderer, or should local HTML preview also be required?</li>
-<li>Should docstring drift be an error by default, a warning by default, or only hard-fail under <code>--check</code> or <code>--strict</code>?</li>
-<li>Should packages ship generated documentation bundles, RFC 048 metadata only, or both when publishing?</li>
-<li>What is the minimum cross-linking and search-index metadata that belongs in this RFC before hosted site tooling takes over site generation?</li>
-</ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Signature</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>map</code></td>
+<td><code>map[T, E, U](result: Result[T, E], f: Callable[T, U]) -&gt; Result[U, E]</code></td>
+<td>Transform <code>Ok(T)</code> with <code>f</code>; preserve <code>Err(E)</code>.</td>
+</tr>
+<tr>
+<td><code>map_err</code></td>
+<td><code>map_err[T, E, F](result: Result[T, E], f: Callable[E, F]) -&gt; Result[T, F]</code></td>
+<td>Transform <code>Err(E)</code> with <code>f</code>; preserve <code>Ok(T)</code>.</td>
+</tr>
+<tr>
+<td><code>and_then</code></td>
+<td><code>and_then[T, E, U](result: Result[T, E], f: Callable[T, Result[U, E]]) -&gt; Result[U, E]</code></td>
+<td>Chain a <code>Result</code>-returning function after <code>Ok(T)</code>; preserve <code>Err(E)</code>.</td>
+</tr>
+<tr>
+<td><code>or_else</code></td>
+<td><code>or_else[T, E, F](result: Result[T, E], f: Callable[E, Result[T, F]]) -&gt; Result[T, F]</code></td>
+<td>Recover or remap from <code>Err(E)</code> with a <code>Result</code>-returning function; preserve <code>Ok(T)</code>.</td>
+</tr>
+<tr>
+<td><code>inspect</code></td>
+<td><code>inspect[T, E](result: Result[T, E], f: Callable[T, None]) -&gt; Result[T, E]</code></td>
+<td>Observe <code>Ok(T)</code> with <code>f</code>; preserve the original <code>Result</code>.</td>
+</tr>
+<tr>
+<td><code>inspect_err</code></td>
+<td><code>inspect_err[T, E](result: Result[T, E], f: Callable[E, None]) -&gt; Result[T, E]</code></td>
+<td>Observe <code>Err(E)</code> with <code>f</code>; preserve the original <code>Result</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="observer-borrowing">Observer Borrowing<a class="headerlink" href="#observer-borrowing" title="Permanent link">&para;</a></h2>
+<p><code>inspect</code> and <code>inspect_err</code> pass the observed payload through an implicit borrow when the original branch value must remain available after the callback. Source code still spells the observer as <code>Callable[T, None]</code> or <code>Callable[E, None]</code>; there is no separate borrowed callback syntax.</p>
+<h2 id="relationship-to-method-syntax">Relationship To Method Syntax<a class="headerlink" href="#relationship-to-method-syntax" title="Permanent link">&para;</a></h2>
+<p>For named function callbacks, the compiler may lower method calls such as <code>result.map(double)</code> or <code>result.inspect(log_value)</code> through these <code>std.result</code> helpers. Callable objects and closure-shaped values can remain on the direct method-lowering path so they keep the same callable-object behavior documented for <code>Callable1</code>.</p>
+<p>That split is an implementation detail, not a semantic distinction users should depend on. The reference contract is that method syntax and the corresponding helper function have the same branch behavior, return type shape, and observer-preservation behavior.</p>
+<p>For workflow-oriented examples, see <a href="../../../tutorials/fallible_and_infallible_paths/">Fallible and infallible paths</a>. For the compiler-side ownership policy behind observer borrowing, see <a href="../../../../contributing/explanation/duckborrowing/">Duckborrowing</a>.</p>
 
 
 
@@ -5245,18 +4971,18 @@ Return the arithmetic mean.
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

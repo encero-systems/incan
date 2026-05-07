@@ -1770,6 +1770,8 @@
       
         
       
+        
+      
     
     
       
@@ -1948,6 +1950,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -4510,6 +4533,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#borrowed-callable-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Borrowed callable parameters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#collections-and-tuples" class="md-nav__link">
     <span class="md-ellipsis">
       Collections and tuples
@@ -4978,6 +5010,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#borrowed-callable-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Borrowed callable parameters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#collections-and-tuples" class="md-nav__link">
     <span class="md-ellipsis">
       Collections and tuples
@@ -5213,6 +5254,9 @@ At these boundaries:</p>
 <li>Non-string non-<code>Copy</code> values generally borrow rather than clone.</li>
 <li>Mutable aggregate Incan parameters can reborrow as <code>&amp;mut T</code> when the callee parameter requires mutation.</li>
 </ul>
+<h3 id="borrowed-callable-parameters">Borrowed callable parameters<a class="headerlink" href="#borrowed-callable-parameters" title="Permanent link">&para;</a></h3>
+<p>Function-typed parameters can be refined by lowering when their body uses a non-<code>Copy</code> payload as an observer and then keeps using that payload afterward. For example, a helper such as <code>tap[T, E](result: Result[T, E], f: Callable[T, None]) -&gt; Result[T, E]</code> can call <code>f(value)</code> and then return <code>Ok(value)</code> without requiring <code>T: Clone</code>. The generated callable boundary becomes <code>fn(&amp;T) -&gt; ()</code>, the callback call borrows <code>value</code>, and the original branch payload remains available to move into the returned <code>Result</code>.</p>
+<p>This is a backend ownership decision, not new source syntax. Incan code still writes <code>Callable[T, None]</code>; the compiler records the borrowed callable shape in IR when the use site proves that borrowing is the correct ownership plan. Named function values passed to such a borrowed function-pointer parameter receive a private borrowed adapter when their source signature takes the payload by value.</p>
 <h3 id="collections-and-tuples">Collections and tuples<a class="headerlink" href="#collections-and-tuples" title="Permanent link">&para;</a></h3>
 <p>Collection and tuple literals recursively apply <code>CollectionElement</code> planning to each item. This prevents nested string/borrow issues from escaping through literal syntax.</p>
 <p>Examples of expected behavior:</p>
@@ -5235,6 +5279,7 @@ When ownership planning can clone a generic value, <code>src/backend/ir/trait_bo
 <li>If a new source expression can produce borrowed data, teach <code>conversions.rs</code> how it materializes at owned sinks.</li>
 <li>If a new sink stores values recursively, route children through <code>emit_expr_for_use</code>.</li>
 <li>If a generic value can be cloned by backend policy, update trait-bound inference in the same change.</li>
+<li>If a callable parameter is refined from owned to borrowed payloads, make trait-bound inference follow the borrowed target so it does not add <code>Clone</code> merely because the original source spelling was <code>Callable[T, None]</code>.</li>
 <li>If a library or consumer needs workaround calls to compile, treat that as evidence of a missing planner rule.</li>
 </ul>
 <h2 id="testing-expectations">Testing expectations<a class="headerlink" href="#testing-expectations" title="Permanent link">&para;</a></h2>
@@ -5246,6 +5291,7 @@ When ownership planning can clone a generic value, <code>src/backend/ir/trait_bo
 <li>Build or run tests for generated Rust when borrow checker behavior is the failure mode.</li>
 <li>Consumer checks from sibling projects when the bug came from real library patterns rather than a minimized fixture.</li>
 <li>Trait-bound inference tests when a backend-inserted clone touches generic <code>T</code>.</li>
+<li>User-authored helper tests when a stdlib feature depends on duckborrowing; the same pattern should work outside <code>std</code>.</li>
 </ul>
 <h2 id="review-checklist">Review checklist<a class="headerlink" href="#review-checklist" title="Permanent link">&para;</a></h2>
 <p>Before merging duckborrowing changes, answer these questions:</p>

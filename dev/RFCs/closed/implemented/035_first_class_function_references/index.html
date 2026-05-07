@@ -1766,6 +1766,8 @@
       
         
       
+        
+      
     
     
       
@@ -1944,6 +1946,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -5131,7 +5154,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="kt">double</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># unnecessary indirection</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">items</span><span class="o">.</span><span class="nb">map</span><span class="p">((</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="kt">double</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>   <span class="c1"># unnecessary indirection</span>
 </code></pre></div>
 <p>Named function references remove that ceremony.</p>
 <h3 id="it-is-a-prerequisite-for-user-defined-decorators">It is a prerequisite for user-defined decorators<a class="headerlink" href="#it-is-a-prerequisite-for-user-defined-decorators" title="Permanent link">&para;</a></h3>
@@ -5170,7 +5193,7 @@
 <p><code>Callable[Params, R]</code> always takes <strong>exactly two</strong> type arguments: the first is either a single type (one parameter) or a parenthesized tuple of types (zero or multiple parameters), and the second is the return type. Both forms are interchangeable in every position where a function type is accepted.</p>
 <p>When the enclosing function has a bounded type parameter, <code>Callable</code> composes with it naturally — <code>T</code> is already known and bounded at the function level:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">apply_all</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">items</span><span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="interaction-with-methods">Interaction with methods<a class="headerlink" href="#interaction-with-methods" title="Permanent link">&para;</a></h3>
 <p>Instance methods are not directly passable as unbound values in this RFC (that would require a <code>self</code>-binding mechanism). Static methods (decorated with <code>@staticmethod</code>) are passable because they have no receiver:</p>
@@ -5336,7 +5359,7 @@
 <li>
 <p><strong>Bound on the outer function's type parameter:</strong> <strong>Supported.</strong> When <code>T</code> is declared on the enclosing function with <code>with Loggable</code>, using it in <code>Callable[T, str]</code> is the idiomatic pattern:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">apply_all</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">](</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Callable</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="n">items</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">items</span><span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 </code></pre></div>
 </li>
 <li>

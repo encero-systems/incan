@@ -1895,6 +1895,8 @@
       
         
       
+        
+      
     
     
       
@@ -2073,6 +2075,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -4961,7 +4984,7 @@ and “what to do when…”.</p>
 <p>Use <code>match</code> when you want to <strong>recover</strong>, <strong>retry</strong>, <strong>branch</strong>, or <strong>attach context</strong>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_user</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="c1"># Propagate: caller decides what to do.</span>
-    <span class="n">user</span> <span class="o">=</span> <span class="n">fetch_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Network</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">fetch_user</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Network</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">load_user_or_guest</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">User</span><span class="p">:</span>
@@ -4977,8 +5000,8 @@ and “what to do when…”.</p>
     <span class="nc">Parse</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">ConfigError</span><span class="p">]:</span>
-    <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span> <span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">(</span><span class="n">e</span><span class="p">))</span><span class="o">?</span>
+    <span class="n">content</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="n">content</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span> <span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">(</span><span class="n">e</span><span class="p">))</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
 </code></pre></div>
 <p>Tip: do this once at the boundary, not at every call site.</p>

@@ -1772,6 +1772,8 @@
       
         
       
+        
+      
     
     
       
@@ -1950,6 +1952,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -5020,8 +5043,8 @@
 <strong>explicitly</strong>. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 </code></pre></div>
 <p>The key ideas:</p>
@@ -5046,8 +5069,8 @@ Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enfo
 </code></pre></div>
 <p><strong>Incan (explicit propagation)</strong>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 </code></pre></div>
 <p>Quick mapping:</p>
@@ -5109,8 +5132,8 @@ caught values are frequently <code>unknown</code>).</p>
 </code></pre></div>
 </details>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">load_config_or_default</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Config</span><span class="p">:</span>
@@ -5185,8 +5208,8 @@ otherwise unwrap the <code>Ok(...)</code> value.</p>
 <h3 id="transform-errors-with-map_err">Transform errors with <code>map_err</code><a class="headerlink" href="#transform-errors-with-map_err" title="Permanent link">&para;</a></h3>
 <p>Use this when you want to convert one error type into another at a boundary.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="n">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">parse_binary_config</span><span class="p">[</span><span class="nc">Config</span><span class="p">](</span><span class="nb">bytes</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="provide-defaults-with-unwrap_or">Provide defaults with <code>unwrap_or</code><a class="headerlink" href="#provide-defaults-with-unwrap_or" title="Permanent link">&para;</a></h3>

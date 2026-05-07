@@ -1766,6 +1766,8 @@
       
         
       
+        
+      
     
     
       
@@ -1944,6 +1946,27 @@
   
   <span class="md-ellipsis">
     std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
   </span>
   
 
@@ -5153,13 +5176,13 @@
 
 <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
     <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_active</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">user_name</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">user_name</span><span class="p">)</span>
     <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Adapters compose without realizing intermediate lists. The example above filters and maps lazily; <code>.collect()</code> is the point where the final list is produced.</p>
 <p>Iterators over unbounded sources stay bounded when the consumer asks for a bounded prefix:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">first_ten_squares</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">naturals</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">map</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">map</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>
     <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
     <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
 </code></pre></div>
