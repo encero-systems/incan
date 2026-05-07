@@ -4964,6 +4964,75 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
+        let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
+        let civil_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/civil.incn")?;
+        assert!(
+            runtime_source.contains("from rust::std::time import") && !runtime_source.contains("@rust"),
+            "std.datetime runtime must use the Rust std::time boundary without raw @rust bodies"
+        );
+        assert!(
+            !civil_source.contains("from rust::") && !civil_source.contains("@rust"),
+            "std.datetime civil calendar code must remain source-defined Incan"
+        );
+
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_datetime_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.datetime surface run failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "500",
+                "2",
+                "9",
+                "true",
+                "true",
+                "true",
+                "2026-04-21",
+                "2026-07-14",
+                "true",
+                "2026-04-15T00:34:56.123456789",
+                "Tue Apr 14 2026",
+                "12:34:56.123456789",
+                "07:08:09.123456789",
+                "2026-04-14",
+                "2026-04-14T07:08:09.123456789",
+                "2026-04-14",
+                "53",
+                "bad-week",
+                "2026-04-15T12:34:56",
+                "true",
+                "1800",
+                "+01:00",
+                "Z",
+                "2026-04-14T12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56.123456789+0100",
+                "2026-04-14 12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56Z",
+                "bad-offset",
+                "long-nanos",
+                "bad-date-digits",
+                "bad-time-digits",
+                "named-timezone",
+            ],
+            "unexpected std.datetime output: {stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_rust_associated_call_in_elif_branch_uses_path_syntax() {
         let Ok(output) = Command::new(incan_debug_binary())
             .args([

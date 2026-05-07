@@ -1,0 +1,106 @@
+from std.datetime import (
+    Date,
+    DateTime,
+    DateTimeError,
+    DateTimeInterval,
+    DateTimeOffset,
+    Duration,
+    FixedOffset,
+    Instant,
+    SystemTime,
+    Time,
+    TimeDelta,
+    YearMonthInterval,
+    utc,
+)
+
+
+def exercise() -> Result[None, DateTimeError]:
+    duration = Duration.seconds(1) + Duration.nanoseconds(500)
+    println(duration.subsecond_nanoseconds())
+
+    start = Instant.now()
+    stop = start.checked_add(Duration.seconds(2))?
+    println(stop.duration_since(start).whole_seconds())
+
+    system_time = SystemTime.from_unix_seconds(5)?.checked_add(Duration.seconds(4))?
+    println(system_time.unix_seconds())
+    println(SystemTime.now().unix_seconds() > 0)
+    println(Date.fromisoformat("2025-01-01")? < Date.utc_today())
+    println(DateTime.fromisoformat("2025-01-01T00:00:00")? < DateTime.utc_now())
+
+    anchor = Date.fromisoformat("2026-04-14")?
+    next_week = anchor + TimeDelta.days(7)
+    quarter_end = anchor + YearMonthInterval.months(3)
+    println(next_week.isoformat())
+    println(quarter_end.isoformat())
+
+    normalized = DateTimeInterval.new(months=15, days=1, hours=24)
+    println(normalized == DateTimeInterval.new(years=1, months=3, days=2))
+
+    clock = Time.fromisoformat("12:34:56.123456789")?
+    timestamp = DateTime.combine(anchor, clock) + DateTimeInterval.new(hours=12)
+    println(timestamp.isoformat())
+    println(anchor.strftime("%a %b %_d %Y")?)
+    println(clock.strftime("%H:%M:%S.%f")?)
+    parsed_clock = Time.strptime("07:08:09.123456789", "%T.%f")?
+    println(parsed_clock.isoformat())
+    parsed_date = Date.strptime("Tue Apr 14 2026", "%a %b %d %Y")?
+    println(parsed_date.isoformat())
+    parsed_timestamp = DateTime.strptime("2026-04-14 07:08:09.123456789", "%F %T.%f")?
+    println(parsed_timestamp.isoformat())
+    sunday_week = Date.strptime("2026 15 2", "%Y %U %w")?
+    println(sunday_week.isoformat())
+
+    println(Date.fromisoformat("2021-01-01")?.iso_week())
+    match Date.fromisocalendar(2021, 53, 1):
+        Ok(_) => println("accepted-bad-week")
+        Err(_) => println("bad-week")
+
+    naive = DateTime.fromisoformat("2026-04-14T12:34:56")?
+    later = naive + TimeDelta.days(1)
+    println(later.isoformat())
+    first = DateTime.fromisoformat("2026-04-14T12:00:00")?
+    second = DateTime.fromisoformat("2026-04-14T12:30:00")?
+    println(first < second)
+    elapsed = second - first
+    if isinstance(elapsed, TimeDelta):
+        println(elapsed.seconds)
+    offset = FixedOffset.hours(1)?
+    println(offset.isoformat())
+    println(utc().isoformat())
+    offset_timestamp = DateTimeOffset(datetime=DateTime.combine(anchor, clock), offset=offset)
+    println(offset_timestamp.isoformat())
+    println(offset_timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f%z")?)
+    println(offset_timestamp.strftime("%F %T.%f%:z")?)
+    parsed_offset = DateTimeOffset.strptime(
+        "2026-04-14T12:34:56.123456789+01:00",
+        "%Y-%m-%dT%H:%M:%S.%f%:z",
+    )?
+    println(parsed_offset.isoformat())
+    println(DateTimeOffset.fromisoformat("2026-04-14T12:34:56Z")?.isoformat())
+    match DateTimeOffset.strptime(
+        "2026-04-14T12:34:56.1+01:90",
+        "%Y-%m-%dT%H:%M:%S.%f%:z",
+    ):
+        Ok(_) => println("accepted-bad-offset")
+        Err(_) => println("bad-offset")
+    match Time.fromisoformat("12:34:56.1234567891"):
+        Ok(_) => println("accepted-long-nanos")
+        Err(_) => println("long-nanos")
+    match Date.fromisoformat("2026-aa-14"):
+        Ok(_) => println("accepted-bad-date-digits")
+        Err(_) => println("bad-date-digits")
+    match Time.fromisoformat("12:bb:56"):
+        Ok(_) => println("accepted-bad-time-digits")
+        Err(_) => println("bad-time-digits")
+    match DateTime.strptime("2026-04-14T12:34:56Z", "%Y-%m-%dT%H:%M:%S%Z"):
+        Ok(_) => println("accepted-named-timezone")
+        Err(_) => println("named-timezone")
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise():
+        Ok(_) => pass
+        Err(err) => println(err.message())

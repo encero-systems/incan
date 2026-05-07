@@ -132,6 +132,7 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .enumerate()
             .map(|(idx, (arg, from_default))| {
+                let param = callable_signature.and_then(|sig| sig.params.get(idx));
                 let external_method_shape = matches!(
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
@@ -141,7 +142,15 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     None
                 };
-                let emitted = self.emit_expr_for_use(arg, base_use_site);
+                let arg_use_site = match (base_use_site, param) {
+                    (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
+                        target_ty: Some(&param.ty),
+                    },
+                    _ => base_use_site,
+                };
+                let external_param_planned =
+                    matches!(arg_use_site, ValueUseSite::ExternalCallArg { target_ty: Some(_) });
+                let emitted = self.emit_expr_for_use(arg, arg_use_site);
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
@@ -170,7 +179,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     return Ok(wrapped);
                 }
-                let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
+                let Some(param) = param else {
                     if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
                     {
                         emitted = quote! { &mut #emitted };
@@ -185,22 +194,32 @@ impl<'a> IrEmitter<'a> {
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
                 }
-                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
+                if external_method_shape
+                    && !external_param_planned
+                    && idx == 0
+                    && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
+                {
                     return Ok(quote! { &mut #emitted });
                 }
-                if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_borrow(method, &arg.ty) {
+                if external_method_shape
+                    && !external_param_planned
+                    && idx == 0
+                    && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                {
                     return Ok(quote! { &#emitted });
                 }
-                match &param.ty {
-                    IrType::Ref(_) => match &arg.ty {
-                        IrType::Ref(_) | IrType::RefMut(_) => {}
-                        _ => emitted = quote! { &#emitted },
-                    },
-                    IrType::RefMut(_) => match &arg.ty {
-                        IrType::Ref(_) | IrType::RefMut(_) => {}
-                        _ => emitted = quote! { &mut #emitted },
-                    },
-                    _ => {}
+                if !external_param_planned {
+                    match &param.ty {
+                        IrType::Ref(_) => match &arg.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => {}
+                            _ => emitted = quote! { &#emitted },
+                        },
+                        IrType::RefMut(_) => match &arg.ty {
+                            IrType::Ref(_) | IrType::RefMut(_) => {}
+                            _ => emitted = quote! { &mut #emitted },
+                        },
+                        _ => {}
+                    }
                 }
                 Ok(emitted)
             })

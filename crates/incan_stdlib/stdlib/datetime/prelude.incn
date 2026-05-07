@@ -1,0 +1,31 @@
+"""
+Public `std.datetime` surface.
+
+`std.datetime` re-exports runtime clock primitives from `std.datetime.runtime`, civil calendar values from
+`std.datetime.civil`, and the shared `DateTimeError` type from `std.datetime.error`.
+
+Example:
+
+```incan
+from std.datetime import Date, Instant, TimeDelta
+
+started = Instant.now()
+renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
+println(renewal.isoformat())
+println(started.elapsed().whole_seconds())
+```
+"""
+
+from std.datetime.error import DateTimeError
+from std.datetime.runtime import Duration, Instant, SystemTime
+from std.datetime.civil import (
+    TimeDelta,
+    YearMonthInterval,
+    DateTimeInterval,
+    Date,
+    Time,
+    DateTime,
+    FixedOffset,
+    DateTimeOffset,
+    utc,
+)

@@ -11,6 +11,15 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
 
+/// Return whether a metadata-free Rust import path follows Rust's constant naming convention.
+fn rust_path_last_segment_looks_like_const(path: &str) -> bool {
+    let segment = path.rsplit("::").next().unwrap_or(path).trim_start_matches("r#");
+    segment
+        .chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        && segment.chars().any(|ch| ch.is_ascii_uppercase())
+}
+
 impl TypeChecker {
     /// Resolve an identifier to its type.
     pub(in crate::frontend::typechecker::check_expr) fn check_ident(&mut self, name: &str, span: Span) -> ResolvedType {
@@ -61,6 +70,13 @@ impl TypeChecker {
                     return ResolvedType::Unknown;
                 }
                 // RFC 041: carry canonical Rust path and (when available) extracted rust-inspect metadata.
+                let ident_kind = match &info.metadata {
+                    Some(meta) if matches!(meta.kind, incan_core::interop::RustItemKind::Constant { .. }) => {
+                        IdentKind::RustValue
+                    }
+                    None if rust_path_last_segment_looks_like_const(info.path.as_str()) => IdentKind::RustValue,
+                    _ => IdentKind::RustImport,
+                };
                 let resolved = match &info.metadata {
                     Some(meta) => match &meta.kind {
                         incan_core::interop::RustItemKind::Function(sig) => {
@@ -91,7 +107,7 @@ impl TypeChecker {
                     },
                     None => ResolvedType::RustPath(info.path.clone()),
                 };
-                (IdentKind::RustImport, resolved)
+                (ident_kind, resolved)
             }
         };
 

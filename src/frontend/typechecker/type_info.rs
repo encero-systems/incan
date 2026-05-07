@@ -206,6 +206,8 @@ pub enum IdentKind {
     Module,
     /// A Rust import placeholder (`import rust::...` / `from rust::... import ...`).
     RustImport,
+    /// A Rust value import, such as a public Rust constant.
+    RustValue,
     /// A trait name (may be used as a type-like namespace).
     Trait,
 }

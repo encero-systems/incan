@@ -1217,8 +1217,8 @@ impl<'a> IrEmitter<'a> {
 
         // Determine binop plan (conversions + emit strategy)
         let plan = determine_binop_plan(op, left, right);
-        let l = plan.lhs_conv.apply(l_raw);
-        let r = plan.rhs_conv.apply(r_raw);
+        let mut l = plan.lhs_conv.apply(l_raw);
+        let mut r = plan.rhs_conv.apply(r_raw);
 
         match plan.emit {
             BinOpEmitKind::StdlibCall { path, borrow_args } => {
@@ -1237,6 +1237,12 @@ impl<'a> IrEmitter<'a> {
             }
             BinOpEmitKind::Infix { token } => {
                 let op_tokens = token;
+                if Self::binop_operand_needs_parens(op, left, false) {
+                    l = quote! { (#l) };
+                }
+                if Self::binop_operand_needs_parens(op, right, true) {
+                    r = quote! { (#r) };
+                }
 
                 // Handle reference vs value comparisons
                 let is_comparison = matches!(
@@ -1249,13 +1255,67 @@ impl<'a> IrEmitter<'a> {
                     let right_is_value = !matches!(&right.ty, IrType::Ref(_) | IrType::RefMut(_));
 
                     if left_is_ref && right_is_value {
-                        return Ok(quote! { *#l #op_tokens #r });
+                        return Ok(quote! { *(#l) #op_tokens #r });
                     }
                 }
 
                 Ok(quote! { #l #op_tokens #r })
             }
         }
+    }
+
+    /// Return whether a nested binary operand must be parenthesized to preserve Incan precedence.
+    fn binop_operand_needs_parens(parent: &BinOp, operand: &TypedExpr, is_right: bool) -> bool {
+        let IrExprKind::BinOp { op: child, .. } = &operand.kind else {
+            return false;
+        };
+
+        let parent_precedence = Self::binop_precedence(parent);
+        let child_precedence = Self::binop_precedence(child);
+        if child_precedence < parent_precedence {
+            return true;
+        }
+        if child_precedence > parent_precedence {
+            return false;
+        }
+
+        if Self::is_comparison_binop(parent) || Self::is_comparison_binop(child) {
+            return true;
+        }
+
+        is_right && (parent != child || Self::right_same_precedence_needs_parens(parent))
+    }
+
+    /// Return the relative precedence rank used when lowering nested Incan binary operations to Rust.
+    fn binop_precedence(op: &BinOp) -> u8 {
+        match op {
+            BinOp::Or => 1,
+            BinOp::And => 2,
+            BinOp::BitOr => 3,
+            BinOp::BitXor => 4,
+            BinOp::BitAnd => 5,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => 6,
+            BinOp::Shl | BinOp::Shr => 7,
+            BinOp::Add | BinOp::Sub => 8,
+            BinOp::Mul | BinOp::Div | BinOp::FloorDiv | BinOp::Mod => 9,
+            BinOp::Pow => 10,
+        }
+    }
+
+    /// Return whether an operator is a non-associative comparison.
+    fn is_comparison_binop(op: &BinOp) -> bool {
+        matches!(
+            op,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+        )
+    }
+
+    /// Return whether a same-precedence right operand changes semantics without parentheses.
+    fn right_same_precedence_needs_parens(op: &BinOp) -> bool {
+        matches!(
+            op,
+            BinOp::Sub | BinOp::Div | BinOp::FloorDiv | BinOp::Mod | BinOp::Pow | BinOp::Shl | BinOp::Shr
+        )
     }
 }
 
@@ -1483,6 +1543,26 @@ mod tests {
             render(tokens),
             "if(encoded>0)!=(true){panic!(\"AssertionError:left!=right\");}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_binop_parenthesizes_lower_precedence_right_operand() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let right = TypedExpr::new(
+            IrExprKind::BinOp {
+                op: BinOp::Or,
+                left: Box::new(local_arg("right_a", IrType::Bool)),
+                right: Box::new(local_arg("right_b", IrType::Bool)),
+            },
+            IrType::Bool,
+        );
+        let tokens = emitter
+            .emit_binop_expr(&BinOp::And, &local_arg("left", IrType::Bool), &right)
+            .map_err(|err| std::io::Error::other(format!("logical binop should emit: {err:?}")))?;
+
+        assert_eq!(render(tokens), "left&&(right_a||right_b)");
         Ok(())
     }
 

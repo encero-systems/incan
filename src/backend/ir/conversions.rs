@@ -572,6 +572,21 @@ fn rust_value_needs_stringification(expr: &IrExpr, target_ty: Option<&IrType>) -
         && (matches!(expr.ty, IrType::Unknown) || is_rust_path_value_type(&expr.ty))
 }
 
+/// Return whether a field expression reads through the implicit `&self` receiver.
+fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
+    let IrExprKind::Field { object, .. } = &expr.kind else {
+        return false;
+    };
+    matches!(
+        &object.kind,
+        IrExprKind::Var {
+            name,
+            access: VarAccess::Read | VarAccess::Borrow,
+            ..
+        } if name == "self"
+    )
+}
+
 /// Whether a field projection must clone instead of moving directly from its parent object.
 ///
 /// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
@@ -722,16 +737,25 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             // External Rust functions/enum variants — use `.into()` for strings so the Rust compiler can resolve the
             // target type via the `Into` trait. This handles crates that use custom string types (e.g., Polars'
             // `PlSmallStr`) implementing `From<String>` / `From<&str>`.
-            match &expr.kind {
+            match (&expr.kind, target_ty) {
                 // String literals → .into() (works for String, &str, PlSmallStr, and any From<&str>)
-                IrExprKind::String(_) => Conversion::Into, // String variables → borrow for external calls (&str param)
-                IrExprKind::StaticRead { .. } if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
-                IrExprKind::Var { .. } if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
-                IrExprKind::Var { .. } if matches!(expr.ty, IrType::String) => Conversion::Borrow,
+                (IrExprKind::String(_), _) => Conversion::Into,
+                // String variables → borrow for external calls (&str param)
+                (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
+                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
+                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
+                (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
+                (_, Some(IrType::Ref(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
+                    Conversion::Borrow
+                }
+                (_, Some(IrType::RefMut(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
+                    Conversion::MutBorrow
+                }
                 // Rust adapter leaves commonly accept borrowed handles (`&Sender<T>`, `&Mutex<T>`, ...).
-                // When the frontend cannot surface an explicit `&T` parameter type for inline Rust imports,
-                // preserve handle ownership by borrowing field-based wrapper access like `self.0`.
-                IrExprKind::Field { .. } if matches!(expr.ty, IrType::Unknown) || !expr.ty.is_copy() => {
+                // When metadata is unavailable, do not move non-Copy wrapper fields out of `&self`.
+                (IrExprKind::Field { .. }, None)
+                    if !expr.ty.is_copy() && field_access_reads_from_self_receiver(expr) =>
+                {
                     Conversion::Borrow
                 }
                 // Everything else as-is (Rust's type system handles it)
@@ -1253,6 +1277,155 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
         assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_field_with_by_value_target_does_not_borrow() {
+        let rust_duration = IrType::Struct("std::time::Duration".to_string());
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            rust_duration.clone(),
+        );
+
+        let conv = determine_conversion(&expr, Some(&rust_duration), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "field-backed Rust values passed to by-value Rust params must not be borrowed"
+        );
+    }
+
+    #[test]
+    fn test_external_function_known_field_without_target_does_not_guess_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            IrType::Struct("std::time::Duration".to_string()),
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "known Rust field values must stay by-value when metadata is unavailable"
+        );
+    }
+
+    #[test]
+    fn test_external_function_string_field_without_target_borrows_like_string_variable() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "path".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Path".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "metadata-free Rust calls should borrow string-backed field projections"
+        );
+    }
+
+    #[test]
+    fn test_external_function_self_field_without_target_borrows_noncopy_receiver_field() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Sender".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::Struct("incan_stdlib::async::channel::Sender<T>".to_string()),
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "metadata-free Rust calls must not move non-Copy wrapper fields out of &self"
+        );
+    }
+
+    #[test]
+    fn test_external_function_unknown_field_without_target_keeps_adapter_borrow_fallback() {
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "self".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Wrapper".to_string()),
+                )),
+                field: "0".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_field_with_ref_target_borrows() {
+        let rust_duration = IrType::Struct("std::time::Duration".to_string());
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "other".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Duration".to_string()),
+                )),
+                field: "value".to_string(),
+            },
+            rust_duration.clone(),
+        );
+        let target = IrType::Ref(Box::new(rust_duration));
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Borrow,
+            "field-backed Rust values still borrow when metadata says the Rust param is by-reference"
+        );
     }
 
     #[test]

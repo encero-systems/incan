@@ -8,6 +8,7 @@ Pages in this section are curated and checked into the repository.
 
 - [`std.async`](async.md) (curated)
 - [`std.derives.*`](derives.md) (curated)
+- [`std.datetime`](datetime.md) (curated)
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)
 - [`std.io`](io.md) (curated)

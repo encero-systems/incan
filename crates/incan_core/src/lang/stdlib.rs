@@ -263,6 +263,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "datetime",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &["runtime", "civil", "error", "prelude"],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "graph",
         feature: None,
         extra_crate_deps: &[],
@@ -434,6 +441,9 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
         assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "runtime"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     }
@@ -483,6 +493,14 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "graph"])),
             Some("stdlib/graph.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "datetime"])),
+            Some("stdlib/datetime/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "datetime", "runtime"])),
+            Some("stdlib/datetime/runtime.incn".to_string())
         );
     }
 
@@ -566,6 +584,7 @@ mod tests {
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
+        let datetime_ns = find_namespace("datetime");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
@@ -586,5 +605,7 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("byteorder")
         );
+        assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
     }
 }

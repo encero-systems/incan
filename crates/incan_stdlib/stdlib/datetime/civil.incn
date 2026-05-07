@@ -1,0 +1,2215 @@
+"""
+Civil date and time values for `std.datetime`.
+
+This module owns calendar arithmetic and ISO-style formatting/parsing. The format compiler is an Incan-native port
+inspired by the directive tables in Rust's `chrono` and `time` crates, with Incan-specific nanosecond precision.
+Runtime elapsed time and host clocks live in `std.datetime.runtime` because those map directly to Rust's `std::time`
+primitives.
+
+Example:
+
+```incan
+from std.datetime.civil import Date, TimeDelta
+
+renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
+println(renewal.isoformat())
+```
+"""
+
+from std.datetime.error import DateTimeError
+from std.datetime.runtime import SystemTime
+
+const _DAYS_PER_YEAR: int = 365
+const _DAYS_PER_LEAP_YEAR: int = 366
+const _DAYS_PER_WEEK: int = 7
+const _MONTHS_PER_YEAR: int = 12
+const _HOURS_PER_DAY: int = 24
+const _MINUTES_PER_HOUR: int = 60
+const _SECONDS_PER_MINUTE: int = 60
+const _SECONDS_PER_HOUR: int = _MINUTES_PER_HOUR * _SECONDS_PER_MINUTE
+const _SECONDS_PER_DAY: int = _HOURS_PER_DAY * _SECONDS_PER_HOUR
+const _NANOS_PER_MICROSECOND: int = 1_000
+const _NANOS_PER_MILLISECOND: int = 1_000_000
+const _NANOS_PER_SECOND: int = 1_000_000_000
+const _NANOS_PER_DAY: int = _SECONDS_PER_DAY * _NANOS_PER_SECOND
+const _UNIX_EPOCH_YEAR: int = 1970
+
+
+model _ParsedNumber:
+    value: int
+    next: int
+
+
+pub model TimeDelta:
+    """
+    Day/time interval for civil datetime arithmetic.
+
+    `TimeDelta` stores days separately from seconds and nanoseconds. It is suitable for date and datetime arithmetic,
+    while `Duration` remains the runtime elapsed-time type.
+    """
+
+    pub days: int
+    pub seconds: int
+    pub nanoseconds: int
+
+    @staticmethod
+    def nanoseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from nanoseconds.
+
+        Args:
+            value: Signed nanoseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value)
+
+    @staticmethod
+    def microseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from microseconds.
+
+        Args:
+            value: Signed microseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_MICROSECOND)
+
+    @staticmethod
+    def milliseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from milliseconds.
+
+        Args:
+            value: Signed milliseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_MILLISECOND)
+
+    @staticmethod
+    def seconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from seconds.
+
+        Args:
+            value: Signed seconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_SECOND)
+
+    @staticmethod
+    def minutes(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from minutes.
+
+        Args:
+            value: Signed minutes.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return TimeDelta.seconds(value * _SECONDS_PER_MINUTE)
+
+    @staticmethod
+    def hours(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from hours.
+
+        Args:
+            value: Signed hours.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return TimeDelta.seconds(value * _SECONDS_PER_HOUR)
+
+    @staticmethod
+    def days(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from days.
+
+        Args:
+            value: Signed civil day count.
+
+        Returns:
+            A `TimeDelta` with whole days and no time remainder.
+        """
+        return TimeDelta(days=value, seconds=0, nanoseconds=0)
+
+    @staticmethod
+    def weeks(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from weeks.
+
+        Args:
+            value: Signed seven-day week count.
+
+        Returns:
+            A `TimeDelta`.
+        """
+        return TimeDelta.days(value * _DAYS_PER_WEEK)
+
+    def total_nanoseconds(self) -> int:
+        """
+        Return this interval as total nanoseconds.
+
+        Returns:
+            Signed nanoseconds represented by the day, second, and nanosecond fields.
+        """
+        total_seconds = self.days * _SECONDS_PER_DAY + self.seconds
+        return total_seconds * _NANOS_PER_SECOND + self.nanoseconds
+
+    def __add__(self, other: TimeDelta) -> TimeDelta:
+        """
+        Add two day/time intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized interval sum.
+        """
+        return _timedelta_from_nanos(self.total_nanoseconds() + other.total_nanoseconds())
+
+    def __sub__(self, other: TimeDelta) -> TimeDelta:
+        """
+        Subtract one day/time interval from another.
+
+        Args:
+            other: Interval to subtract.
+
+        Returns:
+            Normalized interval difference.
+        """
+        return _timedelta_from_nanos(self.total_nanoseconds() - other.total_nanoseconds())
+
+    def __eq__(self, other: TimeDelta) -> bool:
+        """
+        Compare two day/time intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when both normalized intervals represent the same duration.
+        """
+        return self.days == other.days and self.seconds == other.seconds and self.nanoseconds == other.nanoseconds
+
+
+pub model YearMonthInterval:
+    """
+    Calendar interval measured in years and months.
+
+    Month-based arithmetic intentionally stays separate from fixed day/time intervals because months and years do not
+    have fixed day lengths.
+    """
+
+    pub years: int
+    pub months: int
+
+    @staticmethod
+    def years(value: int) -> YearMonthInterval:
+        """
+        Construct a year/month interval from years.
+
+        Args:
+            value: Signed year count.
+
+        Returns:
+            A normalized `YearMonthInterval`.
+        """
+        return _year_month_from_months(value * _MONTHS_PER_YEAR)
+
+    @staticmethod
+    def months(value: int) -> YearMonthInterval:
+        """
+        Construct a year/month interval from months.
+
+        Args:
+            value: Signed month count.
+
+        Returns:
+            A normalized `YearMonthInterval`.
+        """
+        return _year_month_from_months(value)
+
+    def total_months(self) -> int:
+        """
+        Return this interval as total months.
+
+        Returns:
+            Signed month count.
+        """
+        return self.years * _MONTHS_PER_YEAR + self.months
+
+    def __add__(self, other: YearMonthInterval) -> YearMonthInterval:
+        """
+        Add two year/month intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized year/month interval sum.
+        """
+        return _year_month_from_months(self.total_months() + other.total_months())
+
+    def __sub__(self, other: YearMonthInterval) -> YearMonthInterval:
+        """
+        Subtract one year/month interval from another.
+
+        Args:
+            other: Interval to subtract.
+
+        Returns:
+            Normalized year/month interval difference.
+        """
+        return _year_month_from_months(self.total_months() - other.total_months())
+
+    def __eq__(self, other: YearMonthInterval) -> bool:
+        """
+        Compare two year/month intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when both normalized year and month components match.
+        """
+        return self.years == other.years and self.months == other.months
+
+
+pub type DayTimeInterval = TimeDelta
+
+
+pub model DateTimeInterval:
+    """
+    Compound calendar and day/time interval.
+
+    `DateTimeInterval` preserves the semantic split between year/month and day/time components. When applied to civil
+    dates or datetimes, the year/month portion is applied first, then the day/time portion.
+    """
+
+    pub years: int
+    pub months: int
+    pub days: int
+    pub seconds: int
+    pub nanoseconds: int
+
+    @staticmethod
+    def new(
+        years: int = 0,
+        months: int = 0,
+        days: int = 0,
+        hours: int = 0,
+        minutes: int = 0,
+        seconds: int = 0,
+        milliseconds: int = 0,
+        microseconds: int = 0,
+        nanoseconds: int = 0,
+    ) -> DateTimeInterval:
+        """
+        Construct and normalize a compound datetime interval.
+
+        Args:
+            years: Signed year component.
+            months: Signed month component.
+            days: Signed day component.
+            hours: Signed hour component.
+            minutes: Signed minute component.
+            seconds: Signed second component.
+            milliseconds: Signed millisecond component.
+            microseconds: Signed microsecond component.
+            nanoseconds: Signed nanosecond component.
+
+        Returns:
+            A `DateTimeInterval` normalized within year/month and day/time buckets.
+        """
+        ym = _year_month_from_months(years * _MONTHS_PER_YEAR + months)
+        total_hours = days * _HOURS_PER_DAY + hours
+        total_minutes = total_hours * _MINUTES_PER_HOUR + minutes
+        total_seconds = total_minutes * _SECONDS_PER_MINUTE + seconds
+        mut total_nanos = total_seconds * _NANOS_PER_SECOND
+        total_nanos += milliseconds * _NANOS_PER_MILLISECOND
+        total_nanos += microseconds * _NANOS_PER_MICROSECOND
+        total_nanos += nanoseconds
+        dt = _timedelta_from_nanos(total_nanos)
+        return DateTimeInterval(
+            years=ym.years,
+            months=ym.months,
+            days=dt.days,
+            seconds=dt.seconds,
+            nanoseconds=dt.nanoseconds,
+        )
+
+    def year_month(self) -> YearMonthInterval:
+        """
+        Return the year/month portion.
+
+        Returns:
+            `YearMonthInterval` with the calendar portion of this interval.
+        """
+        return YearMonthInterval(years=self.years, months=self.months)
+
+    def day_time(self) -> TimeDelta:
+        """
+        Return the day/time portion.
+
+        Returns:
+            `TimeDelta` with the day, second, and nanosecond portion of this interval.
+        """
+        return TimeDelta(days=self.days, seconds=self.seconds, nanoseconds=self.nanoseconds)
+
+    def __add__(self, other: DateTimeInterval) -> DateTimeInterval:
+        """
+        Add two compound datetime intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized compound interval sum.
+        """
+        return DateTimeInterval.new(
+            years=self.years + other.years,
+            months=self.months + other.months,
+            days=self.days + other.days,
+            seconds=self.seconds + other.seconds,
+            nanoseconds=self.nanoseconds + other.nanoseconds,
+        )
+
+    def __eq__(self, other: DateTimeInterval) -> bool:
+        """
+        Compare two compound intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when all normalized interval components match.
+        """
+        return (
+            self.years == other.years
+            and self.months == other.months
+            and self.days == other.days
+            and self.seconds == other.seconds
+            and self.nanoseconds == other.nanoseconds
+        )
+
+
+pub model Date:
+    """
+    Gregorian calendar date.
+
+    Date arithmetic applies calendar rules. Adding months clamps the day to the last valid day in the target month,
+    so adding one month to January 31 yields the last day of February.
+    """
+
+    pub year: int
+    pub month: int
+    pub day: int
+
+    @staticmethod
+    def utc_today() -> Date:
+        """
+        Return the current UTC calendar date.
+
+        The host clock read comes from `std.datetime.runtime.SystemTime`; the Unix timestamp to Gregorian date
+        conversion is Incan-native. This method intentionally does not use the host local timezone. Named or local
+        timezone-aware `today` helpers belong in timezone packages layered above `std.datetime`.
+
+        Returns:
+            Current UTC date.
+        """
+        return _datetime_from_unix_nanoseconds_utc(SystemTime.now().unix_nanoseconds()).date
+
+    @staticmethod
+    def fromisoformat(value: str) -> Result[Date, DateTimeError]:
+        """
+        Parse an ISO date string.
+
+        Args:
+            value: Date in `YYYY-MM-DD` form.
+
+        Returns:
+            Parsed `Date`, or `Err(DateTimeError)` for malformed or out-of-range input.
+        """
+        if len(value) != 10 or value[4:5] != "-" or value[7:8] != "-":
+            return Err(DateTimeError(detail="expected date in YYYY-MM-DD form"))
+        year = _parse_fixed_digits(value, 0, 4, "expected date in YYYY-MM-DD form")?
+        month = _parse_fixed_digits(value, 5, 2, "expected date in YYYY-MM-DD form")?
+        day = _parse_fixed_digits(value, 8, 2, "expected date in YYYY-MM-DD form")?
+        return Date.from_fields(year, month, day)
+
+    @staticmethod
+    def strptime(value: str, format: str) -> Result[Date, DateTimeError]:
+        """
+        Parse a date with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and kept
+        deterministic. Date parsing rejects time and timezone directives.
+
+        Args:
+            value: Date text to parse.
+            format: Format string such as `%Y-%m-%d`, `%d/%m/%y`, or `%a %b %_d %Y`.
+
+        Returns:
+            Parsed `Date`, or `Err(DateTimeError)`.
+        """
+        parsed = _strptime_datetime(value, format, true, false)?
+        return Ok(parsed.date)
+
+    @staticmethod
+    def from_fields(year: int, month: int, day: int) -> Result[Date, DateTimeError]:
+        """
+        Construct a checked date from fields.
+
+        Args:
+            year: Gregorian year.
+            month: Month in `1..12`.
+            day: Day of month.
+
+        Returns:
+            `Ok(Date)` when the fields form a valid date, otherwise `Err(DateTimeError)`.
+        """
+        if month < 1 or month > _MONTHS_PER_YEAR:
+            return Err(DateTimeError(detail="month must be in 1..12"))
+        last = days_in_month(year, month)
+        if day < 1 or day > last:
+            return Err(DateTimeError(detail="day is out of range for month"))
+        return Ok(Date(year=year, month=month, day=day))
+
+    @staticmethod
+    def fromisocalendar(year: int, week: int, weekday: int) -> Result[Date, DateTimeError]:
+        """
+        Construct a date from ISO week calendar fields.
+
+        Args:
+            year: ISO week-numbering year.
+            week: ISO week in the valid range for `year`.
+            weekday: ISO weekday, where Monday is `1` and Sunday is `7`.
+
+        Returns:
+            `Ok(Date)` for valid ISO calendar fields, otherwise `Err(DateTimeError)`.
+        """
+        if week < 1 or week > iso_weeks_in_year(year) or weekday < 1 or weekday > _DAYS_PER_WEEK:
+            return Err(DateTimeError(detail="invalid ISO calendar fields"))
+        jan4 = Date(year=year, month=1, day=4)
+        monday = jan4.add_days(1 - jan4.weekday())
+        return Ok(monday.add_days((week - 1) * _DAYS_PER_WEEK + weekday - 1))
+
+    def isoformat(self) -> str:
+        """
+        Format this date as ISO text.
+
+        Returns:
+            Date in `YYYY-MM-DD` form.
+        """
+        return _pad4(self.year) + "-" + _pad2(self.month) + "-" + _pad2(self.day)
+
+    def strftime(self, format: str) -> Result[str, DateTimeError]:
+        """
+        Format this date with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and kept
+        deterministic. Date formatting rejects time and timezone directives.
+
+        Args:
+            format: Format string such as `%Y-%m-%d`, `%F`, `%a %b %_d %Y`, or `%j`.
+
+        Returns:
+            Formatted date text, or `Err(DateTimeError)`.
+        """
+        return _strftime_date(self, format)
+
+    def add_days(self, days: int) -> Date:
+        """
+        Offset this date by whole days.
+
+        Args:
+            days: Signed day count.
+
+        Returns:
+            Shifted `Date`.
+        """
+        mut out = Date(year=self.year, month=self.month, day=self.day)
+        mut remaining = days
+        while remaining > 0:
+            out = out._next_day()
+            remaining -= 1
+        while remaining < 0:
+            out = out._previous_day()
+            remaining += 1
+        return out
+
+    def add_months(self, months: int) -> Date:
+        """
+        Offset this date by calendar months.
+
+        Args:
+            months: Signed month count.
+
+        Returns:
+            Shifted `Date`, clamped to the target month's last valid day when needed.
+        """
+        raw_month = (self.year * _MONTHS_PER_YEAR) + (self.month - 1) + months
+        year = raw_month // _MONTHS_PER_YEAR
+        month = (raw_month % _MONTHS_PER_YEAR) + 1
+        day = _min_int(self.day, days_in_month(year, month))
+        return Date(year=year, month=month, day=day)
+
+    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> Date:
+        """
+        Apply a civil interval to this date.
+
+        Args:
+            interval: `TimeDelta`, `YearMonthInterval`, or `DateTimeInterval`.
+
+        Returns:
+            Shifted `Date`. For `DateTimeInterval`, the year/month portion is applied before the day portion.
+        """
+        if isinstance(interval, TimeDelta):
+            return self.add_days(interval.days)
+        elif isinstance(interval, YearMonthInterval):
+            return self.add_months(interval.total_months())
+        elif isinstance(interval, DateTimeInterval):
+            return self.add_months(interval.year_month().total_months()).add_days(interval.days)
+
+    def __add__(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> Date:
+        """
+        Add a civil interval to this date.
+
+        Args:
+            interval: Interval to apply.
+
+        Returns:
+            Shifted `Date`.
+        """
+        return self.add_interval(interval)
+
+    def __sub__(self, other: Union[TimeDelta, YearMonthInterval, DateTimeInterval, Date]) -> Union[Date, TimeDelta]:
+        """
+        Subtract an interval or another date.
+
+        Args:
+            other: Interval to subtract, or `Date` to measure from.
+
+        Returns:
+            `Date` when subtracting an interval; `TimeDelta` when subtracting another date.
+        """
+        if isinstance(other, Date):
+            return TimeDelta.days(self._ordinal() - other._ordinal())
+        elif isinstance(other, TimeDelta):
+            return self.add_days(0 - other.days)
+        elif isinstance(other, YearMonthInterval):
+            return self.add_months(0 - other.total_months())
+        elif isinstance(other, DateTimeInterval):
+            return self.add_months(0 - other.year_month().total_months()).add_days(0 - other.days)
+
+    def weekday(self) -> int:
+        """
+        Return the ISO weekday.
+
+        Returns:
+            Monday as `1` through Sunday as `7`.
+        """
+        return ((self._ordinal() + 6) % 7) + 1
+
+    def iso_week(self) -> int:
+        """
+        Return the ISO week number.
+
+        Returns:
+            ISO week number in the valid range for this date's ISO week-numbering year.
+        """
+        week = (self.day_of_year() - self.weekday() + 10) // 7
+        if week < 1:
+            return iso_weeks_in_year(self.year - 1)
+        if week > iso_weeks_in_year(self.year):
+            return 1
+        return week
+
+    def day_of_year(self) -> int:
+        """
+        Return the ordinal day within the calendar year.
+
+        Returns:
+            `1` for January 1.
+        """
+        mut total = self.day
+        mut month = 1
+        while month < self.month:
+            total += days_in_month(self.year, month)
+            month += 1
+        return total
+
+    def quarter(self) -> int:
+        """
+        Return the calendar quarter.
+
+        Returns:
+            Quarter number in `1..4`.
+        """
+        return ((self.month - 1) // 3) + 1
+
+    def __eq__(self, other: Date) -> bool:
+        """
+        Compare two dates for equality.
+
+        Args:
+            other: Date to compare against.
+
+        Returns:
+            True when year, month, and day all match.
+        """
+        return self.year == other.year and self.month == other.month and self.day == other.day
+
+    def __lt__(self, other: Date) -> bool:
+        """
+        Compare two dates in calendar order.
+
+        Args:
+            other: Date to compare against.
+
+        Returns:
+            True when this date is earlier than `other`.
+        """
+        return self._ordinal() < other._ordinal()
+
+    def _next_day(self) -> Date:
+        if self.day < days_in_month(self.year, self.month):
+            return Date(year=self.year, month=self.month, day=self.day + 1)
+        if self.month < _MONTHS_PER_YEAR:
+            return Date(year=self.year, month=self.month + 1, day=1)
+        return Date(year=self.year + 1, month=1, day=1)
+
+    def _previous_day(self) -> Date:
+        if self.day > 1:
+            return Date(year=self.year, month=self.month, day=self.day - 1)
+        if self.month > 1:
+            prev_month = self.month - 1
+            return Date(year=self.year, month=prev_month, day=days_in_month(self.year, prev_month))
+        return Date(year=self.year - 1, month=12, day=31)
+
+    def _ordinal(self) -> int:
+        mut total = 0
+        mut year = 1
+        while year < self.year:
+            if is_leap_year(year):
+                total += 366
+            else:
+                total += 365
+            year += 1
+        return total + self.day_of_year()
+
+
+pub model Time:
+    """
+    Wall-clock time of day with nanosecond precision.
+
+    `Time` has no date context. Use `DateTime` when both calendar date and wall-clock time matter.
+    """
+
+    pub hour: int
+    pub minute: int
+    pub second: int
+    pub nanosecond: int
+
+    @staticmethod
+    def fromisoformat(value: str) -> Result[Time, DateTimeError]:
+        """
+        Parse an ISO time string.
+
+        Args:
+            value: Time in `HH:MM:SS` form, optionally with fractional seconds.
+
+        Returns:
+            Parsed `Time`, or `Err(DateTimeError)`.
+        """
+        if len(value) < 8 or value[2:3] != ":" or value[5:6] != ":":
+            return Err(DateTimeError(detail="expected time in HH:MM:SS form"))
+        mut nanos = 0
+        if len(value) > 8:
+            if value[8:9] != ".":
+                return Err(DateTimeError(detail="expected fractional seconds after '.'"))
+            nanos = _parse_fractional_nanos(value[9:])?
+        hour = _parse_fixed_digits(value, 0, 2, "expected time in HH:MM:SS form")?
+        minute = _parse_fixed_digits(value, 3, 2, "expected time in HH:MM:SS form")?
+        second = _parse_fixed_digits(value, 6, 2, "expected time in HH:MM:SS form")?
+        return Time.from_fields(hour, minute, second, nanos)
+
+    @staticmethod
+    def from_fields(hour: int, minute: int, second: int, nanosecond: int = 0) -> Result[Time, DateTimeError]:
+        """
+        Construct a checked time from fields.
+
+        Args:
+            hour: Hour in `0..23`.
+            minute: Minute in `0..59`.
+            second: Second in `0..59`.
+            nanosecond: Fractional nanosecond in `0..999999999`.
+
+        Returns:
+            `Ok(Time)` when fields are valid, otherwise `Err(DateTimeError)`.
+        """
+        if hour < 0 or hour >= _HOURS_PER_DAY:
+            return Err(DateTimeError(detail="hour must be in 0..23"))
+        if minute < 0 or minute >= _MINUTES_PER_HOUR:
+            return Err(DateTimeError(detail="minute must be in 0..59"))
+        if second < 0 or second >= _SECONDS_PER_MINUTE:
+            return Err(DateTimeError(detail="second must be in 0..59"))
+        if nanosecond < 0 or nanosecond >= _NANOS_PER_SECOND:
+            return Err(DateTimeError(detail="nanosecond must be in 0..999999999"))
+        return Ok(Time(hour=hour, minute=minute, second=second, nanosecond=nanosecond))
+
+    @staticmethod
+    def strptime(value: str, format: str) -> Result[Time, DateTimeError]:
+        """
+        Parse a wall-clock time with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. Time parsing rejects date and timezone directives.
+
+        Args:
+            value: Time text to parse.
+            format: Format string such as `%H:%M:%S.%f`, `%I:%M:%S %p`, or `%T`.
+
+        Returns:
+            Parsed `Time`, or `Err(DateTimeError)`.
+        """
+        parsed = _strptime_datetime(value, format, false, true)?
+        return Ok(parsed.time)
+
+    def isoformat(self) -> str:
+        """
+        Format this time as ISO text.
+
+        Returns:
+            `HH:MM:SS` with a fractional nanosecond suffix when needed.
+        """
+        base = _pad2(self.hour) + ":" + _pad2(self.minute) + ":" + _pad2(self.second)
+        if self.nanosecond == 0:
+            return base
+        return base + "." + _pad9(self.nanosecond)
+
+    def strftime(self, format: str) -> Result[str, DateTimeError]:
+        """
+        Format this time with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. Time formatting rejects date and timezone directives.
+
+        Args:
+            format: Format string such as `%H:%M:%S.%f`, `%I:%M:%S %p`, or `%T`.
+
+        Returns:
+            Formatted time text, or `Err(DateTimeError)`.
+        """
+        return _strftime_time(self, format)
+
+    def seconds_since_midnight(self) -> int:
+        """
+        Return whole seconds since midnight.
+
+        Returns:
+            Seconds represented by the hour, minute, and second fields.
+        """
+        return self.hour * _SECONDS_PER_HOUR + self.minute * _SECONDS_PER_MINUTE + self.second
+
+    def __eq__(self, other: Time) -> bool:
+        """
+        Compare two wall-clock times for equality.
+
+        Args:
+            other: Time to compare against.
+
+        Returns:
+            True when hour, minute, second, and nanosecond all match.
+        """
+        return (
+            self.hour == other.hour
+            and self.minute == other.minute
+            and self.second == other.second
+            and self.nanosecond == other.nanosecond
+        )
+
+    def __lt__(self, other: Time) -> bool:
+        """
+        Compare two wall-clock times.
+
+        Args:
+            other: Time to compare against.
+
+        Returns:
+            True when this time is earlier within the day.
+        """
+        if self.seconds_since_midnight() == other.seconds_since_midnight():
+            return self.nanosecond < other.nanosecond
+        return self.seconds_since_midnight() < other.seconds_since_midnight()
+
+
+pub model DateTime:
+    """
+    Naive Gregorian date and wall-clock time.
+
+    `DateTime` has no timezone or offset. Use `DateTimeOffset` when ISO text carries a concrete UTC offset; named
+    timezone rule lookup belongs in separately versioned packages.
+    """
+
+    pub date: Date
+    pub time: Time
+
+    @staticmethod
+    def utc_now() -> DateTime:
+        """
+        Return the current UTC datetime.
+
+        The host clock read comes from `std.datetime.runtime.SystemTime`; the Unix timestamp to Gregorian datetime
+        conversion is Incan-native. This method is intentionally UTC-only. Named or local timezone-aware `now`
+        helpers belong in timezone packages layered above `std.datetime`.
+
+        Returns:
+            Current UTC datetime.
+        """
+        return _datetime_from_unix_nanoseconds_utc(SystemTime.now().unix_nanoseconds())
+
+    @staticmethod
+    def fromisoformat(value: str) -> Result[DateTime, DateTimeError]:
+        """
+        Parse an ISO datetime string.
+
+        Args:
+            value: Datetime in `YYYY-MM-DDTHH:MM:SS` form. A space separator is also accepted.
+
+        Returns:
+            Parsed `DateTime`, or `Err(DateTimeError)`.
+        """
+        if len(value) < 19:
+            return Err(DateTimeError(detail="expected datetime in YYYY-MM-DDTHH:MM:SS form"))
+        sep = value[10:11]
+        if sep != "T" and sep != " ":
+            return Err(DateTimeError(detail="expected T or space between date and time"))
+        date = Date.fromisoformat(value[0:10])?
+        time = Time.fromisoformat(value[11:])?
+        return Ok(DateTime(date=date, time=time))
+
+    @staticmethod
+    def strptime(value: str, format: str) -> Result[DateTime, DateTimeError]:
+        """
+        Parse a naive datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. Use `DateTimeOffset.strptime` for concrete `%z` offsets; named timezone
+        directives remain outside `std.datetime`.
+
+        Args:
+            value: Datetime text to parse.
+            format: Format string such as `%Y-%m-%d %H:%M:%S.%f` or `%F %T`.
+
+        Returns:
+            Parsed `DateTime`, or `Err(DateTimeError)`.
+        """
+        return _strptime_datetime(value, format, true, true)
+
+    @staticmethod
+    def combine(date: Date, time: Time) -> DateTime:
+        """
+        Combine a date and time.
+
+        Args:
+            date: Calendar date.
+            time: Wall-clock time.
+
+        Returns:
+            Naive `DateTime` with the supplied fields.
+        """
+        return DateTime(date=date, time=time)
+
+    def isoformat(self) -> str:
+        """
+        Format this datetime as ISO text.
+
+        Returns:
+            `YYYY-MM-DDTHH:MM:SS` with fractional seconds when needed.
+        """
+        return self.date.isoformat() + "T" + self.time.isoformat()
+
+    def strftime(self, format: str) -> Result[str, DateTimeError]:
+        """
+        Format this naive datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. Use `DateTimeOffset.strftime` for concrete `%z` offsets; named timezone
+        directives remain outside `std.datetime`.
+
+        Args:
+            format: Format string such as `%Y-%m-%d %H:%M:%S.%f`, `%F %T`, or `%c`.
+
+        Returns:
+            Formatted datetime text, or `Err(DateTimeError)`.
+        """
+        return _strftime_datetime(self, format)
+
+    def add_timedelta(self, delta: TimeDelta) -> DateTime:
+        """
+        Offset this datetime by a day/time interval.
+
+        Args:
+            delta: Day/time interval to apply.
+
+        Returns:
+            Shifted `DateTime`.
+        """
+        time_seconds = self.time.seconds_since_midnight()
+        time_nanos = time_seconds * _NANOS_PER_SECOND
+        base_nanos = time_nanos + self.time.nanosecond
+        total = base_nanos + delta.total_nanoseconds()
+        days = total // _NANOS_PER_DAY
+        nanos = total % _NANOS_PER_DAY
+        seconds = nanos // _NANOS_PER_SECOND
+        fractional_nanos = nanos % _NANOS_PER_SECOND
+        time = Time(
+            hour=seconds // _SECONDS_PER_HOUR,
+            minute=(seconds % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE,
+            second=seconds % _SECONDS_PER_MINUTE,
+            nanosecond=fractional_nanos,
+        )
+        return DateTime(date=self.date.add_days(days), time=time)
+
+    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTime:
+        """
+        Apply a civil interval to this datetime.
+
+        Args:
+            interval: `TimeDelta`, `YearMonthInterval`, or `DateTimeInterval`.
+
+        Returns:
+            Shifted `DateTime`. For `DateTimeInterval`, the year/month portion is applied before day/time.
+        """
+        if isinstance(interval, TimeDelta):
+            return self.add_timedelta(interval)
+        elif isinstance(interval, YearMonthInterval):
+            return DateTime(date=self.date.add_months(interval.total_months()), time=self.time)
+        elif isinstance(interval, DateTimeInterval):
+            return DateTime(date=self.date.add_months(interval.year_month().total_months()), time=self.time).add_timedelta(
+                interval.day_time(),
+            )
+
+    def __add__(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTime:
+        """
+        Add a civil interval to this datetime.
+
+        Args:
+            interval: Interval to apply.
+
+        Returns:
+            Shifted `DateTime`.
+        """
+        return self.add_interval(interval)
+
+    def __sub__(
+        self,
+        other: Union[TimeDelta, YearMonthInterval, DateTimeInterval, DateTime],
+    ) -> Union[DateTime, TimeDelta]:
+        """
+        Subtract an interval or another datetime.
+
+        Args:
+            other: Interval to subtract, or `DateTime` to measure from.
+
+        Returns:
+            `DateTime` when subtracting an interval; `TimeDelta` when subtracting another datetime.
+        """
+        if isinstance(other, DateTime):
+            seconds = self._epoch_seconds() - other._epoch_seconds()
+            nanos = self.time.nanosecond - other.time.nanosecond
+            return _timedelta_from_nanos(seconds * _NANOS_PER_SECOND + nanos)
+        elif isinstance(other, TimeDelta):
+            return self.add_timedelta(_timedelta_from_nanos(0 - other.total_nanoseconds()))
+        elif isinstance(other, YearMonthInterval):
+            return DateTime(date=self.date.add_months(0 - other.total_months()), time=self.time)
+        elif isinstance(other, DateTimeInterval):
+            return DateTime(date=self.date.add_months(0 - other.year_month().total_months()), time=self.time).add_timedelta(
+                _timedelta_from_nanos(0 - other.day_time().total_nanoseconds()),
+            )
+
+    def __eq__(self, other: DateTime) -> bool:
+        """
+        Compare two naive datetimes for equality.
+
+        Args:
+            other: Datetime to compare against.
+
+        Returns:
+            True when both date and time match.
+        """
+        return self.date == other.date and self.time == other.time
+
+    def __lt__(self, other: DateTime) -> bool:
+        """
+        Compare two naive datetimes.
+
+        Args:
+            other: Datetime to compare against.
+
+        Returns:
+            True when this datetime is earlier than `other`.
+        """
+        if self.date == other.date:
+            return self.time < other.time
+        return self.date < other.date
+
+    def _epoch_seconds(self) -> int:
+        day_seconds = self.time.seconds_since_midnight()
+        date_seconds = self.date._ordinal() * _SECONDS_PER_DAY
+        return date_seconds + day_seconds
+
+
+pub model FixedOffset:
+    """
+    Fixed UTC offset measured in whole minutes.
+
+    Fixed offsets are deterministic values, so they belong in `std.datetime`. Named timezones are rule databases that
+    resolve to different offsets across instants and belong in separately versioned packages such as `pub.timezones`.
+    """
+
+    pub seconds: int
+
+    @staticmethod
+    def seconds(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from seconds.
+
+        Args:
+            value: Signed offset seconds. The value must be within one day and divisible by one minute.
+
+        Returns:
+            `Ok(FixedOffset)` for valid whole-minute offsets, otherwise `Err(DateTimeError)`.
+        """
+        if value <= 0 - _SECONDS_PER_DAY or value >= _SECONDS_PER_DAY:
+            return Err(DateTimeError(detail="fixed offset must be within one day"))
+        if value % _SECONDS_PER_MINUTE != 0:
+            return Err(DateTimeError(detail="fixed offset must be representable as whole minutes"))
+        return Ok(FixedOffset(seconds=value))
+
+    @staticmethod
+    def minutes(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from minutes.
+
+        Args:
+            value: Signed offset minutes.
+
+        Returns:
+            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
+        """
+        return FixedOffset.seconds(value * _SECONDS_PER_MINUTE)
+
+    @staticmethod
+    def hours(value: int) -> Result[FixedOffset, DateTimeError]:
+        """
+        Construct a checked fixed offset from hours.
+
+        Args:
+            value: Signed offset hours.
+
+        Returns:
+            `Ok(FixedOffset)` when the offset is within one day, otherwise `Err(DateTimeError)`.
+        """
+        return FixedOffset.seconds(value * _SECONDS_PER_HOUR)
+
+    @staticmethod
+    def utc() -> FixedOffset:
+        """
+        Return the zero UTC offset.
+
+        Returns:
+            `FixedOffset(seconds=0)`.
+        """
+        return FixedOffset(seconds=0)
+
+    def isoformat(self) -> str:
+        """
+        Format this offset as ISO offset text.
+
+        Returns:
+            `Z` for UTC, otherwise `+HH:MM` or `-HH:MM`.
+        """
+        if self.seconds == 0:
+            return "Z"
+        return _format_offset(self, true, true)
+
+
+pub def utc() -> FixedOffset:
+    """
+    Return the zero UTC offset.
+
+    Returns:
+        `FixedOffset(seconds=0)`.
+    """
+    return FixedOffset.utc()
+
+
+pub model DateTimeOffset:
+    """
+    Naive datetime paired with a fixed UTC offset.
+
+    `DateTimeOffset` is not a named timezone type. It stores only the concrete offset that appears in ISO text or `%z`
+    formatted data. Named timezone lookup, daylight-saving transitions, and historical rule tables belong in
+    separately versioned packages.
+    """
+
+    pub datetime: DateTime
+    pub offset: FixedOffset
+
+    @staticmethod
+    def fromisoformat(value: str) -> Result[DateTimeOffset, DateTimeError]:
+        """
+        Parse an ISO fixed-offset datetime string.
+
+        Args:
+            value: Datetime with `Z` or `+HH:MM` / `-HH:MM` offset.
+
+        Returns:
+            Parsed `DateTimeOffset`, or `Err(DateTimeError)`.
+        """
+        if value[len(value) - 1:] == "Z":
+            datetime = DateTime.fromisoformat(value[0:len(value) - 1])?
+            return Ok(DateTimeOffset(datetime=datetime, offset=utc()))
+        if len(value) < 25:
+            return Err(DateTimeError(detail="expected fixed-offset datetime with offset"))
+        offset_start = len(value) - 6
+        datetime = DateTime.fromisoformat(value[0:offset_start])?
+        parsed = _parse_offset(value, offset_start)?
+        if parsed.next != len(value):
+            return Err(DateTimeError(detail="expected fixed offset at end of datetime"))
+        return Ok(DateTimeOffset(datetime=datetime, offset=parsed.offset))
+
+    @staticmethod
+    def strptime(value: str, format: str) -> Result[DateTimeOffset, DateTimeError]:
+        """
+        Parse a fixed-offset datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. `%z` / `%:z` parse concrete offsets; named timezone directives remain outside
+        `std.datetime`.
+
+        Args:
+            value: Datetime text to parse.
+            format: Format string such as `%Y-%m-%dT%H:%M:%S.%f%z`.
+
+        Returns:
+            Parsed `DateTimeOffset`, or `Err(DateTimeError)`.
+        """
+        parsed = _strptime_temporal(value, format, true, true, true)?
+        if not parsed.has_offset:
+            return Err(DateTimeError(detail="DateTimeOffset.strptime requires %z or %:z"))
+        return Ok(DateTimeOffset(datetime=parsed.datetime, offset=parsed.offset))
+
+    def isoformat(self) -> str:
+        """
+        Format this fixed-offset datetime as ISO text.
+
+        Returns:
+            Local datetime followed by `Z`, `+HH:MM`, or `-HH:MM`.
+        """
+        return self.datetime.isoformat() + self.offset.isoformat()
+
+    def strftime(self, format: str) -> Result[str, DateTimeError]:
+        """
+        Format this fixed-offset datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. `%z` / `%:z` format concrete offsets; named timezone directives remain outside
+        `std.datetime`.
+
+        Args:
+            format: Format string such as `%Y-%m-%dT%H:%M:%S.%f%z`.
+
+        Returns:
+            Formatted datetime text, or `Err(DateTimeError)`.
+        """
+        return _strftime_datetime_offset(self, format)
+
+    def __eq__(self, other: DateTimeOffset) -> bool:
+        """
+        Compare two fixed-offset datetimes for instant equality.
+
+        Args:
+            other: Fixed-offset datetime to compare against.
+
+        Returns:
+            True when both values represent the same UTC instant.
+        """
+        return self._utc_seconds() == other._utc_seconds() and self.datetime.time.nanosecond == other.datetime.time.nanosecond
+
+    def __lt__(self, other: DateTimeOffset) -> bool:
+        """
+        Compare two fixed-offset datetimes by UTC instant.
+
+        Args:
+            other: Fixed-offset datetime to compare against.
+
+        Returns:
+            True when this value represents an earlier UTC instant.
+        """
+        if self._utc_seconds() == other._utc_seconds():
+            return self.datetime.time.nanosecond < other.datetime.time.nanosecond
+        return self._utc_seconds() < other._utc_seconds()
+
+    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
+        """
+        Apply a civil interval while preserving this fixed offset.
+
+        Args:
+            interval: `TimeDelta`, `YearMonthInterval`, or `DateTimeInterval`.
+
+        Returns:
+            Shifted `DateTimeOffset` with the same offset.
+        """
+        return DateTimeOffset(datetime=self.datetime.add_interval(interval), offset=self.offset)
+
+    def __add__(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
+        """
+        Add a civil interval to this fixed-offset datetime.
+
+        Args:
+            interval: Interval to apply.
+
+        Returns:
+            Shifted `DateTimeOffset` with the same offset.
+        """
+        return self.add_interval(interval)
+
+    def __sub__(
+        self,
+        other: Union[TimeDelta, YearMonthInterval, DateTimeInterval, DateTimeOffset],
+    ) -> Union[DateTimeOffset, TimeDelta]:
+        """
+        Subtract an interval or another fixed-offset datetime.
+
+        Args:
+            other: Interval to subtract, or `DateTimeOffset` to measure from.
+
+        Returns:
+            `DateTimeOffset` when subtracting an interval; `TimeDelta` when subtracting another fixed-offset datetime.
+        """
+        if isinstance(other, DateTimeOffset):
+            seconds = self._utc_seconds() - other._utc_seconds()
+            nanos = self.datetime.time.nanosecond - other.datetime.time.nanosecond
+            return _timedelta_from_nanos(seconds * _NANOS_PER_SECOND + nanos)
+        elif isinstance(other, TimeDelta):
+            return DateTimeOffset(
+                datetime=self.datetime.add_timedelta(_timedelta_from_nanos(0 - other.total_nanoseconds())),
+                offset=self.offset,
+            )
+        elif isinstance(other, YearMonthInterval):
+            return DateTimeOffset(
+                datetime=DateTime(date=self.datetime.date.add_months(0 - other.total_months()), time=self.datetime.time),
+                offset=self.offset,
+            )
+        elif isinstance(other, DateTimeInterval):
+            return DateTimeOffset(
+                datetime=DateTime(
+                    date=self.datetime.date.add_months(0 - other.year_month().total_months()),
+                    time=self.datetime.time,
+                ).add_timedelta(_timedelta_from_nanos(0 - other.day_time().total_nanoseconds())),
+                offset=self.offset,
+            )
+
+    def _utc_seconds(self) -> int:
+        return self.datetime._epoch_seconds() - self.offset.seconds
+
+
+model _ParsedOffset:
+    offset: FixedOffset
+    next: int
+
+
+model _ParsedTemporal:
+    datetime: DateTime
+    offset: FixedOffset
+    has_offset: bool
+
+
+def _strptime_datetime(value: str, format: str, allow_date: bool, allow_time: bool) -> Result[DateTime, DateTimeError]:
+    parsed = _strptime_temporal(value, format, allow_date, allow_time, false)?
+    return Ok(parsed.datetime)
+
+
+def _strftime_date(date: Date, format: str) -> Result[str, DateTimeError]:
+    expanded = _expand_format_aliases(format)?
+    mut out = ""
+    mut index = 0
+    while index < len(expanded):
+        if expanded[index:index + 1] != "%":
+            out += expanded[index:index + 1]
+            index += 1
+        else:
+            parsed = _read_directive(expanded, index)?
+            index = parsed.next
+            directive = expanded[parsed.value:parsed.value + 1]
+            mut padding = expanded[parsed.value - 1:parsed.value]
+            if padding != "-" and padding != "_" and padding != "0":
+                padding = "".to_string()
+            if directive == "%":
+                out += "%"
+            elif directive == "n":
+                out += "\n"
+            elif directive == "t":
+                out += "\t"
+            else:
+                out += _format_date_directive(date, directive, padding)?
+    return Ok(out)
+
+
+def _strftime_time(time: Time, format: str) -> Result[str, DateTimeError]:
+    expanded = _expand_format_aliases(format)?
+    mut out = ""
+    mut index = 0
+    while index < len(expanded):
+        if expanded[index:index + 1] != "%":
+            out += expanded[index:index + 1]
+            index += 1
+        else:
+            parsed = _read_directive(expanded, index)?
+            index = parsed.next
+            directive = expanded[parsed.value:parsed.value + 1]
+            mut padding = expanded[parsed.value - 1:parsed.value]
+            if padding != "-" and padding != "_" and padding != "0":
+                padding = "".to_string()
+            if directive == "%":
+                out += "%"
+            elif directive == "n":
+                out += "\n"
+            elif directive == "t":
+                out += "\t"
+            else:
+                out += _format_time_directive(time, directive, padding)?
+    return Ok(out)
+
+
+def _strftime_datetime(datetime: DateTime, format: str) -> Result[str, DateTimeError]:
+    return _strftime_datetime_inner(datetime, FixedOffset.utc(), false, format)
+
+
+def _strftime_datetime_offset(datetime: DateTimeOffset, format: str) -> Result[str, DateTimeError]:
+    return _strftime_datetime_inner(datetime.datetime, datetime.offset, true, format)
+
+
+def _strftime_datetime_inner(datetime: DateTime, offset: FixedOffset, has_offset: bool, format: str) -> Result[str, DateTimeError]:
+    expanded = _expand_format_aliases(format)?
+    mut out = ""
+    mut index = 0
+    while index < len(expanded):
+        if expanded[index:index + 1] != "%":
+            out += expanded[index:index + 1]
+            index += 1
+        else:
+            parsed = _read_directive(expanded, index)?
+            index = parsed.next
+            directive = expanded[parsed.value:parsed.value + 1]
+            mut padding = expanded[parsed.value - 1:parsed.value]
+            if padding != "-" and padding != "_" and padding != "0" and padding != ":":
+                padding = "".to_string()
+            if directive == "%":
+                out += "%"
+            elif directive == "n":
+                out += "\n"
+            elif directive == "t":
+                out += "\t"
+            elif directive == "z":
+                if not has_offset:
+                    return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+                out += _format_offset(offset, padding == ":", false)
+            elif directive == "Z":
+                return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+            elif _is_date_directive(directive):
+                out += _format_date_directive(datetime.date, directive, padding)?
+            elif _is_time_directive(directive):
+                out += _format_time_directive(datetime.time, directive, padding)?
+            else:
+                return Err(DateTimeError(detail="unsupported strftime directive"))
+    return Ok(out)
+
+
+def _read_directive(format: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start + 1
+    if index >= len(format):
+        return Err(DateTimeError(detail="unexpected end of strftime format"))
+    modifier = format[index:index + 1]
+    if modifier == "-" or modifier == "_" or modifier == "0" or modifier == ":":
+        index += 1
+        if index >= len(format):
+            return Err(DateTimeError(detail="unexpected end of strftime format"))
+    return Ok(_ParsedNumber(value=index, next=index + 1))
+
+
+def _expand_format_aliases(format: str) -> Result[str, DateTimeError]:
+    mut out = ""
+    mut index = 0
+    while index < len(format):
+        if format[index:index + 1] != "%":
+            out += format[index:index + 1]
+            index += 1
+        else:
+            parsed = _read_directive(format, index)?
+            directive = format[parsed.value:parsed.value + 1]
+            mut modifier = format[parsed.value - 1:parsed.value]
+            if modifier != "-" and modifier != "_" and modifier != "0" and modifier != ":":
+                modifier = "".to_string()
+            if modifier != "" and (directive == "F" or directive == "D" or directive == "R" or directive == "T" or directive == "c" or directive == "x" or directive == "X" or directive == "r"):
+                return Err(DateTimeError(detail="padding modifiers are not supported on compound strftime aliases"))
+            if directive == "F":
+                out += "%Y-%m-%d"
+            elif directive == "D" or directive == "x":
+                out += "%m/%d/%y"
+            elif directive == "R":
+                out += "%H:%M"
+            elif directive == "T" or directive == "X":
+                out += "%H:%M:%S"
+            elif directive == "r":
+                out += "%I:%M:%S %p"
+            elif directive == "c":
+                out += "%a %b %_d %H:%M:%S %Y"
+            else:
+                out += "%" + modifier + directive
+            index = parsed.next
+    return Ok(out)
+
+
+def _format_date_directive(date: Date, directive: str, padding: str) -> Result[str, DateTimeError]:
+    mut actual_padding = padding
+    if directive == "Y":
+        return Ok(_format_padded(date.year, 4, actual_padding))
+    if directive == "y":
+        return Ok(_format_padded(date.year % 100, 2, actual_padding))
+    if directive == "m":
+        return Ok(_format_padded(date.month, 2, actual_padding))
+    if directive == "d":
+        return Ok(_format_padded(date.day, 2, actual_padding))
+    if directive == "e":
+        if actual_padding == "":
+            actual_padding = "_".to_string()
+        return Ok(_format_padded(date.day, 2, actual_padding))
+    if directive == "j":
+        return Ok(_format_padded(date.day_of_year(), 3, actual_padding))
+    if directive == "a":
+        return Ok(_weekday_short(date.weekday()))
+    if directive == "A":
+        return Ok(_weekday_long(date.weekday()))
+    if directive == "b" or directive == "h":
+        return Ok(_month_short(date.month))
+    if directive == "B":
+        return Ok(_month_long(date.month))
+    if directive == "w":
+        if date.weekday() == 7:
+            return Ok("0")
+        return Ok(str(date.weekday()))
+    if directive == "u":
+        return Ok(str(date.weekday()))
+    if directive == "U":
+        return Ok(_format_padded(_week_number_sunday(date), 2, actual_padding))
+    if directive == "W":
+        return Ok(_format_padded(_week_number_monday(date), 2, actual_padding))
+    if directive == "V":
+        return Ok(_format_padded(date.iso_week(), 2, actual_padding))
+    if directive == "G":
+        return Ok(_format_padded(_iso_year(date), 4, actual_padding))
+    if directive == "g":
+        return Ok(_format_padded(_iso_year(date) % 100, 2, actual_padding))
+    if _is_time_directive(directive):
+        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
+    if _is_timezone_directive(directive):
+        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+    return Err(DateTimeError(detail="unsupported strftime directive"))
+
+
+def _format_time_directive(time: Time, directive: str, padding: str) -> Result[str, DateTimeError]:
+    if directive == "H":
+        return Ok(_format_padded(time.hour, 2, padding))
+    if directive == "I":
+        return Ok(_format_padded(_hour_12(time.hour), 2, padding))
+    if directive == "M":
+        return Ok(_format_padded(time.minute, 2, padding))
+    if directive == "S":
+        return Ok(_format_padded(time.second, 2, padding))
+    if directive == "f":
+        return Ok(_pad9(time.nanosecond))
+    if directive == "p":
+        return Ok(_period_upper(time.hour))
+    if directive == "P":
+        return Ok(_period_lower(time.hour))
+    if _is_date_directive(directive):
+        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
+    if _is_timezone_directive(directive):
+        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+    return Err(DateTimeError(detail="unsupported strftime directive"))
+
+
+def _strptime_temporal(
+    value: str,
+    format: str,
+    allow_date: bool,
+    allow_time: bool,
+    allow_offset: bool,
+) -> Result[_ParsedTemporal, DateTimeError]:
+    expanded = _expand_format_aliases(format)?
+    mut year = 1900
+    mut month = 1
+    mut day = 1
+    mut hour = 0
+    mut minute = 0
+    mut second = 0
+    mut nanosecond = 0
+    mut ordinal_day = 0
+    mut iso_year = 1900
+    mut iso_week = 0
+    mut iso_weekday = 1
+    mut saw_iso = false
+    mut week_number = 0
+    mut week_starts_monday = false
+    mut saw_week_number = false
+    mut saw_weekday = false
+    mut hour_12 = 0
+    mut saw_hour_12 = false
+    mut saw_pm = false
+    mut offset = FixedOffset.utc()
+    mut has_offset = false
+    mut value_index = 0
+    mut format_index = 0
+    while format_index < len(expanded):
+        if expanded[format_index:format_index + 1] != "%":
+            if value_index >= len(value) or value[value_index:value_index + 1] != expanded[format_index:format_index + 1]:
+                return Err(DateTimeError(detail="strptime literal mismatch"))
+            value_index += 1
+            format_index += 1
+        else:
+            parsed = _read_directive(expanded, format_index)?
+            directive = expanded[parsed.value:parsed.value + 1]
+            format_index = parsed.next
+            if directive == "%":
+                if value_index >= len(value) or value[value_index:value_index + 1] != "%":
+                    return Err(DateTimeError(detail="strptime literal mismatch"))
+                value_index += 1
+            elif directive == "n":
+                if value_index >= len(value) or value[value_index:value_index + 1] != "\n":
+                    return Err(DateTimeError(detail="strptime literal mismatch"))
+                value_index += 1
+            elif directive == "t":
+                if value_index >= len(value) or value[value_index:value_index + 1] != "\t":
+                    return Err(DateTimeError(detail="strptime literal mismatch"))
+                value_index += 1
+            elif _is_timezone_directive(directive):
+                if not allow_offset:
+                    return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+                if directive == "Z":
+                    return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+                parsed_offset = _parse_offset(value, value_index)?
+                offset = parsed_offset.offset
+                has_offset = true
+                value_index = parsed_offset.next
+            elif _is_date_directive(directive):
+                if not allow_date:
+                    return Err(DateTimeError(detail="date directive requires Date or DateTime"))
+                if directive == "Y":
+                    number = _parse_number(value, value_index, 4, 4)?
+                    year = number.value
+                    iso_year = year
+                    value_index = number.next
+                elif directive == "y":
+                    number = _parse_number(value, value_index, 2, 2)?
+                    if number.value >= 70:
+                        year = 1900 + number.value
+                    else:
+                        year = 2000 + number.value
+                    iso_year = year
+                    value_index = number.next
+                elif directive == "m":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    month = number.value
+                    value_index = number.next
+                elif directive == "d" or directive == "e":
+                    number = _parse_day_number(value, value_index)?
+                    day = number.value
+                    value_index = number.next
+                elif directive == "j":
+                    number = _parse_number(value, value_index, 1, 3)?
+                    ordinal_day = number.value
+                    value_index = number.next
+                elif directive == "b" or directive == "h":
+                    number = _parse_month_name(value, value_index, false)?
+                    month = number.value
+                    value_index = number.next
+                elif directive == "B":
+                    number = _parse_month_name(value, value_index, true)?
+                    month = number.value
+                    value_index = number.next
+                elif directive == "a":
+                    number = _parse_weekday_name(value, value_index, false)?
+                    iso_weekday = number.value
+                    saw_weekday = true
+                    value_index = number.next
+                elif directive == "A":
+                    number = _parse_weekday_name(value, value_index, true)?
+                    iso_weekday = number.value
+                    saw_weekday = true
+                    value_index = number.next
+                elif directive == "u":
+                    number = _parse_number(value, value_index, 1, 1)?
+                    if number.value < 1 or number.value > _DAYS_PER_WEEK:
+                        return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
+                    iso_weekday = number.value
+                    saw_iso = true
+                    saw_weekday = true
+                    value_index = number.next
+                elif directive == "w":
+                    number = _parse_number(value, value_index, 1, 1)?
+                    if number.value < 0 or number.value > 6:
+                        return Err(DateTimeError(detail="weekday must be in 0..6"))
+                    if number.value == 0:
+                        iso_weekday = 7
+                    else:
+                        iso_weekday = number.value
+                    saw_weekday = true
+                    value_index = number.next
+                elif directive == "G":
+                    number = _parse_number(value, value_index, 4, 4)?
+                    iso_year = number.value
+                    saw_iso = true
+                    value_index = number.next
+                elif directive == "g":
+                    number = _parse_number(value, value_index, 2, 2)?
+                    if number.value >= 70:
+                        iso_year = 1900 + number.value
+                    else:
+                        iso_year = 2000 + number.value
+                    saw_iso = true
+                    value_index = number.next
+                elif directive == "V":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    iso_week = number.value
+                    saw_iso = true
+                    value_index = number.next
+                elif directive == "U" or directive == "W":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    if number.value < 0 or number.value > 53:
+                        return Err(DateTimeError(detail="calendar week must be in 0..53"))
+                    week_number = number.value
+                    week_starts_monday = directive == "W"
+                    saw_week_number = true
+                    value_index = number.next
+            elif _is_time_directive(directive):
+                if not allow_time:
+                    return Err(DateTimeError(detail="time directive requires Time or DateTime"))
+                if directive == "H":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    hour = number.value
+                    value_index = number.next
+                elif directive == "I":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    hour_12 = number.value
+                    saw_hour_12 = true
+                    value_index = number.next
+                elif directive == "M":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    minute = number.value
+                    value_index = number.next
+                elif directive == "S":
+                    number = _parse_number(value, value_index, 1, 2)?
+                    second = number.value
+                    value_index = number.next
+                elif directive == "f":
+                    number = _parse_fractional_number(value, value_index)?
+                    nanosecond = number.value
+                    value_index = number.next
+                elif directive == "p" or directive == "P":
+                    if value[value_index:value_index + 2].upper() == "PM":
+                        saw_pm = true
+                        value_index += 2
+                    elif value[value_index:value_index + 2].upper() == "AM":
+                        saw_pm = false
+                        value_index += 2
+                    else:
+                        return Err(DateTimeError(detail="expected AM or PM"))
+            else:
+                return Err(DateTimeError(detail="unsupported strptime directive"))
+    if value_index != len(value):
+        return Err(DateTimeError(detail="trailing text after strptime parse"))
+    if saw_hour_12:
+        if hour_12 < 1 or hour_12 > 12:
+            return Err(DateTimeError(detail="12-hour clock hour must be in 1..12"))
+        if saw_pm:
+            if hour_12 == 12:
+                hour = 12
+            else:
+                hour = hour_12 + 12
+        else:
+            if hour_12 == 12:
+                hour = 0
+            else:
+                hour = hour_12
+    if ordinal_day != 0:
+        ordinal_date = _date_from_ordinal(year, ordinal_day)?
+        month = ordinal_date.month
+        day = ordinal_date.day
+    if saw_week_number:
+        if saw_iso:
+            return Err(DateTimeError(detail="calendar week directives cannot be combined with ISO week directives"))
+        if ordinal_day != 0:
+            return Err(DateTimeError(detail="calendar week directives cannot be combined with ordinal day"))
+        if not saw_weekday:
+            return Err(DateTimeError(detail="%U and %W parsing require a weekday directive"))
+        week_date = _date_from_calendar_week(year, week_number, iso_weekday, week_starts_monday)?
+        year = week_date.year
+        month = week_date.month
+        day = week_date.day
+    if saw_iso:
+        if iso_week == 0:
+            return Err(DateTimeError(detail="ISO week parsing requires %V"))
+        iso_date = Date.fromisocalendar(iso_year, iso_week, iso_weekday)?
+        year = iso_date.year
+        month = iso_date.month
+        day = iso_date.day
+    date = Date.from_fields(year, month, day)?
+    time = Time.from_fields(hour, minute, second, nanosecond)?
+    return Ok(_ParsedTemporal(datetime=DateTime(date=date, time=time), offset=offset, has_offset=has_offset))
+
+
+def _parse_number(value: str, start: int, min_digits: int, max_digits: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start
+    mut digits = 0
+    while index < len(value) and digits < max_digits and _is_digit(value[index:index + 1]):
+        index += 1
+        digits += 1
+    if digits < min_digits:
+        return Err(DateTimeError(detail="expected numeric strptime field"))
+    return Ok(_ParsedNumber(value=int(value[start:index]), next=index))
+
+
+def _parse_fixed_digits(value: str, start: int, digits: int, detail: str) -> Result[int, DateTimeError]:
+    mut index = start
+    while index < start + digits:
+        if not _is_digit(value[index:index + 1]):
+            return Err(DateTimeError(detail=detail))
+        index += 1
+    return Ok(int(value[start:start + digits]))
+
+
+def _parse_day_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start
+    if value[index:index + 1] == " ":
+        index += 1
+    return _parse_number(value, index, 1, 2)
+
+
+def _parse_fractional_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    number = _parse_number(value, start, 1, 9)?
+    if number.next < len(value) and _is_digit(value[number.next:number.next + 1]):
+        return Err(DateTimeError(detail="fractional seconds must have at most 9 digits"))
+    mut nanos = number.value
+    mut digits = number.next - start
+    while digits < 9:
+        nanos = nanos * 10
+        digits += 1
+    return Ok(_ParsedNumber(value=nanos, next=number.next))
+
+
+def _parse_month_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
+    mut month = 1
+    while month <= _MONTHS_PER_YEAR:
+        mut name = _month_short(month)
+        if long:
+            name = _month_long(month)
+        if value[start:start + len(name)].lower() == name.lower():
+            return Ok(_ParsedNumber(value=month, next=start + len(name)))
+        month += 1
+    return Err(DateTimeError(detail="expected month name"))
+
+
+def _parse_weekday_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
+    mut weekday = 1
+    while weekday <= _DAYS_PER_WEEK:
+        mut name = _weekday_short(weekday)
+        if long:
+            name = _weekday_long(weekday)
+        if value[start:start + len(name)].lower() == name.lower():
+            return Ok(_ParsedNumber(value=weekday, next=start + len(name)))
+        weekday += 1
+    return Err(DateTimeError(detail="expected weekday name"))
+
+
+def _parse_offset(value: str, start: int) -> Result[_ParsedOffset, DateTimeError]:
+    if value[start:start + 1] == "Z":
+        return Ok(_ParsedOffset(offset=FixedOffset.utc(), next=start + 1))
+    sign = value[start:start + 1]
+    if sign != "+" and sign != "-":
+        return Err(DateTimeError(detail="expected fixed offset sign"))
+    hour = _parse_number(value, start + 1, 2, 2)?
+    mut index = hour.next
+    if value[index:index + 1] == ":":
+        index += 1
+    minute = _parse_number(value, index, 2, 2)?
+    if hour.value >= _HOURS_PER_DAY or minute.value >= _MINUTES_PER_HOUR:
+        return Err(DateTimeError(detail="fixed offset is out of range"))
+    mut seconds = hour.value * _SECONDS_PER_HOUR + minute.value * _SECONDS_PER_MINUTE
+    if sign == "-":
+        seconds = 0 - seconds
+    return Ok(_ParsedOffset(offset=FixedOffset.seconds(seconds)?, next=minute.next))
+
+
+def _format_offset(offset: FixedOffset, colon: bool, use_z: bool) -> str:
+    if offset.seconds == 0 and use_z:
+        return "Z"
+    mut value = offset.seconds
+    mut sign = "+"
+    if value < 0:
+        sign = "-".to_string()
+        value = 0 - value
+    hour = _pad2(value // _SECONDS_PER_HOUR)
+    minute = _pad2((value % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE)
+    if colon:
+        return sign + hour + ":" + minute
+    return sign + hour + minute
+
+
+def _format_padded(value: int, width: int, padding: str) -> str:
+    mut out = str(value)
+    if padding == "-":
+        return out
+    mut fill = "0"
+    if padding == "_":
+        fill = " ".to_string()
+    while len(out) < width:
+        out = fill + out
+    return out
+
+
+def _is_digit(value: str) -> bool:
+    return value == "0" or value == "1" or value == "2" or value == "3" or value == "4" or value == "5" or value == "6" or value == "7" or value == "8" or value == "9"
+
+
+def _is_date_directive(directive: str) -> bool:
+    return directive == "Y" or directive == "y" or directive == "m" or directive == "d" or directive == "e" or directive == "j" or directive == "a" or directive == "A" or directive == "b" or directive == "h" or directive == "B" or directive == "w" or directive == "u" or directive == "U" or directive == "W" or directive == "V" or directive == "G" or directive == "g"
+
+
+def _is_time_directive(directive: str) -> bool:
+    return directive == "H" or directive == "I" or directive == "M" or directive == "S" or directive == "f" or directive == "p" or directive == "P"
+
+
+def _is_timezone_directive(directive: str) -> bool:
+    return directive == "z" or directive == "Z"
+
+
+def _hour_12(hour: int) -> int:
+    value = hour % 12
+    if value == 0:
+        return 12
+    return value
+
+
+def _period_upper(hour: int) -> str:
+    if hour < 12:
+        return "AM"
+    return "PM"
+
+
+def _period_lower(hour: int) -> str:
+    if hour < 12:
+        return "am"
+    return "pm"
+
+
+def _month_short(month: int) -> str:
+    if month == 1:
+        return "Jan"
+    if month == 2:
+        return "Feb"
+    if month == 3:
+        return "Mar"
+    if month == 4:
+        return "Apr"
+    if month == 5:
+        return "May"
+    if month == 6:
+        return "Jun"
+    if month == 7:
+        return "Jul"
+    if month == 8:
+        return "Aug"
+    if month == 9:
+        return "Sep"
+    if month == 10:
+        return "Oct"
+    if month == 11:
+        return "Nov"
+    return "Dec"
+
+
+def _month_long(month: int) -> str:
+    if month == 1:
+        return "January"
+    if month == 2:
+        return "February"
+    if month == 3:
+        return "March"
+    if month == 4:
+        return "April"
+    if month == 5:
+        return "May"
+    if month == 6:
+        return "June"
+    if month == 7:
+        return "July"
+    if month == 8:
+        return "August"
+    if month == 9:
+        return "September"
+    if month == 10:
+        return "October"
+    if month == 11:
+        return "November"
+    return "December"
+
+
+def _weekday_short(weekday: int) -> str:
+    if weekday == 1:
+        return "Mon"
+    if weekday == 2:
+        return "Tue"
+    if weekday == 3:
+        return "Wed"
+    if weekday == 4:
+        return "Thu"
+    if weekday == 5:
+        return "Fri"
+    if weekday == 6:
+        return "Sat"
+    return "Sun"
+
+
+def _weekday_long(weekday: int) -> str:
+    if weekday == 1:
+        return "Monday"
+    if weekday == 2:
+        return "Tuesday"
+    if weekday == 3:
+        return "Wednesday"
+    if weekday == 4:
+        return "Thursday"
+    if weekday == 5:
+        return "Friday"
+    if weekday == 6:
+        return "Saturday"
+    return "Sunday"
+
+
+def _iso_year(date: Date) -> int:
+    week = date.iso_week()
+    if date.month == 1 and week >= 52:
+        return date.year - 1
+    if date.month == 12 and week == 1:
+        return date.year + 1
+    return date.year
+
+
+def _week_number_sunday(date: Date) -> int:
+    first = Date(year=date.year, month=1, day=1)
+    first_sunday = 1 + ((7 - first.weekday()) % 7)
+    if date.day_of_year() < first_sunday:
+        return 0
+    return ((date.day_of_year() - first_sunday) // 7) + 1
+
+
+def _week_number_monday(date: Date) -> int:
+    first = Date(year=date.year, month=1, day=1)
+    first_monday = 1 + ((8 - first.weekday()) % 7)
+    if date.day_of_year() < first_monday:
+        return 0
+    return ((date.day_of_year() - first_monday) // 7) + 1
+
+
+def _date_from_ordinal(year: int, ordinal: int) -> Result[Date, DateTimeError]:
+    mut limit = _DAYS_PER_YEAR
+    if is_leap_year(year):
+        limit = _DAYS_PER_LEAP_YEAR
+    if ordinal < 1 or ordinal > limit:
+        return Err(DateTimeError(detail="ordinal day is out of range"))
+    return Ok(Date(year=year, month=1, day=1).add_days(ordinal - 1))
+
+
+def _date_from_calendar_week(
+    year: int,
+    week: int,
+    iso_weekday: int,
+    starts_monday: bool,
+) -> Result[Date, DateTimeError]:
+    jan1 = Date(year=year, month=1, day=1)
+    mut first_day_index = jan1.weekday()
+    mut day_index = iso_weekday
+    if starts_monday:
+        first_day_index -= 1
+        day_index -= 1
+    else:
+        if first_day_index == 7:
+            first_day_index = 0
+        if day_index == 7:
+            day_index = 0
+    first_week_start = 1 + ((_DAYS_PER_WEEK - first_day_index) % _DAYS_PER_WEEK)
+    ordinal = first_week_start + (week - 1) * _DAYS_PER_WEEK + day_index
+    return _date_from_year_ordinal_offset(year, ordinal)
+
+
+def _date_from_year_ordinal_offset(year: int, ordinal: int) -> Result[Date, DateTimeError]:
+    mut target_year = year
+    mut target_ordinal = ordinal
+    while target_ordinal < 1:
+        target_year -= 1
+        if is_leap_year(target_year):
+            target_ordinal += _DAYS_PER_LEAP_YEAR
+        else:
+            target_ordinal += _DAYS_PER_YEAR
+    mut limit = _DAYS_PER_YEAR
+    if is_leap_year(target_year):
+        limit = _DAYS_PER_LEAP_YEAR
+    while target_ordinal > limit:
+        target_ordinal -= limit
+        target_year += 1
+        limit = _DAYS_PER_YEAR
+        if is_leap_year(target_year):
+            limit = _DAYS_PER_LEAP_YEAR
+    return _date_from_ordinal(target_year, target_ordinal)
+
+
+def _datetime_from_unix_nanoseconds_utc(nanoseconds: int) -> DateTime:
+    days = nanoseconds // _NANOS_PER_DAY
+    nanos_of_day = nanoseconds % _NANOS_PER_DAY
+    seconds = nanos_of_day // _NANOS_PER_SECOND
+    date = Date(year=_UNIX_EPOCH_YEAR, month=1, day=1).add_days(days)
+    time = Time(
+        hour=seconds // _SECONDS_PER_HOUR,
+        minute=(seconds % _SECONDS_PER_HOUR) // _SECONDS_PER_MINUTE,
+        second=seconds % _SECONDS_PER_MINUTE,
+        nanosecond=nanos_of_day % _NANOS_PER_SECOND,
+    )
+    return DateTime(date=date, time=time)
+
+
+def _timedelta_from_nanos(nanos: int) -> TimeDelta:
+    days = nanos // _NANOS_PER_DAY
+    rem = nanos % _NANOS_PER_DAY
+    seconds = rem // _NANOS_PER_SECOND
+    nano = rem % _NANOS_PER_SECOND
+    return TimeDelta(days=days, seconds=seconds, nanoseconds=nano)
+
+
+def _year_month_from_months(months: int) -> YearMonthInterval:
+    return YearMonthInterval(years=months // _MONTHS_PER_YEAR, months=months % _MONTHS_PER_YEAR)
+
+
+pub def is_leap_year(year: int) -> bool:
+    """
+    Check whether a Gregorian year is a leap year.
+
+    Args:
+        year: Gregorian year.
+
+    Returns:
+        `true` for leap years.
+    """
+    if year % 400 == 0:
+        return true
+    if year % 100 == 0:
+        return false
+    return year % 4 == 0
+
+
+pub def days_in_month(year: int, month: int) -> int:
+    """
+    Return the number of days in a Gregorian month.
+
+    Args:
+        year: Gregorian year.
+        month: Month in `1..12`.
+
+    Returns:
+        Day count for the month. Invalid month values are treated as 31-day months by this low-level helper; checked
+        constructors validate month ranges before calling it.
+    """
+    if month == 2:
+        if is_leap_year(year):
+            return 29
+        return 28
+    if month == 4 or month == 6 or month == 9 or month == 11:
+        return 30
+    return 31
+
+
+pub def iso_weeks_in_year(year: int) -> int:
+    """
+    Return the number of ISO weeks in an ISO week-numbering year.
+
+    Args:
+        year: ISO week-numbering year.
+
+    Returns:
+        `52` or `53`.
+    """
+    jan1 = Date(year=year, month=1, day=1)
+    if jan1.weekday() == 4:
+        return 53
+    if is_leap_year(year) and jan1.weekday() == 3:
+        return 53
+    return 52
+
+
+def _min_int(left: int, right: int) -> int:
+    if left < right:
+        return left
+    return right
+
+
+def _pad2(value: int) -> str:
+    if value < 10:
+        return "0" + str(value)
+    return str(value)
+
+
+def _pad4(value: int) -> str:
+    if value < 10:
+        return "000" + str(value)
+    if value < 100:
+        return "00" + str(value)
+    if value < 1000:
+        return "0" + str(value)
+    return str(value)
+
+
+def _pad9(value: int) -> str:
+    mut out = str(value)
+    while len(out) < 9:
+        out = "0" + out
+    return out
+
+
+def _parse_fractional_nanos(value: str) -> Result[int, DateTimeError]:
+    if len(value) < 1 or len(value) > 9:
+        return Err(DateTimeError(detail="fractional seconds must have 1 to 9 digits"))
+    mut out = 0
+    mut index = 0
+    while index < len(value) and index < 9:
+        if not _is_digit(value[index:index + 1]):
+            return Err(DateTimeError(detail="fractional seconds must contain only digits"))
+        out = out * 10 + int(value[index:index + 1])
+        index += 1
+    while index < 9:
+        out = out * 10
+        index += 1
+    return Ok(out)

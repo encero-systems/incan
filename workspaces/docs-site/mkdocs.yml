@@ -151,6 +151,7 @@ nav:
               - Overview: language/reference/stdlib/index.md
               - std.async: language/reference/stdlib/async.md
               - std.derives.*: language/reference/stdlib/derives.md
+              - std.datetime: language/reference/stdlib/datetime.md
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
               - std.io: language/reference/stdlib/io.md

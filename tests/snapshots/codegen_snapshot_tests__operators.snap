@@ -27,7 +27,7 @@ fn test_operators() {
     let _using_is: book = true == false;
     let _neg_int: i64 = -42;
     let _neg_float: f64 = -3.14f64;
-    let _complex: i64 = 1 + 2 * 3 - 4;
+    let _complex: i64 = (1 + 2) * (3 - 4);
     let words: Vec<String> = vec!["alpha".to_string(), "beta".to_string()];
     let _has_alpha: bool = {
         let __incan_probe = "alpha";
