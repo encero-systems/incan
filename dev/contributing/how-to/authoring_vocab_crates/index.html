@@ -4359,27 +4359,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#5-add-scoped-symbols" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Add an optional desugarer
+      5. Add scoped symbols
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-build-the-library-artifact" class="md-nav__link">
+  <a href="#6-add-an-optional-desugarer" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Build the library artifact
+      6. Add an optional desugarer
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#7-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
-      7. Consume the DSL from another project
+      7. Build the library artifact
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-consume-the-dsl-from-another-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Consume the DSL from another project
     </span>
   </a>
   
@@ -4958,27 +4967,36 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-add-an-optional-desugarer" class="md-nav__link">
+  <a href="#5-add-scoped-symbols" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Add an optional desugarer
+      5. Add scoped symbols
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-build-the-library-artifact" class="md-nav__link">
+  <a href="#6-add-an-optional-desugarer" class="md-nav__link">
     <span class="md-ellipsis">
-      6. Build the library artifact
+      6. Add an optional desugarer
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-consume-the-dsl-from-another-project" class="md-nav__link">
+  <a href="#7-build-the-library-artifact" class="md-nav__link">
     <span class="md-ellipsis">
-      7. Consume the DSL from another project
+      7. Build the library artifact
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-consume-the-dsl-from-another-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Consume the DSL from another project
     </span>
   </a>
   
@@ -5086,7 +5104,7 @@
 <span class="n">crate-type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;rlib&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;cdylib&quot;</span><span class="p">]</span>
 
 <span class="k">[dependencies]</span>
-<span class="n">incan_vocab</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.2&quot;</span>
+<span class="n">incan_vocab</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.3&quot;</span>
 </code></pre></div>
 <p>Keep the companion crate as a real Rust crate with <code>Cargo.toml</code> and <code>src/lib.rs</code>, even when the DSL description itself is quite small.</p>
 <p>Both crate types are intentional:</p>
@@ -5240,6 +5258,49 @@ orders |&gt; paid_orders
 <span class="p">}</span>
 </code></pre></div>
 <p>The descriptor <code>key</code> must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as <code>pairwise_chain()</code>. RFC 040 supports selected descriptor-gated non-core glyphs such as <code>|&gt;</code>, <code>%&gt;%</code>, <code>:=</code>, and <code>===</code>; broader language-shaped token forms remain RFC 081 work.</p>
+<h2 id="5-add-scoped-symbols">5. Add scoped symbols<a class="headerlink" href="#5-add-scoped-symbols" title="Permanent link">&para;</a></h2>
+<p>Scoped symbols are identifier calls owned by a DSL position. They are useful when a DSL needs concise names such as <code>sum(...)</code> or <code>count(...)</code> without changing ordinary Incan resolution in the rest of the file.</p>
+<p>Inside an eligible DSL position, a matching scoped symbol descriptor is the local meaning. It wins over lexical names, imports, module names, and builtin fallback, the same way an inner variable binding wins over an outer binding. Outside the owning DSL scope, the same spelling remains an ordinary call.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">querykit</span> <span class="kn">import</span><span class="w"> </span><span class="nn">querykit_name</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">query</span><span class="p">:</span>
+        <span class="nb">sum</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span><span class="p">)</span>                 <span class="c1"># querykit&#39;s scoped symbol</span>
+        <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>     <span class="c1"># explicit core builtin escape</span>
+
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>               <span class="c1"># ordinary Incan call resolution</span>
+</code></pre></div>
+<p>Register scoped symbols on the same <code>DslSurface</code> as the declaration that owns them:</p>
+<div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span>
+<span class="w">    </span><span class="n">ClauseSurface</span><span class="p">,</span><span class="w"> </span><span class="n">DeclarationSurface</span><span class="p">,</span><span class="w"> </span><span class="n">DslSurface</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSymbolDescriptor</span><span class="p">,</span>
+<span class="w">    </span><span class="n">ScopedSymbolDiagnosticKind</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSymbolDiagnosticTemplate</span><span class="p">,</span><span class="w"> </span><span class="n">ScopedSymbolMisuseScope</span><span class="p">,</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">,</span>
+<span class="p">};</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">library_vocab</span><span class="p">()</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">VocabRegistration</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">VocabRegistration</span><span class="p">::</span><span class="n">new</span><span class="p">().</span><span class="n">with_surface</span><span class="p">(</span>
+<span class="w">        </span><span class="n">DslSurface</span><span class="p">::</span><span class="n">on_import</span><span class="p">(</span><span class="s">&quot;querykit&quot;</span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_declaration</span><span class="p">(</span>
+<span class="w">                </span><span class="n">DeclarationSurface</span><span class="p">::</span><span class="n">named</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_clause</span><span class="p">(</span><span class="n">ClauseSurface</span><span class="p">::</span><span class="n">expr</span><span class="p">(</span><span class="s">&quot;SELECT&quot;</span><span class="p">)),</span>
+<span class="w">            </span><span class="p">)</span>
+<span class="w">            </span><span class="p">.</span><span class="n">with_scoped_symbol</span><span class="p">(</span>
+<span class="w">                </span><span class="n">ScopedSymbolDescriptor</span><span class="p">::</span><span class="n">aggregate</span><span class="p">(</span><span class="s">&quot;query.sum&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;sum&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">in_clause_body</span><span class="p">(</span><span class="s">&quot;query&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;SELECT&quot;</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_misuse_scope</span><span class="p">(</span><span class="n">ScopedSymbolMisuseScope</span><span class="p">::</span><span class="n">ActiveDsl</span><span class="p">)</span>
+<span class="w">                    </span><span class="p">.</span><span class="n">with_diagnostic</span><span class="p">(</span>
+<span class="w">                        </span><span class="n">ScopedSymbolDiagnosticTemplate</span><span class="p">::</span><span class="n">new</span><span class="p">(</span>
+<span class="w">                            </span><span class="s">&quot;query-sum-outside-select&quot;</span><span class="p">,</span>
+<span class="w">                            </span><span class="n">ScopedSymbolDiagnosticKind</span><span class="p">::</span><span class="n">OutsideEligiblePosition</span><span class="p">,</span>
+<span class="w">                            </span><span class="s">&quot;query aggregate `sum` is only valid inside SELECT clauses&quot;</span><span class="p">,</span>
+<span class="w">                        </span><span class="p">)</span>
+<span class="w">                        </span><span class="p">.</span><span class="n">with_help</span><span class="p">(</span><span class="s">&quot;move `sum(...)` into a SELECT clause&quot;</span><span class="p">),</span>
+<span class="w">                    </span><span class="p">),</span>
+<span class="w">            </span><span class="p">),</span>
+<span class="w">    </span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Use <code>ScopedSymbolMisuseScope::ActiveDsl</code> only when the spelling is a strong signal of DSL intent inside the owning DSL. That gives authors targeted diagnostics for "active DSL, wrong position" while preserving ordinary Incan behavior outside the DSL scope.</p>
 <p>If your desugared output needs extra runtime requirements, declare them in <code>LibraryManifest</code>:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span><span class="n">CargoDependency</span><span class="p">,</span><span class="w"> </span><span class="n">CargoDependencySource</span><span class="p">,</span><span class="w"> </span><span class="n">LibraryManifest</span><span class="p">};</span>
 
@@ -5270,7 +5331,7 @@ orders |&gt; paid_orders
 <li>each <code>exported_name</code> must point at a real public export from the library artifact</li>
 <li>empty keys or export names are rejected before the <code>.incnlib</code> artifact is written</li>
 </ul>
-<h2 id="5-add-an-optional-desugarer">5. Add an optional desugarer<a class="headerlink" href="#5-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
+<h2 id="6-add-an-optional-desugarer">6. Add an optional desugarer<a class="headerlink" href="#6-add-an-optional-desugarer" title="Permanent link">&para;</a></h2>
 <p>Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same <code>library_vocab()</code> bundle.</p>
 <div class="language-rust highlight"><span class="filename">routekit/vocab_companion/src/desugar.rs</span><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">incan_vocab</span><span class="p">::{</span><span class="n">DesugarError</span><span class="p">,</span><span class="w"> </span><span class="n">DesugarOutput</span><span class="p">,</span><span class="w"> </span><span class="n">IncanExpr</span><span class="p">,</span><span class="w"> </span><span class="n">IncanStatement</span><span class="p">,</span><span class="w"> </span><span class="n">VocabDesugarer</span><span class="p">,</span><span class="w"> </span><span class="n">VocabSyntaxNode</span><span class="p">};</span>
 
@@ -5307,7 +5368,7 @@ orders |&gt; paid_orders
 <li>the canonical <code>__incan_*</code> runtime cell globals</li>
 </ul>
 <p>Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.</p>
-<h2 id="6-build-the-library-artifact">6. Build the library artifact<a class="headerlink" href="#6-build-the-library-artifact" title="Permanent link">&para;</a></h2>
+<h2 id="7-build-the-library-artifact">7. Build the library artifact<a class="headerlink" href="#7-build-the-library-artifact" title="Permanent link">&para;</a></h2>
 <p>Run library mode from the Incan project root:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
@@ -5319,7 +5380,7 @@ orders |&gt; paid_orders
 <li>packages the derived metadata and any registered desugarer into <code>target/lib/&lt;library&gt;.incnlib</code></li>
 </ol>
 <p>Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.</p>
-<h2 id="7-consume-the-dsl-from-another-project">7. Consume the DSL from another project<a class="headerlink" href="#7-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
+<h2 id="8-consume-the-dsl-from-another-project">8. Consume the DSL from another project<a class="headerlink" href="#8-consume-the-dsl-from-another-project" title="Permanent link">&para;</a></h2>
 <p>The consumer depends on the built library artifact:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">routekit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../routekit/target/lib&quot;</span><span class="w"> </span><span class="p">}</span>
