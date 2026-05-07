@@ -102,6 +102,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
+| `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
@@ -582,6 +583,18 @@ def main() -> None:
 | Copied | `copied` |  | Copy from Option[&T] to Option[T] when T: Copy. | RFC 000 | 0.1 | Stable |
 | UnwrapOr | `unwrap_or` |  | Return the contained value or a default. | RFC 000 | 0.1 | Stable |
 | Unwrap | `unwrap` |  | Return the contained value or panic. | RFC 000 | 0.1 | Stable |
+
+
+### Result methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Map | `map` |  | Transform an Ok payload while preserving Err. | RFC 070 | 0.3 | Stable |
+| MapErr | `map_err` |  | Transform an Err payload while preserving Ok. | RFC 070 | 0.3 | Stable |
+| AndThen | `and_then` |  | Chain a Result-returning operation from an Ok payload. | RFC 070 | 0.3 | Stable |
+| OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
+| Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
 
 
 ### FrozenList methods
