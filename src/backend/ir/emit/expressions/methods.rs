@@ -302,10 +302,18 @@ impl<'a> IrEmitter<'a> {
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
+                let external_call_arg_shape = matches!(base_use_site, ValueUseSite::ExternalCallArg { .. });
                 let param = callable_signature.and_then(|sig| sig.params.get(idx));
                 let arg_use_site =
                     if external_method_shape && matches!(param.map(|param| &param.ty), Some(IrType::Generic(_))) {
                         ValueUseSite::MethodArg
+                    } else if external_call_arg_shape {
+                        match param {
+                            Some(param) => ValueUseSite::ExternalCallArg {
+                                target_ty: Some(&param.ty),
+                            },
+                            None => base_use_site,
+                        }
                     } else {
                         base_use_site
                     };
@@ -357,6 +365,12 @@ impl<'a> IrEmitter<'a> {
                 };
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
+                }
+                if external_call_arg_shape
+                    && let Some(coerced) =
+                        self.external_list_arg_element_coercion(arg, Some(&param.ty), emitted.clone())
+                {
+                    emitted = coerced;
                 }
                 if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty) {
                     return Ok(quote! { &mut #emitted });

@@ -1703,6 +1703,18 @@ fn test_list_pop_clone_only_model_codegen() {
     insta::assert_snapshot!("list_pop_clone_only_model", rust_code);
 }
 
+#[test]
+fn test_list_clone_model_codegen() {
+    let source = load_test_file("list_clone_model");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("letcopy=nodes.clone();"),
+        "expected list.clone() to emit a normal Vec clone; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("list_clone_model", rust_code);
+}
+
 /// Issue #380: `len(...)` must lower to a parse-safe expression so comparisons compile as Rust.
 #[test]
 fn test_issue380_len_comparison_codegen() {

@@ -1603,6 +1603,16 @@ pub fn list_extend_requires_clone(elem_type: &str, span: Span) -> CompileError {
     .with_hint("Add @derive(Clone) to the element type or extend from a list of Clone elements")
 }
 
+/// Report that `List.clone()` requires a cloneable element type.
+pub fn list_clone_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("List.clone requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("List.clone follows Rust Vec clone semantics, cloning each element into a new list")
+    .with_hint("Add @derive(Clone) to the element type or clone a list of Copy elements")
+}
+
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
     CompileError::type_error("Strings are immutable - cannot assign to index".to_string(), span)
 }

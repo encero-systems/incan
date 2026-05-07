@@ -84,7 +84,7 @@ impl<'a> IrEmitter<'a> {
     /// Generic placeholders coming from the callee signature (`Option[T]`, `Result[T, E]`) are not in scope at the
     /// caller, so they must still be treated as unresolved here even though they are perfectly valid inside the callee
     /// body or an enclosing generic impl/function.
-    fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
+    pub(super) fn is_unresolved_call_seed_type(ty: &IrType) -> bool {
         match ty {
             IrType::Unknown | IrType::Generic(_) => true,
             IrType::Ref(inner) | IrType::RefMut(inner) | IrType::Option(inner) | IrType::List(inner) => {
@@ -651,7 +651,12 @@ impl<'a> IrEmitter<'a> {
                     }
                 };
 
-                let mut tokens = plan_value_use(a, use_site).apply(emitted);
+                let mut tokens = match use_site {
+                    ValueUseSite::ExternalCallArg { target_ty } => self
+                        .external_list_arg_element_coercion(a, target_ty, emitted.clone())
+                        .unwrap_or_else(|| plan_value_use(a, use_site).apply(emitted)),
+                    _ => plan_value_use(a, use_site).apply(emitted),
+                };
                 if let Some(param) = sig_param
                     && incan_call_arg_needs_rust_mut_borrow(param)
                 {
@@ -1176,7 +1181,12 @@ impl<'a> IrEmitter<'a> {
             }
         };
 
-        let mut tokens = plan_value_use(arg, use_site).apply(emitted);
+        let mut tokens = match use_site {
+            ValueUseSite::ExternalCallArg { target_ty } => self
+                .external_list_arg_element_coercion(arg, target_ty, emitted.clone())
+                .unwrap_or_else(|| plan_value_use(arg, use_site).apply(emitted)),
+            _ => plan_value_use(arg, use_site).apply(emitted),
+        };
         if incan_call_arg_needs_rust_mut_borrow(param) {
             match &arg.ty {
                 IrType::Ref(_) | IrType::RefMut(_) => {}

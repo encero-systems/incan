@@ -160,6 +160,8 @@ Many types have a canonical (generated-reference) name and a lowercase alias use
 - Aliases: `list[T]`, `dict[K, V]`, `set[T]`
 - Rust interop alias: `Vec[T]` (accepted as `List[T]`)
 
+When passing a direct `list[T]` to an external Rust function or method that expects `Vec<U>`, Incan emits element-level `.into()` conversions and leaves Rust to validate the required `From<T>` implementation.
+
 The generated language reference shows the canonical name and aliases in one place:
 [Language reference (generated)](language.md).
 

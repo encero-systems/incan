@@ -4586,6 +4586,49 @@ def extend_into(mut xs: List[Mutex], other: List[Mutex]) -> None:
     );
 }
 
+#[test]
+fn test_list_clone_accepts_clone_element_type() {
+    let source = r#"
+@derive(Clone)
+model Node:
+  id: int
+
+def clone_nodes(nodes: List[Node]) -> List[Node]:
+  return nodes.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_clone_accepts_clone_bound_type_param() {
+    let source = r#"
+def clone_items[T with Clone](items: List[T]) -> List[T]:
+  return items.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_clone_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def clone_mutexes(xs: List[Mutex]) -> List[Mutex]:
+  return xs.clone()
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List.clone requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(clone_trait_name().as_str())
+        }),
+        "expected List.clone / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
 // ========================================
 // Models implementing traits (Issue #42)
 // ========================================

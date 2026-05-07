@@ -661,6 +661,8 @@ pub enum CollectionMethodKind {
     Append,
     /// `list.extend(items)` → `incan_stdlib::collections::list_extend(...)`
     Extend,
+    /// `list.clone()` → `list.clone()`
+    Clone,
     /// `list.pop()` lowers via `incan_stdlib::collections::__private::list_pop(...)`, which preserves the `T` return
     /// type while raising `IndexError: pop from empty list` on the runtime side (#194).
     Pop,
@@ -785,6 +787,7 @@ impl MethodKind {
                 Some(Self::Collection(match id {
                     L::Append => CollectionMethodKind::Append,
                     L::Extend => CollectionMethodKind::Extend,
+                    L::Clone => CollectionMethodKind::Clone,
                     L::Pop => CollectionMethodKind::Pop,
                     L::Swap => CollectionMethodKind::Swap,
                     L::Reserve => CollectionMethodKind::Reserve,
