@@ -1911,6 +1911,12 @@ fn local_signature_in_expr(
             crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
                 local_signature_in_expr(inner, ast, source, offset)
             }
+            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+                local_signature_in_expr(&arm.awaitable, ast, source, offset).or_else(|| match &arm.body {
+                    RaceForBody::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+                    RaceForBody::Block(statements) => local_signature_in_statements(statements, ast, source, offset),
+                })
+            }),
             crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 local_signature_in_expr(left, ast, source, offset)
