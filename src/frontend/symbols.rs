@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::ast::{ParamKind, Receiver, Span, Type};
+use crate::frontend::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
 use incan_core::interop::RustItemMetadata;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
@@ -524,12 +524,24 @@ pub struct NewtypeInfo {
     /// Set when this `rusttype` declares at least one `interop:` edge (used by later pipeline stages).
     pub has_interop: bool,
     pub underlying: ResolvedType,
+    /// RFC 017 constrained primitive predicates carried by the declared underlying type.
+    pub constraints: Vec<NewtypePrimitiveConstraint>,
+    /// Whether RFC 017 implicit coercion is permitted for this newtype.
+    pub implicit_coercion_enabled: bool,
     /// Alias-to-target method rebinding map declared inside the type body (`alias = target`).
     ///
     /// Example: `send_now = try_send` is stored as `"send_now" -> "try_send"`.
     pub method_rebindings: HashMap<String, String>,
     pub method_aliases: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
+}
+
+/// One resolved constrained primitive predicate on a newtype underlying type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewtypePrimitiveConstraint {
+    pub key: TypeConstraintKey,
+    pub value: i64,
+    pub repr: String,
 }
 
 /// Enum information
@@ -986,6 +998,10 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
                     }
                 }
             }
+        }
+        Type::ConstrainedPrimitive(name, _) => {
+            let base = Type::Simple(name.clone());
+            resolve_type(&base, symbols)
         }
         Type::Generic(name, args) => {
             let resolved_args: Vec<_> = args.iter().map(|a| resolve_type(&a.node, symbols)).collect();

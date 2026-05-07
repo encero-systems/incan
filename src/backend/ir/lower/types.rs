@@ -240,6 +240,10 @@ impl AstLowering {
                     IrType::Struct(name.clone())
                 }
             }
+            ast::Type::ConstrainedPrimitive(name, _) => {
+                let base = ast::Type::Simple(name.clone());
+                self.lower_const_annotation_type(&base)
+            }
             ast::Type::Generic(base, params) => {
                 if let Some(decimal) = ast_decimal_ir_type(base, params) {
                     return decimal;
@@ -445,6 +449,10 @@ impl AstLowering {
                 } else {
                     IrType::Struct(name.clone())
                 }
+            }
+            ast::Type::ConstrainedPrimitive(name, _) => {
+                let base = ast::Type::Simple(name.clone());
+                self.lower_type_with_type_params(&base, type_param_names)
             }
             ast::Type::Generic(base, params) => {
                 if let Some(decimal) = ast_decimal_ir_type(base, params) {

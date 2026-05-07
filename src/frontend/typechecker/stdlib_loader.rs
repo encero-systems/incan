@@ -733,6 +733,8 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         is_rusttype: nt.is_rusttype,
                         has_interop: !nt.interop_edges.is_empty(),
                         underlying,
+                        constraints: Vec::new(),
+                        implicit_coercion_enabled: true,
                         method_rebindings,
                         method_aliases: std::collections::HashMap::new(),
                         methods: extract_method_signatures_with_rust_imports(&nt.methods, &tp_names, &rust_imports),
@@ -1196,6 +1198,10 @@ fn ast_type_to_resolved_with_rust_imports(
             }
 
             ResolvedType::Named(name.clone())
+        }
+        ast::Type::ConstrainedPrimitive(name, _) => {
+            let base = ast::Type::Simple(name.clone());
+            ast_type_to_resolved_with_rust_imports(&base, type_params, rust_imports)
         }
         ast::Type::Generic(name, args) => {
             let resolved_args: Vec<ResolvedType> = args

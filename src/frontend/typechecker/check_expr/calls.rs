@@ -135,6 +135,19 @@ impl TypeChecker {
                     SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
                         return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
                     }
+                    SymbolKind::Type(TypeInfo::Newtype(_)) => {
+                        if !type_args.is_empty() {
+                            self.errors
+                                .push(errors::explicit_call_site_type_args_not_supported(span));
+                            self.check_call_args(args);
+                            return ResolvedType::Unknown;
+                        }
+                        self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                        self.type_info
+                            .ident_kinds
+                            .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                        return self.check_constructor(name, args, span);
+                    }
                     SymbolKind::Function(func_info) => {
                         return self.validate_function_call(name, &func_info, type_args, args, span);
                     }

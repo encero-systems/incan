@@ -704,7 +704,9 @@ impl TypeChecker {
                 ));
             }
             // Check value matches annotation
-            if !self.types_compatible(&value_ty, &ann_ty) {
+            if !self.types_compatible(&value_ty, &ann_ty)
+                && !self.record_validated_newtype_coercion_if_possible(&value_ty, &ann_ty, assign.value.span)
+            {
                 self.errors.push(errors::type_mismatch(
                     &ann_ty.to_string(),
                     &value_ty.to_string(),

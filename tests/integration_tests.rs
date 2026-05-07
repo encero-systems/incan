@@ -168,6 +168,99 @@ main = "src/main.incn"
 }
 
 #[test]
+fn validated_newtype_runtime_success_coerces_approved_sites() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(incan_debug_binary())
+        .args([
+            "run",
+            "-c",
+            r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("attempts must be >= 1"))
+    return Ok(Attempts(n))
+
+def retry(attempts: Attempts) -> None:
+  println(f"retry={attempts.0}")
+
+def main() -> None:
+  retry(3)
+  attempts: Attempts = 4
+  println(f"local={attempts.0}")
+"#,
+        ])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "validated-newtype success program failed.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("retry=3"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("local=4"), "unexpected stdout:\n{stdout}");
+
+    Ok(())
+}
+
+#[test]
+fn validated_newtype_runtime_fail_fast_reports_validation_error() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("attempts must be >= 1"))
+    return Ok(Attempts(n))
+
+def retry(attempts: Attempts) -> None:
+  return
+
+def read_attempts(attempts: Attempts) -> int:
+  return attempts.0
+
+def main() -> None:
+  println(f"ok={read_attempts(Attempts(1))}")
+  retry(0)
+"#,
+        "ValidationError",
+        &["Attempts::from_underlying", "attempts must be >= 1"],
+    )
+}
+
+#[test]
+fn validated_newtype_runtime_aggregates_model_field_errors() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        r#"
+type PositiveInt = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("positive int must be greater than zero"))
+    return Ok(PositiveInt(n))
+
+model Bounds:
+  low: PositiveInt
+  high: PositiveInt
+
+def width(bounds: Bounds) -> int:
+  return bounds.high.0 - bounds.low.0
+
+def main() -> None:
+  println(f"width={width(Bounds(low=1, high=2))}")
+  _ = Bounds(low=0, high=-1)
+"#,
+        "ValidationError",
+        &[
+            "Bounds validation failed with 2 error(s)",
+            "low: positive int must be greater than zero",
+            "high: positive int must be greater than zero",
+        ],
+    )
+}
+
+#[test]
 fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let src_dir = tmp.path().join("src");

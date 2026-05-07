@@ -8,6 +8,7 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 
 use super::TypeChecker;
 
@@ -26,6 +27,28 @@ type InheritedMembers = (
     HashMap<String, MethodInfo>,
     HashMap<String, Vec<MethodInfo>>,
 );
+
+/// Extract constrained-primitive predicates from a newtype underlying annotation.
+fn newtype_constraints(ty: &Type) -> Vec<NewtypePrimitiveConstraint> {
+    let Type::ConstrainedPrimitive(_, constraints) = ty else {
+        return Vec::new();
+    };
+    constraints
+        .iter()
+        .map(|constraint| NewtypePrimitiveConstraint {
+            key: constraint.node.key,
+            value: constraint.node.value.value,
+            repr: constraint.node.value.repr.clone(),
+        })
+        .collect()
+}
+
+/// Return whether a newtype declaration permits RFC 017 implicit coercion.
+fn newtype_allows_implicit_coercion(decorators: &[Spanned<Decorator>]) -> bool {
+    !decorators.iter().any(|decorator| {
+        core_decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::NoImplicitCoercion)
+    })
+}
 
 /// Convert parsed value enum backing syntax into symbol-table metadata.
 fn value_enum_backing(value_type: ValueEnumType) -> ValueEnumBacking {
@@ -751,6 +774,8 @@ impl TypeChecker {
                 is_rusttype: nt.is_rusttype,
                 has_interop: !nt.interop_edges.is_empty(),
                 underlying: underlying.clone(),
+                constraints: newtype_constraints(&nt.underlying.node),
+                implicit_coercion_enabled: newtype_allows_implicit_coercion(&nt.decorators),
                 method_rebindings,
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(), // Empty for now

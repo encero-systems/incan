@@ -415,8 +415,12 @@ impl TypeChecker {
         }
     }
 
+    /// Emit a call-argument mismatch unless RFC 017 allows a validated-newtype coercion at this argument span.
     fn emit_arg_type_mismatch_if_needed(&mut self, expected: &ResolvedType, actual: &ResolvedType, span: Span) {
         if !self.types_compatible(actual, expected) {
+            if self.record_validated_newtype_coercion_if_possible(actual, expected, span) {
+                return;
+            }
             self.errors
                 .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
         }

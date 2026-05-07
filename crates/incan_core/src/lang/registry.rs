@@ -52,6 +52,9 @@ pub const RFC_009: RfcId = "RFC 009";
 /// RFC 016 — `loop` and `break <value>` loop expressions.
 pub const RFC_016: RfcId = "RFC 016";
 
+/// RFC 017 — validated newtypes with implicit coercion.
+pub const RFC_017: RfcId = "RFC 017";
+
 /// RFC 018 — testing stdlib and assertion helpers.
 pub const RFC_018: RfcId = "RFC 018";
 
@@ -121,6 +124,8 @@ impl RFC {
     pub const _009: RfcId = RFC_009;
     /// RFC 016 — `loop` and `break <value>` loop expressions.
     pub const _016: RfcId = RFC_016;
+    /// RFC 017 — validated newtypes with implicit coercion.
+    pub const _017: RfcId = RFC_017;
     /// RFC 018 — testing stdlib and assertion helpers.
     pub const _018: RfcId = RFC_018;
     /// RFC 021 — model field metadata and aliases.

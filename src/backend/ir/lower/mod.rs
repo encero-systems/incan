@@ -42,6 +42,7 @@ use super::types::IrType;
 use super::{IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
+use crate::frontend::symbols::NewtypePrimitiveConstraint;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
@@ -92,6 +93,8 @@ pub struct AstLowering {
     /// Newtype -> chosen validated constructor method name (e.g. "from_underlying", "from_str"),
     /// used for checked construction lowering of `T(x)` at call sites.
     pub(super) newtype_checked_ctor: HashMap<String, String>,
+    /// Newtype -> generated constrained-primitive predicates for checked construction when no explicit hook exists.
+    pub(super) newtype_constraints: HashMap<String, Vec<NewtypePrimitiveConstraint>>,
     /// When lowering methods inside an impl block, this tracks the current target type name.
     /// Used to avoid rewriting `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
     pub(super) current_impl_type: Option<String>,
@@ -139,22 +142,18 @@ impl AstLowering {
         }
     }
 
-    /// Select a validated constructor method for a newtype for v0.1 checked construction.
-    ///
-    /// Heuristic (minimal hardening for #44, RFC runway):
-    /// - Prefer a static `from_underlying(underlying) -> Result[T, E]` if present and well-shaped.
-    /// - Otherwise, if there is exactly one static `from_*` method with, use it when:
-    ///     - exactly 1 parameter whose type matches the newtype underlying type (syntactic match), and
-    ///     - return type `Result[T, E]`,
+    /// Select the canonical RFC 017 checked-construction hook for a newtype.
     fn select_newtype_checked_ctor(n: &ast::NewtypeDecl) -> Option<String> {
-        fn is_result_of_newtype(ty: &ast::Type, newtype_name: &str) -> bool {
+        /// Return whether an AST type is `Result[Newtype, ValidationError]`.
+        fn is_result_of_newtype_validation_error(ty: &ast::Type, newtype_name: &str) -> bool {
             let ast::Type::Generic(name, args) = ty else {
                 return false;
             };
-            if collections::from_str(name.as_str()) != Some(CollectionTypeId::Result) || args.is_empty() {
+            if collections::from_str(name.as_str()) != Some(CollectionTypeId::Result) || args.len() != 2 {
                 return false;
             }
-            matches!(&args[0].node, ast::Type::Simple(t) if t == newtype_name)
+            matches!(&args[0].node, ast::Type::Simple(t) if t == newtype_name || t == "Self")
+                && matches!(&args[1].node, ast::Type::Simple(t) if t == "ValidationError")
         }
 
         fn matches_underlying_param(m: &ast::MethodDecl, underlying: &ast::Type) -> bool {
@@ -164,50 +163,22 @@ impl AstLowering {
             m.params[0].node.ty.node == *underlying
         }
 
-        // Candidate: static method named from_* with (underlying) -> Result[T, E]
-        let mut candidates: Vec<&ast::MethodDecl> = n
-            .methods
-            .iter()
-            .filter_map(|m| {
-                let md = &m.node;
-                if md.receiver.is_some() {
-                    return None;
-                }
-                if !md.name.starts_with("from_") {
-                    return None;
-                }
-                if !matches_underlying_param(md, &n.underlying.node) {
-                    return None;
-                }
-                if !is_result_of_newtype(&md.return_type.node, &n.name) {
-                    return None;
-                }
-                Some(md)
-            })
-            .collect();
-
-        // Prefer from_underlying
-        if let Some(m) = candidates
-            .iter()
-            .find(|m| m.name == conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
-        {
-            return Some(m.name.clone());
-        }
-
-        if candidates.len() == 1 {
-            // Safe: we just checked len() == 1
-            return candidates.pop().map(|m| m.name.clone());
-        }
-
-        if candidates.len() > 1 {
-            tracing::warn!(
-                newtype = %n.name,
-                candidates = ?candidates.iter().map(|m| &m.name).collect::<Vec<_>>(),
-                "newtype has multiple from_* methods; define explicit from_underlying for checked construction"
-            );
-        }
-
-        None
+        n.methods.iter().find_map(|m| {
+            let md = &m.node;
+            if md.receiver.is_some() {
+                return None;
+            }
+            if md.name != conventions::NEWTYPE_FROM_UNDERLYING_METHOD {
+                return None;
+            }
+            if !matches_underlying_param(md, &n.underlying.node) {
+                return None;
+            }
+            if !is_result_of_newtype_validation_error(&md.return_type.node, &n.name) {
+                return None;
+            }
+            Some(md.name.clone())
+        })
     }
 
     /// Create a new lowering context.
@@ -226,6 +197,7 @@ impl AstLowering {
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
+            newtype_constraints: HashMap::new(),
             current_impl_type: None,
             current_classmethod_constructor: None,
             struct_field_aliases: HashMap::new(),
@@ -239,6 +211,21 @@ impl AstLowering {
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
         }
+    }
+
+    /// Extract generated validation constraints from a newtype underlying annotation.
+    fn newtype_constraints_from_ast(ty: &ast::Type) -> Vec<NewtypePrimitiveConstraint> {
+        let ast::Type::ConstrainedPrimitive(_, constraints) = ty else {
+            return Vec::new();
+        };
+        constraints
+            .iter()
+            .map(|constraint| NewtypePrimitiveConstraint {
+                key: constraint.node.key,
+                value: constraint.node.value.value,
+                repr: constraint.node.value.repr.clone(),
+            })
+            .collect()
     }
 
     /// Create a lowering context that uses typechecker output for more accurate lowering.
@@ -635,6 +622,11 @@ impl AstLowering {
                 // Track validation hook selection for checked construction lowering.
                 if let Some(ctor) = Self::select_newtype_checked_ctor(n) {
                     self.newtype_checked_ctor.insert(n.name.clone(), ctor);
+                } else {
+                    let constraints = Self::newtype_constraints_from_ast(&n.underlying.node);
+                    if !constraints.is_empty() {
+                        self.newtype_constraints.insert(n.name.clone(), constraints);
+                    }
                 }
             }
         }

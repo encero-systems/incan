@@ -10,9 +10,9 @@ def add(acc: int, n: int) -> int:
 type Money = newtype int
 
 type PositiveInt = newtype int:
-    def from_underlying(n: int) -> Result[PositiveInt, str]:
+    def from_underlying(n: int) -> Result[PositiveInt, ValidationError]:
         if n <= 0:
-            return Err("positive int must be greater than zero")
+            return Err(ValidationError("positive int must be greater than zero"))
         return Ok(PositiveInt(n))
 
 def sum_money(items: list[Money]) -> Money:

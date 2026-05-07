@@ -42,6 +42,9 @@ pub enum SurfaceTypeId {
 
     // Reflection
     FieldInfo,
+
+    // Validation
+    ValidationError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -251,6 +254,15 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         RFC::_021,
         Since(0, 1),
     ),
+    info(
+        SurfaceTypeId::ValidationError,
+        "ValidationError",
+        &[],
+        SurfaceTypeKind::Named,
+        "Structured validation error used by validated newtypes.",
+        RFC::_017,
+        Since(0, 3),
+    ),
 ];
 
 /// Canonical Incan name of the task join error type (`"TaskJoinError"`).
@@ -299,8 +311,8 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
         // Reflection
         SurfaceTypeId::FieldInfo => Some("std.reflection"),
 
-        // Interop types are globally available.
-        SurfaceTypeId::Vec | SurfaceTypeId::HashMap => None,
+        // Interop and validation types are globally available.
+        SurfaceTypeId::ValidationError | SurfaceTypeId::Vec | SurfaceTypeId::HashMap => None,
     }
 }
 
@@ -353,6 +365,7 @@ pub fn info_for(id: SurfaceTypeId) -> SurfaceTypeInfo {
         SurfaceTypeId::Body => SURFACE_TYPES[18],
         SurfaceTypeId::Request => SURFACE_TYPES[19],
         SurfaceTypeId::FieldInfo => SURFACE_TYPES[20],
+        SurfaceTypeId::ValidationError => SURFACE_TYPES[21],
     }
 }
 

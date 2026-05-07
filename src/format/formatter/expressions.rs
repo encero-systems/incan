@@ -690,6 +690,19 @@ impl Formatter {
                 }
                 self.writer.write("]");
             }
+            Type::ConstrainedPrimitive(name, constraints) => {
+                self.writer.write(name);
+                self.writer.write("[");
+                for (i, constraint) in constraints.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.writer.write(constraint.node.key.as_str());
+                    self.writer.write("=");
+                    self.writer.write(&constraint.node.value.repr);
+                }
+                self.writer.write("]");
+            }
             Type::IntLiteral(value) => self.writer.write(&value.repr),
             Type::Tuple(types) => {
                 self.writer.write("Tuple[");

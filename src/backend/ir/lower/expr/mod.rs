@@ -224,6 +224,8 @@ impl AstLowering {
         }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
+        // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
+        lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         Ok(lowered)
     }
 

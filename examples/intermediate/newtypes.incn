@@ -22,9 +22,9 @@ struct Email(String);
 type UserId = newtype int
 type ProductId = newtype int
 type Email = newtype str:
-    def from_underlying(v: str) -> Result[Email, str]:
+    def from_underlying(v: str) -> Result[Email, ValidationError]:
         if "@" not in v:
-            return Err("missing @")
+            return Err(ValidationError("missing @"))
         return Ok(Email(v.lower()))
 
 
@@ -45,8 +45,8 @@ def make_positive_id(n: int) -> Result[UserId, str]:
 def main() -> None:
     user_id = UserId(42)
     product_id = ProductId(100)
-    # Checked construction (v0.1 runway): since Email defines from_underlying,
-    # calling Email(...) validates and panics on invalid input.
+    # Checked construction: since Email defines from_underlying,
+    # calling Email(...) validates and raises on invalid input.
     email = Email("alice@example.com")
     user_id_val = user_id.0
     product_id_val = product_id.0

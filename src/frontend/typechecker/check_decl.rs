@@ -1921,10 +1921,13 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a module static declaration and record its final type for later lowering.
     fn check_static(&mut self, static_decl: &StaticDecl, span: Span) {
         let expected_ty = self.resolve_type_checked(&static_decl.ty);
         let value_ty = self.check_expr_with_expected(&static_decl.value, Some(&expected_ty));
-        if !self.types_compatible(&value_ty, &expected_ty) {
+        if !self.types_compatible(&value_ty, &expected_ty)
+            && !self.record_validated_newtype_coercion_if_possible(&value_ty, &expected_ty, static_decl.value.span)
+        {
             self.errors.push(errors::type_mismatch(
                 &expected_ty.to_string(),
                 &value_ty.to_string(),
@@ -2047,9 +2050,11 @@ impl TypeChecker {
 
             // Check default expression type
             if let Some(default) = &field.node.default {
-                let default_ty = self.check_expr(default);
                 let field_ty = self.resolve_type_checked(&field.node.ty);
-                if !self.types_compatible(&default_ty, &field_ty) {
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
                         &default_ty.to_string(),
@@ -2293,9 +2298,11 @@ impl TypeChecker {
             });
 
             if let Some(default) = &field.node.default {
-                let default_ty = self.check_expr(default);
                 let field_ty = self.resolve_type_checked(&field.node.ty);
-                if !self.types_compatible(&default_ty, &field_ty) {
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
                         &default_ty.to_string(),
@@ -2491,6 +2498,7 @@ impl TypeChecker {
             self.errors
                 .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));
         }
+        self.validate_newtype_from_underlying_hook(nt, &underlying);
 
         for rebinding in &nt.rebindings {
             // Short-form rebinding targets (`alias = method`) should be interpreted as method names,
@@ -2542,6 +2550,90 @@ impl TypeChecker {
             if method.node.body.is_some() {
                 self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
+        }
+    }
+
+    /// Validate the canonical RFC 017 `from_underlying` hook when a newtype declares one.
+    fn validate_newtype_from_underlying_hook(&mut self, nt: &NewtypeDecl, underlying: &ResolvedType) {
+        let Some(method_decl) = nt
+            .methods
+            .iter()
+            .find(|method| method.node.name == incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+        else {
+            return;
+        };
+        let method_span = method_decl.span;
+        let method_info = self.lookup_type_info(&nt.name).and_then(|info| match info {
+            TypeInfo::Newtype(newtype) => newtype
+                .methods
+                .get(incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+                .cloned(),
+            _ => None,
+        });
+        let Some(method_info) = method_info else {
+            return;
+        };
+
+        if method_info.receiver.is_some() {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must be a static method with no self receiver",
+                method_span,
+            ));
+        }
+        if method_info.is_async {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must be deterministic and cannot be async",
+                method_span,
+            ));
+        }
+        if method_info.params.len() != 1
+            || method_info
+                .params
+                .first()
+                .is_some_and(|param| param.kind != ParamKind::Normal)
+        {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must accept exactly one ordinary parameter",
+                method_span,
+            ));
+        } else if let Some(param) = method_info.params.first()
+            && !self.types_compatible(&param.ty, underlying)
+        {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                &format!(
+                    "parameter type must be the newtype underlying type '{underlying}', found '{}'",
+                    param.ty
+                ),
+                method_span,
+            ));
+        }
+
+        let expected_err = ResolvedType::Named("ValidationError".to_string());
+        let valid_return = matches!(
+            &method_info.return_type,
+            ResolvedType::Generic(name, args)
+                if crate::frontend::typechecker::helpers::collection_type_id(name.as_str())
+                    == Some(incan_core::lang::types::collections::CollectionTypeId::Result)
+                    && args.len() == 2
+                    && (
+                        matches!(&args[0], ResolvedType::Named(name) if name == &nt.name)
+                            || matches!(&args[0], ResolvedType::SelfType)
+                    )
+                    && args[1] == expected_err
+        );
+        if !valid_return {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                &format!(
+                    "return type must be Result[{}, ValidationError], found '{}'",
+                    nt.name, method_info.return_type
+                ),
+                method_span,
+            ));
         }
     }
 

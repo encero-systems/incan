@@ -104,6 +104,21 @@ impl AstLowering {
                 }
                 IrType::Generic(name.clone())
             }
+            ast::Type::ConstrainedPrimitive(name, _) => {
+                let n = name.as_str();
+                if let Some(id) = numerics::from_str(n) {
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
+                    };
+                }
+                IrType::Generic(name.clone())
+            }
             ast::Type::Generic(base, args) => {
                 let lowered_args = args.iter().map(|arg| Self::lower_bound_type(&arg.node)).collect();
                 IrType::NamedGeneric(base.clone(), lowered_args)
@@ -604,6 +619,7 @@ impl AstLowering {
                     .join(", ");
                 format!("{name}<{inner}>")
             }
+            ast::Type::ConstrainedPrimitive(_, _) => ty.to_string(),
             ast::Type::Function(_, _) => "fn".to_string(),
             ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
             ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),

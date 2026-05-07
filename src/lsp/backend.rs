@@ -1421,6 +1421,7 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("{}[{}]", name, params_str.join(", "))
         }
+        Type::ConstrainedPrimitive(_, _) => ty.to_string(),
         Type::Tuple(types) => {
             let types_str: Vec<String> = types.iter().map(|t| format_type(&t.node)).collect();
             format!("({})", types_str.join(", "))

@@ -186,6 +186,44 @@ pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileE
     .with_hint("Use expression arguments such as name=value for decorator factories")
 }
 
+/// Report a malformed `ValidationError(...)` constructor call.
+pub fn validation_error_constructor_shape(span: Span) -> CompileError {
+    CompileError::type_error(
+        "ValidationError requires exactly one message argument and an optional code".to_string(),
+        span,
+    )
+    .with_hint("Use ValidationError(\"message\") or ValidationError(message=\"message\")")
+}
+
+/// Report a `from_underlying` hook that does not satisfy the RFC 017 contract.
+pub fn invalid_newtype_validation_hook(newtype_name: &str, detail: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Invalid '{newtype_name}.from_underlying' validation hook: {detail}"),
+        span,
+    )
+    .with_hint(format!(
+        "Use: def from_underlying(value: <underlying>) -> Result[{newtype_name}, ValidationError]"
+    ))
+}
+
+/// Report an implicit coercion attempt into a newtype that opted out.
+pub fn implicit_newtype_coercion_disabled(newtype_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Implicit coercion into newtype '{newtype_name}' is disabled"),
+        span,
+    )
+    .with_hint("Use an explicit constructor or from_underlying call at this site")
+}
+
+/// Report a cycle in validated-newtype underlying/coercion resolution.
+pub fn newtype_coercion_cycle(newtype_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Validated-newtype coercion cycle detected while resolving '{newtype_name}'"),
+        span,
+    )
+    .with_hint("Break the newtype-underlying cycle before relying on implicit coercion")
+}
+
 pub fn reserved_root_namespace(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("'{}' is a reserved root namespace", name), span)
         .with_hint("Choose a different name (reserved: std, rust)")
@@ -1405,6 +1443,18 @@ pub fn positional_constructor_args_not_supported(type_name: &str, span: Span) ->
         span,
     )
     .with_hint(format!("Use named arguments: {}(field=value, ...)", type_name))
+}
+
+/// Report a newtype constructor call that does not pass exactly one positional underlying value.
+pub fn newtype_constructor_shape(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Newtype constructor '{}' requires exactly one positional underlying value",
+            type_name
+        ),
+        span,
+    )
+    .with_hint(format!("Use {}(<underlying value>)", type_name))
 }
 
 pub fn positional_pattern_not_supported(type_name: &str, span: Span) -> CompileError {

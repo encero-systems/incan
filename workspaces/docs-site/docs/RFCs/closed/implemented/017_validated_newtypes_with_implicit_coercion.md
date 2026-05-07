@@ -1,13 +1,13 @@
 # RFC 017: Validated newtypes with implicit coercion (pydantic-like feel)
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-01-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 021 (model field metadata and aliases)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/75
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.39
 
 ## Summary
 
@@ -19,14 +19,14 @@ We want guardrails for common primitives (especially numerics) without boilerpla
 
 Today, authors can validate manually (e.g. helpers returning `Result`), but that requires explicit calls everywhere. The desired ergonomics are: pass raw values at boundaries, coerce and validate automatically, and get a clear validation failure on invalid input.
 
-Concrete shapes this model can express in v1:
+Concrete shapes this model can express in the initial validated-newtype contract:
 
 - Constrained numerics (pure): `PositiveInt`, `NonNegativeInt`, finite float, etc.
 - Parsing/normalization types (pure): e.g. URL/UUID/IP types as parse + normalize without DNS/network I/O.
-- Human-friendly boundary parsing stays explicit: e.g. `BytesCount = newtype int[ge=0]` plus explicit `parse_byte_size(str) -> Result[BytesCount, ...]` (v1 does not introduce implicit `str -> int` parsing).
+- Human-friendly boundary parsing stays explicit: e.g. `BytesCount = newtype int[ge=0]` plus explicit `parse_byte_size(str) -> Result[BytesCount, ...]` (this RFC does not introduce implicit `str -> int` parsing).
 - Redaction/masking types: e.g. `SecretStr` as a normal `newtype str`; masking stays a formatter/serializer concern outside this RFC’s compiler changes.
 
-Types that depend on non-determinism (filesystem existence, wall-clock time, network) are out of scope for v1 implicit coercion; they remain explicit constructors or a future “impure validation” extension.
+Types that depend on non-determinism (filesystem existence, wall-clock time, network) are out of scope for implicit coercion; they remain explicit constructors or a future “impure validation” extension.
 
 ### Versioning note (v0.1 vs v0.2)
 
@@ -43,7 +43,7 @@ This RFC describes the intended **v0.2** direction. For **v0.1** stabilization, 
 ## Non-goals
 
 - Implicit ambient primitive conversions (`str -> int`, `int -> float`, etc.) as part of coercion rewriting.
-- Non-deterministic or effectful validation inside the implicit-coercion contract for v1.
+- Non-deterministic or effectful validation inside the implicit-coercion contract.
 - Labeled control flow or other unrelated language features.
 
 ## Guide-level explanation (how users think about it)
@@ -92,12 +92,12 @@ Implicit coercion from `int` to `RetryAttempts` follows the chain `int -> Positi
 
 - `int("5")` remains a plain conversion to `int` (no constraint keyword arguments at runtime).
 - Constraints live on the constrained type (`int[ge=0]`) and are enforced by `from_underlying` and by implicit coercion sites.
-- For v1, constrained primitives are intended as newtype underlyings, not as universal drop-in replacements for bare `int`/`float` everywhere.
+- Constrained primitives are intended as newtype underlyings, not as universal drop-in replacements for bare `int`/`float` everywhere.
 
-**Constraint vocabulary (v1 proposal):**
+**Constraint vocabulary:**
 
 - `int[...]`: `ge`, `gt`, `le`, `lt` (values must be compile-time constants: literals or named `const`s).
-- `float[...]` (optional for v1): same keys; values compile-time constants. IEEE: comparisons with NaN are false, so NaN must fail all such constraints by default.
+- `float[...]` may use the same keys; values must be compile-time constants. IEEE comparisons with NaN are false, so NaN must fail all such constraints by default.
 
 **Constraint semantics:** `ge` / `gt` / `le` / `lt` have the usual ordered comparisons. Multiple constraints may appear in one bracket list (`int[ge=0, lt=10]`); order is irrelevant and all must hold. Constraint parameters are compile-time constants, not arbitrary expressions. Only one constraint block is permitted on a primitive. Duplicate keys are rejected.
 
@@ -149,14 +149,6 @@ Multiple exit shapes (success, timeout, error) and call-site noise are reduced a
 - Unifying coercion chains and diagnostics adds compiler and runtime complexity.
 - Constrained types and aggregation must be tuned to avoid confusing error volumes.
 
-## Layers affected
-
-- **Lexer/parser/AST/formatter:** constrained primitive syntax in type position; structured representation; stable formatting.
-- **Typechecker:** reserved hook shape, coercion insertion at approved sites, cycle detection, diagnostics.
-- **Lowering/IR/emission:** validated coercion representation; deterministic evaluation order; panic paths for failed coercion.
-- **Runtime/stdlib:** `ValidationError` shape, aggregation helpers, stable formatting.
-- **Docs/tooling:** teach hooks, coercion sites, opt-outs, and explicit alternatives.
-
 ## Implementation architecture
 
 *(Non-normative.)* A practical rollout has four broad pieces:
@@ -168,12 +160,99 @@ Multiple exit shapes (success, timeout, error) and call-site noise are reduced a
 
 Implementation sequencing is not part of the public contract. The RFC’s design claim is the full validated-newtype boundary model, not any one stepping-stone rollout order.
 
+## Layers affected
+
+- **Lexer/parser/AST/formatter:** constrained primitive syntax in type position; structured representation; stable formatting.
+- **Typechecker:** reserved hook shape, coercion insertion at approved sites, cycle detection, diagnostics.
+- **Lowering/IR/emission:** validated coercion representation; deterministic evaluation order; panic paths for failed coercion.
+- **Runtime/stdlib:** `ValidationError` shape, aggregation helpers, stable formatting.
+- **Docs/tooling:** teach hooks, coercion sites, opt-outs, and explicit alternatives.
+
+## Implementation Plan
+
+### Phase 1: Type surface and validation metadata
+
+- Add constrained primitive type syntax in type position and keep it as structured AST/type metadata.
+- Preserve formatter and parser round-tripping for constrained primitive types.
+- Recognize `from_underlying` as the canonical newtype hook and validate its deterministic, underlying-to-newtype shape.
+- Provide default generated validation metadata for unconstrained newtypes and constrained primitive underlyings.
+
+### Phase 2: Coercion eligibility and insertion
+
+- Build a typechecker-owned validated-newtype coercion planner for underlying-to-newtype and newtype-to-newtype chains.
+- Apply coercion only at approved sites: newtype construction, function arguments, typed initializers, and model/class field initialization.
+- Reject coercion cycles, primitive parsing, unrelated primitive widening, and opted-out implicit coercion with precise diagnostics.
+
+### Phase 3: Lowering, emission, and runtime errors
+
+- Carry validated coercion decisions through lowering instead of rediscovering them during emission.
+- Emit deterministic fail-fast coercion calls for ordinary sites.
+- Add the runtime `ValidationError` and aggregation representation needed for model/class field initialization.
+- Emit aggregated model/class construction failures where multiple fields fail validation.
+
+### Phase 4: User-facing docs, release notes, and closeout
+
+- Update the newtypes tutorial/reference material to describe checked construction, implicit coercion sites, opt-outs, and explicit recovery paths.
+- Add active `0.3` release notes for validated-newtype work.
+- Bump the active development version by one `0.3.0-dev.N` increment.
+- Run focused parser/typechecker/codegen tests plus the repository pre-commit gate.
+
+## Implementation log
+
+### Spec / lifecycle
+
+- [x] Review RFC 017 for In Progress hygiene and establish the implementation phases/checklist.
+- [x] Keep the RFC checklist synchronized as implementation slices land.
+
+### Parser / AST / Formatter
+
+- [x] Parser: accept constrained primitive syntax in type position.
+- [x] AST: represent primitive constraints structurally instead of as ordinary generic arguments.
+- [x] Formatter: round-trip constrained primitive types stably.
+- [x] Diagnostics: reject duplicate keys, unsupported keys, non-constant values, and repeated constraint blocks.
+
+### Typechecker
+
+- [x] Recognize `from_underlying` as the canonical newtype validation hook.
+- [x] Validate hook parameter and return shape against the newtype underlying type and `Result[Self, ValidationError]`.
+- [x] Generate/default validation metadata for unconstrained and constrained underlyings.
+- [x] Plan validated-newtype coercion chains without ambient primitive conversions.
+- [x] Insert coercion at newtype construction, function arguments, typed initializers, and model/class field initialization.
+- [x] Reject cycles and opted-out implicit coercion with span-precise diagnostics.
+
+### Lowering / IR / Emission
+
+- [x] Carry checked coercion plans through lowering/IR.
+- [x] Emit fail-fast validated coercion calls for ordinary coercion sites.
+- [x] Emit aggregated validation failures for model/class field initialization.
+- [x] Preserve deterministic evaluation order and avoid ad hoc emission-time type guesses.
+
+### Runtime / Stdlib
+
+- [x] Provide canonical `ValidationError` support for validated newtypes.
+- [x] Provide aggregation helpers or data structures for model/class construction failures.
+- [x] Keep explicit `Result`-returning construction available for recoverable flows.
+
+### Tests
+
+- [x] Parser and formatter tests for constrained primitive syntax.
+- [x] Typechecker tests for valid hooks, malformed hooks, coercion chains, cycles, opt-outs, and invalid primitive conversions.
+- [x] Codegen snapshots for checked construction, function arguments, typed initializers, and model/class fields.
+- [x] Runtime/integration tests for successful coercion, fail-fast errors, and aggregated field errors.
+
+### Docs / Release
+
+- [x] Update authored user-facing newtype documentation.
+- [x] Update relevant reference material for validation errors and coercion controls.
+- [x] Add active `0.3` release notes.
+- [x] Bump the active development version from `0.3.0-dev.38` to the next dev increment.
+
 ## Design Decisions
 
 1. **Panic strategy (unwind vs abort)** — Validation failures from implicit coercion use the language runtime’s normal panic mechanism (typically unwinding). A distinct abort-only policy is out of scope unless specified separately.
 
-2. **Constraint catalog for v1** — Start with `ge` / `gt` / `le` / `lt` on `int`, with optional extension to `float` under the same keys; additional constraints or types ship via follow-up RFCs or releases.
+2. **Constraint catalog** — Start with `ge` / `gt` / `le` / `lt` on `int`, with optional extension to `float` under the same keys; additional constraints or types ship via follow-up RFCs or releases.
 
-3. **Non-panicking mode** — Explicit `Type.from_underlying(value)` (and related explicit APIs) remains the supported recoverable path. Implicit coercion stays panic-on-invalid for v1 until a dedicated opt-in “Result mode” is specified and implemented.
+3. **Non-panicking mode** — Explicit `Type.from_underlying(value)` (and related explicit APIs) remains the supported recoverable path. Implicit coercion stays panic-on-invalid until a dedicated opt-in “Result mode” is specified and implemented.
 
-4. **Serialization and FFI** — Implicit coercion applies only at the Incan-language sites listed in this RFC. Serialization codecs and FFI boundaries must use explicit constructors or adapters; no implicit coercion across foreign boundaries in v1.
+4. **Serialization and FFI** — Implicit coercion applies only at the Incan-language sites listed in this RFC. Serialization codecs and FFI boundaries must use explicit constructors or adapters; no implicit coercion across foreign boundaries in this RFC.

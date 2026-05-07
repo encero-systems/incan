@@ -23,16 +23,16 @@ trait Error:
 ## Example: simple structured error
 
 ```incan
-model ValidationError with Error:
+model AgeValidationError with Error:
     field: str
     msg: str
 
     def message(self) -> str:
         return f"Validation failed for '{self.field}': {self.msg}"
 
-def validate_age(age: int) -> Result[int, ValidationError]:
+def validate_age(age: int) -> Result[int, AgeValidationError]:
     if age < 0:
-        return Err(ValidationError(field="age", msg="cannot be negative"))
+        return Err(AgeValidationError(field="age", msg="cannot be negative"))
     return Ok(age)
 ```
 

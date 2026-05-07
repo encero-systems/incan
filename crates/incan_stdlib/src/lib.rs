@@ -16,6 +16,7 @@ pub mod reflection;
 pub mod storage;
 pub mod strings;
 pub mod testing;
+pub mod validation;
 pub mod version;
 
 #[cfg(feature = "json")]
