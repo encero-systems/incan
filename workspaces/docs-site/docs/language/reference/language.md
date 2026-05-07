@@ -112,6 +112,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.io` | - | - | - |
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
+| `std.builtins` | - | - | - |
 
 ## Builtin exceptions
 

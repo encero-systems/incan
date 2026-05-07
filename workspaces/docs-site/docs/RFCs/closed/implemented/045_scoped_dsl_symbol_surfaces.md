@@ -1,6 +1,6 @@
 # RFC 045: Scoped DSL symbol surfaces
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-27
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/202
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -127,12 +127,13 @@ For an unqualified call-form identifier `name(...)` in an eligible position of a
 2. If not matched by scoped descriptors, ordinary language resolution must apply (lexical bindings, imports, and module-scoped names per existing rules).
 3. If ordinary resolution fails, builtin resolution may still apply per existing language rules.
 
-Precedence when **both** an active scoped symbol descriptor and an ordinary lexical binding could apply to the same unqualified call (for example an imported alias that spells the same as a scoped DSL symbol) is not settled in this Draft; see **Unresolved questions**.
+Precedence follows the same local-over-outer model as variable scope: inside an eligible position of an active owning DSL block, a matching scoped symbol descriptor is the local meaning and takes precedence over ordinary lexical bindings, imports, module-scoped names, and builtin fallback. Users who want the ordinary meaning must use explicit qualification or an alias.
 
-### Resolution outside eligible positions
+### Resolution outside DSL scope and in ineligible DSL positions
 
-- Scoped symbol descriptors must not alter ordinary language resolution outside eligible positions.
-- Outside eligible positions, names must resolve exactly as they do without scoped symbol registration.
+- Outside the owning DSL's structural scope, scoped symbol descriptors must not alter ordinary language resolution.
+- Inside the owning DSL's structural scope but outside an eligible position, a descriptor may emit DSL-owned misuse diagnostics when `misuse_scope` opts into active-DSL diagnostics.
+- Descriptors without active-DSL misuse diagnostics leave ineligible positions to ordinary language resolution.
 
 ### Explicit builtin access
 
@@ -143,9 +144,8 @@ Precedence when **both** an active scoped symbol descriptor and an ordinary lexi
 
 Implementations should emit targeted diagnostics for:
 
-- likely outside-scope DSL symbol misuse
+- active-DSL symbol misuse outside an eligible DSL position
 - ambiguous intent where both scoped DSL meaning and ordinary lexical meaning are plausible
-- missing activation when a scoped symbol is used in DSL-styled contexts
 
 Diagnostics should suggest explicit rewrites (`std.builtins.<name>` or qualified lexical symbol) when overlap occurs.
 
@@ -153,6 +153,7 @@ Diagnostics should suggest explicit rewrites (`std.builtins.<name>` or qualified
 
 - Existing code outside scoped DSL positions must preserve behavior.
 - Inside scoped DSL positions, behavior may change from ordinary builtin resolution to DSL-owned resolution where descriptors are active.
+- Inside active DSL scope, descriptor authors may opt into targeted diagnostics for spellings that are strong DSL-intent signals but appear in the wrong DSL position.
 - DSL authors should document scoped symbol sets as part of their language surface contract.
 
 ## Design details
@@ -180,7 +181,7 @@ The feature is additive at language surface level, but it can change behavior fo
 ## Alternatives considered
 
 - **Keep import-only DSL symbols forever.** Rejected because it keeps repetitive boilerplate and naming workarounds for common DSL primitives; every DSL user must import `sum`, `count`, etc. explicitly even though the meaning is unambiguous in context.
-- **Require globally unique DSL symbol names.** Rejected because it produces unnatural user-facing APIs (`inql_sum`, `hees_count`) and does not scale across independent DSL ecosystems that may reasonably want the same short names.
+- **Require globally unique DSL symbol names.** Rejected because it produces unnatural user-facing APIs (`query_sum`, `metrics_count`) and does not scale across independent DSL ecosystems that may reasonably want the same short names.
 - **Allow global shadowing of builtins by libraries.** Rejected because it is too broad and unsafe; it breaks predictability outside DSL contexts and makes it impossible for the compiler to provide helpful diagnostics about intent.
 - **Use runtime dunder-like dispatch for function calls.** Rejected because scoped language meaning should be compile-time and lexical, not ambient runtime magic; the enclosing DSL block owns the meaning, not a runtime inspection of "where am I."
 - **Fold scoped symbols into RFC 040 (scoped DSL surface forms).** Rejected because scoped identifiers are a distinct problem class from scoped syntax tokens; glyphs and expression forms need parser-level handling; identifiers need name-resolution-level precedence rules; keeping them in separate RFCs keeps each RFC focused and independently implementable.
@@ -212,13 +213,114 @@ Non-normative recommended shape:
 - **Formatter**: formatting should preserve explicit qualification used to disambiguate scoped vs builtin calls.
 - **LSP / tooling**: completions, hover, go-to-definition, and diagnostics should reflect scoped symbol meaning by context.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should scoped symbol precedence in eligible positions always outrank lexical names, or should lexical aliases outrank scoped symbols when explicitly imported?
-- Is `std.builtins.<name>` the correct canonical builtin escape path, or should a dedicated reserved root be introduced instead?
-- Should misuse diagnostics outside eligible positions be warning-level or error-level by default when a likely scoped intent is detected?
-- How should scoped symbol descriptor families be modeled for non-aggregate DSL symbols so tooling can provide semantic hints consistently?
-- Should descriptor activation be file-local only, or should there be an opt-in module subtree propagation model?
-- How should scoped symbol overloading across nested DSL blocks be resolved when multiple active descriptors share a name?
+### Phase 1: Vocab descriptor contract
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Extend `incan_vocab` with scoped symbol descriptor DTOs centered in the vocab crate, not ad-hoc compiler-local structs.
+- Model descriptor families as DSL-authored metadata constrained by a compiler/tooling-known family enum plus optional DSL-specific role metadata.
+- Add activation, eligibility, misuse-scope, diagnostic, and formatting/tooling metadata to the serialized descriptor contract.
+- Version-bump the `incan_vocab` crate for the author-facing API and serialized descriptor surface change.
+
+### Phase 2: Manifest and activation plumbing
+
+- Persist scoped symbol descriptors through library manifest serialization and validation.
+- Activate scoped symbol descriptors through the same file-local import-driven model used for soft keywords.
+- Reject malformed descriptors with producer-facing diagnostics before consumer compilation trusts them.
+
+### Phase 3: Frontend context and resolution
+
+- Preserve owning DSL block, clause, nested-scope, and call-position context through semantic analysis.
+- Resolve matching scoped symbols as the local meaning inside eligible positions, before lexical/import/module/builtin fallback.
+- Preserve ordinary resolution outside DSL scope and outside eligible positions.
+- Resolve nested DSL conflicts with innermost eligible owner wins; report ambiguity for same-depth matches.
+
+### Phase 4: Builtin escape namespace
+
+- Add `std.builtins` as the explicit escape path for core builtin functions.
+- Back the namespace from the existing builtin registry so the implementation dogfoods Incan-visible stdlib structure rather than adding parser-only magic.
+- Keep moving builtin types into `std.builtins` out of scope for this RFC.
+
+### Phase 5: Lowering, emission, formatter, and LSP
+
+- Carry scoped symbol identity into lowering and emission so DSL-owned calls do not collapse back into ordinary builtin calls.
+- Preserve explicit qualification in formatter output.
+- Surface completions, hover, go-to-definition, and diagnostics from the same scoped symbol metadata used by the compiler.
+
+### Phase 6: Tests and docs
+
+- Add vocab DTO, manifest round-trip, parser/context, typechecker, lowering/emission, formatter, and LSP coverage.
+- Add diagnostics tests for DSL-internal misuse and same-depth ambiguity.
+- Update authored user docs for scoped symbol behavior, `std.builtins`, vocab authoring, and migration guidance.
+- Add release notes for the active dev line.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Resolve scoped symbol precedence: eligible scoped descriptor is local meaning and outranks ordinary lexical/import/builtin fallback.
+- [x] Resolve builtin escape path: `std.builtins.<name>`.
+- [x] Resolve misuse diagnostics: DSL-internal active-but-ineligible misuse can use descriptor diagnostics; outside DSL scope ordinary resolution stays regular.
+- [x] Resolve descriptor family ownership: DSL-authored metadata constrained by a stable compiler/tooling family contract.
+- [x] Resolve activation scope: file-local import activation, matching soft-keyword behavior.
+- [x] Resolve nested ownership: innermost eligible owner wins; same-depth conflicts are ambiguous.
+
+### `incan-vocab` registry
+
+- [x] Add scoped symbol descriptor DTOs.
+- [x] Add family / role metadata for scoped symbols.
+- [x] Add eligibility and misuse-scope metadata for name-resolution positions.
+- [x] Add diagnostic template metadata for scoped symbol misuse and ambiguity.
+- [x] Version-bump `incan_vocab` for the descriptor API/serialization change.
+
+### Manifest / activation
+
+- [x] Persist descriptors through library manifest serialization.
+- [x] Validate malformed descriptors at producer/manifest load boundaries.
+- [x] Activate descriptors through import-local DSL activation.
+- [x] Add manifest round-trip and validation tests.
+
+### Frontend / resolution
+
+- [x] Preserve owning DSL block and eligible position context for scoped symbol lookup.
+- [x] Resolve scoped symbols before lexical/import/module/builtin fallback inside eligible positions.
+- [x] Preserve ordinary resolution outside DSL scope and outside eligible positions.
+- [x] Implement innermost eligible owner wins for nested DSL blocks.
+- [x] Diagnose same-depth scoped symbol ambiguity.
+- [x] Add parser/typechecker tests for precedence, escape paths, nested scopes, and non-DSL fallback.
+
+### Builtin escape namespace
+
+- [x] Add `std.builtins` as an explicit builtin-function namespace.
+- [x] Back `std.builtins` from the builtin registry.
+- [x] Add tests for `std.builtins.sum` inside and outside scoped DSL positions.
+
+### Lowering / emission
+
+- [x] Carry scoped symbol identity through parser AST and vocab bridge handoff.
+- [x] Emit DSL-owned symbol calls through the structured vocab AST handoff path.
+- [x] Preserve explicit builtin calls as direct builtin targets.
+- [x] Add codegen/snapshot coverage for explicit builtin calls.
+
+### Formatter / LSP / tooling
+
+- [x] Preserve explicit qualification in formatter output.
+- [x] Add LSP completion/hover/go-to-definition behavior for scoped symbols.
+- [x] Add parser diagnostics for DSL-internal misuse and ambiguity so LSP diagnostics can surface them.
+
+### Docs / release notes
+
+- [x] Update user-facing language docs for scoped DSL symbols.
+- [x] Update vocab-authoring docs and `incan_vocab` README.
+- [x] Document `std.builtins` as the explicit builtin escape path.
+- [x] Add active dev-line release notes.
+- [x] Bump active dev version.
+
+## Design Decisions
+
+- Scoped symbol precedence is local-over-outer, like variable scope. Inside an eligible DSL-owned position, a matching scoped symbol descriptor is the local meaning and outranks ordinary lexical names, imports, module-scoped names, and builtin fallback. Outside DSL scope and outside eligible positions, ordinary Incan resolution stays unchanged.
+- `std.builtins.<name>` is the canonical escape path for core builtin functions. This RFC requires the function namespace, backed by the existing builtin registry, so the compiler dogfoods an Incan-visible stdlib surface. Moving builtin types into this namespace is a possible future extension and is not part of this RFC.
+- Misuse diagnostics apply only where the DSL is active and the symbol is used inside the DSL's structural scope but outside an eligible position. The descriptor's diagnostic metadata owns those messages. Outside DSL scope, matching spellings do not produce DSL diagnostics and ordinary resolution applies.
+- Descriptor families are authored by the DSL through `incan_vocab`, but the core contract uses stable compiler/tooling-known family categories plus optional DSL-specific role metadata. This keeps LSP, docs, compatibility checks, and diagnostics predictable while still allowing DSLs to describe their domain roles.
+- Activation is file-local and import-driven, matching soft-keyword activation. It does not propagate across module subtrees or unrelated files.
+- Nested scoped symbols use ordinary scope intuition: the innermost eligible owning DSL block wins. If multiple descriptors at the same ownership depth match one occurrence, the occurrence is ambiguous and must be disambiguated.

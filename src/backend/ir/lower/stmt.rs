@@ -2069,6 +2069,9 @@ impl AstLowering {
                     self.count_expr_ident_reads(&left.node, counts);
                     self.count_expr_ident_reads(&right.node, counts);
                 }
+                ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    self.count_call_args_ident_reads(args, counts);
+                }
             },
             ast::Expr::Match(scrutinee, arms) => {
                 self.count_expr_ident_reads(&scrutinee.node, counts);

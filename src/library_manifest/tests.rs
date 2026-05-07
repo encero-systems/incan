@@ -676,7 +676,10 @@ fn manifest_io_round_trip_preserves_scoped_surface_descriptors() -> Result<(), B
     manifest.write_to_path(&path)?;
     let loaded = LibraryManifest::read_from_path(&path)?;
 
-    let scoped_surfaces = &loaded.vocab.as_ref().unwrap().dsl_surfaces[0].scoped_surfaces;
+    let Some(loaded_vocab) = loaded.vocab.as_ref() else {
+        return Err("expected vocab payload to round-trip".into());
+    };
+    let scoped_surfaces = &loaded_vocab.dsl_surfaces[0].scoped_surfaces;
     assert_eq!(loaded, manifest);
     assert_eq!(scoped_surfaces.len(), 3);
     assert_eq!(
@@ -692,6 +695,273 @@ fn manifest_io_round_trip_preserves_scoped_surface_descriptors() -> Result<(), B
         scoped_surfaces[2].receiver,
         Some(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver"))
     );
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_scoped_symbol_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                        ]),
+                )
+                .with_scoped_symbols([
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                        .in_clause_body("query", "SELECT")
+                        .with_role(
+                            incan_vocab::ScopedSymbolRoleMetadata::new("aggregate.sum")
+                                .with_label("Sum")
+                                .with_description("Sum aggregate"),
+                        )
+                        .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "`sum` is only a query aggregate inside SELECT clauses",
+                        )),
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.count", "count").with_eligibilities([
+                        incan_vocab::ScopedSymbolEligibility::clause_body("query", "SELECT"),
+                        incan_vocab::ScopedSymbolEligibility::call_argument("query", "window"),
+                    ]),
+                ]),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    let Some(loaded_vocab) = loaded.vocab.as_ref() else {
+        return Err("expected vocab payload to round-trip".into());
+    };
+    let scoped_symbols = &loaded_vocab.dsl_surfaces[0].scoped_symbols;
+    assert_eq!(loaded, manifest);
+    assert_eq!(scoped_symbols.len(), 2);
+    assert_eq!(scoped_symbols[0].symbol, "sum");
+    assert_eq!(scoped_symbols[0].family, incan_vocab::ScopedSymbolFamily::AggregateLike);
+    assert_eq!(
+        scoped_symbols[0].role.as_ref().map(|role| role.key.as_str()),
+        Some("aggregate.sum")
+    );
+    assert_eq!(scoped_symbols[1].eligible_in[1].call.as_deref(), Some("window"));
+    assert_eq!(
+        scoped_symbols[0].diagnostics[0].kind,
+        incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_empty_scoped_symbol_descriptor_key() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("", "sum").in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("vocab scoped symbol descriptor key cannot be empty")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_empty_scoped_symbol_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "").in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("symbol cannot be empty")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_hard_keyword_scoped_symbol_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::function("query.from", "from")
+                        .in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("cannot be a hard keyword")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_malformed_scoped_symbol_eligibility() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum").with_eligibility(
+                        incan_vocab::ScopedSymbolEligibility {
+                            declaration: "query".to_string(),
+                            clause: None,
+                            call: None,
+                            position: incan_vocab::ScopedSymbolPosition::ClauseBody,
+                        },
+                    ),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("clause-body eligibility must declare a clause")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_ambiguous_scoped_symbol_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let query_surface = incan_vocab::DslSurface::on_import("mylib.query")
+        .with_declaration(
+            incan_vocab::DeclarationSurface::named("query").with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+        )
+        .with_scoped_symbols([
+            incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.primary", "sum")
+                .in_clause_body("query", "SELECT"),
+            incan_vocab::ScopedSymbolDescriptor::function("query.sum.secondary", "sum")
+                .in_clause_body("query", "SELECT"),
+        ]);
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![query_surface],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("ambiguous scoped symbol descriptor")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_malformed_scoped_symbol_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                        .in_clause_body("query", "SELECT")
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "`sum` is only valid inside SELECT",
+                        ))
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::AmbiguousResolution,
+                            "use an explicit qualifier to disambiguate `sum`",
+                        )),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("contains duplicate diagnostic code")
+    ));
     Ok(())
 }
 

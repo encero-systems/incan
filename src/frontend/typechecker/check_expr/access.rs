@@ -2316,6 +2316,16 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if Self::is_explicit_builtin_namespace_expr(base) {
+            let result = self.check_explicit_builtin_call(method, args, span);
+            if !type_args.is_empty() {
+                self.errors
+                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                return ResolvedType::Unknown;
+            }
+            return result;
+        }
+
         if self.is_builtin_list_surface_receiver(base)
             && method == collection_helpers::member(BuiltinCollectionHelperId::ListRepeat)
         {

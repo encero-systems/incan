@@ -256,6 +256,14 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
             }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                args.iter().find_map(|arg| match arg {
+                    crate::frontend::ast::CallArg::Positional(expr)
+                    | crate::frontend::ast::CallArg::Named(_, expr)
+                    | crate::frontend::ast::CallArg::PositionalUnpack(expr)
+                    | crate::frontend::ast::CallArg::KeywordUnpack(expr) => call_site_type_in_expr(expr, offset),
+                })
+            }
         },
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }

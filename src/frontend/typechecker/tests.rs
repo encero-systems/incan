@@ -7106,6 +7106,59 @@ def foo() -> str:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_explicit_std_builtins_sum_call() {
+    let source = r#"
+def foo() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_len_call() {
+    let source = r#"
+def foo() -> int:
+  names = ["a", "b"]
+  return std.builtins.len(names)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_unknown_member_is_rejected() {
+    let source = r#"
+def foo() -> int:
+  return std.builtins.not_real([1, 2, 3])
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.builtins member should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Type 'std.builtins' has no method 'not_real(...)'")),
+        "Expected missing-method diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_root_sum_shadowing_preserved_but_explicit_std_builtins_bypasses_shadow() {
+    let source = r#"
+def sum(value: str) -> str:
+  return value
+
+def root_call() -> str:
+  return sum("ok")
+
+def explicit_call() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================
 // Tuple tests
 // ========================================

@@ -465,7 +465,30 @@ impl<'a> Parser<'a> {
                     "Expected ')' after arguments",
                 )?;
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
-                expr = Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span);
+                expr = if let Expr::Ident(name) = &expr.node {
+                    if let Some(active) = self.active_scoped_symbol_descriptor(name, span)? {
+                        Spanned::new(
+                            Expr::Surface(Box::new(SurfaceExpr {
+                                key: SurfaceFeatureKey::ScopedDslSurface {
+                                    dependency_key: active.dependency_key.clone(),
+                                    descriptor_key: active.descriptor.key.clone(),
+                                },
+                                payload: SurfaceExprPayload::ScopedSymbolCall {
+                                    symbol: name.clone(),
+                                    args,
+                                    owner: self.scoped_symbol_owner(active),
+                                },
+                            })),
+                            span,
+                        )
+                    } else if let Some(error) = self.scoped_symbol_misuse_error(name, span)? {
+                        return Err(error);
+                    } else {
+                        Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span)
+                    }
+                } else {
+                    Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span)
+                };
             } else {
                 break;
             }
@@ -824,6 +847,106 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Return the innermost active scoped-symbol descriptor accepted by the current context.
+    fn active_scoped_symbol_descriptor(
+        &self,
+        symbol: &str,
+        span: Span,
+    ) -> Result<Option<&ActiveScopedSymbolDescriptor>, CompileError> {
+        let matches: Vec<_> = self
+            .active_scoped_symbol_descriptors
+            .iter()
+            .filter(|active| {
+                active.descriptor.symbol == symbol
+                    && active
+                        .descriptor
+                        .eligible_in
+                        .iter()
+                        .any(|eligibility| self.scoped_symbol_eligibility_accepts_current_context(eligibility))
+            })
+            .collect();
+        let Some(max_depth) = matches
+            .iter()
+            .map(|active| self.scoped_symbol_owner_depth(active))
+            .max()
+        else {
+            return Ok(None);
+        };
+        let mut best = matches
+            .into_iter()
+            .filter(|active| self.scoped_symbol_owner_depth(active) == max_depth);
+        let first = best.next();
+        if best.next().is_some() {
+            return Err(CompileError::syntax(
+                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
+                span,
+            )
+            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+        }
+        Ok(first)
+    }
+
+    /// Build a descriptor-owned diagnostic for a scoped symbol used inside its active DSL but outside an eligible position.
+    fn scoped_symbol_misuse_error(
+        &self,
+        symbol: &str,
+        span: Span,
+    ) -> Result<Option<CompileError>, CompileError> {
+        let matches: Vec<_> = self
+            .active_scoped_symbol_descriptors
+            .iter()
+            .filter(|active| {
+                active.descriptor.symbol == symbol
+                    && active.descriptor.misuse_scope == incan_vocab::ScopedSymbolMisuseScope::ActiveDsl
+                    && active
+                        .descriptor
+                        .eligible_in
+                        .iter()
+                        .any(|eligibility| self.scoped_symbol_eligibility_is_inside_owning_dsl(eligibility))
+            })
+            .collect();
+        let Some(max_depth) = matches
+            .iter()
+            .filter_map(|active| self.scoped_symbol_owner_declaration_depth(active))
+            .max()
+        else {
+            return Ok(None);
+        };
+        let mut best = matches
+            .into_iter()
+            .filter(|active| self.scoped_symbol_owner_declaration_depth(active) == Some(max_depth));
+        let Some(active) = best.next() else {
+            return Ok(None);
+        };
+        if best.next().is_some() {
+            return Err(CompileError::syntax(
+                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
+                span,
+            )
+            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+        }
+
+        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
+            diagnostic.kind == incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition
+        });
+        let message = diagnostic
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "Scoped symbol `{}` is not valid in this DSL position",
+                    active.descriptor.symbol
+                )
+            });
+        let mut error = CompileError::syntax(message, span);
+        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+            error = error.with_note(format!("diagnostic code: {code}"));
+        }
+        if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
+            error = error.with_hint(help);
+        }
+        Ok(Some(error))
+    }
+
     /// Consume the longest active scoped glyph at the current token position.
     fn consume_active_scoped_glyph(&mut self) -> Option<(ActiveScopedSurfaceDescriptor, String)> {
         let mut best: Option<(ActiveScopedSurfaceDescriptor, String, usize)> = None;
@@ -925,10 +1048,13 @@ impl<'a> Parser<'a> {
         eligibility: &incan_vocab::ScopedSurfaceEligibility,
     ) -> bool {
         match eligibility.position {
-            incan_vocab::ScopedSurfacePosition::DeclarationBody
-            | incan_vocab::ScopedSurfacePosition::ClauseBody => {
+            incan_vocab::ScopedSurfacePosition::DeclarationBody => {
                 self.vocab_block_stack.last() == Some(&eligibility.declaration)
             }
+            incan_vocab::ScopedSurfacePosition::ClauseBody => self.current_vocab_clause_matches(
+                eligibility.declaration.as_str(),
+                eligibility.clause.as_deref(),
+            ),
             incan_vocab::ScopedSurfacePosition::CallArgument => self
                 .scoped_call_argument_stack
                 .last()
@@ -936,6 +1062,56 @@ impl<'a> Parser<'a> {
             incan_vocab::ScopedSurfacePosition::DeclarationHead => false,
             _ => false,
         }
+    }
+
+    /// Return whether a scoped-symbol eligibility matches the parser's current scoped context.
+    fn scoped_symbol_eligibility_accepts_current_context(
+        &self,
+        eligibility: &incan_vocab::ScopedSymbolEligibility,
+    ) -> bool {
+        match eligibility.position {
+            incan_vocab::ScopedSymbolPosition::DeclarationBody => {
+                self.vocab_block_stack.last() == Some(&eligibility.declaration)
+            }
+            incan_vocab::ScopedSymbolPosition::ClauseBody => self.current_vocab_clause_matches(
+                eligibility.declaration.as_str(),
+                eligibility.clause.as_deref(),
+            ),
+            incan_vocab::ScopedSymbolPosition::CallArgument => self
+                .scoped_call_argument_stack
+                .last()
+                .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str()))
+                && self.vocab_block_stack.iter().any(|declaration| declaration == &eligibility.declaration),
+            _ => false,
+        }
+    }
+
+    /// Return whether the current parser position is inside the owning DSL declaration for an eligibility rule.
+    fn scoped_symbol_eligibility_is_inside_owning_dsl(
+        &self,
+        eligibility: &incan_vocab::ScopedSymbolEligibility,
+    ) -> bool {
+        self.vocab_block_stack
+            .iter()
+            .any(|declaration| declaration == &eligibility.declaration)
+    }
+
+    /// Return whether the current vocab stack is positioned inside a clause-like nested vocab block.
+    fn current_vocab_clause_matches(&self, declaration: &str, clause: Option<&str>) -> bool {
+        let Some(clause) = clause else {
+            return false;
+        };
+        let Some(clause_depth) = self
+            .vocab_block_stack
+            .iter()
+            .rposition(|active| active == clause)
+        else {
+            return false;
+        };
+        self.vocab_block_stack
+            .iter()
+            .take(clause_depth)
+            .any(|active| active == declaration)
     }
 
     /// Build the owner metadata attached to a scoped-surface AST payload.
@@ -958,6 +1134,47 @@ impl<'a> Parser<'a> {
                     .last()
                     .map(|context| context.call.clone()),
             })
+    }
+
+    /// Build the owner metadata attached to a scoped-symbol AST payload.
+    fn scoped_symbol_owner(&self, active: &ActiveScopedSymbolDescriptor) -> ScopedSurfaceOwner {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .find(|eligibility| self.scoped_symbol_eligibility_accepts_current_context(eligibility))
+            .map(|eligibility| ScopedSurfaceOwner {
+                declaration: eligibility.declaration.clone(),
+                clause: eligibility.clause.clone(),
+                call: eligibility.call.clone(),
+            })
+            .unwrap_or_else(|| ScopedSurfaceOwner {
+                declaration: self.vocab_block_stack.last().cloned().unwrap_or_default(),
+                clause: None,
+                call: self
+                    .scoped_call_argument_stack
+                    .last()
+                    .map(|context| context.call.clone()),
+            })
+    }
+
+    /// Return a lexical-depth proxy for nested scoped-symbol ownership.
+    fn scoped_symbol_owner_depth(&self, active: &ActiveScopedSymbolDescriptor) -> usize {
+        self.scoped_symbol_owner_declaration_depth(active).unwrap_or(0)
+    }
+
+    /// Return the innermost active declaration depth that can own this scoped symbol.
+    fn scoped_symbol_owner_declaration_depth(&self, active: &ActiveScopedSymbolDescriptor) -> Option<usize> {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .filter_map(|eligibility| {
+                self.vocab_block_stack
+                    .iter()
+                    .rposition(|declaration| declaration == &eligibility.declaration)
+            })
+            .max()
     }
 
     /// Return the function or method name whose argument list is about to be parsed.
@@ -1197,6 +1414,16 @@ impl<'a> Parser<'a> {
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.shift_spanned_expr(left, offset);
                     self.shift_spanned_expr(right, offset);
+                }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    for arg in args {
+                        match arg {
+                            CallArg::Positional(expr)
+                            | CallArg::Named(_, expr)
+                            | CallArg::PositionalUnpack(expr)
+                            | CallArg::KeywordUnpack(expr) => self.shift_spanned_expr(expr, offset),
+                        }
+                    }
                 }
             },
         }

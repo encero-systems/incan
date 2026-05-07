@@ -17,10 +17,35 @@ use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, Validat
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
+use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::types as surface_types;
 
 impl AstLowering {
+    /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
+    pub(in crate::backend::ir::lower::expr) fn explicit_builtin_member_name(
+        callee: &ast::Spanned<ast::Expr>,
+    ) -> Option<&str> {
+        let ast::Expr::Field(namespace, member) = &callee.node else {
+            return None;
+        };
+        if Self::is_explicit_builtin_namespace_expr(namespace) {
+            Some(member.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Return whether an expression is the explicit builtin namespace `std.builtins`.
+    pub(in crate::backend::ir::lower::expr) fn is_explicit_builtin_namespace_expr(
+        expr: &ast::Spanned<ast::Expr>,
+    ) -> bool {
+        let ast::Expr::Field(root, namespace) = &expr.node else {
+            return false;
+        };
+        namespace == STDLIB_BUILTINS && matches!(&root.node, ast::Expr::Ident(name) if name == STDLIB_ROOT)
+    }
+
     /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
     fn callable_signature_from_params(&self, params: &[CallableParam], ret: &ResolvedType) -> FunctionSignature {
         FunctionSignature {
@@ -1364,6 +1389,19 @@ impl AstLowering {
         args: &[ast::CallArg],
         call_span: ast::Span,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
+        if let Some(name) = Self::explicit_builtin_member_name(f)
+            && let Some(builtin) = BuiltinFn::from_name(name)
+        {
+            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            return Ok((
+                IrExprKind::BuiltinCall {
+                    func: builtin,
+                    args: args_ir,
+                },
+                IrType::Unknown,
+            ));
+        }
+
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());

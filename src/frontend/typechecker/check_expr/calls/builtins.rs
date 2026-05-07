@@ -6,12 +6,55 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{FunctionInfo, ResolvedType};
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
 impl TypeChecker {
+    /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
+    pub(in crate::frontend::typechecker::check_expr) fn explicit_builtin_member_name(
+        callee: &Spanned<Expr>,
+    ) -> Option<&str> {
+        let Expr::Field(namespace, member) = &callee.node else {
+            return None;
+        };
+        if Self::is_explicit_builtin_namespace_expr(namespace) {
+            Some(member.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Return whether an expression is the explicit builtin namespace `std.builtins`.
+    pub(in crate::frontend::typechecker::check_expr) fn is_explicit_builtin_namespace_expr(
+        expr: &Spanned<Expr>,
+    ) -> bool {
+        let Expr::Field(root, namespace) = &expr.node else {
+            return false;
+        };
+        namespace == stdlib::STDLIB_BUILTINS && matches!(&root.node, Expr::Ident(name) if name == stdlib::STDLIB_ROOT)
+    }
+
+    /// Typecheck an explicit builtin-function call without allowing root-scope shadowing to intercept it.
+    pub(in crate::frontend::typechecker::check_expr) fn check_explicit_builtin_call(
+        &mut self,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+    ) -> ResolvedType {
+        if core_builtins::from_str(name).is_none() {
+            self.check_call_args(args);
+            self.errors
+                .push(errors::missing_method("std.builtins", name, call_span));
+            return ResolvedType::Unknown;
+        }
+
+        self.check_builtin_call_inner(name, args, call_span, false)
+            .unwrap_or(ResolvedType::Unknown)
+    }
+
     fn validate_stdlib_module_call_arity(
         &mut self,
         callable: &str,
@@ -54,7 +97,18 @@ impl TypeChecker {
         args: &[CallArg],
         call_span: Span,
     ) -> Option<ResolvedType> {
-        let has_function_symbol = self.has_non_builtin_function_definition(name);
+        self.check_builtin_call_inner(name, args, call_span, true)
+    }
+
+    /// Typecheck a builtin call, optionally preserving ordinary root-name shadowing behavior.
+    fn check_builtin_call_inner(
+        &mut self,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+        respect_shadowing: bool,
+    ) -> Option<ResolvedType> {
+        let has_function_symbol = respect_shadowing && self.has_non_builtin_function_definition(name);
 
         // Constructors (variant-like)
         if let Some(cid) = surface_constructors::from_str(name) {

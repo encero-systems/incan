@@ -4197,6 +4197,280 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
+    fn test_imported_vocab_block_prefers_scoped_symbol_over_core_call() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, args, owner }
+                        if symbol == "sum" && args.len() == 1 && owner.declaration == "query"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            &function.body[0].node,
+            crate::ast::Statement::Expr(expr)
+                if matches!(&expr.node, crate::ast::Expr::Call(callee, _, _)
+                    if matches!(&callee.node, crate::ast::Expr::Ident(name) if name == "sum"))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_same_depth_scoped_symbol_ambiguity_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\nimport pub::metrics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("query")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.analytics", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+        surface_map.insert(
+            "metrics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("metrics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.metrics", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("same-depth scoped symbol collision should be ambiguous");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Ambiguous scoped symbol `sum`")),
+            "expected ambiguous scoped symbol diagnostic, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_vocab_block_prefers_innermost_scoped_symbol() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  query:\n    stage:\n      sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![
+                    incan_vocab::KeywordSpec::block("query"),
+                    incan_vocab::KeywordSpec::sub_block("stage", "query"),
+                ],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_declaration(incan_vocab::DeclarationSurface::named("stage").in_block("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_declaration_body("query"),
+                    )
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("stage.sum", "sum")
+                            .in_declaration_body("stage"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(query_block) = &function.body[0].node else {
+            return Err(format!("expected query block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::VocabBlock(stage_block) = &query_block.body[0].node else {
+            return Err(format!("expected stage block, got {:?}", query_block.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &stage_block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", stage_block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, owner, .. }
+                        if symbol == "sum" && owner.declaration == "stage"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_active_scoped_symbol_misuse_uses_descriptor_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("query")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(
+                        incan_vocab::DeclarationSurface::named("query")
+                            .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                    )
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_clause_body("query", "SELECT")
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .with_diagnostic(
+                                incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                                    "query-sum-outside-select",
+                                    incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                                    "query aggregate `sum` is only valid inside SELECT clauses",
+                                )
+                                .with_help("move `sum(...)` into a SELECT clause"),
+                            ),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("active scoped symbol misuse should use descriptor diagnostic");
+        let first_error = errors.first().expect("expected at least one scoped-symbol diagnostic");
+        assert!(
+            first_error
+                .message
+                .contains("query aggregate `sum` is only valid inside SELECT clauses"),
+            "expected author-provided scoped-symbol diagnostic, got {:?}",
+            errors
+        );
+        assert!(
+            first_error.hints.iter().any(|hint| hint.contains("move `sum(...)`")),
+            "expected author-provided scoped-symbol help, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_imported_vocab_block_accepts_multitoken_pipe_glyph() -> Result<(), Box<dyn std::error::Error>> {
         let source = "import pub::querykit\n\ndef configure() -> None:\n  query:\n    orders |> paid_orders\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;

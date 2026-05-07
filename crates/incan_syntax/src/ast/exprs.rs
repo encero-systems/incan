@@ -126,6 +126,12 @@ pub enum SurfaceExprPayload {
         right: Box<Spanned<Expr>>,
         owner: ScopedSurfaceOwner,
     },
+    /// DSL-owned identifier call accepted in an eligible name-resolution position.
+    ScopedSymbolCall {
+        symbol: Ident,
+        args: Vec<CallArg>,
+        owner: ScopedSurfaceOwner,
+    },
 }
 
 /// Source DSL context that accepted a scoped surface expression.

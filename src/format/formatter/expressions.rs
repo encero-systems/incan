@@ -203,6 +203,15 @@ impl Formatter {
                     self.writer.write(" ");
                     self.format_expr(&right.node);
                 }
+                (
+                    SurfaceFeatureKey::ScopedDslSurface { .. },
+                    SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. },
+                ) => {
+                    self.writer.write(symbol);
+                    self.writer.write("(");
+                    self.format_call_args_with_wrapping(args);
+                    self.writer.write(")");
+                }
                 _ => self.writer.write("<surface_expr>"),
             },
             Expr::Try(inner) => {

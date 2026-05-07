@@ -1564,6 +1564,9 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
                     self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
                 }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
+                }
             },
         }
     }
@@ -1827,6 +1830,13 @@ impl TypeChecker {
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.collect_static_initializer_static_writes_from_expr(left, current_static, visiting_functions);
                     self.collect_static_initializer_static_writes_from_expr(right, current_static, visiting_functions);
+                }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    self.collect_static_initializer_static_writes_from_call_args(
+                        args,
+                        current_static,
+                        visiting_functions,
+                    );
                 }
             },
         }

@@ -33,7 +33,10 @@ use crate::frontend::api_metadata::{
     ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiStatic, ApiTrait,
     ApiTypeAlias, CheckedApiMetadata, SourceAnchor, collect_checked_api_metadata, validate_checked_api_docstrings,
 };
-use crate::frontend::ast::{Declaration, MethodDecl, Program, Span, Type, TypeParam};
+use crate::frontend::ast::{
+    CallArg, Condition, Declaration, Expr, ListEntry, MatchBody, MethodDecl, Program, Span, Spanned, Statement,
+    SurfaceExprPayload, Type, TypeParam,
+};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
 };
@@ -78,6 +81,8 @@ pub struct DocumentState {
     rusttype_info: HashMap<String, String>,
     /// Checked public API metadata snippets that can be shown through hover after a successful typecheck.
     api_metadata_previews: Vec<ApiMetadataPreview>,
+    /// Imported DSL surfaces from loaded `pub::` library manifests, used for scoped symbol LSP affordances.
+    library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +317,7 @@ impl IncanLanguageServer {
                     rust_origin_symbols,
                     rusttype_info,
                     api_metadata_previews,
+                    library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
                 },
             );
         }
@@ -2258,6 +2264,945 @@ fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> 
     None
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScopedSymbolLspContext {
+    vocab_stack: Vec<String>,
+    call_target: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedSymbolLspDescriptor<'a> {
+    dependency_key: &'a str,
+    descriptor: &'a incan_vocab::ScopedSymbolDescriptor,
+    depth: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedSymbolOccurrence<'a> {
+    dependency_key: &'a str,
+    descriptor: &'a incan_vocab::ScopedSymbolDescriptor,
+    symbol_span: Span,
+}
+
+/// Build hover markdown for a DSL-scoped symbol descriptor.
+fn scoped_symbol_hover_markdown(dependency_key: &str, descriptor: &incan_vocab::ScopedSymbolDescriptor) -> String {
+    let mut markdown = format!(
+        "```incan\n{}(...)\n```\n\n*scoped DSL symbol* from `pub::{dependency_key}`",
+        descriptor.symbol
+    );
+    markdown.push_str(&format!("\n\nDescriptor: `{}`", descriptor.key));
+    markdown.push_str(&format!(
+        "\n\nFamily: `{}`",
+        scoped_symbol_family_label(descriptor.family)
+    ));
+    if let Some(role) = &descriptor.role {
+        if let Some(label) = role.label.as_deref().filter(|label| !label.is_empty()) {
+            markdown.push_str(&format!("\n\nRole: `{}` ({label})", role.key));
+        } else {
+            markdown.push_str(&format!("\n\nRole: `{}`", role.key));
+        }
+    }
+    markdown
+}
+
+/// Return a stable, human-readable label for a scoped symbol family.
+fn scoped_symbol_family_label(family: incan_vocab::ScopedSymbolFamily) -> &'static str {
+    match family {
+        incan_vocab::ScopedSymbolFamily::FunctionLike => "function-like",
+        incan_vocab::ScopedSymbolFamily::AggregateLike => "aggregate-like",
+        incan_vocab::ScopedSymbolFamily::PredicateLike => "predicate-like",
+        incan_vocab::ScopedSymbolFamily::ProjectionLike => "projection-like",
+        incan_vocab::ScopedSymbolFamily::GroupingLike => "grouping-like",
+        incan_vocab::ScopedSymbolFamily::OrderingLike => "ordering-like",
+        incan_vocab::ScopedSymbolFamily::WindowLike => "window-like",
+        _ => "unknown",
+    }
+}
+
+/// Build completion detail text for a DSL-scoped symbol descriptor.
+fn scoped_symbol_completion_detail(dependency_key: &str, descriptor: &incan_vocab::ScopedSymbolDescriptor) -> String {
+    let family = scoped_symbol_family_label(descriptor.family);
+    if let Some(role) = &descriptor.role {
+        if let Some(label) = role.label.as_deref().filter(|label| !label.is_empty()) {
+            return format!("scoped DSL {family} from pub::{dependency_key} ({label})");
+        }
+        return format!("scoped DSL {family} from pub::{dependency_key} ({})", role.key);
+    }
+    format!("scoped DSL {family} from pub::{dependency_key}")
+}
+
+/// Find the scoped symbol occurrence under `offset`, if the parsed AST accepted it as a DSL symbol call.
+fn scoped_symbol_at_offset<'a>(
+    ast: &'a Program,
+    source: &str,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Option<ScopedSymbolOccurrence<'a>> {
+    let (ident, symbol_span) = identifier_at_offset(source, offset)?;
+    let mut found = None;
+    for decl in &ast.declarations {
+        scoped_symbol_in_declaration(decl, &ident, symbol_span, surfaces, &mut found);
+        if found.is_some() {
+            break;
+        }
+    }
+    found
+}
+
+/// Search one declaration for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_declaration<'a>(
+    decl: &'a Spanned<Declaration>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(decl.span.start <= symbol_span.start && symbol_span.end <= decl.span.end) {
+        return;
+    }
+    match &decl.node {
+        Declaration::Const(konst) => scoped_symbol_in_expr(&konst.value, ident, symbol_span, surfaces, found),
+        Declaration::Static(static_decl) => {
+            scoped_symbol_in_expr(&static_decl.value, ident, symbol_span, surfaces, found);
+        }
+        Declaration::Function(func) => scoped_symbol_in_statements(&func.body, ident, symbol_span, surfaces, found),
+        Declaration::Model(model) => {
+            for method in &model.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &model.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Declaration::Class(class) => {
+            for method in &class.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &class.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Declaration::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &trait_decl.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Search a statement list for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_statements<'a>(
+    statements: &'a [Spanned<Statement>],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for stmt in statements {
+        if found.is_some() {
+            break;
+        }
+        scoped_symbol_in_statement(stmt, ident, symbol_span, surfaces, found);
+    }
+}
+
+/// Search one statement for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_statement<'a>(
+    stmt: &'a Spanned<Statement>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(stmt.span.start <= symbol_span.start && symbol_span.end <= stmt.span.end) {
+        return;
+    }
+    match &stmt.node {
+        Statement::Assignment(assign) => scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found),
+        Statement::FieldAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.object, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::IndexAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.object, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.index, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::Return(expr) | Statement::Break(expr) => {
+            if let Some(expr) = expr {
+                scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::If(if_stmt) => {
+            scoped_symbol_in_condition(&if_stmt.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&if_stmt.then_body, ident, symbol_span, surfaces, found);
+            for (condition, body) in &if_stmt.elif_branches {
+                scoped_symbol_in_expr(condition, ident, symbol_span, surfaces, found);
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+            if let Some(body) = &if_stmt.else_body {
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::Loop(loop_stmt) => scoped_symbol_in_statements(&loop_stmt.body, ident, symbol_span, surfaces, found),
+        Statement::While(while_stmt) => {
+            scoped_symbol_in_condition(&while_stmt.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&while_stmt.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::For(for_stmt) => {
+            scoped_symbol_in_expr(&for_stmt.iter, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&for_stmt.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        Statement::Assert(assert_stmt) => {
+            match &assert_stmt.kind {
+                crate::frontend::ast::AssertKind::Condition(expr) => {
+                    scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                }
+                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                    scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
+                }
+                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                    scoped_symbol_in_expr(call, ident, symbol_span, surfaces, found);
+                }
+            }
+            if let Some(message) = &assert_stmt.message {
+                scoped_symbol_in_expr(message, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::CompoundAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::TupleUnpack(assign) => scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found),
+        Statement::ChainedAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::TupleAssign(assign) => {
+            for target in &assign.targets {
+                scoped_symbol_in_expr(target, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::VocabBlock(block) => {
+            scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::Pass | Statement::Continue | Statement::Surface(_) => {}
+    }
+}
+
+/// Search a control-flow condition for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_condition<'a>(
+    condition: &'a Condition,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    match condition {
+        Condition::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        Condition::Let { value, .. } => scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found),
+    }
+}
+
+/// Search one expression tree for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_expr<'a>(
+    expr: &'a Spanned<Expr>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(expr.span.start <= symbol_span.start && symbol_span.end <= expr.span.end) {
+        return;
+    }
+    if let Expr::Surface(surface) = &expr.node
+        && let incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+            dependency_key,
+            descriptor_key,
+        } = &surface.key
+        && let SurfaceExprPayload::ScopedSymbolCall { symbol, .. } = &surface.payload
+        && symbol == ident
+        && symbol_span.start == expr.span.start
+        && let Some(descriptor) = scoped_symbol_descriptor(surfaces, dependency_key, descriptor_key)
+    {
+        *found = Some(ScopedSymbolOccurrence {
+            dependency_key,
+            descriptor,
+            symbol_span,
+        });
+        return;
+    }
+
+    match &expr.node {
+        Expr::Binary(left, _, right) => {
+            scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
+        }
+        Expr::Unary(_, inner)
+        | Expr::Index(inner, _)
+        | Expr::Slice(inner, _)
+        | Expr::Try(inner)
+        | Expr::Paren(inner)
+        | Expr::Yield(Some(inner)) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+        Expr::Call(callee, _, args) => {
+            scoped_symbol_in_expr(callee, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+        }
+        Expr::MethodCall(receiver, _, _, args) => {
+            scoped_symbol_in_expr(receiver, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+        }
+        Expr::Match(scrutinee, arms) => {
+            scoped_symbol_in_expr(scrutinee, ident, symbol_span, surfaces, found);
+            for arm in arms {
+                if let Some(guard) = &arm.node.guard {
+                    scoped_symbol_in_expr(guard, ident, symbol_span, surfaces, found);
+                }
+                match &arm.node.body {
+                    MatchBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+                    MatchBody::Block(body) => scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found),
+                }
+            }
+        }
+        Expr::If(if_expr) => {
+            scoped_symbol_in_expr(&if_expr.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&if_expr.then_body, ident, symbol_span, surfaces, found);
+            if let Some(body) = &if_expr.else_body {
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+        }
+        Expr::Loop(loop_expr) => scoped_symbol_in_statements(&loop_expr.body, ident, symbol_span, surfaces, found),
+        Expr::ListComp(comp) => {
+            scoped_symbol_in_expr(&comp.expr, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.iter, ident, symbol_span, surfaces, found);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_in_expr(filter, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_comprehension_clauses(&comp.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::DictComp(comp) => {
+            scoped_symbol_in_expr(&comp.key, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.value, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.iter, ident, symbol_span, surfaces, found);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_in_expr(filter, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_comprehension_clauses(&comp.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::Generator(generator) => {
+            scoped_symbol_in_expr(&generator.expr, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_comprehension_clauses(&generator.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::Closure(_, body) => scoped_symbol_in_expr(body, ident, symbol_span, surfaces, found),
+        Expr::Tuple(items) | Expr::Set(items) => {
+            for item in items {
+                scoped_symbol_in_expr(item, ident, symbol_span, surfaces, found);
+            }
+        }
+        Expr::List(entries) => {
+            for entry in entries {
+                match entry {
+                    ListEntry::Element(expr) | ListEntry::Spread(expr) => {
+                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                    }
+                }
+            }
+        }
+        Expr::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                        scoped_symbol_in_expr(key, ident, symbol_span, surfaces, found);
+                        scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
+                    }
+                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                    }
+                }
+            }
+        }
+        Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                    scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            scoped_symbol_in_expr(start, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(end, ident, symbol_span, surfaces, found);
+        }
+        Expr::Surface(surface) => match &surface.payload {
+            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
+                scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
+        Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+    }
+}
+
+/// Search comprehension clauses for parsed scoped symbol occurrences.
+fn scoped_symbol_in_comprehension_clauses<'a>(
+    clauses: &'a [crate::frontend::ast::ComprehensionClause],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for clause in clauses {
+        match clause {
+            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                scoped_symbol_in_expr(iter, ident, symbol_span, surfaces, found);
+            }
+            crate::frontend::ast::ComprehensionClause::If(condition) => {
+                scoped_symbol_in_expr(condition, ident, symbol_span, surfaces, found);
+            }
+        }
+    }
+}
+
+/// Search call arguments for parsed scoped symbol occurrences.
+fn scoped_symbol_in_call_args<'a>(
+    args: &'a [CallArg],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        }
+    }
+}
+
+/// Resolve a scoped symbol descriptor by dependency key and descriptor key.
+fn scoped_symbol_descriptor<'a>(
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    dependency_key: &str,
+    descriptor_key: &str,
+) -> Option<&'a incan_vocab::ScopedSymbolDescriptor> {
+    surfaces
+        .get(dependency_key)?
+        .iter()
+        .flat_map(|surface| surface.scoped_symbols.iter())
+        .find(|descriptor| descriptor.key == descriptor_key)
+}
+
+/// Find the nearest activating `pub::` import span before a scoped symbol use.
+fn find_pub_library_import_span(ast: &Program, dependency_key: &str, before_offset: usize) -> Option<Span> {
+    ast.declarations.iter().rev().find_map(|decl| {
+        if decl.span.start >= before_offset {
+            return None;
+        }
+        let Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        match &import.kind {
+            crate::frontend::ast::ImportKind::PubLibrary { library }
+            | crate::frontend::ast::ImportKind::PubFrom { library, .. }
+                if library == dependency_key =>
+            {
+                Some(decl.span)
+            }
+            _ => None,
+        }
+    })
+}
+
+/// Return scoped symbol descriptors eligible for completion at the given document offset.
+fn active_scoped_symbol_completions<'a>(
+    ast: &'a Program,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Vec<ScopedSymbolLspDescriptor<'a>> {
+    let Some(context) = scoped_symbol_context_at_offset(ast, offset) else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for (dependency_key, surface) in active_imported_dsl_surfaces(ast, surfaces, offset) {
+        for descriptor in &surface.scoped_symbols {
+            let Some(depth) = scoped_symbol_depth_in_context(descriptor, &context) else {
+                continue;
+            };
+            candidates.push(ScopedSymbolLspDescriptor {
+                dependency_key,
+                descriptor,
+                depth,
+            });
+        }
+    }
+
+    let mut max_depth_by_symbol: HashMap<&str, usize> = HashMap::new();
+    for candidate in &candidates {
+        max_depth_by_symbol
+            .entry(candidate.descriptor.symbol.as_str())
+            .and_modify(|depth| *depth = (*depth).max(candidate.depth))
+            .or_insert(candidate.depth);
+    }
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            max_depth_by_symbol
+                .get(candidate.descriptor.symbol.as_str())
+                .is_some_and(|depth| *depth == candidate.depth)
+        })
+        .collect()
+}
+
+/// Return DSL surfaces activated by `pub::` imports before the given document offset.
+fn active_imported_dsl_surfaces<'a>(
+    ast: &'a Program,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Vec<(&'a str, &'a incan_vocab::DslSurface)> {
+    let mut active = Vec::new();
+    for decl in &ast.declarations {
+        if decl.span.end > offset {
+            break;
+        }
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        let library = match &import.kind {
+            crate::frontend::ast::ImportKind::PubLibrary { library }
+            | crate::frontend::ast::ImportKind::PubFrom { library, .. } => library.as_str(),
+            _ => continue,
+        };
+        let Some(library_surfaces) = surfaces.get(library) else {
+            continue;
+        };
+        active.extend(
+            library_surfaces
+                .iter()
+                .filter(move |surface| dsl_surface_applies_to_pub_import_lsp(surface, library))
+                .map(move |surface| (library, surface)),
+        );
+    }
+    active
+}
+
+/// Return whether an imported DSL surface activates for a `pub::library` import in LSP helpers.
+fn dsl_surface_applies_to_pub_import_lsp(surface: &incan_vocab::DslSurface, library: &str) -> bool {
+    match &surface.activation {
+        incan_vocab::KeywordActivation::Always => true,
+        incan_vocab::KeywordActivation::OnImport { namespace } => namespace_matches_pub_library_lsp(namespace, library),
+        _ => false,
+    }
+}
+
+/// Return whether an activation namespace matches a `pub::library` import in LSP helpers.
+fn namespace_matches_pub_library_lsp(namespace: &str, library: &str) -> bool {
+    let trimmed = namespace.trim();
+    !trimmed.is_empty() && (trimmed == library || trimmed.starts_with(&format!("{library}.")))
+}
+
+/// Return the innermost lexical DSL depth where a descriptor is eligible in the current LSP context.
+fn scoped_symbol_depth_in_context(
+    descriptor: &incan_vocab::ScopedSymbolDescriptor,
+    context: &ScopedSymbolLspContext,
+) -> Option<usize> {
+    descriptor
+        .eligible_in
+        .iter()
+        .filter_map(|eligibility| scoped_symbol_eligibility_depth(eligibility, context))
+        .max()
+}
+
+/// Return the lexical DSL depth where one eligibility rule matches the current LSP context.
+fn scoped_symbol_eligibility_depth(
+    eligibility: &incan_vocab::ScopedSymbolEligibility,
+    context: &ScopedSymbolLspContext,
+) -> Option<usize> {
+    match eligibility.position {
+        incan_vocab::ScopedSymbolPosition::DeclarationBody => context
+            .vocab_stack
+            .iter()
+            .rposition(|declaration| declaration == &eligibility.declaration),
+        incan_vocab::ScopedSymbolPosition::ClauseBody => {
+            let clause = eligibility.clause.as_deref()?;
+            let clause_depth = context.vocab_stack.iter().rposition(|active| active == clause)?;
+            context
+                .vocab_stack
+                .iter()
+                .take(clause_depth)
+                .rposition(|active| active == &eligibility.declaration)
+                .map(|declaration_depth| declaration_depth.max(clause_depth))
+        }
+        incan_vocab::ScopedSymbolPosition::CallArgument => {
+            if eligibility.call.as_deref() != context.call_target.as_deref() {
+                return None;
+            }
+            context
+                .vocab_stack
+                .iter()
+                .rposition(|declaration| declaration == &eligibility.declaration)
+        }
+        _ => None,
+    }
+}
+
+/// Derive the DSL block stack and call-argument target active at a document offset.
+fn scoped_symbol_context_at_offset(ast: &Program, offset: usize) -> Option<ScopedSymbolLspContext> {
+    let mut context = ScopedSymbolLspContext {
+        vocab_stack: Vec::new(),
+        call_target: None,
+    };
+    for decl in &ast.declarations {
+        if decl.span.start <= offset && offset <= decl.span.end {
+            scoped_symbol_context_in_declaration(decl, offset, &mut context);
+        }
+    }
+    if context.vocab_stack.is_empty() {
+        None
+    } else {
+        Some(context)
+    }
+}
+
+/// Update scoped symbol completion context from one declaration containing the offset.
+fn scoped_symbol_context_in_declaration(
+    decl: &Spanned<Declaration>,
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    match &decl.node {
+        Declaration::Const(konst) => scoped_symbol_context_in_expr(&konst.value, offset, context),
+        Declaration::Static(static_decl) => scoped_symbol_context_in_expr(&static_decl.value, offset, context),
+        Declaration::Function(func) => scoped_symbol_context_in_statements(&func.body, offset, context),
+        Declaration::Model(model) => {
+            for method in &model.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &model.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        Declaration::Class(class) => {
+            for method in &class.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &class.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        Declaration::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &trait_decl.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Update scoped symbol completion context from a statement list containing the offset.
+fn scoped_symbol_context_in_statements(
+    statements: &[Spanned<Statement>],
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    for stmt in statements {
+        if stmt.span.start <= offset && offset <= stmt.span.end {
+            scoped_symbol_context_in_statement(stmt, offset, context);
+        }
+    }
+}
+
+/// Update scoped symbol completion context from one statement containing the offset.
+fn scoped_symbol_context_in_statement(stmt: &Spanned<Statement>, offset: usize, context: &mut ScopedSymbolLspContext) {
+    match &stmt.node {
+        Statement::Assignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::FieldAssignment(assign) => {
+            scoped_symbol_context_in_expr(&assign.object, offset, context);
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::IndexAssignment(assign) => {
+            scoped_symbol_context_in_expr(&assign.object, offset, context);
+            scoped_symbol_context_in_expr(&assign.index, offset, context);
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::Return(expr) | Statement::Break(expr) => {
+            if let Some(expr) = expr {
+                scoped_symbol_context_in_expr(expr, offset, context);
+            }
+        }
+        Statement::If(if_stmt) => {
+            scoped_symbol_context_in_condition(&if_stmt.condition, offset, context);
+            scoped_symbol_context_in_statements(&if_stmt.then_body, offset, context);
+            for (condition, body) in &if_stmt.elif_branches {
+                scoped_symbol_context_in_expr(condition, offset, context);
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+            if let Some(body) = &if_stmt.else_body {
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+        }
+        Statement::Loop(loop_stmt) => scoped_symbol_context_in_statements(&loop_stmt.body, offset, context),
+        Statement::While(while_stmt) => {
+            scoped_symbol_context_in_condition(&while_stmt.condition, offset, context);
+            scoped_symbol_context_in_statements(&while_stmt.body, offset, context);
+        }
+        Statement::For(for_stmt) => {
+            scoped_symbol_context_in_expr(&for_stmt.iter, offset, context);
+            scoped_symbol_context_in_statements(&for_stmt.body, offset, context);
+        }
+        Statement::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        Statement::Assert(assert_stmt) => {
+            match &assert_stmt.kind {
+                crate::frontend::ast::AssertKind::Condition(expr) => {
+                    scoped_symbol_context_in_expr(expr, offset, context);
+                }
+                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                    scoped_symbol_context_in_expr(value, offset, context);
+                }
+                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                    scoped_symbol_context_in_expr(call, offset, context);
+                }
+            }
+            if let Some(message) = &assert_stmt.message {
+                scoped_symbol_context_in_expr(message, offset, context);
+            }
+        }
+        Statement::CompoundAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::TupleUnpack(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::ChainedAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::TupleAssign(assign) => {
+            for target in &assign.targets {
+                scoped_symbol_context_in_expr(target, offset, context);
+            }
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::VocabBlock(block) => {
+            let previous_len = context.vocab_stack.len();
+            context.vocab_stack.push(block.keyword.clone());
+            scoped_symbol_context_in_statements(&block.body, offset, context);
+            let matched_body = block
+                .body
+                .iter()
+                .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
+            if !matched_body {
+                context.vocab_stack.truncate(previous_len);
+            }
+        }
+        Statement::Pass | Statement::Continue | Statement::Surface(_) => {}
+    }
+}
+
+/// Update scoped symbol completion context from a control-flow condition containing the offset.
+fn scoped_symbol_context_in_condition(condition: &Condition, offset: usize, context: &mut ScopedSymbolLspContext) {
+    match condition {
+        Condition::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        Condition::Let { value, .. } => scoped_symbol_context_in_expr(value, offset, context),
+    }
+}
+
+/// Update scoped symbol completion context from one expression containing the offset.
+fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &mut ScopedSymbolLspContext) {
+    if !(expr.span.start <= offset && offset <= expr.span.end) {
+        return;
+    }
+    match &expr.node {
+        Expr::Call(callee, _, args) => {
+            scoped_symbol_context_in_expr(callee, offset, context);
+            if offset >= callee.span.end && offset <= expr.span.end {
+                context.call_target = call_argument_target_lsp(callee);
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+        }
+        Expr::MethodCall(receiver, method, _, args) => {
+            scoped_symbol_context_in_expr(receiver, offset, context);
+            if offset >= receiver.span.end && offset <= expr.span.end {
+                context.call_target = Some(method.clone());
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+        }
+        Expr::Binary(left, _, right) => {
+            scoped_symbol_context_in_expr(left, offset, context);
+            scoped_symbol_context_in_expr(right, offset, context);
+        }
+        Expr::Unary(_, inner)
+        | Expr::Index(inner, _)
+        | Expr::Slice(inner, _)
+        | Expr::Try(inner)
+        | Expr::Paren(inner)
+        | Expr::Yield(Some(inner)) => scoped_symbol_context_in_expr(inner, offset, context),
+        Expr::Match(scrutinee, arms) => {
+            scoped_symbol_context_in_expr(scrutinee, offset, context);
+            for arm in arms {
+                if let Some(guard) = &arm.node.guard {
+                    scoped_symbol_context_in_expr(guard, offset, context);
+                }
+                match &arm.node.body {
+                    MatchBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+                    MatchBody::Block(body) => scoped_symbol_context_in_statements(body, offset, context),
+                }
+            }
+        }
+        Expr::If(if_expr) => {
+            scoped_symbol_context_in_expr(&if_expr.condition, offset, context);
+            scoped_symbol_context_in_statements(&if_expr.then_body, offset, context);
+            if let Some(body) = &if_expr.else_body {
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+        }
+        Expr::Loop(loop_expr) => scoped_symbol_context_in_statements(&loop_expr.body, offset, context),
+        Expr::ListComp(comp) => {
+            scoped_symbol_context_in_expr(&comp.expr, offset, context);
+            scoped_symbol_context_in_expr(&comp.iter, offset, context);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_context_in_expr(filter, offset, context);
+            }
+            scoped_symbol_context_in_comprehension_clauses(&comp.clauses, offset, context);
+        }
+        Expr::DictComp(comp) => {
+            scoped_symbol_context_in_expr(&comp.key, offset, context);
+            scoped_symbol_context_in_expr(&comp.value, offset, context);
+            scoped_symbol_context_in_expr(&comp.iter, offset, context);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_context_in_expr(filter, offset, context);
+            }
+            scoped_symbol_context_in_comprehension_clauses(&comp.clauses, offset, context);
+        }
+        Expr::Generator(generator) => {
+            scoped_symbol_context_in_expr(&generator.expr, offset, context);
+            scoped_symbol_context_in_comprehension_clauses(&generator.clauses, offset, context);
+        }
+        Expr::Closure(_, body) => scoped_symbol_context_in_expr(body, offset, context),
+        Expr::Tuple(items) | Expr::Set(items) => {
+            for item in items {
+                scoped_symbol_context_in_expr(item, offset, context);
+            }
+        }
+        Expr::List(entries) => {
+            for entry in entries {
+                match entry {
+                    ListEntry::Element(expr) | ListEntry::Spread(expr) => {
+                        scoped_symbol_context_in_expr(expr, offset, context);
+                    }
+                }
+            }
+        }
+        Expr::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                        scoped_symbol_context_in_expr(key, offset, context);
+                        scoped_symbol_context_in_expr(value, offset, context);
+                    }
+                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                        scoped_symbol_context_in_expr(expr, offset, context);
+                    }
+                }
+            }
+        }
+        Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                    scoped_symbol_context_in_expr(expr, offset, context);
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            scoped_symbol_context_in_expr(start, offset, context);
+            scoped_symbol_context_in_expr(end, offset, context);
+        }
+        Expr::Surface(surface) => match &surface.payload {
+            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_context_in_expr(inner, offset, context),
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                scoped_symbol_context_in_expr(left, offset, context);
+                scoped_symbol_context_in_expr(right, offset, context);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
+        Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
+    }
+}
+
+/// Update scoped symbol completion context from comprehension clauses containing the offset.
+fn scoped_symbol_context_in_comprehension_clauses(
+    clauses: &[crate::frontend::ast::ComprehensionClause],
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    for clause in clauses {
+        match clause {
+            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                scoped_symbol_context_in_expr(iter, offset, context);
+            }
+            crate::frontend::ast::ComprehensionClause::If(condition) => {
+                scoped_symbol_context_in_expr(condition, offset, context);
+            }
+        }
+    }
+}
+
+/// Update scoped symbol completion context from call arguments containing the offset.
+fn scoped_symbol_context_in_call_args(args: &[CallArg], offset: usize, context: &mut ScopedSymbolLspContext) {
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        }
+    }
+}
+
+/// Return the identifier-like callee name used by call-argument scoped symbol eligibility.
+fn call_argument_target_lsp(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
+        Expr::Ident(name) | Expr::Field(_, name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 /// Find a decorator at `offset` and resolve it to its registry info.
 ///
 /// Returns `(decorator_id, resolved_path_segments)` if a recognized decorator is found.
@@ -3052,6 +3997,22 @@ impl LanguageServer for IncanLanguageServer {
                     range: Some(span_to_range(&doc.source, preview.span.start, preview.span.end)),
                 }));
             }
+
+            if let Some(scoped_symbol) =
+                scoped_symbol_at_offset(ast, &doc.source, &doc.library_imported_dsl_surfaces, offset)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: scoped_symbol_hover_markdown(scoped_symbol.dependency_key, scoped_symbol.descriptor),
+                    }),
+                    range: Some(span_to_range(
+                        &doc.source,
+                        scoped_symbol.symbol_span.start,
+                        scoped_symbol.symbol_span.end,
+                    )),
+                }));
+            }
         }
 
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
@@ -3123,6 +4084,7 @@ impl LanguageServer for IncanLanguageServer {
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
+    /// Resolve go-to-definition for local symbols, stdlib imports, decorators, and DSL-scoped symbols.
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
@@ -3153,6 +4115,17 @@ impl LanguageServer for IncanLanguageServer {
             if let Some(location) = stdlib_location_for_path(&module_path) {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
+        }
+
+        if let Some(scoped_symbol) =
+            scoped_symbol_at_offset(ast, &doc.source, &doc.library_imported_dsl_surfaces, offset)
+            && let Some(import_span) =
+                find_pub_library_import_span(ast, scoped_symbol.dependency_key, scoped_symbol.symbol_span.start)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(&doc.source, import_span.start, import_span.end),
+            })));
         }
 
         // Find what symbol the cursor is on
@@ -3233,6 +4206,21 @@ impl LanguageServer for IncanLanguageServer {
                     )),
                     Some("0_cls".to_string()),
                 );
+            }
+            if let Some(off) = position_to_offset(&doc.source, position) {
+                for scoped_symbol in active_scoped_symbol_completions(ast, &doc.library_imported_dsl_surfaces, off) {
+                    push_completion(
+                        &mut items,
+                        &mut seen,
+                        &scoped_symbol.descriptor.symbol,
+                        CompletionItemKind::FUNCTION,
+                        Some(scoped_symbol_completion_detail(
+                            scoped_symbol.dependency_key,
+                            scoped_symbol.descriptor,
+                        )),
+                        Some(format!("0_scoped_{}", scoped_symbol.descriptor.symbol)),
+                    );
+                }
             }
         }
 
@@ -3708,5 +4696,117 @@ mod completion_tests {
             "expected negative-count detail in hover markdown: {markdown}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_scoped_symbol_tests {
+    use std::collections::HashMap;
+
+    use super::{
+        active_scoped_symbol_completions, find_pub_library_import_span, scoped_symbol_at_offset,
+        scoped_symbol_hover_markdown,
+    };
+    use crate::frontend::ast::Program;
+    use crate::frontend::{lexer, parser};
+
+    fn scoped_symbol_fixture() -> (
+        String,
+        Program,
+        parser::ImportedLibraryDslSurfaces,
+        parser::ImportedLibraryVocab,
+    ) {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n\nconst outside = 1\n";
+        let mut keyword_map = HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .with_role(
+                                incan_vocab::ScopedSymbolRoleMetadata::new("aggregate.total").with_label("Total"),
+                            )
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+        let tokens = lexer::lex(source).expect("fixture should lex");
+        let ast = parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+            .expect("fixture should parse");
+        (source.to_string(), ast, surface_map, keyword_map)
+    }
+
+    #[test]
+    fn scoped_symbol_completion_is_limited_to_active_dsl_scope() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let scoped_offset = source.find("sum(amount)").expect("sum call should exist");
+        let items = active_scoped_symbol_completions(&ast, &surface_map, scoped_offset);
+        assert!(
+            items.iter().any(|item| {
+                item.dependency_key == "analytics"
+                    && item.descriptor.key == "query.sum"
+                    && item.descriptor.symbol == "sum"
+            }),
+            "expected sum completion inside query block, got {items:?}"
+        );
+
+        let outside_offset = source.find("const outside").expect("outside binding should exist");
+        let outside_items = active_scoped_symbol_completions(&ast, &surface_map, outside_offset);
+        assert!(
+            outside_items.is_empty(),
+            "scoped symbol completions must not leak outside the owning DSL scope: {outside_items:?}"
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_hover_resolves_imported_descriptor_metadata() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
+        let occurrence =
+            scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+        let markdown = scoped_symbol_hover_markdown(occurrence.dependency_key, occurrence.descriptor);
+
+        assert_eq!(occurrence.dependency_key, "analytics");
+        assert_eq!(occurrence.descriptor.key, "query.sum");
+        assert_eq!(&source[occurrence.symbol_span.start..occurrence.symbol_span.end], "sum");
+        assert!(
+            markdown.contains("scoped DSL symbol")
+                && markdown.contains("`pub::analytics`")
+                && markdown.contains("Descriptor: `query.sum`")
+                && markdown.contains("Family: `aggregate-like`"),
+            "hover markdown should expose descriptor metadata, got:\n{markdown}"
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_definition_points_to_activating_pub_import() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
+        let occurrence =
+            scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+        let import_span = find_pub_library_import_span(&ast, occurrence.dependency_key, occurrence.symbol_span.start)
+            .expect("activating import span should be available");
+
+        assert_eq!(&source[import_span.start..import_span.end], "import pub::analytics");
     }
 }

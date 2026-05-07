@@ -344,6 +344,14 @@ where
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 expr_has(&left.node, pred) || expr_has(&right.node, pred)
             }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                args.iter().any(|arg| match arg {
+                    crate::frontend::ast::CallArg::Positional(expr)
+                    | crate::frontend::ast::CallArg::Named(_, expr)
+                    | crate::frontend::ast::CallArg::PositionalUnpack(expr)
+                    | crate::frontend::ast::CallArg::KeywordUnpack(expr) => expr_has(&expr.node, pred),
+                })
+            }
         },
 
         // ---- Context: collection / interpolation expressions ----

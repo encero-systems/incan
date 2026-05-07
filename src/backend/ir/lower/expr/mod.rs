@@ -490,6 +490,19 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if Self::is_explicit_builtin_namespace_expr(o)
+                    && let Some(builtin) = BuiltinFn::from_name(m)
+                {
+                    let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+                    return Ok(TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: builtin,
+                            args: args_ir,
+                        },
+                        IrType::Unknown,
+                    ));
+                }
+
                 if matches!(&o.node, ast::Expr::Ident(name)
                     if collection_helpers::from_parts(name, m) == Some(BuiltinCollectionHelperId::ListRepeat)
                         && collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List))

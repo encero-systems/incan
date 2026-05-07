@@ -29,6 +29,8 @@ pub const STDLIB_ASYNC: &str = "async";
 pub const STDLIB_GRAPH: &str = "graph";
 /// `std.rust` module name for capability bounds (RFC 041).
 pub const STDLIB_RUST: &str = "rust";
+/// `std.builtins` module name for explicit builtin-function escape calls (RFC 045).
+pub const STDLIB_BUILTINS: &str = "builtins";
 
 const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
 
@@ -302,6 +304,15 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         // generated code. They have no .incn stub and no emitted Rust module.
         typechecker_only: true,
     },
+    StdlibNamespace {
+        name: STDLIB_BUILTINS,
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        // `std.builtins.<name>(...)` is an explicit call escape to the compiler's builtin-function registry. Builtin
+        // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
+        typechecker_only: true,
+    },
 ];
 
 /// Look up a top-level stdlib namespace by name.
@@ -453,6 +464,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
     }
 
     #[test]
@@ -514,7 +526,9 @@ mod tests {
     #[test]
     fn typechecker_only_namespace_std_rust_has_no_stub_path() {
         assert_eq!(stdlib_stub_path(&segs(&["std", "rust"])), None);
+        assert_eq!(stdlib_stub_path(&segs(&["std", "builtins"])), None);
         assert!(is_typechecker_only_stdlib(&segs(&["std", "rust"])));
+        assert!(is_typechecker_only_stdlib(&segs(&["std", "builtins"])));
         assert!(!is_typechecker_only_stdlib(&segs(&["std", "testing"])));
         assert!(!is_typechecker_only_stdlib(&segs(&["std", "async"])));
         assert!(!is_typechecker_only_stdlib(&segs(&["not", "stdlib"]))); // non-stdlib path
@@ -532,6 +546,7 @@ mod tests {
         assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+        assert!(hint.contains(&"std.builtins".to_string()));
     }
 
     #[test]
