@@ -5514,7 +5514,7 @@
 <p>A library produces two artifacts during <code>incan build --lib</code>:</p>
 <ol>
 <li>
-<p><strong>Type manifest</strong> (<code>.incnlib</code>) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, and soft keyword declarations. Generated from the library's checked public API — never hand-written.</p>
+<p><strong>Type manifest</strong> (<code>.incnlib</code>) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, soft keyword declarations, checked contract metadata, and shipped Rust ABI metadata for Rust-backed items. Generated from the library's checked public API and Rust ABI extraction during <code>build --lib</code> — never hand-written.</p>
 </li>
 <li>
 <p><strong>Generated Rust crate</strong> — the library's <code>.incn</code> source lowered to Rust source plus <code>Cargo.toml</code>, ready for <code>cargo</code> to compile and link against. The Phase 1 artifact ships generated <code>.rs</code> source, not a compiled <code>.rlib</code>, so the artifact remains target-independent and compatible with the consumer's toolchain.</p>
@@ -5547,8 +5547,13 @@
     activations: list[SoftKeywordActivation]
       # Extracted from the library&#39;s vocab crate (RFC 027) during build --lib.
       # Never hand-authored.
+
+  rust_abi:
+    schema_version: int               # Rust ABI schema version
+    items: list[RustItemMetadata]     # Canonical Rust item signatures captured during build --lib
 </code></pre></div>
 <p>The manifest is serialized as JSON for Phase 1 because it is human-readable, debuggable, and requires no extra dependencies. Implementations should isolate the encoding behind a stable manifest read/write boundary so the on-disk format may evolve later without changing the language contract. The semantic contract is the manifest schema, not JSON as a forever format.</p>
+<p>Consumers use embedded <code>rust_abi</code> metadata before falling back to workspace inspection. That keeps published-library Rust-backed signatures deterministic: the producer captures the Rust ABI once, ships it in <code>.incnlib</code>, and consumers do not need to inspect the producer workspace on compiler hot paths.</p>
 <p><code>TypeRef</code> is recursive: it must support plain named types, applied generics, optionals, results/unions, and nested combinations. Bounds belong at the declarations that introduce type parameters, not on every individual use site, so exported generic types and exported generic functions must carry their type parameters plus bound metadata alongside the recursive <code>TypeRef</code> tree.</p>
 <p>The <code>.incnlib</code> manifest is intentionally a semantic surface artifact, not a transport or dependency-resolution artifact. It describes the checked public API plus optional vocab metadata; it does not describe where the generated Rust crate lives on disk, nor does it attempt to encode future git/registry/lockfile resolution data. For Phase 1, we mandate that the generated Rust crate name must match the library package name, and the crate's on-disk location is determined by the dependency transport (<code>target/lib/</code> for local builds, extracted package root for registry packages); the <code>.incnlib</code> file does not hold information about this (on purpose).</p>
 <h3 id="pub-import-syntax"><code>pub::</code> import syntax<a class="headerlink" href="#pub-import-syntax" title="Permanent link">&para;</a></h3>

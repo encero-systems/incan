@@ -1548,6 +1548,21 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#published-libraries-and-shipped-abi-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Published libraries and shipped ABI metadata
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Published libraries and shipped ABI metadata">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#qualified-backing-paths" class="md-nav__link">
     <span class="md-ellipsis">
@@ -5402,6 +5417,21 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#published-libraries-and-shipped-abi-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Published libraries and shipped ABI metadata
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Published libraries and shipped ABI metadata">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#qualified-backing-paths" class="md-nav__link">
     <span class="md-ellipsis">
@@ -5902,6 +5932,9 @@ adopted Rust trait. In that case Incan treats the alias as already satisfying th
 <p><code>rusttype ... with Awaitable[T]</code> is currently rejected with a focused diagnostic. The compiler keeps <code>Awaitable[T]</code> as
 the Incan-facing async contract, but Rust <code>Future</code> bridge emission still needs safe pin-projection and output-mapping
 metadata before it can replace handwritten Rust adapters.</p>
+<h2 id="published-libraries-and-shipped-abi-metadata">Published libraries and shipped ABI metadata<a class="headerlink" href="#published-libraries-and-shipped-abi-metadata" title="Permanent link">&para;</a></h2>
+<p>When a library exposes Rust-backed items, run <code>incan build --lib</code> before another project consumes it through <code>pub::</code>. The generated <code>.incnlib</code> embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.</p>
+<p>Consumers load that shipped ABI metadata first for Rust-backed imported symbols. <code>rust_inspect</code> remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its <code>.incnlib</code>.</p>
 <h3 id="qualified-backing-paths">Qualified backing paths<a class="headerlink" href="#qualified-backing-paths" title="Permanent link">&para;</a></h3>
 <p>When a <code>rust::</code> import binds a Rust module (or other namespace), you can name a concrete type inside it with <code>::</code> after that binding:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">substrait</span><span class="p">::</span><span class="n">proto</span> <span class="kn">import</span><span class="w"> </span><span class="nn">type</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">proto_type</span>
