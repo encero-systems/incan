@@ -5680,7 +5680,7 @@ with Rust-level async performance.</p>
     <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">transform</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="k">return</span> <span class="kt">result</span>
 </code></pre></div>
-<p><code>await</code> is only valid inside <code>async def</code> bodies and <strong>async</strong> methods Using <code>await</code> in an ordinary <code>def</code> or sync method is a type error.</p>
+<p><code>await</code> is only valid inside <code>async def</code> bodies and <strong>async</strong> methods. Using <code>await</code> in an ordinary <code>def</code> or sync method is a type error. Calling an async function or method as a direct value without <code>await</code> produces a compiler warning; pass async work to task APIs such as <code>spawn()</code> when another async API should consume it.</p>
 <div class="admonition info">
 <p class="admonition-title">Coming from Python?</p>
 <p>Incan's <code>await</code> follows the same rules as in Python: it is disallowed outside an <code>async</code> scope.</p>
