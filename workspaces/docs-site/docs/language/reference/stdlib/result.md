@@ -1,7 +1,7 @@
 # std.result (reference)
 
-`std.result` exposes Incan-authored helper functions for the value-transforming
-`Result[T, E]` combinators.
+`std.result` exposes Incan-authored helper functions for the `Result[T, E]`
+combinator surface.
 
 The method form is the normal way to compose results:
 
@@ -31,15 +31,18 @@ def main() -> None:
 | `map_err` | `map_err[T, E, F](result: Result[T, E], f: Callable[E, F]) -> Result[T, F]` | Transform `Err(E)` with `f`; preserve `Ok(T)`. |
 | `and_then` | `and_then[T, E, U](result: Result[T, E], f: Callable[T, Result[U, E]]) -> Result[U, E]` | Chain a `Result`-returning function after `Ok(T)`; preserve `Err(E)`. |
 | `or_else` | `or_else[T, E, F](result: Result[T, E], f: Callable[E, Result[T, F]]) -> Result[T, F]` | Recover or remap from `Err(E)` with a `Result`-returning function; preserve `Ok(T)`. |
+| `inspect` | `inspect[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]` | Observe `Ok(T)` with `f`; preserve the original `Result`. |
+| `inspect_err` | `inspect_err[T, E](result: Result[T, E], f: Callable[E, None]) -> Result[T, E]` | Observe `Err(E)` with `f`; preserve the original `Result`. |
 
-`inspect` and `inspect_err` are method-only today. They observe a branch through
-an implicit borrow and return the original `Result[T, E]` unchanged; that borrowed
-observer contract is compiler-provided until borrowed callback types are
-user-spellable in Incan source.
+`inspect` and `inspect_err` pass the observed payload through an implicit borrow
+when the original branch value must remain available after the callback. Source
+code still spells the observer as `Callable[T, None]` or `Callable[E, None]`; the
+compiler refines the generated callable boundary when borrowing is required.
 
 ## Relationship To Method Syntax
 
-For named function callbacks, the compiler may lower value-transforming method
-calls such as `result.map(double)` through these `std.result` helpers. Callable
-objects and closure-shaped values remain on the direct method lowering path so
-they keep the same callable-object behavior documented for `Callable1`.
+For named function callbacks, the compiler may lower method calls such as
+`result.map(double)` or `result.inspect(log_value)` through these `std.result`
+helpers. Callable objects and closure-shaped values remain on the direct method
+lowering path so they keep the same callable-object behavior documented for
+`Callable1`.

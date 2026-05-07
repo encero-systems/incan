@@ -88,15 +88,6 @@ impl<'a> IrEmitter<'a> {
         }
 
         match &callback.kind {
-            IrExprKind::Var {
-                name,
-                ref_kind: VarRefKind::Value,
-                ..
-            } if matches!(callback.ty, IrType::Function { .. }) && self.needs_result_observer_function_helper(name) => {
-                let helper_name = Self::result_observer_borrowed_function_name(name);
-                let helper = Self::rust_ident(&helper_name);
-                Ok(quote! { #helper(#borrowed_payload) })
-            }
             _ if matches!(callback.ty, IrType::Function { .. }) => {
                 let callback_tokens = self.emit_expr(callback)?;
                 Ok(quote! { #callback_tokens(#borrowed_payload) })
@@ -113,6 +104,42 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #callback_tokens.#method(#borrowed_payload) })
             }
         }
+    }
+
+    /// Return whether a Result observer callback can be routed through the Incan-authored `std.result` helper.
+    fn result_observer_can_use_stdlib_helper(&self, callback: &TypedExpr) -> bool {
+        match &callback.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } if matches!(callback.ty, IrType::Function { .. }) => self.function_registry.get(name).is_some(),
+            _ => false,
+        }
+    }
+
+    /// Emit the callback argument passed to an Incan-authored `inspect` / `inspect_err` helper.
+    fn emit_result_observer_stdlib_callback_arg(
+        &self,
+        callback: &TypedExpr,
+        observed_ty: &IrType,
+    ) -> Result<TokenStream, EmitError> {
+        if observed_ty.is_copy() {
+            return self.emit_expr(callback);
+        }
+        if let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &callback.kind
+            && matches!(callback.ty, IrType::Function { .. })
+            && self.needs_borrowed_function_adapter(name, &[0])
+        {
+            let helper_name = Self::borrowed_function_adapter_name(name, &[0]);
+            let helper = Self::rust_ident(&helper_name);
+            return Ok(quote! { #helper });
+        }
+        self.emit_expr(callback)
     }
 
     /// Return the branch payload type observed by `inspect` or `inspect_err`.
@@ -157,6 +184,12 @@ impl<'a> IrEmitter<'a> {
                         "cannot infer observed payload type for Result.{method_name}"
                     )));
                 };
+                if self.result_observer_can_use_stdlib_helper(callback) {
+                    let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, &observed_ty)?;
+                    return Ok(quote! {
+                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
+                }
                 let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
                 quote! {
                     #receiver_tokens.#method_ident(|__incan_result_value| {

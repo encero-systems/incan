@@ -1,9 +1,9 @@
 """
 Result combinator helpers.
 
-These functions are the Incan-authored implementation of the value-transforming
-`Result[T, E]` combinator surface. Method syntax such as `value.map(f)` uses the
-same semantics; direct imports are useful when a function-shaped API is clearer.
+These functions are the Incan-authored implementation of the `Result[T, E]`
+combinator surface. Method syntax such as `value.map(f)` uses the same
+semantics; direct imports are useful when a function-shaped API is clearer.
 """
 
 
@@ -41,3 +41,25 @@ pub def or_else[T, E, F](result: Result[T, E], f: Callable[E, Result[T, F]]) -> 
     match result:
         Ok(value) => return Ok(value)
         Err(error) => return f(error)
+
+
+pub def inspect[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]:
+    """
+    Observe an `Ok(T)` payload with `f`, preserving the original result unchanged.
+    """
+    match result:
+        Ok(value) =>
+            f(value)
+            return Ok(value)
+        Err(error) => return Err(error)
+
+
+pub def inspect_err[T, E](result: Result[T, E], f: Callable[E, None]) -> Result[T, E]:
+    """
+    Observe an `Err(E)` payload with `f`, preserving the original result unchanged.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) =>
+            f(error)
+            return Err(error)

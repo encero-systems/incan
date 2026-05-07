@@ -675,12 +675,16 @@ def main(result: Result[int, str]) -> Result[int, str]:
         "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains(".inspect(|__incan_result_value|"),
-        "inspect should use Rust's borrowed Result observer surface:\n{rust_code}"
+        rust_code.contains("crate::__incan_std::result::inspect"),
+        "inspect with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("observe_int(*__incan_result_value)"),
-        "inspect should copy Copy payloads from Rust's borrowed observer surface without cloning:\n{rust_code}"
+        rust_code.contains("observe_int"),
+        "inspect should pass Copy named observers through the std.result helper without cloning:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains(".inspect(|__incan_result_value|"),
+        "callable-object inspect should use Rust's borrowed Result observer surface:\n{rust_code}"
     );
     assert!(
         rust_code.contains("observer.__call__(*__incan_result_value)"),
@@ -716,16 +720,26 @@ pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload,
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("fn __incan_result_observer_borrow_observe_payload(_: &Payload)"),
-        "non-Copy observer callbacks should get a generated borrowed helper:\n{rust_code}"
+        rust_code.contains("fn __incan_borrow_adapter_observe_payload_0(_: &Payload)"),
+        "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("__incan_result_observer_borrow_observe_payload(__incan_result_value)"),
-        "inspect should pass Rust's borrowed payload directly into the borrowed helper:\n{rust_code}"
+        rust_code.contains("crate::__incan_std::result::inspect(")
+            && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
+        "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_observer_borrow_observe_payload"),
+        "named function observers should use the generic borrowed adapter, not the old Result-specific helper:\n{rust_code}"
     );
     assert!(
         rust_code.contains("fn __incan_result_observer_borrow___call__(&self, _: &Payload)"),
         "non-Copy callable observers should get a generated borrowed __call__ helper:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("fn __incan_result_observer_borrow___call__").count(),
+        1,
+        "callable-object borrowed observer helper should be emitted once:\n{rust_code}"
     );
     assert!(
         rust_code.contains("observer.__incan_result_observer_borrow___call__(__incan_result_value)"),

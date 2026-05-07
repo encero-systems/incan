@@ -161,6 +161,91 @@ impl AstLowering {
         }
     }
 
+    /// Build a synthetic callable signature from an already-lowered function type.
+    fn function_signature_from_ir_type(params: &[IrType], ret: &IrType) -> FunctionSignature {
+        FunctionSignature {
+            params: params
+                .iter()
+                .enumerate()
+                .map(|(idx, ty)| FunctionParam {
+                    name: format!("__incan_arg_{idx}"),
+                    ty: ty.clone(),
+                    mutability: super::super::super::types::Mutability::Immutable,
+                    is_self: false,
+                    kind: ast::ParamKind::Normal,
+                    default: None,
+                })
+                .collect(),
+            return_type: ret.clone(),
+        }
+    }
+
+    /// Return whether passing `arg` to a callable parameter should refine that parameter to a shared borrow.
+    fn callable_arg_needs_implicit_borrow(arg: &TypedExpr, target_ty: &IrType) -> bool {
+        if arg.ty.is_copy() || matches!(target_ty, IrType::Ref(_) | IrType::RefMut(_)) {
+            return false;
+        }
+        matches!(
+            arg.kind,
+            IrExprKind::Var {
+                access: VarAccess::Read | VarAccess::Borrow,
+                ..
+            }
+        )
+    }
+
+    /// Refine a function-typed local parameter call when borrowing preserves a non-`Copy` argument for later use.
+    fn refine_function_typed_local_call(
+        &mut self,
+        func: &mut TypedExpr,
+        args: &[IrCallArg],
+        callable_signature: Option<FunctionSignature>,
+    ) -> Option<FunctionSignature> {
+        let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &func.kind
+        else {
+            return callable_signature;
+        };
+        let local_name = name.clone();
+        if !self.current_callable_param_scope_contains(&local_name) {
+            return callable_signature;
+        }
+
+        let IrType::Function { params, ret } = &func.ty else {
+            return callable_signature;
+        };
+        let mut signature =
+            callable_signature.unwrap_or_else(|| Self::function_signature_from_ir_type(params, ret.as_ref()));
+        let mut changed = false;
+
+        for (idx, arg) in args.iter().enumerate() {
+            if !matches!(arg.kind, IrCallArgKind::Positional | IrCallArgKind::Named) {
+                continue;
+            }
+            let Some(param) = signature.params.get_mut(idx) else {
+                continue;
+            };
+            if Self::callable_arg_needs_implicit_borrow(&arg.expr, &param.ty) {
+                param.ty = IrType::Ref(Box::new(param.ty.clone()));
+                changed = true;
+            }
+        }
+
+        if changed {
+            let refined_ty = IrType::Function {
+                params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: Box::new(signature.return_type.clone()),
+            };
+            func.ty = refined_ty.clone();
+            self.update_local_binding(&local_name, refined_ty);
+        }
+
+        Some(signature)
+    }
+
     fn lower_adapter_kind(adapter_kind: ast::InteropAdapterKind) -> super::super::super::decl::IrInteropAdapterKind {
         match adapter_kind {
             ast::InteropAdapterKind::Via => super::super::super::decl::IrInteropAdapterKind::Via,
@@ -358,7 +443,7 @@ impl AstLowering {
             ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
             _ => None,
         };
-        let func = self.lower_expr_spanned(f)?;
+        let mut func = self.lower_expr_spanned(f)?;
         if let Some(resolved_operator) = self
             .type_info
             .as_ref()
@@ -459,6 +544,13 @@ impl AstLowering {
                 ret_ty,
             ));
         }
+        let callable_signature = imported_callee_path
+            .as_deref()
+            .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .or_else(|| self.callable_signature_for_call_span(call_span))
+            .or_else(|| self.callable_signature_for_callee_span(f.span));
+        let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
+
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()
         } else {
@@ -469,11 +561,7 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
-                callable_signature: imported_callee_path
-                    .as_deref()
-                    .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
-                    .or_else(|| self.callable_signature_for_call_span(call_span))
-                    .or_else(|| self.callable_signature_for_callee_span(f.span)),
+                callable_signature,
                 canonical_path: imported_callee_path,
             },
             ret_ty,

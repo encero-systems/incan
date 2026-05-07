@@ -2786,6 +2786,60 @@ def main() -> None:
     }
 
     #[test]
+    fn test_user_authored_result_tap_borrows_callback_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::fs import ReadDir
+from rust::std::path import Path as RustPath
+
+def observe_entries(_entries: ReadDir) -> None:
+    pass
+
+def tap[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]:
+    match result:
+        Ok(value) =>
+            f(value)
+            return Ok(value)
+        Err(error) => return Err(error)
+
+def main() -> None:
+    result = tap(read_dir(RustPath.new(".")), observe_entries)
+    match result:
+        Ok(entries) =>
+            mut seen = False
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+            println(seen)
+        Err(err) => println(err.to_string())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "user-authored Result tap borrowed callback regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true"],
+            "unexpected user-authored Result tap output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

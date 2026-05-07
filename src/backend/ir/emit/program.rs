@@ -31,7 +31,7 @@ use super::super::decl::{
 use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use super::super::stmt::AssignTarget;
 use super::super::types::IrType;
-use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
+use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
 
 /// Import tracking for warning-free codegen.
@@ -220,6 +220,7 @@ impl ImportTracker {
 /// generated entrypoints/public surface and can avoid generated `unused_imports`/`dead_code` suppressions.
 struct GeneratedUseAnalyzer<'program> {
     declarations_by_name: HashMap<String, &'program IrDecl>,
+    function_registry: &'program FunctionRegistry,
     impls_by_target: HashMap<String, Vec<&'program super::super::decl::IrImpl>>,
     rust_extension_trait_imports_by_method: HashMap<String, Vec<String>>,
     external_error_trait_types: HashSet<String>,
@@ -238,6 +239,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     ) -> GeneratedUseAnalysis {
         let mut analyzer = Self {
             declarations_by_name: HashMap::new(),
+            function_registry: &program.function_registry,
             impls_by_target: HashMap::new(),
             rust_extension_trait_imports_by_method: HashMap::new(),
             external_error_trait_types: external_error_trait_types.clone(),
@@ -691,11 +693,16 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::Cast { expr: operand, .. } => self.scan_expr(operand),
             IrExprKind::Call {
-                func, args, type_args, ..
+                func,
+                args,
+                type_args,
+                callable_signature,
+                canonical_path,
             } => {
                 if let IrExprKind::Var { name, .. } = &func.kind {
                     self.analysis.used_constructors.insert(name.clone());
                 }
+                self.record_borrowed_function_value_adapters(func, args, callable_signature.as_ref(), canonical_path);
                 self.scan_expr(func);
                 for ty in type_args {
                     self.scan_type(ty);
@@ -922,7 +929,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 ref_kind: VarRefKind::Value,
                 ..
             } if matches!(callback.ty, IrType::Function { .. }) => {
-                self.analysis.result_observer_function_callbacks.insert(name.clone());
+                self.analysis.borrowed_function_adapters.insert((name.clone(), vec![0]));
             }
             _ if !matches!(callback.ty, IrType::Function { .. }) => {
                 if let Some(type_name) = callback.ty.nominal_type_name() {
@@ -932,6 +939,82 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Resolve the most precise callable signature available for adapter analysis at a call site.
+    fn function_signature_for_call(
+        &self,
+        func: &TypedExpr,
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: &Option<Vec<String>>,
+    ) -> Option<FunctionSignature> {
+        let local_name = match &func.kind {
+            IrExprKind::Var { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        let canonical_name = canonical_path.as_ref().and_then(|path| path.last()).map(String::as_str);
+        local_name
+            .and_then(|name| self.function_registry.get(name).cloned())
+            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
+            .or_else(|| callable_signature.cloned())
+            .or_else(|| match &func.ty {
+                IrType::Function { params, ret } => Some(FunctionSignature {
+                    params: params
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, ty)| super::super::decl::FunctionParam {
+                            name: format!("__incan_arg_{idx}"),
+                            ty: ty.clone(),
+                            mutability: super::super::types::Mutability::Immutable,
+                            is_self: false,
+                            kind: crate::frontend::ast::ParamKind::Normal,
+                            default: None,
+                        })
+                        .collect(),
+                    return_type: ret.as_ref().clone(),
+                }),
+                _ => None,
+            })
+    }
+
+    /// Record named function arguments that need private adapters for borrowed function-pointer parameters.
+    fn record_borrowed_function_value_adapters(
+        &mut self,
+        func: &TypedExpr,
+        args: &[super::super::expr::IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: &Option<Vec<String>>,
+    ) {
+        let Some(signature) = self.function_signature_for_call(func, callable_signature, canonical_path) else {
+            return;
+        };
+        for (idx, arg) in args.iter().enumerate() {
+            let Some(param) = signature.params.get(idx) else {
+                continue;
+            };
+            let IrType::Function { params, .. } = &param.ty else {
+                continue;
+            };
+            let borrowed_indices: Vec<usize> = params
+                .iter()
+                .enumerate()
+                .filter_map(|(param_idx, ty)| matches!(ty, IrType::Ref(_)).then_some(param_idx))
+                .collect();
+            if borrowed_indices.is_empty() {
+                continue;
+            }
+            if let IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } = &arg.expr.kind
+                && matches!(arg.expr.ty, IrType::Function { .. })
+            {
+                self.analysis
+                    .borrowed_function_adapters
+                    .insert((name.clone(), borrowed_indices));
+            }
         }
     }
 
@@ -1555,9 +1638,10 @@ impl<'a> IrEmitter<'a> {
             &self.external_error_trait_types,
         );
         let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
-        let result_observer_function_callbacks = analysis.result_observer_function_callbacks.clone();
         let result_observer_callable_types = analysis.result_observer_callable_types.clone();
-        self.set_result_observer_callbacks(result_observer_function_callbacks, result_observer_callable_types);
+        let borrowed_function_adapters = analysis.borrowed_function_adapters.clone();
+        self.set_result_observer_callable_types(result_observer_callable_types);
+        self.set_borrowed_function_adapters(borrowed_function_adapters);
         self.set_generated_use_analysis(analysis);
 
         let emitted_declarations: Vec<&IrDecl> = program
@@ -1648,10 +1732,19 @@ impl<'a> IrEmitter<'a> {
         let mut decl_items = Vec::new();
         for decl in emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
-            if let IrDeclKind::Function(func) = &decl.kind
-                && let Some(helper) = self.emit_result_observer_borrowed_function(func)?
-            {
-                decl_items.push(helper);
+            if let IrDeclKind::Function(func) = &decl.kind {
+                let adapters = self.borrowed_function_adapters.borrow();
+                let mut matching_adapters: Vec<Vec<usize>> = adapters
+                    .iter()
+                    .filter_map(|(name, indices)| (name == &func.name).then_some(indices.clone()))
+                    .collect();
+                drop(adapters);
+                matching_adapters.sort();
+                for indices in matching_adapters {
+                    if let Some(helper) = self.emit_borrowed_function_adapter(func, &indices)? {
+                        decl_items.push(helper);
+                    }
+                }
             }
         }
 

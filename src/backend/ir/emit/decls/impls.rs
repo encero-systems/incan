@@ -32,6 +32,7 @@ impl<'a> IrEmitter<'a> {
         for method in &impl_block.methods {
             if self.needs_result_observer_callable_helper(&impl_block.target_type)
                 && let Some(helper) = self.emit_result_observer_borrowed_method(method)?
+                && self.claim_result_observer_callable_helper(&impl_block.target_type)
             {
                 borrowed_observer_methods.push(helper);
             }
