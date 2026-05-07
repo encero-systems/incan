@@ -2,7 +2,7 @@
 JSON Handling in Incan
 
 Demonstrates:
-- @derive(Serialize, Deserialize) for JSON support
+- @derive(json) for JSON support
 - Model.to_json() - instance method for serialization
 - Model.from_json() - static method for deserialization
 - Nested models
@@ -10,14 +10,16 @@ Demonstrates:
 See docs/guide/derives/serialization.md for details.
 """
 
-@derive(Debug, Clone, Serialize, Deserialize)
+from std.serde import json
+
+@derive(Debug, Clone, json)
 model Address:
     street: str
     city: str
     zip: str
 
 
-@derive(Debug, Clone, Serialize, Deserialize)
+@derive(Debug, Clone, json)
 model User:
     name: str
     age: int
@@ -25,7 +27,7 @@ model User:
     address: Address
 
 
-@derive(Debug, Clone, Serialize, Deserialize)
+@derive(Debug, Clone, json)
 model ApiResponse:
     success: bool
     data: User

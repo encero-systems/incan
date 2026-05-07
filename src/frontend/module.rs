@@ -64,14 +64,38 @@ pub(crate) fn resolve_program_source_imports(
     program
         .declarations
         .iter()
-        .filter_map(|decl| {
+        .flat_map(|decl| {
             let Declaration::Import(import) = &decl.node else {
-                return None;
+                return Vec::new();
             };
-            Some(ResolvedProgramSourceImport {
+            let mut resolved = vec![ResolvedProgramSourceImport {
                 span: decl.span,
                 resolution: resolve_source_module_import(base_dir, source_root, import),
-            })
+            }];
+
+            if let ImportKind::From { module, items } = &import.kind
+                && module.parent_levels == 0
+                && !module.is_absolute
+                && module
+                    .segments
+                    .first()
+                    .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+            {
+                for item in items {
+                    let mut item_module_path = module.segments.clone();
+                    item_module_path.push(item.name.clone());
+                    if stdlib::is_known_stdlib_module(&item_module_path) {
+                        resolved.push(ResolvedProgramSourceImport {
+                            span: decl.span,
+                            resolution: SourceModuleImportResolution::Stdlib {
+                                module_path: item_module_path,
+                            },
+                        });
+                    }
+                }
+            }
+
+            resolved
         })
         .collect()
 }

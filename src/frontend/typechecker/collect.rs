@@ -18,7 +18,7 @@ mod stdlib_imports;
 
 use self::decl_helpers::{
     collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
-    collect_properties, inject_json_methods, inject_validate_methods,
+    collect_properties, inject_validate_methods,
 };
 
 type InheritedMembers = (
@@ -269,9 +269,7 @@ impl TypeChecker {
             collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
 
-        // Inject JSON methods based on derives
         let derives = self.extract_derive_names(&model.decorators);
-        inject_json_methods(&mut methods, &mut method_overloads, &model.name, &derives);
         let field_order: Vec<Ident> = model.fields.iter().map(|f| f.node.name.clone()).collect();
         inject_validate_methods(
             &mut methods,
@@ -322,9 +320,7 @@ impl TypeChecker {
         methods.extend(collect_methods_from_overloads(&own_method_overloads));
         method_overloads.extend(own_method_overloads);
 
-        // Inject JSON methods based on derives
         let derives = self.extract_derive_names(&class.decorators);
-        inject_json_methods(&mut methods, &mut method_overloads, &class.name, &derives);
         let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
         let mut trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));

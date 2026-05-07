@@ -1009,9 +1009,6 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
         Some(DeriveId::Default) => {
             error = error.with_hint("Add @derive(Default) to enable Type.default()");
         }
-        Some(DeriveId::Serialize) | Some(DeriveId::Deserialize) => {
-            error = error.with_hint(format!("Add @derive({}) for JSON/serialization support", trait_name));
-        }
         Some(DeriveId::Validate) => {
             error = error.with_hint("Add @derive(Validate) to enable validated construction via TypeName.new(...)");
             error = error.with_hint("Then implement: def validate(self) -> Result[Self, E]: ...");

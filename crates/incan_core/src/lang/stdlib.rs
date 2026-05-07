@@ -370,8 +370,10 @@ pub fn is_known_stdlib_module(path: &[String]) -> bool {
     let Some(ns) = find_namespace(&path[1]) else {
         return false;
     };
-    if path.len() == 2 {
-        return true;
+    match path.len() {
+        2 => return true,
+        3 => {}
+        _ => return false,
     }
     // Leaf modules (no submodules) don't have children.
     if ns.submodules.is_empty() {
@@ -611,7 +613,7 @@ mod tests {
     fn trait_method_module_lookup_leaves_other_builtin_traits_unmapped() {
         assert_eq!(trait_method_module_segments(traits::as_str(TraitId::From)), None);
         assert_eq!(trait_method_module_segments(traits::as_str(TraitId::Into)), None);
-        assert_eq!(trait_method_module_segments(derives::as_str(DeriveId::Serialize)), None);
+        assert_eq!(trait_method_module_segments("Serialize"), None);
     }
 
     #[test]

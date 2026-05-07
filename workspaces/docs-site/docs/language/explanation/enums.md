@@ -488,7 +488,9 @@ For practical recipes (state machines, commands, error types, expression trees),
 Enums support `@derive(...)` decorators and docstrings:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 enum Status:
     """Represents the current state of a task."""
     Pending
@@ -564,7 +566,9 @@ enum PaymentMethod:
     BankTransfer(str, str)   # account, routing
 
 # Model: data-first, serialization
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model PaymentRequest:
     method: PaymentMethod
     amount: float

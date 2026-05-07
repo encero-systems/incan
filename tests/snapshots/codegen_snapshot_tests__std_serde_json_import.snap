@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::serde::json::Serialize;
-pub use crate::__incan_std::serde::json::Deserialize;
+use json::{Deserialize as _, Serialize as _};
+pub use crate::__incan_std::serde::json;
 #[derive(
     serde::Serialize,
     serde::Deserialize,
@@ -25,10 +25,15 @@ struct Config {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     debug: bool,
 }
-impl Config {
-    /// Serialize this model to a JSON string
-    pub fn to_json(&self) -> String {
+impl json::Serialize for Config {
+    fn to_json(&self) -> String {
         incan_stdlib::json::__private::stringify_or_raise(self, stringify!(Config))
+    }
+}
+impl json::Deserialize for Config {
+    fn from_json(json_str: String) -> Result<Self, String> {
+        serde_json::from_str(&json_str)
+            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
     }
 }
 fn main() {

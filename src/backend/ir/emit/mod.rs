@@ -87,7 +87,7 @@ pub struct IrEmitter<'a> {
     generated_use_analysis: RefCell<GeneratedUseAnalysis>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
-    /// Whether serde is needed (for Serialize/Deserialize derives)
+    /// Whether serde is needed for emitted Rust derives or helpers.
     needs_serde: RefCell<bool>,
     /// Function registry for call-site type checking
     function_registry: &'a FunctionRegistry,

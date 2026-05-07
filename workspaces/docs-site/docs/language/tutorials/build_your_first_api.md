@@ -48,7 +48,7 @@ The example demonstrates:
 
 - `@route("/path")` for routes (imported from `std.web.routing`)
 - `Json[T]` for JSON responses
-- `@derive(Serialize)` for response models
+- `@derive(json)` for response models
 - `async def` handlers (async/await)
 
 Learn more:

@@ -234,7 +234,7 @@ fn types_spellings_unique_and_resolvable() {
 fn derives_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "derive",
-        expected_len: 13,
+        expected_len: 11,
         items: derives::DERIVES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

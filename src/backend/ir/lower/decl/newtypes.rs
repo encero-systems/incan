@@ -45,8 +45,8 @@ impl AstLowering {
             }
         }
 
-        // Note: Serialize/Deserialize derives for newtypes are added post-lowering by `add_serde_to_newtypes` in
-        // codegen.rs, which selectively adds only the derives that are actually needed.
+        // Note: serde derives for newtypes are added post-lowering by `add_serde_to_newtypes` in codegen.rs, which
+        // selectively adds only the derives that are actually needed.
         Ok(IrStruct {
             name: n.name.clone(),
             fields,

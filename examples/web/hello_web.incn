@@ -18,16 +18,17 @@ Then visit:
 """
 
 from std.web import App, route, Response, Json, GET
+from std.serde import json
 import std.async
 
 
 # Models for JSON responses
-@derive(Serialize)
+@derive(json)
 model Greeting:
     message: str
 
 
-@derive(Serialize)
+@derive(json)
 model User:
     id: int
     name: str

@@ -81,8 +81,7 @@ Only the items usable in `@derive(...)` are derives:
 | [Clone][derive-clone]             | `.clone()`                | —          | Auto-added              |
 | [Copy][derive-copy]               | Implicit copy             | —          | Marker trait            |
 | [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
-| [Serialize][derive-serialize]     | JSON stringify            | —          | `json_stringify(value)` |
-| [Deserialize][derive-deserialize] | JSON parse                | —          | `T.from_json(str)`      |
+| [json][derive-serialize]          | JSON stringify/parse      | —          | `std.serde` module      |
 | [Validate][derive-validate]       | Validated construction    | —          | Models only             |
 
 Detailed pages:
@@ -734,6 +733,8 @@ def main() -> None:
 - `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
 
 ```incan
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
     name: str
@@ -779,9 +780,11 @@ def encode[T with json.Serialize](value: T) -> str:
 
 - `T.from_json(input: str)` → `Result[T, str]`
 
-Note: explicit `with Deserialize` adoption still needs either `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
+Note: explicit `with Deserialize` adoption still needs either an imported `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str

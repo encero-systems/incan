@@ -928,8 +928,9 @@ def main() -> None:
     let routes_source = r#"
 import std.async
 from std.web import route, Json
+from std.serde import json
 
-@derive(Serialize)
+@derive(json)
 model User:
   id: int
   name: str
@@ -2588,9 +2589,9 @@ fn test_std_serde_json_compiled_codegen() {
     insta::assert_snapshot!("std_serde_json_compiled", rust_code);
 }
 
-/// RFC 023: verify `from std.serde.json import Serialize, Deserialize` resolves and compiles.
+/// RFC 024: verify `@derive(json)` resolves through stdlib derive metadata and compiles.
 ///
-/// Exercises the stdlib import path for serde traits alongside @derive(Serialize, Deserialize).
+/// Exercises the stdlib import path for the json module-level derive.
 #[test]
 fn test_std_serde_json_import_codegen() {
     let source = load_test_file("std_serde_json_import");

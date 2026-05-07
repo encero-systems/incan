@@ -29,10 +29,6 @@ pub enum DeriveId {
     Copy,
     Default,
 
-    // Serialization
-    Serialize,
-    Deserialize,
-
     // Validation
     Validate,
 }
@@ -107,20 +103,6 @@ pub const DERIVES: &[DeriveInfo] = &[
         Since(0, 1),
     ),
     info(
-        DeriveId::Serialize,
-        "Serialize",
-        "Derive serialization support (e.g. JSON).",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        DeriveId::Deserialize,
-        "Deserialize",
-        "Derive deserialization support (e.g. JSON).",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
         DeriveId::Validate,
         "Validate",
         "Enable validated construction via `TypeName.new(...)` and require a `validate(self) -> Result[Self, E]` method.",
@@ -161,9 +143,7 @@ pub fn info_for(id: DeriveId) -> DeriveInfo {
         DeriveId::Clone => DERIVES[7],
         DeriveId::Copy => DERIVES[8],
         DeriveId::Default => DERIVES[9],
-        DeriveId::Serialize => DERIVES[10],
-        DeriveId::Deserialize => DERIVES[11],
-        DeriveId::Validate => DERIVES[12],
+        DeriveId::Validate => DERIVES[10],
     }
 }
 
