@@ -1,7 +1,6 @@
 # Dates and times
 
-This page collects practical recipes for `std.datetime`: reading clocks, parsing user input, formatting output, choosing
-the right interval type, and working with fixed UTC offsets.
+This page collects practical recipes for `std.datetime`: reading clocks, parsing user input, formatting output, choosing the right interval type, and working with fixed UTC offsets.
 
 ## Choose the right type
 
@@ -19,8 +18,7 @@ the right interval type, and working with fixed UTC offsets.
 
 ## Read the clock
 
-Use `Instant.now()` for monotonic measurement. Use `SystemTime.now()` for Unix timestamps. Use `Date.utc_today()` and
-`DateTime.utc_now()` when application code wants UTC civil values.
+Use `Instant.now()` for monotonic measurement. Use `SystemTime.now()` for Unix timestamps. Use `Date.utc_today()` and `DateTime.utc_now()` when application code wants UTC civil values.
 
 ```incan
 from std.datetime import Date, DateTime, DateTimeError, Duration, Instant, SystemTime
@@ -36,8 +34,7 @@ def record_clock() -> Result[None, DateTimeError]:
     return Ok(None)
 ```
 
-`Instant` is monotonic and should not be serialized as a real-world timestamp. `SystemTime` is the host system clock and
-can move if the system clock is adjusted.
+`Instant` is monotonic and should not be serialized as a real-world timestamp. `SystemTime` is the host system clock and can move if the system clock is adjusted.
 
 ## Parse ISO input
 
@@ -76,8 +73,7 @@ def parse_report_row(date_text: str, stamp_text: str) -> Result[DateTime, DateTi
     return Ok(parsed_stamp)
 ```
 
-The directive surface is Python-shaped. `%f` parses fractional seconds as nanoseconds, accepting up to nine digits and
-normalizing shorter fractions to nanosecond precision.
+The directive surface is Python-shaped. `%f` parses fractional seconds as nanoseconds, accepting up to nine digits and normalizing shorter fractions to nanosecond precision.
 
 ## Format output
 
@@ -130,8 +126,7 @@ def render_offset_timestamp(value: str) -> Result[str, DateTimeError]:
     return stamp.strftime("%F %T.%f%:z")
 ```
 
-`%z` formats offsets as `+0100`; `%:z` formats offsets as `+01:00`. Parsing accepts `Z` for UTC in ISO fixed-offset
-input, but named timezone directives are intentionally unsupported in `std.datetime`.
+`%z` formats offsets as `+0100`; `%:z` formats offsets as `+01:00`. Parsing accepts `Z` for UTC in ISO fixed-offset input, but named timezone directives are intentionally unsupported in `std.datetime`.
 
 ## Handle parse and range failures
 

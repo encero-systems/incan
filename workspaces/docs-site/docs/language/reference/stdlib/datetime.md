@@ -2,9 +2,7 @@
 
 `std.datetime` provides temporal value types for runtime timing, civil dates and times, fixed UTC offsets, and interval arithmetic.
 
-For a guided walkthrough, see [Dates and times](../../tutorials/dates_and_times.md). For recipes, see
-[Dates and times](../../how-to/dates_and_times.md). For the mental model behind the runtime/civil split, see
-[Date and time model](../../explanation/datetime_model.md).
+For a guided walkthrough, see [Dates and times](../../tutorials/dates_and_times.md). For recipes, see [Dates and times](../../how-to/dates_and_times.md). For the mental model behind the runtime/civil split, see [Date and time model](../../explanation/datetime_model.md).
 
 The runtime timing layer is backed by Rust's `std::time` through normal Incan Rust interop. The civil calendar layer is source-defined Incan, including normalization, comparison, arithmetic, fixed-offset ISO parsing/formatting, and Python-shaped `strftime` / `strptime` helpers with nanosecond `%f` precision.
 

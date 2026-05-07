@@ -1,7 +1,6 @@
 # Dates and times
 
-This tutorial builds a small subscription schedule with `std.datetime`. It uses UTC clocks for "now", civil values for
-dates users type into forms, fixed offsets for external timestamps, and interval types for arithmetic.
+This tutorial builds a small subscription schedule with `std.datetime`. It uses UTC clocks for "now", civil values for dates users type into forms, fixed offsets for external timestamps, and interval types for arithmetic.
 
 ## Import the pieces
 
@@ -20,8 +19,7 @@ from std.datetime import (
 )
 ```
 
-`std.datetime` re-exports the public runtime and civil APIs. Reach for submodules only when you are reading stdlib source
-or intentionally keeping imports narrow.
+`std.datetime` re-exports the public runtime and civil APIs. Reach for submodules only when you are reading stdlib source or intentionally keeping imports narrow.
 
 ## Read UTC from the host clock
 
@@ -35,8 +33,7 @@ def print_clock() -> None:
     println(DateTime.utc_now().isoformat())
 ```
 
-These helpers deliberately return UTC civil values. Named timezones such as `Europe/Amsterdam` are not part of
-`std.datetime`; they require rule data that belongs in separately versioned packages.
+These helpers deliberately return UTC civil values. Named timezones such as `Europe/Amsterdam` are not part of `std.datetime`; they require rule data that belongs in separately versioned packages.
 
 ## Parse user input
 
@@ -52,8 +49,7 @@ def read_cutoff_time(value: str) -> Result[Time, DateTimeError]:
     return Time.fromisoformat(value)
 ```
 
-`fromisoformat` is the best default for machine-readable input. It accepts values such as `"2026-04-14"` and
-`"12:34:56.123456789"`.
+`fromisoformat` is the best default for machine-readable input. It accepts values such as `"2026-04-14"` and `"12:34:56.123456789"`.
 
 ## Add days and months
 
@@ -71,8 +67,7 @@ def renewal_date(start: str, months: int) -> Result[Date, DateTimeError]:
     return Ok(signup + YearMonthInterval.months(months))
 ```
 
-The distinction matters. Seven days is a fixed amount of elapsed civil days. One month is a calendar operation whose day
-count depends on the month and year.
+The distinction matters. Seven days is a fixed amount of elapsed civil days. One month is a calendar operation whose day count depends on the month and year.
 
 ## Combine date and time
 
@@ -87,13 +82,11 @@ def renewal_cutoff(date_text: str, time_text: str) -> Result[DateTime, DateTimeE
     return Ok(DateTime.combine(date, time))
 ```
 
-Use a naive `DateTime` for calendar records where the timezone lives somewhere else in the domain model, or where the
-value is intentionally local civil time.
+Use a naive `DateTime` for calendar records where the timezone lives somewhere else in the domain model, or where the value is intentionally local civil time.
 
 ## Format for people and protocols
 
-All civil values support `isoformat()`. Use `strftime(...)` when a protocol, log line, or user-facing display needs a
-specific shape:
+All civil values support `isoformat()`. Use `strftime(...)` when a protocol, log line, or user-facing display needs a specific shape:
 
 ```incan
 from std.datetime import DateTime, DateTimeError
@@ -104,8 +97,7 @@ def render_stamp(stamp: DateTime) -> Result[None, DateTimeError]:
     return Ok(None)
 ```
 
-The format surface is Python-shaped. Incan's `%f` is intentionally wider than Python's: it formats and parses nine
-nanosecond digits.
+The format surface is Python-shaped. Incan's `%f` is intentionally wider than Python's: it formats and parses nine nanosecond digits.
 
 ## Emit a fixed-offset timestamp
 
@@ -120,13 +112,11 @@ def stamp_for_amsterdam_winter(local: DateTime) -> Result[str, DateTimeError]:
     return stamp.strftime("%F %T.%f%:z")
 ```
 
-This stores `+01:00`, not the name `Europe/Amsterdam`. A named timezone package can decide which fixed offset applies to
-a named zone at a specific instant.
+This stores `+01:00`, not the name `Europe/Amsterdam`. A named timezone package can decide which fixed offset applies to a named zone at a specific instant.
 
 ## Put it together
 
-This function parses a signup date, adds one calendar month, combines the result with a cutoff time, and serializes the
-timestamp with a fixed offset:
+This function parses a signup date, adds one calendar month, combines the result with a cutoff time, and serializes the timestamp with a fixed offset:
 
 ```incan
 from std.datetime import (
@@ -148,8 +138,7 @@ def first_invoice_stamp(signup_text: str) -> Result[str, DateTimeError]:
     return offset_stamp.strftime("%Y-%m-%dT%H:%M:%S.%f%z")
 ```
 
-The result is explicit about every temporal decision: the signup date is civil, the monthly renewal is calendar-based,
-the cutoff is a wall-clock time, and the serialized timestamp is fixed-offset UTC.
+The result is explicit about every temporal decision: the signup date is civil, the monthly renewal is calendar-based, the cutoff is a wall-clock time, and the serialized timestamp is fixed-offset UTC.
 
 ## See also
 
