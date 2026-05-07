@@ -89,7 +89,7 @@ def render(stamp: DateTime) -> Result[None, DateTimeError]:
     return Ok(None)
 ```
 
-Use `%F` for `%Y-%m-%d`, `%T` for `%H:%M:%S`, and `%f` for nine-digit fractional seconds.
+Use `%F` for `%Y-%m-%d`, `%T` for `%H:%M:%S`, and `%f` for nine-digit fractional seconds. The full directive table is in the [`std.datetime` reference](../reference/stdlib/datetime.md#format-directives).
 
 ## Add days, months, and compound intervals
 

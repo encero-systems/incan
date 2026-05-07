@@ -97,7 +97,7 @@ def render_stamp(stamp: DateTime) -> Result[None, DateTimeError]:
     return Ok(None)
 ```
 
-The format surface is Python-shaped. Incan's `%f` is intentionally wider than Python's: it formats and parses nine nanosecond digits.
+The format surface is Python-shaped. Incan's `%f` is intentionally wider than Python's: it formats and parses nine nanosecond digits. The full directive table is in the [`std.datetime` reference](../reference/stdlib/datetime.md#format-directives).
 
 ## Emit a fixed-offset timestamp
 

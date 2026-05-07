@@ -70,6 +70,73 @@ println(parsed.strftime("%a %b %_d %H:%M:%S.%f %Y")?)
 
 `Date` also supports `weekday()`, `iso_week()`, `day_of_year()`, `quarter()`, and ISO calendar construction with `fromisocalendar(...)`.
 
+## Format directives
+
+`strftime(...)` and `strptime(...)` format strings are ordinary text plus percent directives. In `%Y-%m-%dT%H:%M:%S.%f%z`, `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%f`, and `%z` are directives; `-`, `T`, `:`, and `.` are literal characters that must appear exactly when parsing.
+
+Date, time, and offset support depends on the receiver: `Date` accepts date directives only; `Time` accepts time directives only; `DateTime` accepts date and time directives; `DateTimeOffset` accepts date, time, and fixed-offset directives. Named timezone directive `%Z` is rejected by `std.datetime`.
+
+### Date directives
+
+| Directive | Meaning | Notes |
+| --------- | ------- | ----- |
+| `%Y` | Year with century | Four digits, such as `2026` |
+| `%y` | Year without century | `70`-`99` parse as 1970-1999; `00`-`69` parse as 2000-2069 |
+| `%m` | Month number | `01`-`12` |
+| `%d` | Day of month | `01`-`31` |
+| `%e` | Day of month with space padding | Formats ` 1` by default; parsing accepts an optional leading space |
+| `%j` | Day of year | `001`-`366` |
+| `%a` | Abbreviated weekday name | `Mon`, `Tue`, ... |
+| `%A` | Full weekday name | `Monday`, `Tuesday`, ... |
+| `%b` | Abbreviated month name | `Jan`, `Feb`, ... |
+| `%h` | Abbreviated month name | Alias for `%b` |
+| `%B` | Full month name | `January`, `February`, ... |
+| `%w` | Weekday number | Sunday is `0`, Monday is `1`, Saturday is `6` |
+| `%u` | ISO weekday number | Monday is `1`, Sunday is `7` |
+| `%U` | Week number, Sunday first | `00`-`53`; parsing requires a weekday directive |
+| `%W` | Week number, Monday first | `00`-`53`; parsing requires a weekday directive |
+| `%V` | ISO week number | `01`-`53`; parsing requires ISO week-year context |
+| `%G` | ISO week-numbering year | Four digits |
+| `%g` | ISO week-numbering year without century | Two digits |
+
+### Time directives
+
+| Directive | Meaning | Notes |
+| --------- | ------- | ----- |
+| `%H` | Hour, 24-hour clock | `00`-`23` |
+| `%I` | Hour, 12-hour clock | `01`-`12`; use with `%p` or `%P` |
+| `%M` | Minute | `00`-`59` |
+| `%S` | Second | `00`-`59` |
+| `%f` | Fractional second | Formats exactly 9 nanosecond digits; parsing accepts 1-9 digits and pads to nanoseconds |
+| `%p` | Uppercase meridiem | `AM` or `PM` |
+| `%P` | Lowercase meridiem | `am` or `pm`; parsing accepts either case |
+
+### Offset and literal directives
+
+| Directive | Meaning | Notes |
+| --------- | ------- | ----- |
+| `%z` | Fixed UTC offset | `DateTimeOffset` only; formats `+HHMM` or `-HHMM`; parsing accepts `Z`, `+HHMM`, `-HHMM`, `+HH:MM`, and `-HH:MM` |
+| `%:z` | Fixed UTC offset with colon | `DateTimeOffset` only; formats `+HH:MM` or `-HH:MM`; parsing accepts the same fixed-offset inputs as `%z` |
+| `%Z` | Named timezone | Not supported by `std.datetime` |
+| `%%` | Literal percent sign | Formats and parses `%` |
+| `%n` | Newline | Formats and parses `\n` |
+| `%t` | Tab | Formats and parses `\t` |
+
+### Compound aliases
+
+| Alias | Expands to |
+| ----- | ---------- |
+| `%F` | `%Y-%m-%d` |
+| `%D` | `%m/%d/%y` |
+| `%x` | `%m/%d/%y` |
+| `%R` | `%H:%M` |
+| `%T` | `%H:%M:%S` |
+| `%X` | `%H:%M:%S` |
+| `%r` | `%I:%M:%S %p` |
+| `%c` | `%a %b %_d %H:%M:%S %Y` |
+
+Numeric formatting directives accept padding modifiers: `%-d` disables padding, `%_d` uses spaces, and `%0d` uses zeroes. Modifiers are not supported on compound aliases such as `%F`, `%T`, or `%c`; `%:z` uses `:` for the offset separator rather than numeric padding.
+
 ## Fixed offsets
 
 `FixedOffset` stores a concrete UTC offset in whole minutes. `DateTimeOffset` pairs a naive `DateTime` with that offset and supports ISO text, `%z`, and `%:z`:
