@@ -2423,6 +2423,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#module-derive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module derive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#serialize" class="md-nav__link">
     <span class="md-ellipsis">
       Serialize
@@ -4843,6 +4852,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#module-derive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module derive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#serialize" class="md-nav__link">
     <span class="md-ellipsis">
       Serialize
@@ -4922,9 +4940,25 @@
 <li><a href="../../../explanation/error_handling/">Error handling</a></li>
 </ul>
 <hr />
+<h2 id="module-derive">Module derive<a class="headerlink" href="#module-derive" title="Permanent link">&para;</a></h2>
+<p>Import <code>std.serde</code>'s <code>json</code> module when a type should adopt both JSON traits through one derive:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
+</code></pre></div>
+<p><code>@derive(json)</code> adopts <code>json.Serialize</code> and <code>json.Deserialize</code>, forwards the required Rust serde derives, and makes the
+adopted traits available to method lookup and generic bounds. Import from <code>std.serde.json</code> directly when you want only
+one side of the protocol.</p>
+<hr />
 <h2 id="serialize">Serialize<a class="headerlink" href="#serialize" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Derive</strong>: <code>@derive(Serialize)</code></li>
+<li><strong>Derive</strong>: <code>@derive(Serialize)</code> or <code>@derive(json)</code></li>
 <li><strong>API</strong>: <code>json_stringify(value) -&gt; str</code></li>
 <li><strong>Trait import</strong>: <code>from std.serde.json import Serialize</code> + <code>with Serialize</code> gives a default <code>.to_json()</code> implementation</li>
 </ul>
@@ -4949,7 +4983,7 @@
 <hr />
 <h2 id="deserialize">Deserialize<a class="headerlink" href="#deserialize" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Derive</strong>: <code>@derive(Deserialize)</code></li>
+<li><strong>Derive</strong>: <code>@derive(Deserialize)</code> or <code>@derive(json)</code></li>
 <li><strong>API</strong>: <code>T.from_json(input: str) -&gt; Result[T, str]</code></li>
 <li><strong>Trait import</strong>: <code>with Deserialize</code> still requires either <code>@derive(Deserialize)</code> or an explicit <code>from_json()</code> implementation</li>
 </ul>
