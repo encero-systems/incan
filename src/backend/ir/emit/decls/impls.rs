@@ -5,12 +5,13 @@
 
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
+use std::collections::HashSet;
 
 use incan_core::lang::conventions;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 
-use super::super::super::types::IrType;
+use super::super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{EmitError, IrEmitter};
 
 impl<'a> IrEmitter<'a> {
@@ -201,6 +202,8 @@ impl<'a> IrEmitter<'a> {
                                 | magic_methods::MagicMethodId::Str
                                 | magic_methods::MagicMethodId::ClassName
                                 | magic_methods::MagicMethodId::Fields
+                                | magic_methods::MagicMethodId::FieldValue
+                                | magic_methods::MagicMethodId::FieldItems
                         )
                     )
                 })
@@ -274,6 +277,45 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
+    /// Emit compiler-generated field overlay methods for a struct, independent of source impl blocks.
+    pub(in crate::backend::ir::emit) fn emit_field_overlay_methods_for_struct(
+        &self,
+        strukt: &super::super::super::decl::IrStruct,
+        explicit_method_names: &HashSet<String>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let field_value_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldValue);
+        let field_items_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldItems);
+        let mut methods = Vec::new();
+        let used_methods = &self.generated_use_analysis.borrow().used_methods;
+
+        if !explicit_method_names.contains(field_value_name)
+            && used_methods.contains(&(strukt.name.clone(), field_value_name.to_string()))
+            && let Some(field_value_method) = self.emit_field_value_method(&strukt.name)?
+        {
+            methods.push(field_value_method);
+        }
+
+        if !explicit_method_names.contains(field_items_name)
+            && used_methods.contains(&(strukt.name.clone(), field_items_name.to_string()))
+            && let Some(field_items_method) = self.emit_field_items_method(&strukt.name)?
+        {
+            methods.push(field_items_method);
+        }
+
+        if methods.is_empty() {
+            return Ok(None);
+        }
+
+        let target_type = Self::rust_ident(&strukt.name);
+        let generics = self.emit_type_params(&strukt.type_params);
+        let generics_bare = self.emit_type_params_bare(&strukt.type_params);
+        Ok(Some(quote! {
+            impl #generics #target_type #generics_bare {
+                #(#methods)*
+            }
+        }))
+    }
+
     /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
     fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
         let Some(field_names) = self.struct_field_names.get(struct_name) else {
@@ -324,6 +366,134 @@ impl<'a> IrEmitter<'a> {
             pub fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
                 static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
                 incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+            }
+        }))
+    }
+
+    /// Resolve the Rust value type shared by generated field overlay methods for a lowered struct.
+    ///
+    /// The generated `__field_value__()` and `__field_items__()` methods expose a single value slot type. Homogeneous
+    /// fields use their common type directly; heterogeneous concrete fields use an anonymous union. Generic field
+    /// shapes are skipped because anonymous union definitions are monomorphic today.
+    fn field_overlay_value_type_for_struct(&self, struct_name: &str) -> Result<Option<IrType>, EmitError> {
+        let Some(field_names) = self.struct_field_names.get(struct_name) else {
+            return Ok(None);
+        };
+        let mut value_types = Vec::new();
+        for field_name in field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            if ty.contains_generic_parameter() {
+                return Ok(None);
+            }
+            value_types.push(ty.clone());
+        }
+        if value_types.is_empty() {
+            return Ok(Some(IrType::Unit));
+        }
+        value_types.sort_by_key(IrType::rust_name);
+        value_types.dedup();
+        if value_types.len() == 1 {
+            Ok(value_types.pop())
+        } else {
+            Ok(Some(IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), value_types)))
+        }
+    }
+
+    /// Emit the Rust expression that converts one struct field into the overlay value slot type.
+    ///
+    /// Heterogeneous overlays wrap cloned field values in the generated union variant that corresponds to the field's
+    /// concrete type. Homogeneous overlays can clone the field value directly.
+    fn field_overlay_value_expr(&self, value_ty: &IrType, field_ty: &IrType, field_name: &str) -> TokenStream {
+        let field_ident = format_ident!("{}", field_name);
+        if value_ty.is_union()
+            && let Some(variant_index) = value_ty.union_variant_index_for_member(field_ty)
+        {
+            let variant_ident = format_ident!("{}", IrType::union_variant_name(variant_index));
+            let union_path = self.emit_union_type_path(value_ty);
+            return quote! { #union_path :: #variant_ident(self.#field_ident.clone()) };
+        }
+        quote! { self.#field_ident.clone() }
+    }
+
+    /// Emit the compiler-provided `__field_value__` method for a concrete model or class struct.
+    ///
+    /// The method accepts canonical field names and model aliases, returning `None` for unknown names. It is omitted
+    /// when field metadata is missing or when the field value shape cannot be represented as a concrete Rust type.
+    fn emit_field_value_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some(field_names) = self.struct_field_names.get(struct_name) else {
+            return Ok(None);
+        };
+        let Some(value_ty) = self.field_overlay_value_type_for_struct(struct_name)? else {
+            return Ok(None);
+        };
+        let value_ty_tokens = self.emit_type(&value_ty);
+        let mut arms = Vec::new();
+        for field_name in field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let field_ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            let value = self.field_overlay_value_expr(&value_ty, field_ty, field_name);
+            let mut keys = vec![field_name.clone()];
+            if let Some(Some(alias)) = self.struct_field_aliases.get(&key)
+                && alias != field_name
+            {
+                keys.push(alias.clone());
+            }
+            for lookup_key in keys {
+                arms.push(quote! { #lookup_key => Some(#value) });
+            }
+        }
+
+        Ok(Some(quote! {
+            /// Return a public field value by canonical field name or model alias.
+            pub fn __field_value__(&self, name: String) -> Option<#value_ty_tokens> {
+                match name.as_str() {
+                    #(#arms,)*
+                    _ => None,
+                }
+            }
+        }))
+    }
+
+    /// Emit the compiler-provided `__field_items__` method for a concrete model or class struct.
+    ///
+    /// The returned vector preserves lowered field order, including inherited class fields that lowering already
+    /// prepended before child fields.
+    fn emit_field_items_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some(field_names) = self.struct_field_names.get(struct_name) else {
+            return Ok(None);
+        };
+        let Some(value_ty) = self.field_overlay_value_type_for_struct(struct_name)? else {
+            return Ok(None);
+        };
+        let value_ty_tokens = self.emit_type(&value_ty);
+        let mut items = Vec::new();
+        for field_name in field_names {
+            let key = (struct_name.to_string(), field_name.clone());
+            let field_ty = self.struct_field_types.get(&key).ok_or_else(|| {
+                EmitError::Unsupported(format!(
+                    "missing field type metadata for '{}.{}'",
+                    struct_name, field_name
+                ))
+            })?;
+            let value = self.field_overlay_value_expr(&value_ty, field_ty, field_name);
+            items.push(quote! { (#field_name.to_string(), #value) });
+        }
+
+        Ok(Some(quote! {
+            /// Return public field name/value pairs in declaration order.
+            pub fn __field_items__(&self) -> Vec<(String, #value_ty_tokens)> {
+                vec![#(#items),*]
             }
         }))
     }

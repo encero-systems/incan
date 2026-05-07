@@ -9,6 +9,8 @@ pub enum MagicMethodId {
     Str,
     ClassName,
     Fields,
+    FieldValue,
+    FieldItems,
     Slice,
 }
 
@@ -50,6 +52,22 @@ pub const MAGIC_METHODS: &[MagicMethodInfo] = &[
         Since(0, 1),
     ),
     info(
+        MagicMethodId::FieldValue,
+        "__field_value__",
+        &[],
+        "Return a reflected field value by runtime field name.",
+        RFC::_030,
+        Since(0, 3),
+    ),
+    info(
+        MagicMethodId::FieldItems,
+        "__field_items__",
+        &[],
+        "Return reflected field name/value pairs.",
+        RFC::_030,
+        Since(0, 3),
+    ),
+    info(
         MagicMethodId::Slice,
         "__slice__",
         &[],
@@ -88,7 +106,9 @@ pub fn info_for(id: MagicMethodId) -> MagicMethodInfo {
         MagicMethodId::Str => MAGIC_METHODS[1],
         MagicMethodId::ClassName => MAGIC_METHODS[2],
         MagicMethodId::Fields => MAGIC_METHODS[3],
-        MagicMethodId::Slice => MAGIC_METHODS[4],
+        MagicMethodId::FieldValue => MAGIC_METHODS[4],
+        MagicMethodId::FieldItems => MAGIC_METHODS[5],
+        MagicMethodId::Slice => MAGIC_METHODS[6],
     }
 }
 

@@ -124,6 +124,7 @@ nav:
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
+          - Choosing collection types: language/how-to/choosing_collections.md
           - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
@@ -150,6 +151,7 @@ nav:
           - Standard library:
               - Overview: language/reference/stdlib/index.md
               - std.async: language/reference/stdlib/async.md
+              - std.collections: language/reference/stdlib/collections.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md

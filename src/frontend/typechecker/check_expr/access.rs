@@ -988,12 +988,61 @@ impl TypeChecker {
     ///
     /// These methods are compiler-provided rather than declared in user-visible source, so the typechecker must model
     /// their return types directly.
-    fn reflection_magic_method_return_type(&self, method: &str) -> Option<ResolvedType> {
+    fn field_overlay_value_type_for_nominal(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let (type_name, type_args) = match ty {
+            ResolvedType::Named(name) => (name.as_str(), None),
+            ResolvedType::Generic(name, args) => (name.as_str(), Some(args.as_slice())),
+            _ => return None,
+        };
+        let type_info = self.lookup_semantic_type_info(type_name)?;
+        let (type_params, fields): (&[String], Vec<&FieldInfo>) = match type_info {
+            TypeInfo::Model(model) => (model.type_params.as_slice(), model.fields.values().collect()),
+            TypeInfo::Class(class) => (
+                class.type_params.as_slice(),
+                class
+                    .fields
+                    .values()
+                    .filter(|field| matches!(field.visibility, Visibility::Public))
+                    .collect(),
+            ),
+            _ => return None,
+        };
+        if fields.is_empty() {
+            return Some(ResolvedType::Unit);
+        }
+        let subst = type_args.map(|args| type_param_subst_map(type_params, args));
+        let mut value_types: Vec<ResolvedType> = fields
+            .into_iter()
+            .map(|field| match &subst {
+                Some(subst) => substitute_resolved_type(&field.ty, subst),
+                None => field.ty.clone(),
+            })
+            .collect();
+        value_types.sort_by_key(|ty| ty.to_string());
+        value_types.dedup();
+        if value_types.len() == 1 {
+            value_types.pop()
+        } else {
+            Some(union_ty(value_types))
+        }
+    }
+
+    /// Return the declared surface type for a compiler-provided reflection magic method.
+    ///
+    /// These methods do not have user-visible source declarations, so method-call checking uses this helper to expose
+    /// their synthesized return types while preserving nominal receiver-specific field value typing.
+    fn reflection_magic_method_return_type(&self, receiver_ty: &ResolvedType, method: &str) -> Option<ResolvedType> {
         match magic_methods::from_str(method) {
             Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
             Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
                 ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
             ))),
+            Some(magic_methods::MagicMethodId::FieldValue) => {
+                self.field_overlay_value_type_for_nominal(receiver_ty).map(option_ty)
+            }
+            Some(magic_methods::MagicMethodId::FieldItems) => self
+                .field_overlay_value_type_for_nominal(receiver_ty)
+                .map(|value_ty| list_ty(ResolvedType::Tuple(vec![ResolvedType::Str, value_ty]))),
             _ => None,
         }
     }
@@ -1018,6 +1067,12 @@ impl TypeChecker {
                 matches!(
                     self.lookup_semantic_type_info(type_name),
                     Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))
+                )
+            }
+            Some(magic_methods::MagicMethodId::FieldValue | magic_methods::MagicMethodId::FieldItems) => {
+                matches!(
+                    self.lookup_semantic_type_info(type_name),
+                    Some(TypeInfo::Model(_) | TypeInfo::Class(_))
                 )
             }
             _ => false,
@@ -2399,7 +2454,7 @@ impl TypeChecker {
         }
 
         if self.nominal_type_supports_reflection_magic(&base_ty, method)
-            && let Some(ret) = self.reflection_magic_method_return_type(method)
+            && let Some(ret) = self.reflection_magic_method_return_type(&base_ty, method)
         {
             return ret;
         }

@@ -30,7 +30,7 @@ use super::super::decl::{
 };
 use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use super::super::stmt::AssignTarget;
-use super::super::types::IrType;
+use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
 
@@ -1158,6 +1158,28 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Return the anonymous union shape needed by generated field overlay methods for a concrete struct.
+    ///
+    /// This mirrors `emit_field_overlay_methods_for_struct()` so the crate-level union definitions are available
+    /// before generated impls are emitted. Generic field shapes are skipped because anonymous union definitions are
+    /// currently monomorphic.
+    fn field_overlay_value_type_from_struct(strukt: &super::super::decl::IrStruct) -> Option<IrType> {
+        let mut value_types: Vec<IrType> = strukt.fields.iter().map(|field| field.ty.clone()).collect();
+        if value_types.iter().any(IrType::contains_generic_parameter) {
+            return None;
+        }
+        if value_types.is_empty() {
+            return None;
+        }
+        value_types.sort_by_key(IrType::rust_name);
+        value_types.dedup();
+        if value_types.len() == 1 {
+            value_types.pop()
+        } else {
+            Some(IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), value_types))
+        }
+    }
+
     /// Collect anonymous union shapes that appear inside a type.
     fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
         if let Some(name) = ty.union_type_name() {
@@ -1576,6 +1598,8 @@ impl<'a> IrEmitter<'a> {
                 for field in &s.fields {
                     self.struct_field_types
                         .insert((s.name.clone(), field.name.clone()), field.ty.clone());
+                    self.struct_field_visibilities
+                        .insert((s.name.clone(), field.name.clone()), field.visibility);
                     self.struct_field_aliases
                         .insert((s.name.clone(), field.name.clone()), field.alias.clone());
                     self.struct_field_descriptions
@@ -1696,10 +1720,40 @@ impl<'a> IrEmitter<'a> {
             items.push(quote! { use crate::#std_namespace::traits::error::Error; });
         }
 
+        let mut explicit_methods_by_type: HashMap<String, HashSet<String>> = HashMap::new();
+        for decl in &emitted_declarations {
+            if let IrDeclKind::Impl(impl_block) = &decl.kind
+                && impl_block.trait_name.is_none()
+            {
+                explicit_methods_by_type
+                    .entry(impl_block.target_type.clone())
+                    .or_default()
+                    .extend(impl_block.methods.iter().map(|method| method.name.clone()));
+            }
+        }
+
         if self.emit_generated_union_definitions {
             let mut union_types = self.generated_union_types.clone();
             for decl in &emitted_declarations {
                 Self::collect_union_types_from_decl(decl, &mut union_types);
+            }
+            let field_value_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldValue);
+            let field_items_name = magic_methods::as_str(magic_methods::MagicMethodId::FieldItems);
+            let empty_methods = HashSet::new();
+            let used_methods = &self.generated_use_analysis.borrow().used_methods;
+            for decl in &emitted_declarations {
+                if let IrDeclKind::Struct(strukt) = &decl.kind {
+                    let explicit_methods = explicit_methods_by_type.get(&strukt.name).unwrap_or(&empty_methods);
+                    let needs_field_value = !explicit_methods.contains(field_value_name)
+                        && used_methods.contains(&(strukt.name.clone(), field_value_name.to_string()));
+                    let needs_field_items = !explicit_methods.contains(field_items_name)
+                        && used_methods.contains(&(strukt.name.clone(), field_items_name.to_string()));
+                    if (needs_field_value || needs_field_items)
+                        && let Some(value_ty) = Self::field_overlay_value_type_from_struct(strukt)
+                    {
+                        Self::collect_union_types_from_type(&value_ty, &mut union_types);
+                    }
+                }
             }
             let mut union_type_items: Vec<_> = union_types.into_iter().collect();
             union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
@@ -1745,7 +1799,7 @@ impl<'a> IrEmitter<'a> {
 
         // Emit all declarations.
         let mut decl_items = Vec::new();
-        for decl in emitted_declarations {
+        for decl in &emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
             if let IrDeclKind::Function(func) = &decl.kind {
                 let adapters = self.borrowed_function_adapters.borrow();
@@ -1760,6 +1814,17 @@ impl<'a> IrEmitter<'a> {
                         decl_items.push(helper);
                     }
                 }
+            }
+        }
+        let empty_methods = HashSet::new();
+        for decl in emitted_declarations {
+            if let IrDeclKind::Struct(strukt) = &decl.kind
+                && let Some(overlay_impl) = self.emit_field_overlay_methods_for_struct(
+                    strukt,
+                    explicit_methods_by_type.get(&strukt.name).unwrap_or(&empty_methods),
+                )?
+            {
+                decl_items.push(overlay_impl);
             }
         }
 

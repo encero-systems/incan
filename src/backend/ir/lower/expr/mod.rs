@@ -79,6 +79,22 @@ impl AstLowering {
         }
     }
 
+    /// Return whether a generic type parameter should keep Rust's comparison operators instead of lowering to a
+    /// dunder-style method call.
+    ///
+    /// Generic `T with Ord`/`PartialOrd` bounds lower to Rust trait bounds such as `PartialOrd`; they do not introduce
+    /// inherent `__lt__`/`__le__` methods on `T`. Keeping the operator form lets Rust type-check the generic bound.
+    fn generic_comparison_uses_rust_operator(&self, left: &Spanned<ast::Expr>, method: &str) -> bool {
+        if !matches!(method, "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__") {
+            return false;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(left.span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .is_some_and(|ty| matches!(ty, IrType::Generic(_)))
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::backend::ir::lower) fn lower_condition_expr(
         &mut self,
@@ -296,6 +312,7 @@ impl AstLowering {
                     && resolved_operator.kind == ResolvedOperatorKind::Binary
                     // `__eq__` is represented in generated Rust as `PartialEq::eq`, not as an inherent method.
                     && resolved_operator.method != magic_methods::as_str(MagicMethodId::Eq)
+                    && !self.generic_comparison_uses_rust_operator(l, &resolved_operator.method)
                 {
                     let receiver = self.lower_expr_spanned(l)?;
                     let arg_expr = self.lower_expr_spanned(r)?;

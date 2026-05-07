@@ -7,6 +7,7 @@ Pages in this section are curated and checked into the repository.
 ## Available modules
 
 - [`std.async`](async.md) (curated)
+- [`std.collections`](collections.md) (curated)
 - [`std.derives.*`](derives.md) (curated)
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)

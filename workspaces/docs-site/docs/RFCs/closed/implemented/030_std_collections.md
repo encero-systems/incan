@@ -1,18 +1,18 @@
 # RFC 030: `std.collections` — extended collection types
 
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 022 (stdlib namespacing), RFC 023 (compilable stdlib), RFC 028 (operator overloading)
 - **Issue:** [#164](https://github.com/dannys-code-corner/incan/issues/164)
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
-Introduce `std.collections` as Incan's standard library namespace for non-builtin container types that are common, user-facing, and semantically distinct from `List`, `Dict`, `Set`, and `Tuple`. The north-star module includes queue, multiset, ordered-map, ordered-set, sorted-map, sorted-set, default-valued map, layered-map, and priority-queue surfaces: `Deque[T]`, `Counter[T]`, `DefaultDict[K, V]`, `OrderedDict[K, V]`, `OrderedSet[T]`, `SortedDict[K, V]`, `SortedSet[T]`, `ChainMap[K, V]`, and `PriorityQueue[T]`. These are ordinary stdlib types under the RFC 022 / RFC 023 model: imported explicitly, specified in Incan-facing terms, and backed by Rust implementations where that is the practical runtime strategy.
+Introduce `std.collections` as Incan's standard library namespace for non-builtin container types that are common, user-facing, and semantically distinct from `List`, `Dict`, `Set`, and `Tuple`. The north-star module includes queue, multiset, ordered-map, ordered-set, sorted-map, sorted-set, default-valued map, layered-map, and priority-queue surfaces: `Deque[T]`, `Counter[T]`, `DefaultDict[K, V]`, `OrderedDict[K, V]`, `OrderedSet[T]`, `SortedDict[K, V]`, `SortedSet[T]`, `ChainMap[K, V]`, and `PriorityQueue[T]`. These are ordinary stdlib types under the RFC 022 / RFC 023 model: imported explicitly, specified in Incan-facing terms, and implemented as Incan-source stdlib code rather than Rust-backed stdlib dispatch.
 
 This RFC is not a proposal to turn every interesting Rust or Python container into a builtin or direct re-export. It is a commitment that Incan should provide a coherent user-facing collections module with first-class, batteries-included types for the collection shapes that repeatedly matter in real application, analytics, and tooling code.
 
@@ -23,7 +23,7 @@ This RFC is not a proposal to turn every interesting Rust or Python container in
 - builtins remain the default, always-available containers for general-purpose code
 - `std.collections` provides opt-in specialized containers with distinct semantics
 - these types are library types, not parser keywords or compiler primitives
-- the public contract is Pythonic at the surface where that improves DX, while still taking advantage of Rust-backed implementations where they are clearly stronger
+- the public contract is Pythonic at the surface where that improves DX, while the implementation dogfoods ordinary Incan-source stdlib code
 
 The intended north-star module surface is:
 
@@ -35,7 +35,7 @@ The intended north-star module surface is:
 - `SortedDict[K, V]`: key-sorted mapping with deterministic order and range-oriented behavior
 - `SortedSet[T]`: value-sorted set with deterministic order and range-oriented behavior
 - `ChainMap[K, V]`: layered lookup across multiple maps and record-like layers
-- `PriorityQueue[T]`: heap-backed priority queue
+- `PriorityQueue[T]`: priority queue with explicit ordering policy
 
 ## Motivation
 
@@ -103,14 +103,14 @@ for key, value in prices.items():
     print(key, value)
 ```
 
-Python's `collections` module proves the user demand, while Rust's `std::collections` and adjacent ecosystem give us stronger backing choices for ordered, sorted, and queue-like structures. Incan should not mirror either language blindly. It should standardize the collection types that actually make the language feel complete for systems, data, and library work.
+Python's `collections` module proves the user demand, while Rust's collection vocabulary remains useful prior art for semantics and performance expectations. Incan should not mirror either language blindly. It should standardize the collection types that actually make the language feel complete for systems, data, and library work, and the stdlib implementation should remain pure Incan unless a future RFC explicitly creates a host-backed escape hatch.
 
 ## Goals
 
 - Provide a coherent north-star `std.collections` module rather than a narrow two-type sketch.
 - Keep builtins and specialized containers clearly separated.
 - Make Pythonic surfaces first-class where that improves usability.
-- Use Rust-backed implementations where they materially improve correctness, determinism, or performance.
+- Dogfood pure Incan stdlib implementations instead of adding Rust-backed dispatch for this module.
 - Include ordered and sorted collection families explicitly rather than forcing everything through future `Dict` redesign speculation.
 - Support layered lookup as a general collection utility, including model-heavy Incan workflows.
 
@@ -118,6 +118,7 @@ Python's `collections` module proves the user demand, while Rust's `std::collect
 
 - Making these collection types compiler builtins.
 - Re-exporting Rust container APIs wholesale.
+- Adding Rust-backed stdlib dispatch, Rust runtime wrappers, or host-only collection methods for `std.collections`.
 - Freezing every method and convenience helper down to the last alias in this draft.
 - Solving the entire future `Dict` / `FrozenDict` redesign space here.
 - Settling every comparison-policy detail for `PriorityQueue[T]` in this draft.
@@ -192,7 +193,7 @@ groups = DefaultDict[List[str]](...)
 groups["a"].append("x")
 ```
 
-The exact constructor/default-factory contract is still open in this draft, but the type itself is not.
+`DefaultDict` supports both a copied default value and a zero-argument default factory. Use the default-value constructor when every missing key should start from the same cloned value; use the default-factory constructor when each missing key should be materialized from a callable.
 
 ### `OrderedDict[K, V]` and `OrderedSet[T]`
 
@@ -289,7 +290,7 @@ Additional collection types may be added later, but the module should already re
 - both Python-style and Rust-style end-operation names are true aliases
 - iteration order is front-to-back
 - indexed access is allowed, but random access is not the motivation for the type
-- Rust backing: `VecDeque<T>`
+- implementation must be Incan-source stdlib code, not a Rust `VecDeque<T>` wrapper
 
 #### `Counter[T]`
 
@@ -309,14 +310,14 @@ Additional collection types may be added later, but the module should already re
 
 - insertion order is preserved by iteration and order-sensitive serialization
 - reinserting an existing key/value does not create a duplicate entry
-- Rust backing: `IndexMap` / `IndexSet` or equivalent ordered hash collections
+- implementation must be Incan-source stdlib code, not `IndexMap` / `IndexSet` wrappers or equivalent Rust-backed dispatch
 
 #### `SortedDict[K, V]` and `SortedSet[T]`
 
 - iteration order is sorted order
 - the types support order-aware traversal and range-oriented operations
 - keys/values must satisfy the language's ordering requirements for sorted collections
-- Rust backing: `BTreeMap` / `BTreeSet`
+- implementation must be Incan-source stdlib code, not `BTreeMap` / `BTreeSet` wrappers
 
 #### `ChainMap[K, V]`
 
@@ -331,7 +332,7 @@ Additional collection types may be added later, but the module should already re
 #### `PriorityQueue[T]`
 
 - heap semantics are the point of the type
-- the underlying backing is heap-based (`BinaryHeap` or equivalent)
+- the implementation must provide priority-queue semantics in Incan-source stdlib code rather than wrapping `BinaryHeap` or equivalent Rust runtime state
 - the exact public ordering contract remains open in this draft
 
 ### Compatibility / migration
@@ -345,8 +346,8 @@ This RFC is additive. It introduces new opt-in stdlib types under a new namespac
 The module should be designed from Incan's point of view, not as a copy of either source ecosystem:
 
 - Python gives the strongest user-facing intuition for `Deque`, `Counter`, `DefaultDict`, `OrderedDict`, and `ChainMap`
-- Rust gives stronger backing choices and vocabulary for `VecDeque`, `BTreeMap`, `BTreeSet`, `BinaryHeap`, and the `IndexMap`/`IndexSet` family
-- Incan should standardize the public semantics that make sense, then back them with Rust implementations where that is the cleanest runtime strategy
+- Rust gives useful vocabulary for queue, sorted-map, sorted-set, and priority-queue semantics, but those names are design references rather than implementation permission
+- Incan should standardize the public semantics that make sense, then implement the module in pure Incan-source stdlib code so the language dogfoods its own collection abstractions
 
 ### Why separate map and set types still make sense
 
@@ -381,6 +382,10 @@ Rejected because these are specialized containers, not global-language defaults.
 
 Rejected because that would leak Rust names and backend details into the public contract instead of giving Incan a deliberate collections story.
 
+### Back `std.collections` with Rust runtime dispatch
+
+Rejected because this module is intended to prove ordinary Incan-source stdlib expressiveness. Rust-backed dispatch would hide gaps in model methods, generics, indexing traits, iteration, and module loading that this RFC is supposed to exercise directly.
+
 ### Leave all specialized collections to third-party libraries
 
 Rejected because this is basic language completeness territory, not an exotic ecosystem extension.
@@ -395,26 +400,96 @@ Rejected because this is basic language completeness territory, not an exotic ec
 ## Layers affected
 
 - **Stdlib registry** — `std.collections` remains a registered stdlib namespace.
-- **Stdlib source** — public Incan-facing declarations, docs, examples, and protocol integration for the full type set.
-- **Stdlib runtime** — Rust-backed implementations over `VecDeque`, `HashMap`, `IndexMap`, `IndexSet`, `BTreeMap`, `BTreeSet`, `BinaryHeap`, and equivalent runtime structures where appropriate.
+- **Stdlib source** — public Incan-facing declarations, docs, examples, and pure Incan-source implementations for the full type set.
+- **Stdlib runtime** — no new Rust-backed dispatch or Rust wrapper state for this module; existing builtin collection primitives may be used only through ordinary Incan syntax and stdlib source.
 - **Typechecker / protocol surface** — generic collection typing, iteration behavior, ordering constraints for sorted collections, and record-layer participation in `ChainMap`.
 - **Serialization / docs / tooling** — deterministic-order behavior for ordered and sorted types must be documented and surfaced consistently in docs, completions, and examples.
+
+## Implementation Plan
+
+### RFC lifecycle and source contract
+
+- Keep the RFC, issue, and implementation aligned on a pure Incan-source stdlib contract.
+- Register `std.collections` as an ordinary stdlib namespace without extra Rust crate dependencies.
+- Ensure any implementation blocker caused by missing language support is reported as a compiler or stdlib dogfooding gap, not worked around through Rust-backed dispatch.
+
+### Stdlib collection module
+
+- Add `std.collections` source under `crates/incan_stdlib/stdlib/collections.incn`.
+- Implement the full public type set in Incan source: `Deque[T]`, `Counter[T]`, `DefaultDict[K, V]`, `OrderedDict[K, V]`, `OrderedSet[T]`, `SortedDict[K, V]`, `SortedSet[T]`, `ChainMap[K, V]`, and `PriorityQueue[T]`.
+- Provide both Python-style and Rust-style `Deque` end-operation aliases as true synonyms.
+- Implement `Counter[T]` with non-negative core counts; arithmetic helpers may produce intermediate negative counts only where the method contract explicitly says so.
+- Implement `DefaultDict[K, V]` with both default-value and default-factory construction paths.
+- Implement `PriorityQueue[T]` with a construction-time ordering policy and a min-first default.
+
+### Compiler and tooling integration
+
+- Extend the stdlib namespace registry so `from std.collections import ...` resolves through the normal stdlib loading path.
+- Verify exported types, generic annotations, method surfaces, and doc metadata are visible through existing stdlib import, typechecker, and LSP/documentation machinery.
+- Do not add parser keywords, builtin type IDs, special lowering paths, or Rust runtime wrappers for the `std.collections` types.
+
+### Tests and docs
+
+- Add focused import/typechecker coverage for all public `std.collections` types.
+- Add compile/run or snapshot coverage for representative behavior across queue, counter, defaulting, ordered, sorted, layered, and priority queue semantics.
+- Update the authored stdlib reference/docs navigation for `std.collections`.
+- Add release notes and bump the active development version.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Resolve the implementation backing contract as pure Incan-source stdlib code.
+- [x] Resolve `PriorityQueue[T]` ordering as a construction-time policy with min-first default.
+- [x] Resolve `Counter[T]` as non-negative core counts with explicitly contracted arithmetic exceptions.
+- [x] Resolve `DefaultDict[K, V]` construction as both default-value and default-factory.
+
+### Stdlib registry
+
+- [x] Register `std.collections` in `STDLIB_NAMESPACES` without extra Rust crate dependencies.
+- [x] Add namespace/path tests for `std.collections`.
+
+### Stdlib source
+
+- [x] Add `crates/incan_stdlib/stdlib/collections.incn`.
+- [x] Implement `Deque[T]` with alias method pairs.
+- [x] Implement `Counter[T]` with non-negative core operations and counting helpers.
+- [x] Implement `DefaultDict[K, V]` with default value and default factory.
+- [x] Implement `OrderedDict[K, V]` and `OrderedSet[T]` with insertion-order behavior.
+- [x] Implement `SortedDict[K, V]` and `SortedSet[T]` with deterministic sorted behavior.
+- [x] Implement `ChainMap[K, V]` for mapping layers.
+- [x] Add `ChainMap[K, V]` record/model field overlays through compiler-generated field snapshots.
+- [x] Implement `PriorityQueue[T]` with construction-time ordering policy and min-first default.
+
+### Compiler / tooling
+
+- [x] Verify imported public collection types are visible to the typechecker and library export metadata.
+- [x] Verify no parser, builtin, lowering, emission, or Rust runtime special case is added for `std.collections`.
+- [x] Verify docs/LSP-facing metadata exposes the new module.
+
+### Tests
+
+- [x] Add targeted typechecker/import tests for all public collection types.
+- [x] Add behavior coverage for `Deque`, `Counter`, `DefaultDict`, ordered collections, sorted collections, `ChainMap`, and `PriorityQueue`.
+- [x] Add a guard that `std.collections` has no extra Rust-backed crate dependency or runtime wrapper.
+- [x] Run targeted verification.
+- [x] Run the repository pre-commit gate.
+
+### Docs / release
+
+- [x] Update stdlib reference docs and navigation for `std.collections`.
+- [x] Add release notes for RFC 030.
+- [x] Bump the active development version.
 
 ## Design Decisions
 
 1. `std.collections` is a full north-star module, not a narrow `Deque + Counter` placeholder.
 2. `DefaultDict`, `OrderedDict`, and `OrderedSet` are first-class public types in this RFC.
-3. `SortedDict` and `SortedSet` belong in the stdlib surface and should be backed by sorted-tree structures.
+3. `SortedDict` and `SortedSet` belong in the stdlib surface and must be implemented in pure Incan-source stdlib code rather than backed by Rust sorted-tree wrappers.
 4. `ChainMap` remains in scope and should align with RFC 033's precedence intuition without being defined in terms of `ctx`.
 5. `ChainMap` supports both mapping layers and record/model layers; record/model layers are read-only field overlays in this RFC.
-6. `PriorityQueue[T]` remains in scope even though one core policy question is still unresolved.
+6. `PriorityQueue[T]` uses a construction-time ordering policy and defaults to min-first behavior.
 7. `NamedTuple` is out of scope; Incan `model` already covers the named-record use case better.
 8. `FrozenDeque` is out of scope for now; this RFC is about specialized mutable/runtime collection semantics first.
-
-## Unresolved questions
-
-1. What is the public ordering contract for `PriorityQueue[T]`: max-first only, min-first only, or a construction-time policy?
-2. Should `Counter[T]` counts be fully signed, or should the core contract remain non-negative except where arithmetic helpers explicitly produce negatives?
-3. What is the best first-class construction contract for `DefaultDict[K, V]`: default value, default factory, or both?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+9. `Counter[T]` has non-negative core counts; arithmetic helpers may expose negative intermediate counts only where explicitly documented.
+10. `DefaultDict[K, V]` supports both default-value and default-factory construction.

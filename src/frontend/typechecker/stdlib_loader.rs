@@ -1367,6 +1367,45 @@ mod tests {
     }
 
     #[test]
+    fn test_load_collections_module_exports_public_types() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "collections".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load stdlib/collections.incn")?;
+        let names = module
+            .types
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for expected in [
+            "PriorityOrder",
+            "Deque",
+            "Counter",
+            "DefaultDict",
+            "OrderedDict",
+            "OrderedSet",
+            "SortedDict",
+            "SortedSet",
+            "ChainMap",
+            "PriorityQueue",
+        ] {
+            assert!(names.contains(expected), "std.collections should export {expected}");
+        }
+
+        let deque = module
+            .types
+            .iter()
+            .find(|(name, _)| name == "Deque")
+            .ok_or("Deque export not found")?;
+        let TypeInfo::Model(deque_info) = &deque.1 else {
+            return Err("Deque should be an AST-loaded model export".into());
+        };
+        assert!(deque_info.methods.contains_key("appendleft"));
+        assert!(deque_info.methods.contains_key("popleft"));
+
+        Ok(())
+    }
+
+    #[test]
     fn extract_type_signatures_preserves_same_name_method_overloads() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 pub trait Convert[T]:

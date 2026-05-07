@@ -279,6 +279,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "collections",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "io",
         feature: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
@@ -463,6 +470,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
         assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
     }
@@ -481,6 +489,7 @@ mod tests {
         assert!(!is_known_stdlib_module(&segs(&["std", "f64", "consts"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
+        assert!(!is_known_stdlib_module(&segs(&["std", "collections", "deque"])));
     }
 
     #[test]
@@ -521,6 +530,10 @@ mod tests {
             stdlib_stub_path(&segs(&["std", "tempfile"])),
             Some("stdlib/tempfile.incn".to_string())
         );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "collections"])),
+            Some("stdlib/collections.incn".to_string())
+        );
     }
 
     #[test]
@@ -547,6 +560,7 @@ mod tests {
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
         assert!(hint.contains(&"std.builtins".to_string()));
+        assert!(hint.contains(&"std.collections".to_string()));
     }
 
     #[test]
@@ -609,6 +623,7 @@ mod tests {
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
+        let collections_ns = find_namespace("collections");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
@@ -625,6 +640,10 @@ mod tests {
         );
         assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
         assert_eq!(
             find_namespace("io")
                 .and_then(|ns| ns.extra_crate_deps.first())

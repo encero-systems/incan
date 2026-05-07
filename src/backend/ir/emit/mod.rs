@@ -101,6 +101,8 @@ pub struct IrEmitter<'a> {
     enum_variant_fields: std::collections::HashMap<(String, String), VariantFields>,
     /// Struct field type lookup: (StructName, FieldName) -> IrType
     struct_field_types: std::collections::HashMap<(String, String), IrType>,
+    /// Struct field visibility lookup: (StructName, FieldName) -> Visibility
+    struct_field_visibilities: std::collections::HashMap<(String, String), Visibility>,
     /// Struct field name order (as declared): StructName -> [FieldName...]
     struct_field_names: std::collections::HashMap<String, Vec<String>>,
     /// Struct field alias lookup: (StructName, FieldName) -> alias
@@ -202,6 +204,7 @@ impl<'a> IrEmitter<'a> {
             external_rust_functions: std::collections::HashSet::new(),
             enum_variant_fields: std::collections::HashMap::new(),
             struct_field_types: std::collections::HashMap::new(),
+            struct_field_visibilities: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
             struct_field_aliases: std::collections::HashMap::new(),
             struct_field_descriptions: std::collections::HashMap::new(),
