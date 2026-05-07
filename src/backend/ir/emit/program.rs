@@ -23,12 +23,15 @@ use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::{conventions, magic_methods};
 
 use super::super::decl::{
-    IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrTraitBound, IrTypeParam, Visibility,
+    IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrRustTraitImport, IrTraitBound, IrTypeParam, Visibility,
 };
-use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
+use super::super::expr::{
+    IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern, VarRefKind,
+};
 use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
@@ -222,7 +225,7 @@ struct GeneratedUseAnalyzer<'program> {
     declarations_by_name: HashMap<String, &'program IrDecl>,
     function_registry: &'program FunctionRegistry,
     impls_by_target: HashMap<String, Vec<&'program super::super::decl::IrImpl>>,
-    rust_extension_trait_imports_by_method: HashMap<String, Vec<String>>,
+    rust_extension_trait_imports: HashMap<String, IrRustTraitImport>,
     external_error_trait_types: HashSet<String>,
     preserve_public_items: bool,
     analysis: GeneratedUseAnalysis,
@@ -241,7 +244,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             declarations_by_name: HashMap::new(),
             function_registry: &program.function_registry,
             impls_by_target: HashMap::new(),
-            rust_extension_trait_imports_by_method: HashMap::new(),
+            rust_extension_trait_imports: HashMap::new(),
             external_error_trait_types: external_error_trait_types.clone(),
             preserve_public_items,
             analysis: GeneratedUseAnalysis::default(),
@@ -291,17 +294,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     ..
                 } if matches!(origin, IrImportOrigin::Standard) && matches!(qualifier, IrImportQualifier::None) => {
                     for item in items {
-                        if item.rust_trait_methods.is_empty() {
+                        let Some(import) = &item.rust_trait_import else {
                             continue;
-                        }
+                        };
                         let binding = item.alias.as_ref().unwrap_or(&item.name).clone();
-                        for method in &item.rust_trait_methods {
-                            analyzer
-                                .rust_extension_trait_imports_by_method
-                                .entry(method.clone())
-                                .or_default()
-                                .push(binding.clone());
-                        }
+                        analyzer.rust_extension_trait_imports.insert(binding, import.clone());
                     }
                 }
                 IrDeclKind::Import { .. } => {}
@@ -735,10 +732,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 method,
                 args,
                 type_args,
+                dispatch,
                 ..
             } => {
                 self.scan_expr(receiver);
-                self.mark_rust_extension_trait_imports(receiver, method);
+                self.mark_rust_extension_trait_imports(receiver, method, dispatch.as_ref());
                 self.mark_stdlib_error_trait_import(receiver, method);
                 if let Some(type_name) = Self::nominal_type_name(&receiver.ty) {
                     self.analysis
@@ -1051,20 +1049,43 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
-    /// Mark Rust trait imports that can satisfy an observed extension-method call.
-    fn mark_rust_extension_trait_imports(&mut self, receiver: &TypedExpr, method: &str) {
+    /// Mark the Rust trait import selected for an observed extension-method call.
+    fn mark_rust_extension_trait_imports(
+        &mut self,
+        receiver: &TypedExpr,
+        method: &str,
+        dispatch: Option<&IrMethodDispatch>,
+    ) {
         if !self.receiver_can_use_rust_extension_trait(receiver) {
             return;
         }
-        let Some(bindings) = self.rust_extension_trait_imports_by_method.get(method).cloned() else {
+        if let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch {
+            if self.rust_extension_trait_imports.contains_key(binding) {
+                self.analysis.used_extension_trait_imports.insert(binding.clone());
+            }
+            return;
+        }
+        self.mark_unambiguous_rust_extension_trait_import(method);
+    }
+
+    /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
+    fn mark_unambiguous_rust_extension_trait_import(&mut self, method: &str) {
+        let mut matches = self
+            .rust_extension_trait_imports
+            .iter()
+            .filter(|(_, import)| import.methods.iter().any(|candidate| candidate == method))
+            .map(|(binding, _)| binding.clone());
+        let Some(binding) = matches.next() else {
             return;
         };
-        self.analysis.used_extension_trait_imports.extend(bindings);
+        if matches.next().is_none() {
+            self.analysis.used_extension_trait_imports.insert(binding);
+        }
     }
 
     /// Mark the stdlib `Error` trait import required for Rust method lookup on imported error types.
     fn mark_stdlib_error_trait_import(&mut self, receiver: &TypedExpr, method: &str) {
-        if !matches!(method, "message" | "source") {
+        if !core_traits::method_names(TraitId::Error).contains(&method) {
             return;
         }
         let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {

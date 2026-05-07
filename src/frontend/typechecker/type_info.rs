@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use crate::frontend::ast::{ParamKind, Span};
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::testing_markers::TestingFixtureScope;
-use incan_core::interop::CoercionPolicy;
+use incan_core::interop::{CoercionPolicy, RustFunctionSig};
 
 use super::{ConstValue, const_eval};
 
@@ -95,11 +95,18 @@ pub struct TypeCheckInfo {
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
     /// function argument, typed initializer, or model/class field initializer.
     pub validated_newtype_coercions: HashMap<(usize, usize), ValidatedNewtypeCoercionInfo>,
-    /// Rust trait imports keyed by the source binding name with the trait method names they can place in scope.
+    /// Rust trait imports keyed by the source binding name with the trait path and method names they can place in
+    /// scope.
     ///
-    /// Lowering carries this into IR import items so codegen can retain extension-trait imports that Rust method
-    /// lookup needs even when the generated Rust tokens do not otherwise mention the trait name.
-    pub rust_trait_import_methods: HashMap<String, HashSet<String>>,
+    /// Lowering carries this into IR import items so codegen can retain extension-trait imports when Rust method
+    /// lookup needs the trait in scope even though emitted call tokens do not otherwise mention the trait name.
+    pub rust_trait_imports: HashMap<String, RustTraitImportInfo>,
+    /// Rust extension-trait import selected for one Rust method call.
+    ///
+    /// Keyed by the full method-call expression span. Lowering attaches the binding to the corresponding IR method
+    /// call so generated-use analysis can retain the exact import instead of retaining every trait with the same
+    /// method name.
+    pub rust_method_trait_import_uses: HashMap<(usize, usize), RustMethodTraitImportUse>,
     /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias.
     ///
     /// Lowering must not emit an `impl Trait for Alias` for these entries because Rust coherence treats the alias as
@@ -166,6 +173,32 @@ pub struct ResolvedOperatorCall {
     pub method: String,
     /// The AST operator shape this call replaces.
     pub kind: ResolvedOperatorKind,
+}
+
+/// Metadata for one imported Rust trait binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustTraitImportInfo {
+    /// Canonical import path used by Incan for this trait binding.
+    pub trait_path: String,
+    /// Resolved Rust definition path after re-export resolution, when available.
+    pub definition_path: Option<String>,
+    /// Method names this trait can place in Rust method-lookup scope.
+    pub methods: HashSet<String>,
+    /// Method signatures this trait metadata provided, keyed by method name.
+    pub method_signatures: HashMap<String, RustFunctionSig>,
+}
+
+/// A typechecker-resolved Rust extension-trait import required by a method call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustMethodTraitImportUse {
+    /// Local import binding to retain in generated Rust.
+    pub binding: String,
+    /// Trait path selected for the call.
+    pub trait_path: String,
+    /// Method name observed at the call site.
+    pub method: String,
+    /// Trait method signature, when metadata supplied it.
+    pub signature: Option<RustFunctionSig>,
 }
 
 /// A typechecker-resolved method call consumed by IR lowering.
@@ -460,6 +493,11 @@ impl TypeCheckInfo {
         self.resolved_method_calls.get(&(span.start, span.end))
     }
 
+    /// Return the Rust extension-trait import selected for the method call at `span`, if any.
+    pub fn rust_method_trait_import_use(&self, span: Span) -> Option<&RustMethodTraitImportUse> {
+        self.rust_method_trait_import_uses.get(&(span.start, span.end))
+    }
+
     /// Return custom iteration protocol metadata for `span`, if any.
     pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
         self.protocol_iterations.get(&(span.start, span.end))
@@ -495,6 +533,12 @@ impl TypeCheckInfo {
                 dispatch,
             },
         );
+    }
+
+    /// Record that a Rust method call requires a specific imported extension trait in generated Rust scope.
+    pub(crate) fn record_rust_method_trait_import_use(&mut self, span: Span, import_use: RustMethodTraitImportUse) {
+        self.rust_method_trait_import_uses
+            .insert((span.start, span.end), import_use);
     }
 
     /// Record a custom `for` iteration protocol route.

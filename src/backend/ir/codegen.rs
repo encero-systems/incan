@@ -1731,7 +1731,7 @@ def main() -> None:
     #[test]
     fn generated_use_analysis_keeps_rust_extension_trait_imports() {
         use crate::backend::ir::decl::{
-            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, Visibility,
         };
         use crate::backend::ir::expr::{
             IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
@@ -1749,12 +1749,16 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
-                    rust_trait_methods: vec![String::from("gen_range")],
+                    rust_trait_import: Some(IrRustTraitImport {
+                        trait_path: String::from("rand::Rng"),
+                        definition_path: None,
+                        methods: vec![String::from("gen_range")],
+                    }),
                 },
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
-                    rust_trait_methods: Vec::new(),
+                    rust_trait_import: None,
                 },
             ],
         }));
@@ -1839,6 +1843,106 @@ def main() -> None:
     }
 
     #[test]
+    fn generated_use_analysis_keeps_only_selected_same_name_rust_extension_trait_import() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, Visibility,
+        };
+        use crate::backend::ir::expr::{IrExprKind, IrMethodDispatch, MethodCallArgPolicy, VarAccess, VarRefKind};
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("demo")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("AlphaRender"),
+                    alias: None,
+                    rust_trait_import: Some(IrRustTraitImport {
+                        trait_path: String::from("demo::AlphaRender"),
+                        definition_path: None,
+                        methods: vec![String::from("render")],
+                    }),
+                },
+                IrImportItem {
+                    name: String::from("BetaRender"),
+                    alias: None,
+                    rust_trait_import: Some(IrRustTraitImport {
+                        trait_path: String::from("demo::BetaRender"),
+                        definition_path: None,
+                        methods: vec![String::from("render")],
+                    }),
+                },
+                IrImportItem {
+                    name: String::from("widget"),
+                    alias: None,
+                    rust_trait_import: None,
+                },
+            ],
+        }));
+        let widget_ty = IrType::Struct(String::from("demo::Widget"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![
+                IrStmt::new(IrStmtKind::Let {
+                    name: String::from("widget"),
+                    ty: widget_ty.clone(),
+                    type_annotation: None,
+                    mutability: Mutability::Immutable,
+                    value: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: String::from("widget"),
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::ExternalRustName,
+                        },
+                        widget_ty.clone(),
+                    ),
+                }),
+                IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: String::from("widget"),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            widget_ty,
+                        )),
+                        method: String::from("render"),
+                        dispatch: Some(IrMethodDispatch::RustExtensionTraitImport {
+                            binding: String::from("AlphaRender"),
+                        }),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    IrType::String,
+                ))),
+            ],
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use demo::AlphaRender;"), "{code}");
+        assert!(!code.contains("use demo::BetaRender;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
     fn generated_use_analysis_keeps_rust_trait_candidates_without_metadata() {
         use crate::backend::ir::decl::{
             FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
@@ -1859,12 +1963,12 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
-                    rust_trait_methods: Vec::new(),
+                    rust_trait_import: None,
                 },
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
-                    rust_trait_methods: Vec::new(),
+                    rust_trait_import: None,
                 },
             ],
         }));

@@ -1,6 +1,6 @@
 //! Import declaration lowering.
 
-use super::super::super::decl::IrDeclKind;
+use super::super::super::decl::{IrDeclKind, IrRustTraitImport};
 use super::super::AstLowering;
 use crate::frontend::ast;
 use crate::frontend::module::canonicalize_source_module_segments;
@@ -68,16 +68,23 @@ impl AstLowering {
             .iter()
             .map(|item| {
                 let binding_name = item.alias.as_ref().unwrap_or(&item.name);
-                let rust_trait_methods = self
+                let rust_trait_import = self
                     .type_info
                     .as_ref()
-                    .and_then(|info| info.rust_trait_import_methods.get(binding_name))
-                    .map(|methods| methods.iter().cloned().collect())
-                    .unwrap_or_default();
+                    .and_then(|info| info.rust_trait_imports.get(binding_name))
+                    .map(|import| {
+                        let mut methods: Vec<_> = import.methods.iter().cloned().collect();
+                        methods.sort();
+                        IrRustTraitImport {
+                            trait_path: import.trait_path.clone(),
+                            definition_path: import.definition_path.clone(),
+                            methods,
+                        }
+                    });
                 super::super::super::decl::IrImportItem {
                     name: item.name.clone(),
                     alias: item.alias.clone(),
-                    rust_trait_methods,
+                    rust_trait_import,
                 }
             })
             .collect();

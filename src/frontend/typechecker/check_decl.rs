@@ -2911,7 +2911,7 @@ impl TypeChecker {
     }
 
     /// Return the path suffix used when comparing re-exported Rust trait paths.
-    fn rust_trait_path_suffix(path: &str) -> &str {
+    pub(in crate::frontend::typechecker) fn rust_trait_path_suffix(path: &str) -> &str {
         path.split_once("::").map(|(_, suffix)| suffix).unwrap_or(path)
     }
 

@@ -736,6 +736,14 @@ impl AstLowering {
                             trait_path,
                             type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
                         },
+                    })
+                    .or_else(|| {
+                        self.type_info
+                            .as_ref()
+                            .and_then(|info| info.rust_method_trait_import_use(expr_span))
+                            .map(|import_use| IrMethodDispatch::RustExtensionTraitImport {
+                                binding: import_use.binding.clone(),
+                            })
                     });
 
                 if let Some(policy) = numeric_resize_policy(&method_name)

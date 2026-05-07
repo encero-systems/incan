@@ -12,6 +12,7 @@ use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segment
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::{TestingMarkerSemantics, load_testing_marker_semantics};
 use crate::frontend::typechecker::TypeChecker;
+use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
@@ -1531,17 +1532,19 @@ impl TypeChecker {
     fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
         let mut trait_methods = HashSet::new();
+        let mut trait_method_signatures = std::collections::HashMap::new();
         if let Some(metadata) = &info.metadata
             && let RustItemKind::Trait(trait_info) = &metadata.kind
         {
-            trait_methods = trait_info
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    RustTraitAssoc::Function { name, .. } => Some(name.clone()),
-                    RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => None,
-                })
-                .collect();
+            for item in &trait_info.items {
+                match item {
+                    RustTraitAssoc::Function { name, signature } => {
+                        trait_methods.insert(name.clone());
+                        trait_method_signatures.insert(name.clone(), signature.clone());
+                    }
+                    RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => {}
+                }
+            }
         }
         if trait_methods.is_empty() {
             trait_methods.extend(
@@ -1551,9 +1554,18 @@ impl TypeChecker {
             );
         }
         if !trait_methods.is_empty() {
-            self.type_info
-                .rust_trait_import_methods
-                .insert(name.clone(), trait_methods);
+            self.type_info.rust_trait_imports.insert(
+                name.clone(),
+                RustTraitImportInfo {
+                    trait_path: info.path.clone(),
+                    definition_path: info
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.definition_path.clone()),
+                    methods: trait_methods,
+                    method_signatures: trait_method_signatures,
+                },
+            );
         }
         self.define_rust_import_symbol(name, info, span);
     }
