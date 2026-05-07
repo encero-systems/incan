@@ -13,7 +13,7 @@ from std.async.sync import Mutex, RwLock, Semaphore, Barrier
 async def increment_worker(counter: Mutex[int], id: int, times: int) -> None:
     for i in range(0..times):
         guard = await counter.lock()
-        val = guard.get()
+        val: int = guard.get()
         guard.set(val + 1)
         println(f"  Worker {id}: counter = {val + 1}")
         await sleep(0.05)

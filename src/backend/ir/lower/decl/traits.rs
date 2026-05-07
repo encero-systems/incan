@@ -3,12 +3,15 @@
 use std::collections::HashSet;
 
 use incan_core::lang::trait_bounds;
+use incan_core::lang::traits as core_traits;
+use incan_core::lang::traits::TraitId;
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
+use super::methods::PropertyLoweringMode;
 use crate::frontend::ast;
 use crate::frontend::symbols::ResolvedType;
 
@@ -48,7 +51,7 @@ impl AstLowering {
     /// Lower a trait declaration.
     pub(in crate::backend::ir::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
         let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let methods: Vec<IrFunction> = t
+        let mut methods: Vec<IrFunction> = t
             .methods
             .iter()
             .map(|m| {
@@ -130,6 +133,7 @@ impl AstLowering {
                     return_type,
                     body,
                     is_async: m.node.is_async(),
+                    is_generator: false,
                     visibility: Visibility::Private,
                     type_params: all_type_params,
                     is_extern: false,
@@ -138,6 +142,17 @@ impl AstLowering {
                 })
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        if t.name == core_traits::as_str(TraitId::Iterator) {
+            methods.retain(|method| method.name == "__next__");
+        }
+
+        for property in &t.properties {
+            methods.push(self.lower_property_with_type_params(
+                &property.node,
+                Some(&type_param_names),
+                PropertyLoweringMode::TraitDecl,
+            )?);
+        }
 
         let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info

@@ -23,13 +23,16 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
 };
-use crate::frontend::{diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
+use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
-use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
+use incan_core::lang::{
+    stdlib::{self, StdlibExtraCrateSource},
+    surface::result_methods,
+};
 #[cfg(feature = "rust_inspect")]
 use sha2::{Digest, Sha256};
 
@@ -856,6 +859,45 @@ pub fn read_source(file_path: &str) -> CliResult<String> {
     fs::read_to_string(file_path).map_err(|e| CliError::failure(format!("Error reading file '{}': {}", file_path, e)))
 }
 
+/// Return whether a parsed module uses RFC 088 iterator surface methods that require stdlib adapter modules.
+fn uses_iterator_adapter_surface(program: &Program) -> bool {
+    ast_walk::any_expr_in_program(program, |expr| match expr {
+        crate::frontend::ast::Expr::MethodCall(_, method, _, _) => matches!(
+            method.as_str(),
+            "iter"
+                | "map"
+                | "filter"
+                | "enumerate"
+                | "zip"
+                | "take"
+                | "skip"
+                | "take_while"
+                | "skip_while"
+                | "chain"
+                | "flat_map"
+                | "batch"
+                | "collect"
+                | "count"
+                | "reduce"
+                | "fold"
+                | "any"
+                | "all"
+                | "find"
+                | "for_each"
+                | "sum"
+        ),
+        _ => false,
+    })
+}
+
+/// Return whether a parsed module uses RFC 070 Result combinators backed by std.result helpers.
+fn uses_result_combinator_surface(program: &Program) -> bool {
+    ast_walk::any_expr_in_program(program, |expr| match expr {
+        crate::frontend::ast::Expr::MethodCall(_, method, _, _) => result_methods::from_str(method).is_some(),
+        _ => false,
+    })
+}
+
 /// Collect and parse the entry file and all its dependencies.
 ///
 /// # Note on Prelude
@@ -921,6 +963,40 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
+        if uses_iterator_adapter_surface(&ast) {
+            let module_path = vec![
+                stdlib::STDLIB_ROOT.to_string(),
+                "derives".to_string(),
+                "collection".to_string(),
+            ];
+            let source_path = resolve_stdlib_module_source_path(&module_path)?;
+            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+            module_segments.extend(module_path.iter().skip(1).cloned());
+            let module_name = module_segments.join("_");
+            let dep_path_str = source_path.to_string_lossy().to_string();
+            if !processed.contains(&dep_path_str) {
+                to_process.push((dep_path_str.clone(), module_name, module_segments));
+            }
+            dependency_edges
+                .entry(file_path.clone())
+                .or_default()
+                .insert(dep_path_str);
+        }
+        if uses_result_combinator_surface(&ast) {
+            let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
+            let source_path = resolve_stdlib_module_source_path(&module_path)?;
+            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+            module_segments.extend(module_path.iter().skip(1).cloned());
+            let module_name = module_segments.join("_");
+            let dep_path_str = source_path.to_string_lossy().to_string();
+            if !processed.contains(&dep_path_str) {
+                to_process.push((dep_path_str.clone(), module_name, module_segments));
+            }
+            dependency_edges
+                .entry(file_path.clone())
+                .or_default()
+                .insert(dep_path_str);
+        }
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
@@ -1894,6 +1970,28 @@ from std.math import sqrt
         assert!(
             resolved.dependencies.iter().any(|dep| dep.crate_name == "libm"),
             "std.math should inject libm for generated projects"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_project_requirement_dependencies_adds_io_runtime_crate() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test(
+            r#"
+from std.io import BytesIO
+"#,
+        )?;
+        let requirements = collect_project_requirements(&[module], &LibraryManifestIndex::default())?;
+        let mut resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+
+        merge_project_requirement_dependencies(&mut resolved, &requirements)?;
+
+        assert!(
+            resolved.dependencies.iter().any(|dep| dep.crate_name == "byteorder"),
+            "std.io should inject byteorder for generated projects"
         );
         Ok(())
     }

@@ -174,6 +174,7 @@ use super::expr::{BinOp, VarAccess};
 use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -198,6 +199,8 @@ pub enum ConversionContext {
     Assignment,
     /// Return value from a function
     ReturnValue,
+    /// Value consumed by a generated Rust `match` scrutinee.
+    MatchScrutinee,
 }
 
 /// Result of conversion analysis
@@ -539,6 +542,36 @@ fn borrowed_expr_needs_owned_materialization(expr: &IrExpr, target_ty: Option<&I
     }
 }
 
+/// Return whether an IR type represents Incan's canonical `Result[Ok, Err]` shape.
+fn is_result_like_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Result(_, _) => true,
+        IrType::NamedGeneric(name, args) if args.len() == 2 => {
+            collections::from_str(name.rsplit("::").next().unwrap_or(name)) == Some(CollectionTypeId::Result)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value type came from Rust interop and can reasonably cross an Incan `str` boundary via `ToString`.
+///
+/// Lowering maps `ResolvedType::RustPath` to `IrType::Struct(path)`, so the stable signal left in IR is a Rust-style
+/// path. Keep this narrower than "any struct" so user-defined Incan structs do not silently stringify at ordinary
+/// `str` parameters.
+fn is_rust_path_value_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.contains("::"),
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_rust_path_value_type(inner),
+        _ => false,
+    }
+}
+
+/// Whether a Rust interop value should be stringified for an Incan `str` target.
+fn rust_value_needs_stringification(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    matches!(target_ty, Some(IrType::String))
+        && (matches!(expr.ty, IrType::Unknown) || is_rust_path_value_type(&expr.ty))
+}
+
 /// Whether a field projection must clone instead of moving directly from its parent object.
 ///
 /// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding
@@ -615,6 +648,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
                 // boundaries.
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // Rust interop values that cross into an Incan `str` parameter should use Rust's Display/ToString
+                // boundary. This keeps callers from spelling `.to_string()` manually when matching on Rust errors.
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -651,6 +687,7 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Const `str` values remain owned `str` at the Incan surface even inside return-context calls.
                 (_, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
 
                 // String variable to String param:
                 // - last-use read can move ownership directly
@@ -756,6 +793,22 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 _ => Conversion::None,
             }
         }
+
+        ConversionContext::MatchScrutinee => {
+            // Rust `match` can consume its scrutinee. Preserve existing Incan-owned value semantics by cloning
+            // ordinary non-Copy locals when needed, but do not force `.clone()` onto Rust Result values whose Ok/Err
+            // payloads may be non-Clone (`std::fs::DirEntry`, `std::io::Error`, ...).
+            match (&expr.kind, &expr.ty) {
+                (IrExprKind::Var { .. }, IrType::Unknown) => Conversion::None,
+                (IrExprKind::Var { .. }, ty) if is_result_like_type(ty) => Conversion::None,
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
+                (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+                _ => Conversion::None,
+            }
+        }
     }
 }
 
@@ -792,6 +845,22 @@ pub(crate) fn determine_conversion_for_incan_call(
     context: ConversionContext,
     callee_param: Option<&FunctionParam>,
 ) -> Conversion {
+    if matches!(
+        context,
+        ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
+    ) {
+        match target_ty {
+            Some(IrType::Ref(_)) => match &expr.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ => return Conversion::Borrow,
+            },
+            Some(IrType::RefMut(_)) => match &expr.ty {
+                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ => return Conversion::MutBorrow,
+            },
+            _ => {}
+        }
+    }
     if matches!(
         context,
         ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
@@ -937,6 +1006,66 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_rust_path_value_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("std::io::Error".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust interop values passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_unknown_rust_payload_to_string_param() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "err".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Unknown,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::ToString,
+            "Rust-inspected unknown payloads passed to Incan str parameters should stringify instead of cloning"
+        );
+    }
+
+    #[test]
+    fn test_incan_function_local_struct_to_string_param_does_not_stringify_implicitly() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::Clone,
+            "only Rust-path values should receive implicit ToString conversion for str parameters"
+        );
     }
 
     #[test]
@@ -1257,6 +1386,43 @@ mod tests {
     }
 
     #[test]
+    fn test_incan_call_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(&expr, Some(&target), ConversionContext::IncanFunctionArg, None);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_return_call_context_borrows_noncopy_var_for_ref_target() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "user".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("User".to_string()),
+        );
+        let target = IrType::Ref(Box::new(IrType::Struct("User".to_string())));
+
+        let conv = determine_conversion_for_incan_call(
+            &expr,
+            Some(&target),
+            ConversionContext::IncanFunctionArgInReturn,
+            None,
+        );
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
     fn test_incan_call_clones_borrowed_as_ref_result_for_owned_nominal_target() {
         let expr = IrExpr::new(
             IrExprKind::MethodCall {
@@ -1269,6 +1435,7 @@ mod tests {
                     IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
                 )),
                 method: "as_ref".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: Vec::new(),
                 callable_signature: None,
@@ -1295,6 +1462,7 @@ mod tests {
                     IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
                 )),
                 method: "as_ref".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: Vec::new(),
                 callable_signature: None,
@@ -1320,6 +1488,7 @@ mod tests {
                     IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())]),
                 )),
                 method: "as_ref".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: Vec::new(),
                 callable_signature: None,
@@ -1354,6 +1523,7 @@ mod tests {
                     IrType::Unknown,
                 )),
                 method: "as_ref".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: Vec::new(),
                 callable_signature: None,
@@ -1379,6 +1549,7 @@ mod tests {
                     IrType::Unknown,
                 )),
                 method: "as_ref".to_string(),
+                dispatch: None,
                 type_args: Vec::new(),
                 args: Vec::new(),
                 callable_signature: None,

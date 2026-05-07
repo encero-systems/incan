@@ -99,6 +99,12 @@ External Rust calls are different from Incan calls. They often accept references
 - Non-string non-`Copy` values generally borrow rather than clone.
 - Mutable aggregate Incan parameters can reborrow as `&mut T` when the callee parameter requires mutation.
 
+### Borrowed callable parameters
+
+Function-typed parameters can be refined by lowering when their body uses a non-`Copy` payload as an observer and then keeps using that payload afterward. For example, a helper such as `tap[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]` can call `f(value)` and then return `Ok(value)` without requiring `T: Clone`. The generated callable boundary becomes `fn(&T) -> ()`, the callback call borrows `value`, and the original branch payload remains available to move into the returned `Result`.
+
+This is a backend ownership decision, not new source syntax. Incan code still writes `Callable[T, None]`; the compiler records the borrowed callable shape in IR when the use site proves that borrowing is the correct ownership plan. Named function values passed to such a borrowed function-pointer parameter receive a private borrowed adapter when their source signature takes the payload by value.
+
 ### Collections and tuples
 
 Collection and tuple literals recursively apply `CollectionElement` planning to each item. This prevents nested string/borrow issues from escaping through literal syntax.
@@ -129,6 +135,7 @@ When ownership planning can clone a generic value, `src/backend/ir/trait_bound_i
 - If a new source expression can produce borrowed data, teach `conversions.rs` how it materializes at owned sinks.
 - If a new sink stores values recursively, route children through `emit_expr_for_use`.
 - If a generic value can be cloned by backend policy, update trait-bound inference in the same change.
+- If a callable parameter is refined from owned to borrowed payloads, make trait-bound inference follow the borrowed target so it does not add `Clone` merely because the original source spelling was `Callable[T, None]`.
 - If a library or consumer needs workaround calls to compile, treat that as evidence of a missing planner rule.
 
 ## Testing expectations
@@ -142,6 +149,7 @@ Use these test shapes:
 - Build or run tests for generated Rust when borrow checker behavior is the failure mode.
 - Consumer checks from sibling projects when the bug came from real library patterns rather than a minimized fixture.
 - Trait-bound inference tests when a backend-inserted clone touches generic `T`.
+- User-authored helper tests when a stdlib feature depends on duckborrowing; the same pattern should work outside `std`.
 
 ## Review checklist
 

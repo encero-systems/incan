@@ -14,6 +14,8 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::ResolvedType;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::traits as core_traits;
+use incan_core::lang::traits::TraitId;
 
 impl AstLowering {
     /// Return whether a method carries a resolved builtin decorator.
@@ -188,10 +190,15 @@ impl AstLowering {
         if bound.type_args.is_empty() {
             return self.trait_impl_targets_for_adopted_trait(&bound.name, type_params);
         }
+        let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
 
         vec![(
             bound.name.clone(),
-            bound.type_args.iter().map(|arg| self.lower_type(&arg.node)).collect(),
+            bound
+                .type_args
+                .iter()
+                .map(|arg| self.lower_type_with_type_params(&arg.node, Some(&type_param_names)))
+                .collect(),
         )]
     }
 
@@ -201,18 +208,34 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        properties: &[Spanned<ast::PropertyDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
-        let lowered = inherent_methods
-            .iter()
-            .map(|m| self.lower_decorated_or_plain_methods(type_name, &m.node, Some(&type_param_names)))
-            .collect::<Result<Vec<_>, LoweringError>>();
+        let lowered = (|| {
+            let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
+            let mut lowered_methods = Vec::new();
+            for method in inherent_methods {
+                lowered_methods.extend(self.lower_decorated_or_plain_methods(
+                    type_name,
+                    &method.node,
+                    Some(&type_param_names),
+                )?);
+            }
+            for property in properties {
+                lowered_methods.push(self.lower_property_with_type_params(
+                    &property.node,
+                    Some(&type_param_names),
+                    PropertyLoweringMode::Inherent,
+                )?);
+            }
+            Ok(lowered_methods)
+        })();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?.into_iter().flatten().collect();
+        let lowered_methods = lowered?;
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
@@ -223,18 +246,37 @@ impl AstLowering {
         })
     }
 
-    /// Keep only method names that can safely be emitted as inherent Rust methods.
-    fn inherent_methods_without_duplicate_names(
-        methods: &[Spanned<ast::MethodDecl>],
-    ) -> Vec<&Spanned<ast::MethodDecl>> {
-        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for method in methods {
-            *counts.entry(method.node.name.as_str()).or_default() += 1;
-        }
-        methods
+    /// Lower a property return type into the comparable IR shape used for trait override matching.
+    fn property_signature_for_match(
+        &mut self,
+        property: &ast::PropertyDecl,
+        type_param_names: &std::collections::HashSet<&str>,
+        subst: &std::collections::HashMap<String, IrType>,
+    ) -> IrType {
+        let return_type = self.lower_callable_return_type(&property.return_type.node, Some(type_param_names));
+        Self::substitute_ir_type_params(return_type, subst)
+    }
+
+    /// Return whether a concrete property can satisfy an instantiated trait property requirement.
+    fn trait_impl_property_override_matches(
+        &mut self,
+        trait_property: &ast::PropertyDecl,
+        candidate: &ast::PropertyDecl,
+        trait_type_params: &[ast::TypeParam],
+        trait_type_args: &[IrType],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+    ) -> bool {
+        let trait_param_names: std::collections::HashSet<&str> =
+            trait_type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let subst: std::collections::HashMap<String, IrType> = trait_type_params
             .iter()
-            .filter(|method| counts.get(method.node.name.as_str()).copied().unwrap_or(0) == 1)
-            .collect()
+            .map(|tp| tp.name.clone())
+            .zip(trait_type_args.iter().cloned())
+            .collect();
+        let trait_return = self.property_signature_for_match(trait_property, &trait_param_names, &subst);
+        let empty_subst = std::collections::HashMap::new();
+        let candidate_return = self.property_signature_for_match(candidate, owner_type_param_names, &empty_subst);
+        trait_return == candidate_return
     }
 
     /// Lower private statics that hold decorated method callable bindings for one owner type.
@@ -393,6 +435,7 @@ impl AstLowering {
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
             is_async: method.is_async(),
+            is_generator: false,
             visibility: Visibility::Public,
             type_params: Vec::new(),
             is_extern: false,
@@ -470,6 +513,7 @@ impl AstLowering {
             IrExprKind::MethodCall {
                 receiver: Box::new(receiver),
                 method: Self::decorator_original_method_name(&method.name),
+                dispatch: None,
                 type_args: Vec::new(),
                 args,
                 callable_signature: None,
@@ -483,6 +527,7 @@ impl AstLowering {
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
             is_async: method.is_async(),
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: Vec::new(),
             is_extern: false,
@@ -584,6 +629,88 @@ impl AstLowering {
         trait_sig == candidate_sig
     }
 
+    /// Return whether a concrete method should be lowered only inside an adopted trait impl.
+    fn method_matches_adopted_trait_impl(
+        &mut self,
+        method: &ast::MethodDecl,
+        type_params: &[ast::TypeParam],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+        adopted_traits: &[Spanned<ast::TraitBound>],
+    ) -> bool {
+        for trait_ref in adopted_traits {
+            for (trait_name, trait_type_args) in
+                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, type_params)
+            {
+                let Some(trait_decl) = self.trait_decls.get(&trait_name).cloned() else {
+                    continue;
+                };
+                for trait_method in &trait_decl.methods {
+                    if trait_method.node.name == method.name
+                        && self.trait_impl_override_matches(
+                            &trait_method.node,
+                            method,
+                            &trait_decl.type_params,
+                            &trait_type_args,
+                            owner_type_param_names,
+                        )
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Keep only methods that Rust can safely emit as inherent methods.
+    ///
+    /// Rust does not support inherent overloads by name. Same-name methods that match adopted trait obligations are
+    /// emitted in trait impl blocks instead; a single remaining distinct-shape method can still be emitted inherently.
+    fn inherent_methods_for_rust_impl(
+        &mut self,
+        type_params: &[ast::TypeParam],
+        methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
+    ) -> Vec<Spanned<ast::MethodDecl>> {
+        let owner_type_param_names: std::collections::HashSet<&str> =
+            type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let mut by_name: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+        for (idx, method) in methods.iter().enumerate() {
+            by_name.entry(method.node.name.as_str()).or_default().push(idx);
+        }
+
+        let mut out = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        for method in methods {
+            if !visited.insert(method.node.name.as_str()) {
+                continue;
+            }
+            let Some(indexes) = by_name.get(method.node.name.as_str()) else {
+                continue;
+            };
+            if indexes.len() == 1 {
+                out.push(methods[indexes[0]].clone());
+                continue;
+            }
+
+            let mut inherent_indexes = Vec::new();
+            for idx in indexes {
+                if !self.method_matches_adopted_trait_impl(
+                    &methods[*idx].node,
+                    type_params,
+                    &owner_type_param_names,
+                    adopted_traits,
+                ) {
+                    inherent_indexes.push(*idx);
+                }
+            }
+            if inherent_indexes.len() == 1 {
+                out.push(methods[inherent_indexes[0]].clone());
+            }
+        }
+        out
+    }
+
     /// Lower trait implementation for a class.
     ///
     /// Only methods matching trait signatures go in `impl Trait for Type`.
@@ -594,6 +721,7 @@ impl AstLowering {
         trait_name: &str,
         trait_type_args: Vec<IrType>,
         impl_methods: &[Spanned<ast::MethodDecl>],
+        impl_properties: &[Spanned<ast::PropertyDecl>],
     ) -> Result<IrImpl, LoweringError> {
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
@@ -609,6 +737,13 @@ impl AstLowering {
                 for method in impl_methods {
                     methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
                 }
+                for property in impl_properties {
+                    methods.push(self.lower_property_with_type_params(
+                        &property.node,
+                        Some(&type_param_names),
+                        PropertyLoweringMode::TraitImpl,
+                    )?);
+                }
                 return Ok(IrImpl {
                     target_type: type_name.to_string(),
                     type_params: Self::lower_type_params(type_params),
@@ -618,9 +753,48 @@ impl AstLowering {
                 });
             };
             let trait_type_params = trait_decl.type_params;
-            let trait_methods = trait_decl.methods;
+            let trait_properties = trait_decl.properties;
+            let mut trait_methods = trait_decl.methods;
+            if trait_name == core_traits::as_str(TraitId::Iterator) {
+                trait_methods.retain(|method| method.node.name == "__next__");
+            }
 
             let mut methods: Vec<IrFunction> = Vec::new();
+            for trait_property in &trait_properties {
+                let property_name = trait_property.node.name.as_str();
+
+                let mut found_override: Option<&ast::PropertyDecl> = None;
+                for property in impl_properties {
+                    if property.node.name == property_name
+                        && self.trait_impl_property_override_matches(
+                            &trait_property.node,
+                            &property.node,
+                            &trait_type_params,
+                            &trait_type_args,
+                            &type_param_names,
+                        )
+                    {
+                        found_override = Some(&property.node);
+                        break;
+                    }
+                }
+                if let Some(property) = found_override {
+                    methods.push(self.lower_property_with_type_params(
+                        property,
+                        Some(&type_param_names),
+                        PropertyLoweringMode::TraitImpl,
+                    )?);
+                    continue;
+                }
+
+                return Err(LoweringError {
+                    message: format!(
+                        "Type '{type_name}' does not implement required property '{property_name}' for trait '{trait_name}'"
+                    ),
+                    span: IrSpan::default(),
+                });
+            }
+
             for trait_method in &trait_methods {
                 let method_name = trait_method.node.name.as_str();
 
@@ -761,6 +935,7 @@ impl AstLowering {
             return_type,
             body,
             is_async: m.is_async(),
+            is_generator: false,
             visibility: Visibility::Private,
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
@@ -775,18 +950,34 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        properties: &[Spanned<ast::PropertyDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         // IMPORTANT: always restore `current_impl_type` even if lowering fails, since lowering continues after
         // collecting errors.
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
-        let lowered = inherent_methods
-            .iter()
-            .map(|m| self.lower_decorated_or_plain_methods(type_name, &m.node, Some(&type_param_names)))
-            .collect::<Result<Vec<_>, LoweringError>>();
+        let lowered = (|| {
+            let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
+            let mut lowered_methods = Vec::new();
+            for method in inherent_methods {
+                lowered_methods.extend(self.lower_decorated_or_plain_methods(
+                    type_name,
+                    &method.node,
+                    Some(&type_param_names),
+                )?);
+            }
+            for property in properties {
+                lowered_methods.push(self.lower_property_with_type_params(
+                    &property.node,
+                    Some(&type_param_names),
+                    PropertyLoweringMode::Inherent,
+                )?);
+            }
+            Ok(lowered_methods)
+        })();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?.into_iter().flatten().collect();
+        let lowered_methods = lowered?;
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
@@ -806,10 +997,11 @@ impl AstLowering {
         type_name: &str,
         type_params: &[ast::TypeParam],
         methods: &[Spanned<ast::MethodDecl>],
+        adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> Result<IrImpl, LoweringError> {
         let prev = self.current_impl_type.replace(type_name.to_string());
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
-        let inherent_methods = Self::inherent_methods_without_duplicate_names(methods);
+        let inherent_methods = self.inherent_methods_for_rust_impl(type_params, methods, adopted_traits);
         let lowered = inherent_methods
             .iter()
             .map(|m| self.lower_decorated_or_plain_methods(type_name, &m.node, Some(&type_param_names)))
@@ -931,6 +1123,7 @@ impl AstLowering {
         {
             self.current_classmethod_constructor = Some(type_name);
         }
+        self.push_callable_param_scope(&params);
         let body_result = if let Some(ref body_stmts) = m.body {
             self.lower_statements(body_stmts)
         } else {
@@ -938,7 +1131,24 @@ impl AstLowering {
             Ok(vec![])
         };
         self.current_classmethod_constructor = previous_classmethod_constructor;
-        let body = body_result?;
+        if body_result.is_ok() {
+            for param in &mut params {
+                if matches!(param.ty, IrType::Function { .. }) {
+                    let refined_ty = self.lookup_var(&param.name);
+                    if matches!(refined_ty, IrType::Function { .. }) {
+                        param.ty = refined_ty;
+                    }
+                }
+            }
+        }
+        self.pop_callable_param_scope();
+        let body = match body_result {
+            Ok(body) => body,
+            Err(err) => {
+                self.pop_scope();
+                return Err(err);
+            }
+        };
         self.pop_scope();
 
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
@@ -953,6 +1163,7 @@ impl AstLowering {
             return_type,
             body,
             is_async: m.is_async(),
+            is_generator: false,
             visibility,
             type_params: std::mem::take(&mut all_type_params),
             is_extern,
@@ -960,4 +1171,66 @@ impl AstLowering {
             lint_allows,
         })
     }
+
+    /// Lower a computed property declaration into the zero-argument function form used by IR emission.
+    pub(in crate::backend::ir::lower) fn lower_property_with_type_params(
+        &mut self,
+        property: &ast::PropertyDecl,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+        mode: PropertyLoweringMode,
+    ) -> Result<IrFunction, LoweringError> {
+        self.push_scope();
+        let mut params = vec![FunctionParam {
+            name: "self".to_string(),
+            ty: match mode {
+                PropertyLoweringMode::TraitDecl | PropertyLoweringMode::TraitImpl => IrType::SelfType,
+                PropertyLoweringMode::Inherent => IrType::Unknown,
+            },
+            mutability: Mutability::Immutable,
+            is_self: true,
+            kind: ast::ParamKind::Normal,
+            default: None,
+        }];
+        self.define_local_binding("self".to_string(), IrType::Unknown, false);
+
+        let return_type = self.lower_callable_return_type(&property.return_type.node, type_param_names);
+        let body_result = match mode {
+            PropertyLoweringMode::TraitDecl => Ok(Vec::new()),
+            PropertyLoweringMode::Inherent | PropertyLoweringMode::TraitImpl => {
+                if let Some(body_stmts) = &property.body {
+                    self.lower_statements(body_stmts)
+                } else {
+                    Ok(Vec::new())
+                }
+            }
+        };
+        self.pop_scope();
+        let body = body_result?;
+
+        let visibility = match mode {
+            PropertyLoweringMode::Inherent => Self::map_visibility(property.visibility),
+            PropertyLoweringMode::TraitDecl | PropertyLoweringMode::TraitImpl => Visibility::Private,
+        };
+
+        Ok(IrFunction {
+            name: property.name.clone(),
+            params: std::mem::take(&mut params),
+            return_type,
+            body,
+            is_async: false,
+            is_generator: false,
+            visibility,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::backend::ir::lower) enum PropertyLoweringMode {
+    Inherent,
+    TraitDecl,
+    TraitImpl,
 }

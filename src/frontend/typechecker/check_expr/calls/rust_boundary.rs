@@ -3,11 +3,12 @@
 use super::TypeChecker;
 use crate::frontend::ast::{CallArg, Span};
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::{ResolvedType, TypeInfo};
+use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
 use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion};
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RustArgBoundaryMatch {
@@ -20,6 +21,42 @@ enum RustArgBoundaryMatch {
 }
 
 impl TypeChecker {
+    /// Eagerly cache metadata for Rust path types returned by inspected Rust calls.
+    ///
+    /// CLI prewarm covers explicit `from rust::... import Item` paths, but chained registry APIs often return helper
+    /// types that users never import directly. Caching those returned receiver types while the originating Rust
+    /// signature is known lets the next method call validate against its real signature instead of falling back to
+    /// permissive unknown-method lowering.
+    fn prewarm_rust_return_type_metadata(&self, ty: &ResolvedType) {
+        match ty {
+            ResolvedType::RustPath(path) => {
+                let _ = self.rust_item_metadata_for_path_blocking(path);
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_return_type_metadata(inner),
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                for arg in args {
+                    self.prewarm_rust_return_type_metadata(arg);
+                }
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+                self.prewarm_rust_return_type_metadata(inner);
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                self.prewarm_rust_return_type_metadata(key);
+                self.prewarm_rust_return_type_metadata(value);
+            }
+            ResolvedType::Function(_, ret) => self.prewarm_rust_return_type_metadata(ret),
+            _ => {}
+        }
+    }
+
+    /// Resolve an inspected Rust return display and cache any returned Rust receiver metadata.
+    fn resolved_rust_return_type_from_sig(&self, sig: &RustFunctionSig) -> ResolvedType {
+        let return_ty = self.resolved_type_from_rust_display(sig.return_type.as_str());
+        self.prewarm_rust_return_type_metadata(&return_ty);
+        return_ty
+    }
+
     fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
         if let ResolvedType::Named(type_name) = arg_ty
             && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
@@ -47,6 +84,21 @@ impl TypeChecker {
         None
     }
 
+    fn is_rust_generic_type_param_display(rust_ty: &str) -> bool {
+        let normalized = rust_ty.trim().replace(' ', "");
+        let mut chars = normalized.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !first.is_ascii_uppercase() || !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        !matches!(
+            normalized.as_str(),
+            "Box" | "HashMap" | "HashSet" | "Option" | "Result" | "Self" | "String" | "Vec"
+        )
+    }
+
     /// Render an Incan type into the canonical boundary vocabulary used by interop coercion policy lookup.
     ///
     /// Returns `None` for shapes not covered by the builtin boundary coercion matrix.
@@ -54,6 +106,7 @@ impl TypeChecker {
         match arg_ty {
             ResolvedType::Int => Some("int".to_string()),
             ResolvedType::Float => Some("float".to_string()),
+            ResolvedType::Numeric(id) => Some(numerics::as_str(*id).to_string()),
             ResolvedType::Bool => Some("bool".to_string()),
             ResolvedType::Str => Some("str".to_string()),
             ResolvedType::FrozenStr => Some("FrozenStr".to_string()),
@@ -169,6 +222,35 @@ impl TypeChecker {
     /// boundary adapters.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let normalized = rust_param_ty.replace(' ', "");
+        let borrowed_shared = matches!(Self::rust_display_borrow_kind(normalized.as_str()), Some((false, _)));
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            if Self::is_rust_generic_type_param_display(inner)
+                && !is_mut
+                && !matches!(arg_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            {
+                return RustArgBoundaryMatch::Exact;
+            }
+            if !is_mut {
+                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                if Self::incan_boundary_type_display(arg_ty).is_none()
+                    && self.types_compatible(arg_ty, &target_inner_ty)
+                {
+                    return RustArgBoundaryMatch::Exact;
+                }
+            }
+            if is_mut {
+                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                if self.types_compatible(arg_ty, &target_inner_ty) {
+                    return RustArgBoundaryMatch::Exact;
+                }
+                if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
+                    && let Some(CoercionPolicy::Exact) =
+                        admitted_builtin_coercion(incan_display.as_str(), inner.replace(' ', "").as_str())
+                {
+                    return RustArgBoundaryMatch::Exact;
+                }
+            }
+        }
         if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
             && Self::is_builtin_rust_boundary_display(normalized.as_str())
         {
@@ -179,7 +261,8 @@ impl TypeChecker {
             };
         }
         let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
-        if self.types_compatible(arg_ty, &target_ty) {
+        let should_try_exact_type_match = !borrowed_shared || Self::incan_boundary_type_display(arg_ty).is_none();
+        if should_try_exact_type_match && self.types_compatible(arg_ty, &target_ty) {
             return RustArgBoundaryMatch::Exact;
         }
         if let Some(kind) = self.rusttype_boundary_match(arg_ty, &target_ty) {
@@ -191,6 +274,17 @@ impl TypeChecker {
             return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Builtin(policy));
         }
         RustArgBoundaryMatch::NoMatch
+    }
+
+    /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
+    fn record_rust_call_site_params(&mut self, span: Span, params: &[incan_core::interop::RustParam]) {
+        let params: Vec<CallableParam> = params
+            .iter()
+            .map(|param| {
+                CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
+            })
+            .collect();
+        self.type_info.record_call_site_callable_params(span, &params);
     }
 
     fn rust_lookup_probe_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
@@ -243,6 +337,7 @@ impl TypeChecker {
         } else {
             &sig.params
         };
+        self.record_rust_call_site_params(span, params);
 
         if arg_types.len() != params.len() {
             self.errors.push(errors::builtin_arity(
@@ -251,7 +346,7 @@ impl TypeChecker {
                 arg_types.len(),
                 span,
             ));
-            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+            return self.resolved_rust_return_type_from_sig(sig);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
@@ -283,7 +378,7 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_type_from_rust_display(sig.return_type.as_str())
+        self.resolved_rust_return_type_from_sig(sig)
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
@@ -295,10 +390,11 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         let arg_types = self.check_call_arg_types(args);
+        self.record_rust_call_site_params(span, &sig.params);
         if arg_types.len() != sig.params.len() {
             self.errors
                 .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
-            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+            return self.resolved_rust_return_type_from_sig(sig);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
@@ -327,7 +423,7 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_type_from_rust_display(sig.return_type.as_str())
+        self.resolved_rust_return_type_from_sig(sig)
     }
 }
 
@@ -337,6 +433,7 @@ mod validate_rust_function_call_tests {
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo, VariableInfo};
     use incan_core::interop::{RustFunctionSig, RustParam};
+    use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
 
     #[test]
@@ -434,10 +531,24 @@ mod validate_rust_function_call_tests {
     }
 
     #[test]
-    fn rust_arg_boundary_accepts_structural_frozen_dict_to_hash_map() {
+    fn rust_arg_boundary_rejects_structural_float_to_f32() {
         let checker = TypeChecker::new();
         let arg_ty = ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Float));
-        assert!(checker.rust_arg_matches_boundary(&arg_ty, "std::collections::HashMap<&str, f32>"));
+        assert!(!checker.rust_arg_matches_boundary(&arg_ty, "std::collections::HashMap<&str, f32>"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_lossless_exact_width_numeric_widening() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
+        assert!(checker.rust_arg_matches_boundary(&arg_ty, "i64"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_rejects_exact_width_numeric_narrowing() {
+        let checker = TypeChecker::new();
+        let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
+        assert!(!checker.rust_arg_matches_boundary(&arg_ty, "i8"));
     }
 
     #[test]
@@ -804,6 +915,14 @@ mod validate_rust_function_call_tests {
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for rusttype target boundary"
         );
+    }
+
+    #[test]
+    fn borrowed_generic_rust_function_param_accepts_owned_incan_value() {
+        let checker = TypeChecker::new();
+
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&T",));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&TValue",));
     }
 
     #[test]

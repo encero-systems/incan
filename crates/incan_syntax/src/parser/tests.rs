@@ -6,6 +6,7 @@
 mod tests {
     use super::*;
     use crate::lexer;
+    use incan_core::lang::types::collections::{self, CollectionTypeId};
 
     fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;
@@ -882,6 +883,66 @@ def f(x: int) -> int:
     }
 
     #[test]
+    fn test_parse_match_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    Kind.Read | Kind.Scan | _ => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Or(patterns) => {
+                assert_eq!(patterns.len(), 3);
+                assert!(matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty()));
+                assert!(matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty()));
+                assert!(matches!(&patterns[2].node, Pattern::Wildcard));
+            }
+            _ => panic!("Expected pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_grouped_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    (
+      Kind.Read
+      | Kind.Scan
+      | _
+    ) => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Expr(match_expr) = &func.body[0].node else {
+            panic!("Expected match expression statement");
+        };
+        let Expr::Match(_, arms) = &match_expr.node else {
+            panic!("Expected match expression");
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Group(inner) => {
+                assert!(matches!(&inner.node, Pattern::Or(patterns) if patterns.len() == 3));
+            }
+            _ => panic!("Expected grouped pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_if_let_condition() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(opt: Option[int]) -> int:
@@ -908,6 +969,49 @@ def f(opt: Option[int]) -> int:
                         ));
                     }
                     _ => panic!("Expected constructor pattern"),
+                }
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_let_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::If(if_stmt) = &func.body[0].node else {
+            panic!("Expected if statement");
+        };
+        match &if_stmt.condition {
+            Condition::Let { pattern, value } => {
+                let Expr::Ident(value_name) = &value.node else {
+                    panic!("Expected identifier value");
+                };
+                assert_eq!(value_name, "result");
+                match &pattern.node {
+                    Pattern::Or(patterns) => {
+                        assert_eq!(patterns.len(), 2);
+                        assert!(matches!(
+                            &patterns[0].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Ok"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                        assert!(matches!(
+                            &patterns[1].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Err"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                    }
+                    _ => panic!("Expected pattern alternation"),
                 }
             }
             Condition::Expr(_) => panic!("Expected let condition"),
@@ -946,6 +1050,23 @@ def drain(current: Option[int]) -> int:
             Condition::Expr(_) => panic!("Expected let condition"),
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_while_let_rejects_pattern_alternation() {
+        let source = r#"
+def drain(current: Result[int, int]) -> int:
+  while let Ok(value) | Err(value) = current:
+    return value
+  return 0
+"#;
+        let errors = parse_str_err(source, "`while let` pattern alternation should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Pattern alternation is only supported in match arms and if let patterns")),
+            "expected `while let` pattern alternation rejection, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -1212,6 +1333,131 @@ def value(async: int) -> int:
 "#;
         parse_str(source)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_property_identifier_without_member_context_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def value(property: int) -> int:
+  return property
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.params[0].node.name, "property");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Dataset:
+  property schema_fields -> list[str]:
+    return self._fields
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.properties.len(), 1);
+        let property = &class.properties[0];
+        assert_eq!(property.node.name, "schema_fields");
+        assert!(matches!(property.node.visibility, Visibility::Private));
+        assert!(
+            matches!(property.node.return_type.node, Type::Generic(ref name, _) if collections::from_str(name) == Some(CollectionTypeId::List))
+        );
+        assert!(property.node.body.is_some());
+        assert!(
+            property.span.start < property.node.return_type.span.start
+                && property.node.return_type.span.end <= property.span.end,
+            "property span should enclose return type span"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_pub_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model User:
+  name: str
+
+  pub property display_name -> str:
+    return self.name
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.fields.len(), 1);
+        assert_eq!(model.properties.len(), 1);
+        let property = &model.properties[0].node;
+        assert_eq!(property.name, "display_name");
+        assert!(matches!(property.visibility, Visibility::Public));
+        assert!(property.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        let property = &trait_decl.properties[0].node;
+        assert_eq!(property.name, "area");
+        assert!(matches!(property.return_type.node, Type::Simple(ref name) if name == "float"));
+        assert!(property.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property_without_ellipsis() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        assert!(trait_decl.properties[0].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_abstract_property_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area -> float\n",
+            "bodyless properties outside traits should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected ':' after property return type")),
+            "expected property body diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_parameter_list_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area(self) -> float:\n    return 0.0\n",
+            "property declarations with parameter lists should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Computed properties do not accept parameter lists")),
+            "expected property parameter diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_declaration_modifier_is_focused_error() {
+        let errs = parse_str_err(
+            "import std.async\n\nclass Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
+            "property declarations with async modifiers should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Declaration modifiers are not supported on properties")),
+            "expected property modifier diagnostic, got: {errs:?}"
+        );
     }
 
     #[test]
@@ -2440,6 +2686,80 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_implicit_derives_metadata_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+__derives__ = [Serialize, Deserialize]
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected __derives__ metadata as const declaration");
+        };
+        assert_eq!(c.name, "__derives__");
+        assert!(c.ty.is_none());
+        let Expr::List(entries) = &c.value.node else {
+            panic!("Expected __derives__ value to parse as list literal");
+        };
+        assert_eq!(entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_qualified_trait_bound() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.type_params[0].bounds.len(), 1);
+        assert_eq!(func.type_params[0].bounds[0].name, "json.Serialize");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_decimal_literal() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Expr::Literal(Literal::Decimal(value)) = &c.value.node else {
+            panic!("Expected decimal literal");
+        };
+        assert_eq!(value.body, "19.99");
+        assert_eq!(value.repr, "19.99d");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_decimal_type_arguments() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE: decimal[10, 2] = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Some(ty) = &c.ty else {
+            panic!("Expected const type annotation");
+        };
+        let Type::Generic(name, args) = &ty.node else {
+            panic!("Expected generic decimal type");
+        };
+        assert_eq!(name, "decimal");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].node, Type::IntLiteral(value) if value.value == 10));
+        assert!(matches!(&args[1].node, Type::IntLiteral(value) if value.value == 2));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_static_decl() -> Result<(), Vec<CompileError>> {
         let source = r#"
 pub static counter: int = 0
@@ -2787,6 +3107,99 @@ def main() -> int:
         assert_eq!(callee.span.start, expected_callee_start);
         assert_eq!(callee.span.end, expected_callee_start + "unknown_pred".len());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_expression_full_clause_shape() -> Result<(), Vec<CompileError>> {
+        let source = "def run(xs: list[int], ys: list[int]) -> Generator[int]:\n  return (x * y for x in xs if x > 0 for y in ys if y > x)\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        assert_eq!(generator.clauses.len(), 4);
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected first for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("x".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "xs"));
+        assert!(matches!(generator.clauses[1], ComprehensionClause::If(_)));
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[2] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected second for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("y".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "ys"));
+        assert!(matches!(generator.clauses[3], ComprehensionClause::If(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_expression_tuple_unpack_binding() -> Result<(), Vec<CompileError>> {
+        let source = "def names(xs: list[str]) -> Generator[str]:\n  return (name for idx, name in enumerate(xs))\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        let ComprehensionClause::For { pattern, .. } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        let Pattern::Tuple(items) = &pattern.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected tuple binding pattern".to_string(),
+                pattern.span,
+            )]);
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_function_yield_compatibility() -> Result<(), Vec<CompileError>> {
+        let source = "def count() -> Generator[int]:\n  yield 1\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        if !matches!(
+            &function.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Yield(Some(_)))
+        ) {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected yield expression statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
         Ok(())
     }
 

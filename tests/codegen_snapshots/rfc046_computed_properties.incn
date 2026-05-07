@@ -1,0 +1,14 @@
+trait Named:
+  property label -> str
+
+pub model Money with Named:
+  cents: int
+
+  pub property dollars -> int:
+    return self.cents + 1
+
+  property label -> str:
+    return "money"
+
+pub def property_total(value: Money) -> int:
+  return value.dollars + value.cents

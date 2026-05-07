@@ -34,6 +34,11 @@ fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     check(&ast)
 }
 
+fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
+    let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lex failed: {errs:?}"));
+    parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
+}
+
 fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,
@@ -68,6 +73,238 @@ fn clone_trait_name() -> String {
 
 fn none_constructor_name() -> String {
     surface_constructors::as_str(ConstructorId::None).to_string()
+}
+
+#[test]
+fn rfc009_exact_width_numeric_widening_typechecks() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i16 = 120
+  wide: i64 = small
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_exact_width_numeric_narrowing_requires_explicit_policy() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide
+"#;
+    let errors = check_str_err(source, "expected narrowing assignment to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'i8', found 'i16'")),
+        "expected i16 -> i8 mismatch, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_integer_literals_are_range_checked_for_exact_width_targets() {
+    let source = r#"
+def main() -> None:
+  small: i8 = 300
+"#;
+    let errors = check_str_err(source, "expected out-of-range i8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal 300 does not fit in i8")),
+        "expected i8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_negative_integer_literals_use_signed_exact_width_ranges() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = -128
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_negative_integer_literals_do_not_fit_unsigned_targets() {
+    let source = r#"
+def main() -> None:
+  byte: u8 = -1
+"#;
+    let errors = check_str_err(source, "expected negative u8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in u8")),
+        "expected u8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_pointer_sized_integer_literals_are_range_checked() {
+    let source = r#"
+def main() -> None:
+  size: usize = -1
+"#;
+    let errors = check_str_err(source, "expected negative usize literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in usize")),
+        "expected usize range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_lossless_resize_uses_contextual_target() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = 120
+  wide: int = small.resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_lossless_resize_rejects_narrowing() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide.resize()
+"#;
+    let errors = check_str_err(source, "expected narrowing resize to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("lossless numeric resize target")),
+        "expected lossless resize diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_explicit_resize_policies_allow_integer_narrowing() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 240
+  maybe: Option[i8] = wide.try_resize()
+  wrapped: i8 = wide.wrapping_resize()
+  capped: i8 = wide.saturating_resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
+    let ok = r#"
+def main() -> None:
+  value: f32 = 1.5
+"#;
+    check_str(ok).unwrap_or_else(|errs| panic!("expected f32 literal to typecheck: {errs:?}"));
+
+    let too_large = r#"
+def main() -> None:
+  value: f32 = 1e100
+"#;
+    let errors = check_str_err(too_large, "expected out-of-range f32 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Float literal 1e100 does not fit in f32")),
+        "expected f32 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_annotation_accepts_decimal_literal() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.99d
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_precision_and_scale_are_validated() {
+    let source = r#"
+def main() -> None:
+  price: decimal[39, 2] = 19.99d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal precision to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Decimal precision must be between 1 and 38")),
+        "expected decimal precision diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_bare_decimal_and_numeric_are_reserved() {
+    for (source, name) in [
+        (
+            r#"
+def main() -> None:
+  value: decimal = 1
+"#,
+            "decimal",
+        ),
+        (
+            r#"
+def main() -> None:
+  value: numeric = 1
+"#,
+            "numeric",
+        ),
+    ] {
+        let errors = check_str_err(source, "expected reserved numeric type name to fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains(&format!("`{name}` is reserved for numeric types"))),
+            "expected reserved numeric type diagnostic for {name}, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn rfc009_bigint_and_hugeint_aliases_typecheck() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  big: bigint = 1
+  huge: hugeint = big
+"#;
+
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_scale() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.999d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal scale to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 3 fractional digit(s)") && err.message.contains("allows at most 2")),
+        "expected decimal literal scale diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_integer_digits() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 1234.5d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal integer width to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 4 integer digit(s)") && err.message.contains("allows at most 3")),
+        "expected decimal literal integer digit diagnostic, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -1471,6 +1708,19 @@ fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
 }
 
 #[test]
+fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&str"),
+        ResolvedType::Ref(Box::new(ResolvedType::Str)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[u8]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+}
+
+#[test]
 fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     let checker = TypeChecker::new();
     let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
@@ -1677,6 +1927,95 @@ def normalize(value: int | str) -> str:
 }
 
 #[test]
+fn test_match_pattern_alternation_typechecks_and_counts_exhaustiveness() {
+    let source = r#"
+enum Status:
+  Pending
+  Retrying
+  Done
+
+def label(status: Status) -> str:
+  match status:
+    Status.Pending | Status.Retrying =>
+      return "waiting"
+    Status.Done =>
+      return "done"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_pattern_alternation_typechecks_common_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_pattern_alternation_rejects_missing_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(_) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(source, "pattern alternation with missing binding should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_names() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(error) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding names should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_types() {
+    let source = r#"
+def describe(value: int | str) -> str:
+  match value:
+    int(item) | str(item) =>
+      return str(item)
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding types should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("has incompatible types")),
+        "expected binding type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_duplicate_interop_edges_rejected() {
     let source = r#"
 from rust::mail import EmailAddress as RustEmailAddress
@@ -1841,7 +2180,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
         scope: 0,
     });
 
-    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Int]);
+    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Numeric(NumericTypeId::I32)]);
     let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
         "incan_stdlib::r#async::channel::Sender<i32>".to_string(),
     )));
@@ -3644,6 +3983,161 @@ def f(i: Intl) -> str:
 }
 
 #[test]
+fn test_computed_property_read_typechecks_and_records_access() -> Result<(), String> {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    assert_eq!(checker.type_info.computed_property_accesses.len(), 1);
+    let access = checker
+        .type_info
+        .computed_property_accesses
+        .values()
+        .next()
+        .ok_or_else(|| "expected computed property access metadata".to_string())?;
+    assert_eq!(access.owner_type, "Account");
+    assert_eq!(access.property, "dollars");
+    Ok(())
+}
+
+#[test]
+fn test_computed_property_call_syntax_is_rejected() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars()
+"#;
+    let errors = check_str_err(source, "expected computed property call error");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Computed property 'dollars' is not callable")),
+        "expected property call diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_computed_property_body_return_type_is_checked() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return "free"
+"#;
+    let errors = check_str_err(source, "expected computed property return mismatch");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type mismatch: expected 'int', found 'str'")),
+        "expected property return mismatch diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_must_be_implemented() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+"#;
+    let errors = check_str_err(source, "expected missing trait property error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires property 'label' to be implemented")),
+        "expected missing trait property diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_accepts_matching_property() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+
+  property label -> str:
+    return self.name
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_trait_computed_property_body_is_rejected() {
+    let source = r#"
+trait Named:
+  property label -> str:
+    return "name"
+"#;
+    let errors = check_str_err(source, "expected trait property body error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' property 'label' cannot define a body")),
+        "expected trait property body diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_member_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  property cents -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.cents' declared as both field and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_method_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  def total(self) -> int:
+    return self.cents
+
+  property total -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property method member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.total' declared as both method and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
 fn test_alias_self_keyword() {
     let source = r#"
 model Data:
@@ -3861,6 +4355,70 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
                 ))
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_infers_list_element_type() {
+    let source = r#"
+def main() -> None:
+  xs: List[int] = list.repeat(-1, 3)
+  ys: list[str] = list.repeat("seed", 2)
+  zs: list[int] = list.repeat(count=2, value=7)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_repeat_rejects_wrong_arity() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1)
+"#;
+    let errors = check_str_err(source, "expected list.repeat arity error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("list.repeat") && err.message.contains("expects 2")),
+        "expected list.repeat arity diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_rejects_non_int_count() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1, "two")
+"#;
+    let errors = check_str_err(source, "expected list.repeat count type error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'int'") && err.message.contains("found 'str'")),
+        "expected count type mismatch diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def make(value: Mutex) -> List[Mutex]:
+  return list.repeat(value, 2)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("list.repeat requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected list.repeat / Clone diagnostic for Rust element type; got {errs:?}"
     );
 }
 
@@ -4832,6 +5390,180 @@ def main() -> Result[None, SessionError]:
         .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
         .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
     Ok(())
+}
+
+#[test]
+fn test_rfc088_iterator_adapter_chain_types_collect_as_list() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def label(n: int) -> str:
+  return str(n)
+
+def pairs(items: Iterator[int], labels: Iterator[str]) -> list[tuple[int, str]]:
+  return items.filter(keep).take(10).skip(1).zip(labels).collect()
+
+def indexed(items: Iterator[int]) -> list[tuple[int, int]]:
+  return items.enumerate().collect()
+
+def labels(items: Iterator[int]) -> list[str]:
+  return items.map(label).collect()
+
+def leading_positive(items: Iterator[int]) -> list[int]:
+  return items.take_while(keep).collect()
+
+def after_positive_prefix(items: Iterator[int]) -> list[int]:
+  return items.skip_while(keep).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_flat_map_accepts_list_callback_result() {
+    let source = r#"
+def words_for(_n: int) -> list[str]:
+  return ["hello"]
+
+def flatten(items: Iterator[int]) -> list[str]:
+  return items.flat_map(words_for).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_terminal_methods_have_frontend_types() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def add(acc: int, n: int) -> int:
+  return acc + n
+
+def visit(_n: int) -> None:
+  pass
+
+def count_items(items: Iterator[int]) -> int:
+  return items.count()
+
+def any_item(items: Iterator[int]) -> bool:
+  return items.any(keep)
+
+def all_items(items: Iterator[int]) -> bool:
+  return items.all(keep)
+
+def find_item(items: Iterator[int]) -> Option[int]:
+  return items.find(keep)
+
+def reduce_items(items: Iterator[int]) -> int:
+  return items.reduce(0, add)
+
+def fold_items(items: Iterator[int]) -> int:
+  return items.fold(0, add)
+
+def visit_items(items: Iterator[int]) -> None:
+  return items.for_each(visit)
+
+def sum_items(items: Iterator[int]) -> int:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_sum_accepts_numeric_items_only() {
+    let source = r#"
+def sum_ints(items: Iterator[int]) -> int:
+  return items.sum()
+
+def sum_floats(items: Iterator[float]) -> float:
+  return items.sum()
+
+type Money = newtype int
+
+def sum_money(items: Iterator[Money]) -> Money:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+
+    let bad_source = r#"
+def sum_strings(items: Iterator[str]) -> str:
+  return items.sum()
+"#;
+    let errs = check_str_err(bad_source, "sum over string iterator should be rejected");
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Iterator.sum() requires int, float, or a newtype over a summable type; found str")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_builtin_list_iter_enters_iterator_surface() {
+    let source = r#"
+from std.derives.collection import Iterable
+
+def keep(n: int) -> bool:
+  return n > 0
+
+def collect_positive(items: list[int]) -> list[int]:
+  return items.iter().filter(keep).batch(2).flat_map(identity_batch).collect()
+
+def identity_batch(batch: list[int]) -> list[int]:
+  return batch
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_filter_callback_return_mismatch_is_rejected() {
+    let source = r#"
+def bad(_n: int) -> str:
+  return "no"
+
+def collect_bad(items: Iterator[int]) -> list[int]:
+  return items.filter(bad).collect()
+"#;
+    let errs = check_str_err(source, "filter callback returning str should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected '(int) -> bool', found '(int) -> str'")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_batch_rejects_static_non_positive_size() {
+    let source = r#"
+def collect_bad(items: Iterator[int]) -> list[list[int]]:
+  return items.batch(0).collect()
+"#;
+    let errs = check_str_err(source, "batch(0) should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Iterator.batch() size must be greater than zero")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_terminal_consumption_rejects_obvious_same_binding_reuse() {
+    let source = r#"
+def consume_twice(items: Iterator[int]) -> int:
+  first = items.count()
+  return first + items.count()
+"#;
+    let errs = check_str_err(source, "same iterator binding reused after terminal method");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("iterator binding `items` was consumed")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -6960,6 +7692,37 @@ fn test_unknown_stdlib_module_from_import() {
     );
 }
 
+#[test]
+fn test_known_stdlib_module_rejects_unknown_annotation_only_import() {
+    let source = r#"
+from std.testing import NotExported
+
+def accepts_marker(value: NotExported) -> None:
+  pass
+"#;
+    let errs = check_str_err(source, "unknown stdlib import used only as an annotation should fail");
+    assert!(
+        errs.iter().any(|e| {
+            e.message
+                .contains("Cannot import `NotExported` from stdlib module `std.testing`")
+                && e.message.contains("not exported")
+        }),
+        "Expected not-exported diagnostic for std.testing.NotExported; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_non_stdlib_annotation_only_import_keeps_placeholder_fallback() {
+    let source = r#"
+from app.types import ExternalOnly
+
+def accepts_external(value: ExternalOnly) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================================================
 // RFC 005: Rust interop
 // ========================================================================
@@ -7174,6 +7937,35 @@ fn test_known_stdlib_module_is_accepted() {
             errs.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn test_std_graph_imports_and_direct_constructors_typecheck() {
+    let source = r#"
+from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+
+def exercise() -> None:
+    mut graph = DiGraph[str]()
+    a: NodeId = graph.add_node("a")
+    b: NodeId = graph.add_node("b")
+    edge_result: Result[None, GraphError] = graph.add_edge(a, b)
+    removed: Result[None, GraphError] = graph.remove_edge(a, b)
+    successors: Result[list[NodeId], GraphError] = graph.successors(a)
+    topo: Result[list[NodeId], GraphError] = graph.topological_order()
+
+    mut dag = Dag[str]()
+    root: NodeId = dag.add_node("root")
+    leaf: NodeId = dag.add_node("leaf")
+    dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    dag_order: list[NodeId] = dag.topological_order()
+
+    mut multi = MultiDiGraph[str]()
+    left: NodeId = multi.add_node("left")
+    right: NodeId = multi.add_node("right")
+    multi_edge: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    between: Result[list[EdgeId], GraphError] = multi.edges_between(left, right)
+"#;
+    assert!(check_str(source).is_ok());
 }
 
 #[test]
@@ -7498,6 +8290,19 @@ fn test_known_stdlib_async_prelude_is_accepted() {
 }
 
 #[test]
+fn test_known_stdlib_fs_module_is_accepted() {
+    let source = "from std.fs import Path, File\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.fs should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     let source = "from std.f64.consts import PI\n";
     let Err(errs) = check_str(source) else {
@@ -7512,6 +8317,11 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     assert!(
         err.hints.iter().any(|h| h.contains("std.derives")),
         "Expected hint to include std.derives; hints: {:?}",
+        err.hints
+    );
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.fs")),
+        "Expected hint to include std.fs; hints: {:?}",
         err.hints
     );
     assert!(
@@ -8242,6 +9052,244 @@ def main() -> None:
         errs.iter()
             .any(|err| err.message.contains("expected 'str', found 'int'")),
         "expected __call__ argument mismatch diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_combinators_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def prefix_error(err: str) -> str:
+  return "error: " + err
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def recover(_err: str) -> Result[int, int]:
+  return Ok(0)
+
+def observe_int(_value: int) -> None:
+  pass
+
+def observe_err(_err: str) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> None:
+  observer = Observer()
+  mapped: Result[int, str] = result.map(double)
+  mapped_err: Result[int, str] = result.map_err(prefix_error)
+  chained: Result[int, str] = result.and_then(keep_positive)
+  recovered: Result[int, int] = result.or_else(recover)
+  inspected: Result[int, str] = result.inspect(observe_int).inspect(observer)
+  inspected_err: Result[int, str] = result.inspect_err(observe_err)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc070_result_combinators_reject_bad_callbacks() {
+    let source = r#"
+def wrong_arg(value: str) -> int:
+  return 1
+
+def not_result(value: int) -> int:
+  return value
+
+def observes_with_value(value: int) -> int:
+  return value
+
+def main(result: Result[int, str]) -> None:
+  _mapped = result.map(wrong_arg)
+  _chained = result.and_then(not_result)
+  _inspected = result.inspect(observes_with_value)
+"#;
+
+    let errs = check_str_err(source, "bad Result combinator callbacks should fail");
+    for expected in [
+        "expected 'str', found 'int'",
+        "expected 'Result",
+        "expected 'Unit', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc006_generator_function_yields_iterates_and_collects() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep(value: int) -> bool:
+  return value > 0
+
+def numbers() -> Generator[int]:
+  yield 1
+  yield 2
+  return
+
+def main() -> List[int]:
+  mut total = 0
+  for item in numbers():
+    total = total + item
+  return numbers().map(double).filter(keep).take(2).collect()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_satisfies_iterable_and_iterator_traits() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def numbers() -> Generator[int]:
+  yield 1
+
+def accept_iterable(values: Iterable[int]) -> None:
+  pass
+
+def accept_iterator(values: Iterator[int]) -> None:
+  pass
+
+def main() -> None:
+  accept_iterable(numbers())
+  accept_iterator(numbers())
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_yield_must_match_element_type() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield "nope"
+"#;
+
+    let errs = check_str_err(source, "expected generator yield type mismatch");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'int', found 'str'")),
+        "expected generator yield type mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_requires_reachable_yield() {
+    let source = r#"
+def broken() -> Generator[int]:
+  return
+"#;
+
+    let errs = check_str_err(source, "expected missing generator yield diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("must contain at least one `yield value`")),
+        "expected missing generator yield diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_yield_outside_generator_is_rejected() {
+    let source = r#"
+def broken() -> int:
+  yield 1
+  return 1
+"#;
+
+    let errs = check_str_err(source, "expected ordinary yield rejection");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("`yield` is only valid in generator functions or fixtures")),
+        "expected yield context diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_return_value_is_rejected() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield 1
+  return 2
+"#;
+
+    let errs = check_str_err(source, "expected generator return-value rejection");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Generator functions cannot use `return value`")),
+        "expected generator return-value diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_helpers_validate_arguments() {
+    let source = r#"
+def stringify(value: int) -> str:
+  return f"{value}"
+
+def keep_str(value: str) -> bool:
+  return true
+
+def numbers() -> Generator[int]:
+  yield 1
+
+def main() -> None:
+  mapped = numbers().map(1)
+  filtered = numbers().filter(stringify)
+  wrong_input = numbers().filter(keep_str)
+  limited = numbers().take("2")
+"#;
+
+    let errs = check_str_err(source, "expected generator helper argument diagnostics");
+    for expected in [
+        "(int) -> _",
+        "expected 'bool', found 'str'",
+        "expected 'str', found 'int'",
+        "expected 'int', found 'str'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc006_generator_expression_infers_element_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def positives(xs: List[int], ys: List[int]) -> Generator[int]:
+  return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_expression_filter_must_be_bool() {
+    let source = r#"
+def broken(xs: List[int]) -> Generator[int]:
+  return (x for x in xs if x)
+"#;
+
+    let errs = check_str_err(source, "expected generator expression filter diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'bool', found 'int'")),
+        "expected generator expression filter diagnostic, got: {errs:?}"
     );
 }
 
@@ -9066,6 +10114,159 @@ def encode(payload: Payload) -> str:
   return payload.to_json()
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_json_adopts_traits_for_methods_and_bounds() {
+    let source = r#"
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_module_derive_adopts_imported_module_traits_for_methods_and_bounds() {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+
+def encode[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .unwrap_or_else(|errs| panic!("user derivable module should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
+    let source = r#"
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
+  value: int
+
+def encode[T with JsonSerialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_rejects_user_module_without_derives_metadata() {
+    let yaml_source = r#"
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .expect_err("module derive should require __derives__ metadata");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("does not declare `__derives__`")),
+        "Expected missing __derives__ diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_user_module_derive_reports_method_collision_between_derived_traits() {
+    let left_source = r#"
+__derives__ = [Readable]
+
+pub trait Readable:
+  def label(self) -> str:
+    return str("left")
+"#;
+    let right_source = r#"
+__derives__ = [Displayable]
+
+pub trait Displayable:
+  def label(self) -> str:
+    return str("right")
+"#;
+    let source = r#"
+import left
+import right
+
+@derive(left, right)
+model Item:
+  value: int
+"#;
+
+    let left_ast = parse_program(left_source, "left module");
+    let right_ast = parse_program(right_source, "right module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("left", &left_ast), ("right", &right_ast)])
+        .expect_err("derived traits with the same default method should be ambiguous");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method 'label'")),
+        "Expected derived trait method collision diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_derives_metadata_rejects_non_trait_entries() {
+    let source = r#"
+trait Good:
+  def ok(self) -> None: ...
+
+const Bad = 1
+__derives__ = [Good, Bad]
+"#;
+    let errs = check_str_err(source, "__derives__ metadata should reject non-trait entries");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("entry 'Bad' is not a trait")),
+        "Expected non-trait __derives__ diagnostic; got: {:?}",
+        errs
+    );
 }
 
 #[test]

@@ -2,8 +2,10 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::ast_walk::any_expr_in_body;
-use crate::frontend::diagnostics::errors;
-use crate::frontend::resolved_type_subst::{substitute_method_info, substitute_resolved_type, type_param_subst_map};
+use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::resolved_type_subst::{
+    substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
+};
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::{
     TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
@@ -11,7 +13,7 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker};
+use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -26,6 +28,11 @@ fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
         && a.has_body == b.has_body
         && a.params == b.params
         && a.return_type == b.return_type
+}
+
+/// Return whether two trait property requirements are structurally identical.
+fn property_infos_identical(a: &PropertyInfo, b: &PropertyInfo) -> bool {
+    a.has_body == b.has_body && a.return_type == b.return_type
 }
 
 fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
@@ -67,10 +74,11 @@ struct ResolvedTraitAdoption {
 }
 
 #[derive(Debug, Clone)]
-struct TraitMethodEntry {
-    method_name: String,
-    origin_trait: String,
-    info: MethodInfo,
+pub(in crate::frontend::typechecker) struct TraitMethodEntry {
+    pub method_name: String,
+    pub origin_trait: String,
+    pub origin_type_args: Vec<ResolvedType>,
+    pub info: MethodInfo,
 }
 
 enum AsyncFixtureYieldShape {
@@ -126,6 +134,25 @@ fn validate_async_fixture_yield_shape(body: &[Spanned<Statement>]) -> AsyncFixtu
 /// Return whether any yield expression appears in a fixture body.
 fn fixture_body_has_yield(body: &[Spanned<Statement>]) -> bool {
     any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
+}
+
+/// Return whether a function body contains any valued `return` statement.
+fn body_has_return_value(body: &[Spanned<Statement>]) -> bool {
+    body.iter().any(|stmt| match &stmt.node {
+        Statement::Return(Some(_)) => true,
+        Statement::If(if_stmt) => {
+            body_has_return_value(&if_stmt.then_body)
+                || if_stmt
+                    .elif_branches
+                    .iter()
+                    .any(|(_, body)| body_has_return_value(body))
+                || if_stmt.else_body.as_deref().is_some_and(body_has_return_value)
+        }
+        Statement::Loop(loop_stmt) => body_has_return_value(&loop_stmt.body),
+        Statement::While(while_stmt) => body_has_return_value(&while_stmt.body),
+        Statement::For(for_stmt) => body_has_return_value(&for_stmt.body),
+        _ => false,
+    })
 }
 
 /// Pick a stable declaration span for fixture-level diagnostics when the AST helper receives only the function node.
@@ -418,7 +445,7 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
                             .collect();
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),
@@ -729,7 +756,11 @@ impl TypeChecker {
         )
     }
 
-    fn method_sigs_compatible(&self, expected: &MethodInfo, found: &MethodInfo) -> bool {
+    pub(in crate::frontend::typechecker) fn method_sigs_compatible(
+        &self,
+        expected: &MethodInfo,
+        found: &MethodInfo,
+    ) -> bool {
         if expected.receiver != found.receiver {
             return false;
         }
@@ -750,6 +781,23 @@ impl TypeChecker {
         self.types_compatible(&expected.return_type, &found.return_type)
     }
 
+    /// Return whether two methods have the same call-time parameter shape, ignoring return type.
+    fn method_call_shapes_same(&self, left: &MethodInfo, right: &MethodInfo) -> bool {
+        if left.receiver != right.receiver {
+            return false;
+        }
+        if left.is_async != right.is_async {
+            return false;
+        }
+        if left.params.len() != right.params.len() {
+            return false;
+        }
+        left.params
+            .iter()
+            .zip(right.params.iter())
+            .all(|(left_param, right_param)| left_param.kind == right_param.kind && left_param.ty == right_param.ty)
+    }
+
     /// True if `ancestor` appears in the transitive supertrait closure of trait `descendant` (RFC 042).
     fn is_strict_supertrait_name(&self, ancestor: &str, descendant: &str) -> bool {
         self.semantic_supertrait_closure(descendant)
@@ -759,6 +807,22 @@ impl TypeChecker {
 
     /// Drop supertrait obligations shadowed by a more derived trait in the same obligation group.
     fn filter_supertrait_dominated_entries(&self, entries: Vec<(String, MethodInfo)>) -> Vec<(String, MethodInfo)> {
+        let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
+        entries
+            .into_iter()
+            .filter(|(ta, _)| {
+                !names
+                    .iter()
+                    .any(|tb| ta != tb && self.is_strict_supertrait_name(ta, tb))
+            })
+            .collect()
+    }
+
+    /// Drop supertrait property obligations shadowed by a more derived trait in the same obligation group.
+    fn filter_supertrait_dominated_property_entries(
+        &self,
+        entries: Vec<(String, PropertyInfo)>,
+    ) -> Vec<(String, PropertyInfo)> {
         let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
         entries
             .into_iter()
@@ -794,6 +858,11 @@ impl TypeChecker {
                 .map(|(name, info)| (name.clone(), substitute_method_info(info, &subst)))
                 .collect(),
             method_aliases: trait_info.method_aliases.clone(),
+            properties: trait_info
+                .properties
+                .iter()
+                .map(|(name, info)| (name.clone(), substitute_property_info(info, &subst)))
+                .collect(),
             requires: trait_info
                 .requires
                 .iter()
@@ -831,6 +900,44 @@ impl TypeChecker {
 
         let instantiated = self.instantiate_trait_info(&trait_info, &resolved_args);
         Some((instantiated, resolved_args))
+    }
+
+    /// Resolve a previously collected trait adoption into instantiated trait metadata for validation.
+    fn resolve_collected_trait_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        adoption_span: Span,
+    ) -> Option<ResolvedTraitAdoption> {
+        let trait_info = self.lookup_trait_info(&adoption.name)?.clone();
+        if adoption.type_args.len() != trait_info.type_params.len() {
+            self.errors.push(errors::trait_adoption_bound_arity_mismatch(
+                &adoption.name,
+                trait_info.type_params.len(),
+                adoption.type_args.len(),
+                adoption_span,
+            ));
+            return None;
+        }
+        let info = if adoption.type_args.is_empty() {
+            trait_info
+        } else {
+            self.instantiate_trait_info(&trait_info, &adoption.type_args)
+        };
+        Some(ResolvedTraitAdoption {
+            name: adoption.name.clone(),
+            info,
+            args: adoption.type_args.clone(),
+            span: adoption_span,
+        })
+    }
+
+    /// Return the first `@derive` span for diagnostics tied to synthetic derive adoptions.
+    fn first_derive_span(decorators: &[Spanned<Decorator>]) -> Span {
+        decorators
+            .iter()
+            .find(|decorator| decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive))
+            .map(|decorator| decorator.span)
+            .unwrap_or_default()
     }
 
     /// Recursively collect abstract trait methods after applying any explicit adoption-time type arguments.
@@ -875,6 +982,48 @@ impl TypeChecker {
         }
     }
 
+    /// Recursively collect abstract trait properties after applying adoption-time type arguments.
+    fn collect_instantiated_trait_abstract_property_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, PropertyInfo)>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (property_name, property_info) in &trait_info.properties {
+            if !property_info.has_body {
+                out.push((property_name.clone(), trait_name.to_string(), property_info.clone()));
+            }
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_abstract_property_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                seen,
+                out,
+            );
+        }
+    }
+
     /// Collect all methods from an instantiated trait and its supertraits with type arguments applied.
     fn collect_instantiated_trait_method_entries(
         &self,
@@ -900,6 +1049,7 @@ impl TypeChecker {
             out.push(TraitMethodEntry {
                 method_name: method_name.clone(),
                 origin_trait: trait_name.to_string(),
+                origin_type_args: trait_args.to_vec(),
                 info: method_info.clone(),
             });
         }
@@ -910,6 +1060,46 @@ impl TypeChecker {
             };
             let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
             self.collect_instantiated_trait_method_entries(supertrait_name, &instantiated, supertrait_args, seen, out);
+        }
+    }
+
+    /// Collect all properties from an instantiated trait and its supertraits with type arguments applied.
+    fn collect_instantiated_trait_property_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, PropertyInfo)>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (property_name, property_info) in &trait_info.properties {
+            out.push((property_name.clone(), trait_name.to_string(), property_info.clone()));
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_property_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                seen,
+                out,
+            );
         }
     }
 
@@ -1027,8 +1217,25 @@ impl TypeChecker {
         method: &str,
         ambiguity_span: Span,
     ) -> Option<MethodInfo> {
+        self.trait_method_entry_resolved_for_adoption(adoption, method, ambiguity_span)
+            .map(|entry| entry.info)
+    }
+
+    pub(in crate::frontend::typechecker) fn trait_method_entry_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        method: &str,
+        ambiguity_span: Span,
+    ) -> Option<TraitMethodEntry> {
         if adoption.type_args.is_empty() {
-            return self.trait_method_info_resolved(&adoption.name, method, ambiguity_span);
+            return self
+                .trait_method_info_resolved(&adoption.name, method, ambiguity_span)
+                .map(|info| TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: adoption.name.clone(),
+                    origin_type_args: Vec::new(),
+                    info,
+                });
         }
         let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
         let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);
@@ -1039,15 +1246,34 @@ impl TypeChecker {
             span: ambiguity_span,
         };
         let entries = self.trait_method_entries_for_adoption(&resolved);
-        let matching: Vec<(String, MethodInfo)> = entries
+        let matching: Vec<(String, Vec<ResolvedType>, MethodInfo)> = entries
             .into_iter()
             .filter(|entry| entry.method_name == method)
-            .map(|entry| (entry.origin_trait, entry.info))
+            .map(|entry| (entry.origin_trait, entry.origin_type_args, entry.info))
             .collect();
-        let filtered = self.filter_supertrait_dominated_entries(matching);
+        let filtered = self.filter_supertrait_dominated_entries(
+            matching
+                .iter()
+                .map(|(origin, _, info)| (origin.clone(), info.clone()))
+                .collect(),
+        );
         match filtered.as_slice() {
             [] => None,
-            [(_, info)] => Some(info.clone()),
+            [(origin_trait, info)] => {
+                let origin_type_args = matching
+                    .iter()
+                    .find(|(origin, _, candidate)| {
+                        origin == origin_trait && self.method_sigs_compatible(candidate, info)
+                    })
+                    .map(|(_, args, _)| args.clone())
+                    .unwrap_or_default();
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: origin_trait.clone(),
+                    origin_type_args,
+                    info: info.clone(),
+                })
+            }
             rest => {
                 let exp0 = &rest[0].1;
                 let all_mutually_compat = rest
@@ -1056,6 +1282,68 @@ impl TypeChecker {
                 if !all_mutually_compat {
                     self.errors
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
+                    return None;
+                }
+                Some(TraitMethodEntry {
+                    method_name: method.to_string(),
+                    origin_trait: rest[0].0.clone(),
+                    origin_type_args: matching
+                        .iter()
+                        .find(|(origin, _, candidate)| {
+                            origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
+                        })
+                        .map(|(_, args, _)| args.clone())
+                        .unwrap_or_default(),
+                    info: exp0.clone(),
+                })
+            }
+        }
+    }
+
+    /// Resolve a trait property visible through an adopted trait, including transitive supertraits.
+    pub(in crate::frontend::typechecker) fn trait_property_info_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        property: &str,
+        ambiguity_span: Span,
+    ) -> Option<PropertyInfo> {
+        let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
+        let root_info = if adoption.type_args.is_empty() {
+            root
+        } else {
+            self.instantiate_trait_info(&root, &adoption.type_args)
+        };
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_instantiated_trait_property_entries(
+            &adoption.name,
+            &root_info,
+            &adoption.type_args,
+            &mut seen,
+            &mut entries,
+        );
+        let matching: Vec<(String, PropertyInfo)> = entries
+            .into_iter()
+            .filter(|(name, _, _)| name == property)
+            .map(|(_, origin, info)| (origin, info))
+            .collect();
+        let filtered = self.filter_supertrait_dominated_property_entries(matching);
+        match filtered.as_slice() {
+            [] => None,
+            [(_, info)] => Some(info.clone()),
+            rest => {
+                let exp0 = &rest[0].1;
+                let all_mutually_compat = rest.iter().all(|(_, e)| {
+                    self.types_compatible(&exp0.return_type, &e.return_type)
+                        && self.types_compatible(&e.return_type, &exp0.return_type)
+                });
+                if !all_mutually_compat {
+                    self.errors.push(errors::trait_property_conflict(
+                        &rest[0].0,
+                        &rest[1].0,
+                        property,
+                        ambiguity_span,
+                    ));
                     return None;
                 }
                 Some(exp0.clone())
@@ -1085,6 +1373,161 @@ impl TypeChecker {
             }
         }
         out
+    }
+
+    /// Group abstract (`...`) properties required by `trait_name` and its transitive supertraits.
+    fn grouped_trait_abstract_property_obligations(
+        &self,
+        trait_name: &str,
+        explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
+    ) -> HashMap<String, Vec<(String, PropertyInfo)>> {
+        let raw = if let Some((trait_info, trait_args)) = explicit_root {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            self.collect_instantiated_trait_abstract_property_entries(
+                trait_name, trait_info, trait_args, &mut seen, &mut out,
+            );
+            out
+        } else {
+            let mut out = Vec::new();
+            if let Some(root) = self.lookup_semantic_trait_info(trait_name) {
+                for (p, info) in &root.properties {
+                    if !info.has_body {
+                        out.push((p.clone(), trait_name.to_string(), info.clone()));
+                    }
+                }
+            }
+            for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
+                let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
+                for (p, info) in &supertrait_info.properties {
+                    if !info.has_body {
+                        out.push((
+                            p.clone(),
+                            supertrait_name.clone(),
+                            substitute_property_info(info, &subst),
+                        ));
+                    }
+                }
+            }
+            out
+        };
+
+        let mut map: HashMap<String, Vec<(String, PropertyInfo)>> = HashMap::new();
+        for (property, origin, info) in raw {
+            map.entry(property).or_default().push((origin, info));
+        }
+        let mut out = HashMap::new();
+        for (property, entries) in map {
+            let filtered = self.filter_supertrait_dominated_property_entries(entries);
+            if !filtered.is_empty() {
+                out.insert(property, filtered);
+            }
+        }
+        out
+    }
+
+    /// Check one concrete property implementation against one trait property requirement.
+    fn check_impl_against_trait_property_requirement(
+        &mut self,
+        type_name: &str,
+        via_trait: &str,
+        property_name: &str,
+        property_info: &PropertyInfo,
+        properties: &HashMap<String, PropertyInfo>,
+        adoption_span: Span,
+    ) {
+        match properties.get(property_name) {
+            None => self
+                .errors
+                .push(errors::missing_trait_property(via_trait, property_name, adoption_span)),
+            Some(found) => {
+                if !self.types_compatible(&found.return_type, &property_info.return_type) {
+                    self.errors.push(errors::trait_property_signature_mismatch(
+                        via_trait,
+                        type_name,
+                        property_name,
+                        &property_info.return_type.to_string(),
+                        &found.return_type.to_string(),
+                        adoption_span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Enforce abstract properties from `trait_name` and its supertraits on a concrete type.
+    fn enforce_trait_abstract_properties(
+        &mut self,
+        type_name: &str,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+        properties: &HashMap<String, PropertyInfo>,
+    ) {
+        let grouped =
+            self.grouped_trait_abstract_property_obligations(trait_name, trait_args.map(|args| (trait_info, args)));
+        let mut property_names: Vec<String> = grouped.keys().cloned().collect();
+        property_names.sort();
+        for property_name in property_names {
+            let Some(group) = grouped.get(&property_name) else {
+                continue;
+            };
+            let exp0 = &group[0].1;
+            if group.len() == 1 {
+                self.check_impl_against_trait_property_requirement(
+                    type_name,
+                    &group[0].0,
+                    property_name.as_str(),
+                    exp0,
+                    properties,
+                    adoption_span,
+                );
+                continue;
+            }
+            let all_mutually_compat = group.iter().all(|(_, e)| {
+                self.types_compatible(&exp0.return_type, &e.return_type)
+                    && self.types_compatible(&e.return_type, &exp0.return_type)
+            });
+            if !all_mutually_compat {
+                self.errors.push(errors::trait_property_conflict(
+                    &group[0].0,
+                    &group[1].0,
+                    property_name.as_str(),
+                    adoption_span,
+                ));
+                continue;
+            }
+            let all_identical = group.iter().all(|(_, e)| property_infos_identical(exp0, e));
+            if all_identical {
+                self.check_impl_against_trait_property_requirement(
+                    type_name,
+                    &group[0].0,
+                    property_name.as_str(),
+                    exp0,
+                    properties,
+                    adoption_span,
+                );
+                continue;
+            }
+            if properties.get(property_name.as_str()).is_some_and(|found| {
+                group
+                    .iter()
+                    .all(|(_, e)| self.types_compatible(&found.return_type, &e.return_type))
+            }) {
+                continue;
+            }
+            self.errors.push(errors::supertrait_property_ambiguity(
+                trait_name,
+                property_name.as_str(),
+                &group[0].0,
+                &group[1].0,
+                adoption_span,
+            ));
+        }
     }
 
     /// Check that `methods` on a concrete type satisfy one abstract requirement from the trait graph.
@@ -1282,7 +1725,7 @@ impl TypeChecker {
         spans
     }
 
-    /// Ensure every duplicate concrete method maps to a distinct same-family trait obligation.
+    /// Ensure overloads that differ only by return type map to same-family trait obligations.
     fn validate_overloaded_methods_are_trait_backed(
         &mut self,
         type_name: &str,
@@ -1306,6 +1749,7 @@ impl TypeChecker {
             }
             let obligations = obligations_by_method.get(method_name).map(Vec::as_slice).unwrap_or(&[]);
             let mut matched_obligations = vec![false; obligations.len()];
+            let mut overload_matches: Vec<Option<usize>> = vec![None; overloads.len()];
             for (idx, overload) in overloads.iter().enumerate() {
                 let matched_index = obligations
                     .iter()
@@ -1316,6 +1760,19 @@ impl TypeChecker {
                     .map(|(obligation_idx, _)| obligation_idx);
                 if let Some(obligation_idx) = matched_index {
                     matched_obligations[obligation_idx] = true;
+                    overload_matches[idx] = Some(obligation_idx);
+                }
+            }
+            let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
+            for (idx, overload) in overloads.iter().enumerate() {
+                if overload_matches[idx].is_some() {
+                    continue;
+                }
+                let shares_call_shape = overloads
+                    .iter()
+                    .enumerate()
+                    .any(|(other_idx, other)| other_idx != idx && self.method_call_shapes_same(overload, other));
+                if has_trait_backed_overload && !shares_call_shape {
                     continue;
                 }
                 let span = method_spans
@@ -1379,9 +1836,61 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Check a const declaration, routing RFC 024 `__derives__` metadata through derive-specific validation.
     fn check_const(&mut self, konst: &ConstDecl, span: Span) {
+        if konst.name == "__derives__" {
+            self.check_derives_metadata(konst);
+            return;
+        }
         // RFC 008: const-eval (with cycle detection + category classification).
         self.check_and_resolve_const(konst, span);
+    }
+
+    /// Validate RFC 024 module-level `__derives__` metadata against the module's local trait declarations.
+    fn check_derives_metadata(&mut self, konst: &ConstDecl) {
+        let Expr::List(entries) = &konst.value.node else {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must be a list of trait names".to_string(),
+                konst.value.span,
+            ));
+            return;
+        };
+        if entries.is_empty() {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must list at least one trait".to_string(),
+                konst.value.span,
+            ));
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for entry in entries {
+            let crate::frontend::ast::ListEntry::Element(expr) = entry else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names, not spreads".to_string(),
+                    konst.value.span,
+                ));
+                continue;
+            };
+            let Expr::Ident(name) = &expr.node else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names".to_string(),
+                    expr.span,
+                ));
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                self.errors.push(CompileError::type_error(
+                    format!("Duplicate trait '{name}' in `__derives__`"),
+                    expr.span,
+                ));
+            }
+            if self.lookup_trait_info(name).is_none() {
+                self.errors.push(CompileError::type_error(
+                    format!("`__derives__` entry '{name}' is not a trait"),
+                    expr.span,
+                ));
+            }
+        }
     }
 
     fn check_static(&mut self, static_decl: &StaticDecl, span: Span) {
@@ -1467,6 +1976,13 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }
+        let derive_adoption_span = Self::first_derive_span(&model.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
 
         let mut method_names = HashSet::new();
         if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) {
@@ -1517,7 +2033,10 @@ impl TypeChecker {
 
         // Check methods
         for method in &model.methods {
-            self.check_method(&method.node, &model.name);
+            self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
+        }
+        for property in &model.properties {
+            self.check_property(&property.node, &model.name);
         }
 
         if has_validate {
@@ -1634,6 +2153,14 @@ impl TypeChecker {
                 adoption_span,
                 &mi.method_overloads,
             );
+            self.enforce_trait_abstract_properties(
+                &model.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &mi.properties,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {
@@ -1654,6 +2181,7 @@ impl TypeChecker {
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
+        let derives = self.extract_derive_names(&class.decorators);
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -1691,6 +2219,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&class.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         // RFC 021: Field aliases are NOT supported on class declarations.
@@ -1744,7 +2279,10 @@ impl TypeChecker {
 
         // Check methods
         for method in &class.methods {
-            self.check_method(&method.node, &class.name);
+            self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
+        }
+        for property in &class.properties {
+            self.check_property(&property.node, &class.name);
         }
         if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&class.methods);
@@ -1809,6 +2347,14 @@ impl TypeChecker {
                 adoption_span,
                 &ci.method_overloads,
             );
+            self.enforce_trait_abstract_properties(
+                &class.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &ci.properties,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {
@@ -1819,7 +2365,8 @@ impl TypeChecker {
         }
     }
 
-    /// Check a trait declaration, including decorator validation and method requirements.
+    /// Validate a trait declaration, including required fields, abstract properties, defaults, and self-typed method
+    /// bodies.
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
@@ -1840,9 +2387,11 @@ impl TypeChecker {
                 acc
             });
         let prev_trait_requires = self.current_trait_requires.take();
+        let prev_trait_properties = self.current_trait_properties.take();
         let prev_trait_name = self.current_trait_name.take();
         let prev_missing_emitted = self.current_trait_missing_requires_emitted.take();
         self.current_trait_requires = Some(requires_map);
+        self.current_trait_properties = self.lookup_trait_info(&tr.name).map(|info| info.properties.clone());
         self.current_trait_name = Some(tr.name.clone());
 
         for method in &tr.methods {
@@ -1854,13 +2403,28 @@ impl TypeChecker {
                 // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
                 // `@requires`).
                 let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType, &trait_type_params);
+                self.check_method_with_self_ty(
+                    &method.node,
+                    ResolvedType::SelfType,
+                    &trait_type_params,
+                    &tr.type_params,
+                );
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }
             self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
+        for property in &tr.properties {
+            if property.node.body.is_some() {
+                self.errors.push(errors::trait_property_body_not_supported(
+                    &tr.name,
+                    &property.node.name,
+                    property.span,
+                ));
+            }
+        }
 
         self.current_trait_requires = prev_trait_requires;
+        self.current_trait_properties = prev_trait_properties;
         self.current_trait_name = prev_trait_name;
         self.current_trait_missing_requires_emitted = prev_missing_emitted;
         self.symbols.exit_scope();
@@ -1948,7 +2512,7 @@ impl TypeChecker {
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         for method in &nt.methods {
             if method.node.body.is_some() {
-                self.check_method(&method.node, &nt.name);
+                self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
         }
     }
@@ -1959,6 +2523,7 @@ impl TypeChecker {
 
         self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
+        let derives = self.extract_derive_names(&en.decorators);
 
         for param in &en.type_params {
             self.symbols.define(Symbol {
@@ -1998,6 +2563,13 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }
+        let derive_adoption_span = Self::first_derive_span(&en.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
 
         self.check_value_enum_decl(en);
         // Check variant field types exist
@@ -2012,7 +2584,7 @@ impl TypeChecker {
         }
 
         for method in &en.methods {
-            self.check_method(&method.node, &en.name);
+            self.check_method_with_owner_type_params(&method.node, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&en.methods);
@@ -2061,6 +2633,14 @@ impl TypeChecker {
                 trait_args,
                 adoption_span,
                 &info.method_overloads,
+            );
+            self.enforce_trait_abstract_properties(
+                &en.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &HashMap::new(),
             );
         } else {
             for (method_name, method_info) in &trait_info.methods {
@@ -2515,20 +3095,41 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&func.return_type);
+        let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
+        if return_type.generator_element_type().is_some() && !has_yield && !body_has_return_value(&func.body) {
+            self.errors
+                .push(errors::generator_requires_yield(&func.name, func.return_type.span));
+        }
+        let yield_context = if fixture_args.is_some() {
+            YieldContext::Fixture
+        } else if has_yield {
+            match return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(return_type.clone());
 
         // Set error type for ? checking
         self.current_return_error_type = return_type.result_err_type().cloned();
 
         let prev_in_async_body = self.in_async_body;
+        let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
         self.in_async_body = func.is_async();
+        let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
 
         // Check body
         for stmt in &func.body {
             self.check_statement(stmt);
         }
 
+        self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.in_async_body = prev_in_async_body;
+        self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
@@ -2562,7 +3163,7 @@ impl TypeChecker {
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
-    pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
+    fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators_allowing_user_defined(&method.decorators);
         let owner_type_params = self
             .lookup_type_info(owner)
@@ -2586,9 +3187,84 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params, owner_params);
         self.current_method_owner = previous_owner;
         self.apply_user_defined_method_decorators(method, owner);
+    }
+
+    /// Validate a model or class computed property body using the concrete nominal owner as immutable `self`.
+    pub(crate) fn check_property(&mut self, property: &PropertyDecl, owner: &str) {
+        let owner_type_params = self
+            .lookup_type_info(owner)
+            .map(|info| match info {
+                TypeInfo::Model(model) => model.type_params.clone(),
+                TypeInfo::Class(class) => class.type_params.clone(),
+                TypeInfo::Builtin | TypeInfo::TypeAlias | TypeInfo::Newtype(_) | TypeInfo::Enum(_) => Vec::new(),
+            })
+            .unwrap_or_default();
+        let previous_owner = self.current_method_owner.replace(owner.to_string());
+        let owner_self_ty = if owner_type_params.is_empty() {
+            ResolvedType::Named(owner.to_string())
+        } else {
+            ResolvedType::Generic(
+                owner.to_string(),
+                owner_type_params
+                    .iter()
+                    .map(|type_param| ResolvedType::TypeVar(type_param.clone()))
+                    .collect(),
+            )
+        };
+        self.check_property_with_self_ty(property, owner_self_ty, &owner_type_params);
+        self.current_method_owner = previous_owner;
+    }
+
+    /// Check a computed property body with the supplied `self` type.
+    fn check_property_with_self_ty(
+        &mut self,
+        property: &PropertyDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+    ) {
+        self.symbols.enter_scope(ScopeKind::Method {
+            receiver: Some(Receiver::Immutable),
+        });
+
+        for type_param in owner_type_params {
+            self.symbols.define(Symbol {
+                name: type_param.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
+        self.symbols.define(Symbol {
+            name: "self".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: self_ty.clone(),
+                is_mutable: false,
+                is_used: true,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+
+        let return_type = self.resolve_type_checked(&property.return_type);
+        let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        self.symbols.set_return_type(effective_return_type);
+        self.current_return_error_type = return_type.result_err_type().cloned();
+
+        if let Some(body) = &property.body {
+            let prev_in_async_body = self.in_async_body;
+            self.in_async_body = false;
+            for stmt in body {
+                self.check_statement(stmt);
+            }
+            self.in_async_body = prev_in_async_body;
+        }
+
+        self.current_return_error_type = None;
+        self.symbols.exit_scope();
     }
 
     /// Check a method body with the concrete owner type used for `Self` in annotations and classmethod constructors.
@@ -2596,7 +3272,13 @@ impl TypeChecker {
     /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
     /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
     /// adopter is resolved later during trait conformance and method-call substitution.
-    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
+    fn check_method_with_self_ty(
+        &mut self,
+        method: &MethodDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+        owner_params: &[TypeParam],
+    ) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
@@ -2622,7 +3304,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
-        let active_bounds = self.type_param_bound_details_from_type_params(&method.type_params);
+        let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
+        active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
 
         // Define self if present
@@ -2665,6 +3348,27 @@ impl TypeChecker {
 
         let return_type = self.resolve_type_checked(&method.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        let body_has_yield = method
+            .body
+            .as_ref()
+            .is_some_and(|body| any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))));
+        if effective_return_type.generator_element_type().is_some()
+            && !body_has_yield
+            && method.body.as_deref().is_some_and(|body| !body_has_return_value(body))
+        {
+            self.errors
+                .push(errors::generator_requires_yield(&method.name, method.return_type.span));
+        }
+        let yield_context = if body_has_yield {
+            match effective_return_type.generator_element_type() {
+                Some(element_ty) => YieldContext::Generator {
+                    element_ty: element_ty.clone(),
+                },
+                None => YieldContext::Disallowed,
+            }
+        } else {
+            YieldContext::Disallowed
+        };
         self.symbols.set_return_type(effective_return_type);
 
         // Set error type for ? checking
@@ -2673,11 +3377,15 @@ impl TypeChecker {
         // Check body
         if let Some(body) = &method.body {
             let prev_in_async_body = self.in_async_body;
+            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();
+            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
             for stmt in body {
                 self.check_statement(stmt);
             }
+            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.in_async_body = prev_in_async_body;
+            self.current_yield_context = prev_yield_context;
         }
 
         self.current_return_error_type = None;

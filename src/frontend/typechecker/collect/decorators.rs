@@ -334,6 +334,23 @@ impl TypeChecker {
             return;
         }
 
+        if self
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)))
+            && let Some(module_path) = self.module_path_for_imported_name(name)
+        {
+            if self.lookup_derivable_traits(&module_path).is_some() {
+                return;
+            }
+            self.errors.push(errors::derive_module_missing_derives(name, span));
+            return;
+        }
+
+        if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
+            self.define_hidden_trait_symbol(&canonical, info, span);
+            return;
+        }
+
         // Allow custom derives imported from stdlib modules backed by rust.module(...).
         let resolved = self
             .import_aliases
@@ -341,10 +358,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![name.to_string()]);
         if resolved.len() >= 2
-            && self
-                .stdlib_cache
-                .lookup_trait_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                .is_some_and(|t| t.rust_module_path.is_some())
+            && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
             return;
         }

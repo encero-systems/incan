@@ -1,0 +1,10 @@
+from std.fs import Path, File
+
+def consume_path(path: Path) -> None:
+    return
+
+def consume_file(file: File) -> None:
+    return
+
+def main() -> None:
+    println("std.fs import codegen")

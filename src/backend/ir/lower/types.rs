@@ -38,6 +38,42 @@ fn lowered_generic_arg_or_unknown(lowered_params: &[IrType], idx: usize) -> IrTy
     lowered_params.get(idx).cloned().unwrap_or(IrType::Unknown)
 }
 
+/// Lower a resolved decimal generic type into its runtime IR representation.
+fn decimal_ir_type(name: &str, args: &[ResolvedType]) -> Option<IrType> {
+    if numerics::decimal_constructor_from_str(name).is_none() || args.len() != 2 {
+        return None;
+    }
+    let precision = decimal_type_arg_u8(&args[0])?;
+    let scale = decimal_type_arg_u8(&args[1])?;
+    Some(IrType::Decimal { precision, scale })
+}
+
+/// Extract a checked decimal precision or scale argument from a resolved type placeholder.
+fn decimal_type_arg_u8(ty: &ResolvedType) -> Option<u8> {
+    match ty {
+        ResolvedType::TypeVar(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Lower a decimal AST annotation into its runtime IR representation.
+fn ast_decimal_ir_type(name: &str, params: &[ast::Spanned<ast::Type>]) -> Option<IrType> {
+    if numerics::decimal_constructor_from_str(name).is_none() || params.len() != 2 {
+        return None;
+    }
+    let precision = ast_decimal_type_arg_u8(&params[0].node)?;
+    let scale = ast_decimal_type_arg_u8(&params[1].node)?;
+    Some(IrType::Decimal { precision, scale })
+}
+
+/// Extract a decimal precision or scale argument from a type-position integer literal.
+fn ast_decimal_type_arg_u8(ty: &ast::Type) -> Option<u8> {
+    match ty {
+        ast::Type::IntLiteral(value) => value.value.try_into().ok(),
+        _ => None,
+    }
+}
+
 /// Construct the canonical IR shape for an anonymous union.
 fn union_ir_type(members: Vec<IrType>) -> IrType {
     let mut has_none = false;
@@ -177,10 +213,14 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match id {
-                        NumericTypeId::Int => IrType::Int,
-                        NumericTypeId::Float => IrType::Float,
-                        NumericTypeId::Bool => IrType::Bool,
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
                     };
                 }
 
@@ -201,6 +241,9 @@ impl AstLowering {
                 }
             }
             ast::Type::Generic(base, params) => {
+                if let Some(decimal) = ast_decimal_ir_type(base, params) {
+                    return decimal;
+                }
                 let params_lowered: Vec<_> = params
                     .iter()
                     .map(|p| self.lower_const_annotation_type(&p.node))
@@ -244,9 +287,10 @@ impl AstLowering {
         match ty {
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
+            ResolvedType::Numeric(id) => IrType::Numeric(*id),
             ResolvedType::Bool => IrType::Bool,
             ResolvedType::Str => IrType::String,
-            ResolvedType::Bytes => IrType::Unknown,
+            ResolvedType::Bytes => IrType::Bytes,
             ResolvedType::FrozenStr => IrType::FrozenStr,
             ResolvedType::FrozenBytes => IrType::FrozenBytes,
             ResolvedType::FrozenList(elem) => IrType::NamedGeneric(
@@ -309,7 +353,10 @@ impl AstLowering {
                     IrType::Tuple(args.iter().map(|t| self.lower_resolved_type(t)).collect())
                 }
                 GenericBaseKind::Collection(
-                    CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                    CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Generator,
                 ) => {
                     // Normalize to canonical spelling from incan_core.
                     let Some(id) = collections::from_str(name.as_str()) else {
@@ -326,6 +373,9 @@ impl AstLowering {
                     )
                 }
                 GenericBaseKind::Other => {
+                    if let Some(decimal) = decimal_ir_type(name, args) {
+                        return decimal;
+                    }
                     let lowered_args: Vec<IrType> = args.iter().map(|t| self.lower_resolved_type(t)).collect();
                     if name == IR_UNION_TYPE_NAME {
                         return union_ir_type(lowered_args);
@@ -370,18 +420,21 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match id {
-                        NumericTypeId::Int => IrType::Int,
-                        NumericTypeId::Float => IrType::Float,
-                        NumericTypeId::Bool => IrType::Bool,
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
                     };
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
                     return match id {
                         StringLikeId::Str | StringLikeId::FString => IrType::String,
-                        // NOTE: runtime `bytes` is not yet a dedicated IR type; keep it as unknown for now.
-                        StringLikeId::Bytes => IrType::Unknown,
+                        StringLikeId::Bytes => IrType::Bytes,
                         StringLikeId::FrozenStr => IrType::FrozenStr,
                         StringLikeId::FrozenBytes => IrType::FrozenBytes,
                     };
@@ -394,6 +447,9 @@ impl AstLowering {
                 }
             }
             ast::Type::Generic(base, params) => {
+                if let Some(decimal) = ast_decimal_ir_type(base, params) {
+                    return decimal;
+                }
                 let lowered_params: Vec<_> = params
                     .iter()
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
@@ -418,7 +474,10 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Tuple) => IrType::Tuple(lowered_params),
                     GenericBaseKind::Collection(
-                        CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict,
+                        CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::FrozenDict
+                        | CollectionTypeId::Generator,
                     ) => {
                         let Some(id) = collections::from_str(base.as_str()) else {
                             return IrType::NamedGeneric(base.clone(), lowered_params);
@@ -450,6 +509,7 @@ impl AstLowering {
                     .collect(),
             ),
             ast::Type::SelfType => IrType::SelfType,
+            ast::Type::IntLiteral(_) => IrType::Unknown,
             ast::Type::Infer => IrType::Unknown,
         }
     }

@@ -1,6 +1,6 @@
 # RFC 047: Lightweight directed graph types (stdlib)
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-31
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,11 +11,11 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/204
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.37
 
 ## Summary
 
-This RFC proposes a small, opinionated directed-graph abstraction in the Incan standard library: stable node identifiers, node payloads, directed edges with optional kind metadata, and a minimal interrogation API covering adjacency, roots and sinks, traversal, and optional topological order. It is not a graph database, query language, or persistence layer. New graph-related stdlib surfaces should continue to go through RFCs rather than growing ad hoc.
+This RFC proposes a small, opinionated directed-graph abstraction in the Incan standard library: stable node identifiers, node payloads, directed edges, multigraph edge identity, and a minimal interrogation API covering adjacency, roots and sinks, traversal, and optional topological order. It is not a graph database, query language, or persistence layer. New graph-related stdlib surfaces should continue to go through RFCs rather than growing ad hoc.
 
 ## Motivation
 
@@ -46,7 +46,7 @@ application-level default graphs may exist in higher-level systems, but this std
 
 ## Guide-level explanation
 
-Authors obtain a graph handle from the stdlib, add nodes with optional payloads, and add directed edges from one node to another. They can ask for outgoing or incoming neighbors, enumerate roots or sinks, and walk from a start node in a documented order. Common walk orders are breadth-first search and depth-first search; the stdlib must document which order each traversal API uses. When the graph is intended to be acyclic, authors may use a DAG mode or type that rejects edge insertions that would create a cycle, or they may call topological-order APIs and handle the error if a cycle exists.
+Authors obtain a graph handle from the stdlib, add nodes with payloads, and add directed edges from one node to another. They can ask for outgoing or incoming neighbors, enumerate roots or sinks, and walk from a start node in a documented order. Common walk orders are breadth-first search and depth-first search; the stdlib must document which order each traversal API uses. When the graph is intended to be acyclic, authors may use checked edge insertion that rejects a cycle, or they may call topological-order APIs and handle the error if a cycle exists.
 
 The type is in-memory and library-scoped. Persistence, network sync, and engine-specific optimization remain outside this RFC.
 
@@ -54,7 +54,7 @@ Authors construct and pass graph values explicitly rather than reaching for one 
 
 ## Illustrative API sketches (non-normative)
 
-The following examples show one possible Incan-facing shape. Names, return types, and error modeling are illustrative until the RFC moves beyond Draft; they are not commitments to exact signatures.
+The following examples show the intended Incan-facing shape. Names, return types, and error modeling may still be refined during implementation, but the design decisions below define the stable contract.
 
 **Module path** is assumed to be `std.graph` (see RFC 022 stdlib namespacing); final names **may** differ.
 
@@ -64,7 +64,7 @@ The following examples show one possible Incan-facing shape. Names, return types
 from std.graph import DiGraph, NodeId
 
 # Empty graph; nodes and edges added explicitly.
-mut g = DiGraph[str].new()
+mut g = DiGraph[str]()
 
 a: NodeId = g.add_node(payload="scan_users")
 b: NodeId = g.add_node(payload="filter_active")
@@ -91,7 +91,7 @@ pub model Step:
     pub timeout_ms: int
 
 def build_step_graph() -> DiGraph[Step]:
-    mut g = DiGraph[Step].new()
+    mut g = DiGraph[Step]()
     fetch = Step(name="fetch", timeout_ms=5000)
     parse = Step(name="parse", timeout_ms=2000)
 
@@ -102,7 +102,11 @@ def build_step_graph() -> DiGraph[Step]:
     return g
 
 def step_name_at(g: DiGraph[Step], nid: NodeId) -> str:
-    return g.node_payload(nid).name
+    match g.node_payload(nid):
+        case Ok(step):
+            return step.name
+        case Err(_):
+            return ""
 ```
 
 **Semantics:** `add_node(payload=...)` ties a `NodeId` to that payload object.
@@ -117,13 +121,21 @@ satisfy whatever the language requires for stored or shared data. Exact bounds a
 from std.graph import DiGraph, NodeId
 
 def collect_bfs(g: DiGraph[str], start: NodeId) -> list[NodeId]:
-    return g.bfs_nodes(start).to_list()
+    match g.bfs_nodes(start):
+        case Ok(nodes):
+            return nodes
+        case Err(_):
+            return []
 
 def collect_dfs_preorder(g: DiGraph[str], start: NodeId) -> list[NodeId]:
-    return g.dfs_preorder_nodes(start).to_list()
+    match g.dfs_preorder_nodes(start):
+        case Ok(nodes):
+            return nodes
+        case Err(_):
+            return []
 ```
 
-Implementations **must** document iteration order; the method names above are **placeholders**.
+Implementations **must** document iteration order; `bfs_nodes` and `dfs_preorder_nodes` are the shipped traversal methods.
 
 ### Topological order on a DAG-shaped graph
 
@@ -135,15 +147,15 @@ def topo_or_empty(g: DiGraph[str]) -> list[NodeId]:
         case Ok(order):
             return order
         case Err(_):
-            return []  # cycle present — real API might use Result throughout
+            return []  # cycle present
 ```
 
-### DAG mode: reject edges that would create a cycle
+### DAG type: reject edges that would create a cycle
 
 ```incan
-from std.graph import Dag, NodeId
+from std.graph import Dag, GraphError, NodeId
 
-mut d = Dag[int].new()
+mut d = Dag[int]()
 x = d.add_node(payload=1)
 y = d.add_node(payload=2)
 z = d.add_node(payload=3)
@@ -151,45 +163,32 @@ z = d.add_node(payload=3)
 d.add_edge(from_=x, to=y)
 d.add_edge(from_=y, to=z)
 
-match d.try_add_edge(from_=z, to=x):
+cycle_attempt: Result[None, GraphError] = d.add_edge(z, x)
+match cycle_attempt:
     case Ok(_):
         pass  # unexpected if cycle detection works
-    case Err(CycleWouldBeCreated):
+    case Err(_):
         pass  # expected
 ```
 
-Alternatively, a single `DiGraph` type could use
-`DiGraph.new(enforce_dag=True)` instead of a separate `Dag` name. See
-Unresolved questions.
+The stable contract includes a first-class `Dag[T]` surface for domains that need acyclicity as part of the type they pass around.
 
-### Parallel edges (multigraph profile), if supported
+### Parallel edges with `MultiDiGraph`
 
 ```incan
-from std.graph import MultiDiGraph, NodeId, EdgeId
+from std.graph import EdgeId, GraphError, MultiDiGraph, NodeId
 
-mut m = MultiDiGraph[str].new()
+mut m = MultiDiGraph[str]()
 u = m.add_node("a")
 v = m.add_node("b")
 
-e1: EdgeId = m.add_edge(from_=u, to=v, kind="primary")
-e2: EdgeId = m.add_edge(from_=u, to=v, kind="backup")
+e1: Result[EdgeId, GraphError] = m.add_edge(u, v)
+e2: Result[EdgeId, GraphError] = m.add_edge(u, v)
 
-edges_uv: list[EdgeId] = m.edges_between(u, v)
+edges_uv: Result[list[EdgeId], GraphError] = m.edges_between(u, v)
 ```
 
-If v1 is **simple-only**, this profile is omitted or deferred; authors use **`DiGraph`** without **`MultiDiGraph`**.
-
-### Edge **kind** on a simple directed graph
-
-```incan
-from std.graph import DiGraph, NodeId
-
-mut g = DiGraph[str].new()
-read = g.add_node("read")
-write = g.add_node("write")
-
-g.add_edge(from_=read, to=write, kind="dataflow")
-```
+`MultiDiGraph[T]` is part of this RFC's stable graph family for domains that need multiple separately identified edges between the same ordered node pair.
 
 ### Storing a graph as **data** (not a singleton)
 
@@ -199,7 +198,14 @@ pub model PipelinePlan:
     pub tip: NodeId
 
 def describe_roots(plan: PipelinePlan) -> str:
-    return ", ".join(plan.deps.node_payload(nid) for nid in plan.deps.roots())
+    mut roots: list[str] = []
+    for nid in plan.deps.roots():
+        match plan.deps.node_payload(nid):
+            case Ok(name):
+                roots.append(name)
+            case Err(_):
+                pass
+    return ", ".join(roots)
 ```
 
 ## Reference-level explanation
@@ -208,20 +214,18 @@ def describe_roots(plan: PipelinePlan) -> str:
 
 A **directed graph** value **must** conceptually consist of:
 
-- A set of nodes, each with a distinct `NodeId` while the node exists. Each
-node may carry an optional payload: any Incan value the API allows, including primitives, `model` or `class` instances, newtypes, and similar values. Edges always connect `NodeId`s, not raw object references.
-- A multiset of directed edges from one `NodeId` to another `NodeId`. Parallel
-edges may be permitted unless a future profile forbids them. If they are permitted, edges must be distinguishable by an `EdgeId` or by iteration order, as specified by the stdlib API.
+- A set of nodes, each with a distinct `NodeId` while the graph instance exists. Each node carries a payload: any Incan value the API allows, including primitives, `model` or `class` instances, newtypes, and similar values. Edges always connect `NodeId`s, not raw object references.
+- A set of directed edges from one `NodeId` to another `NodeId`. `DiGraph[T]` is simple and does not permit parallel edges between the same ordered node pair; `MultiDiGraph[T]` permits parallel edges and distinguishes them with `EdgeId`.
 
-Removing a node must either remove all incident edges or define explicit behavior, such as an error, in the stdlib contract. Implementations must not leave the graph in an inconsistent state silently.
+Removing an edge must remove that edge from outgoing and incoming adjacency. Removing a node must remove all incident edges. Implementations must not leave the graph in an inconsistent state silently.
 
 ### NodeId stability
 
-The stdlib must document whether `NodeId` values are reused after node removal. The recommended default is not to reuse ids in the same graph instance without an explicit compact or reset operation documented for advanced users.
+`NodeId` values must not be reused by ordinary graph operations within the same graph instance, including after node removal.
 
 ### DAG profile
 
-If a DAG type or acyclicity-enforcing mode is provided, adding an edge that would introduce a cycle must fail with a defined error or return type. The graph must not accept the edge.
+`Dag[T]` is a first-class graph type. Adding an edge that would introduce a cycle must fail with a defined error or return type. The graph must not accept the edge.
 
 ### Topological order
 
@@ -245,7 +249,7 @@ Implementations **may** add further helpers (e.g. strongly connected components)
 Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as `model` or `class` values, so that `DiGraph[Step]` means each node's payload is a `Step`. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one `payload: any` model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.
 
 - **Edge metadata.**
-Edges should support an optional kind or label, whether enumerated or string, so multiple domains can filter edges without separate side maps. This must be specified in the final API review before Planned status.
+Edges should support an optional kind or label so multiple domains can filter edges without separate side maps. `DiGraph[T]` stores at most one edge per ordered node pair; `MultiDiGraph[T]` stores multiple edge ids per ordered node pair.
 
 - **Immutability vs mutation.**
 The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.
@@ -293,9 +297,81 @@ backed by runtime-native structures exposed through the normal stdlib binding pa
 - **Docs-site** — user-facing reference for graph types and examples.
 - **RFC process** — this RFC establishes that **further** graph stdlib growth is **RFC-gated**.
 
+## Implementation Plan
+
+### Phase 1: Stdlib Runtime Surface
+
+- Add the source-defined `std.graph` module surface for `DiGraph[T]`, `Dag[T]`, `MultiDiGraph[T]`, `NodeId`, `EdgeId`, and graph errors.
+- Implement directed edges, payload storage, stable non-reused node ids, edge/node removal semantics, roots/sinks, successors/predecessors, BFS, DFS preorder, topological order, and checked acyclic insertion.
+- Keep serialization out of the stable surface.
+
+### Phase 2: Compiler and Stdlib Wiring
+
+- Register `std.graph` in the stdlib namespace registry and expose IDE/typechecker stubs through the stdlib source tree.
+- Ensure the pure Incan `std.graph` implementation lowers and emits correctly with generic graph types.
+- Add typechecker coverage for valid graph construction, method calls, and invalid edge/node usage where diagnostics can be resolved at compile time.
+
+### Phase 3: Documentation and Release Surface
+
+- Add authored user-facing `std.graph` reference documentation with examples for construction, adjacency, traversal, topological order, `Dag[T]`, and `MultiDiGraph[T]`.
+- Update stdlib reference navigation and release notes for the active dev line.
+- Bump the active dev version after implementation work lands.
+
+### Phase 4: Verification and Closeout
+
+- Add unit and integration tests for runtime behavior, stdlib importability, code generation, and user-facing examples.
+- Run targeted slice verification, integrated review/fix, and the repository pre-commit gate.
+- Update this checklist as implementation phases land.
+
+## Implementation log
+
+### RFC / lifecycle
+
+- [x] Move RFC 047 from Draft to Planned with settled design decisions.
+- [x] Move RFC 047 from Planned to In Progress when the Ralph implementation loop starts.
+- [x] Move RFC 047 from In Progress to Implemented when the implementation is PR-ready.
+- [x] Keep this checklist current as slices land.
+
+### Stdlib implementation
+
+- [x] Add pure Incan `std.graph` implementation in the stdlib source tree.
+- [x] Add `NodeId`, `EdgeId`, `DiGraph[T]`, `Dag[T]`, `MultiDiGraph[T]`, and graph error types.
+- [x] Implement node insertion and stable non-reused node id semantics.
+- [x] Implement edge and node removal semantics.
+- [x] Implement simple directed edge insertion with optional kind metadata.
+- [x] Implement multigraph edge insertion with distinct `EdgeId` values.
+- [x] Reject duplicate simple edges between the same ordered node pair.
+- [x] Implement successors, predecessors, roots, and sinks.
+- [x] Implement BFS and DFS preorder traversal with deterministic documented order.
+- [x] Implement topological order with cycle reporting.
+- [x] Implement `Dag[T]` edge insertion that rejects cycles without mutating the graph.
+
+### Compiler / stdlib wiring
+
+- [x] Register `std.graph` in the stdlib namespace registry.
+- [x] Add stdlib `.incn` declarations for graph types and methods.
+- [x] Ensure graph imports activate through the normal stdlib loader path.
+- [x] Ensure generic `DiGraph[T]`, `Dag[T]`, and `MultiDiGraph[T]` types resolve and emit to the runtime Rust types.
+- [x] Add focused typechecker/codegen coverage for graph construction and method use.
+
+### Docs / release
+
+- [x] Add `std.graph` reference documentation.
+- [x] Update stdlib reference index and navigation.
+- [x] Add release notes for `0.3`.
+- [x] Bump `0.3.0-dev.33` to the next dev version.
+
+### Verification
+
+- [x] Add Incan source, generated-build, and integration coverage for graph behavior.
+- [x] Add Incan integration/codegen tests for `std.graph`.
+- [x] Run targeted stdlib/compiler tests.
+- [x] Run integrated review/fix.
+- [x] Run `make pre-commit`.
+
 ## Prior art survey (informative)
 
-This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy to inform unresolved questions 1 and 2. It is not a mandate to copy any API.
+This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy. It is not a mandate to copy any API.
 
 - **Python (NetworkX).** `DiGraph` is simple by default, with at most one edge
 per ordered node pair. `MultiDiGraph` is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.
@@ -316,20 +392,14 @@ edges between the same node pair, while `GraphMap` does not. Acyclicity is not e
 third ubiquitous type name `Dag` alongside `DiGraph`; DAG is often policy on a directed container. A separate `Dag` type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.
 
 **Loose takeaway for question 2 (parallel edges).** Simple directed graphs are
-the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That suggests defaulting to no parallel edges in v1 unless a domain clearly needs a multigraph profile, but the RFC does not have to settle that yet.
+the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That supports keeping `DiGraph[T]` simple while also including `MultiDiGraph[T]` for domains that need a multigraph profile.
 
-## Unresolved questions
+## Design Decisions
 
-1. **Single `DiGraph` type vs separate `Dag` type vs `DiGraph` with
-   `enforce_dag: bool` at construction**: which default best matches Incan
-authors? Prior art suggests DAG-as-policy is more common than a distinct
-   `Dag` type.
-2. **Parallel edges**: allowed by default, or opt-in multigraph profile only?
-Prior art suggests opt-in multigraph support is the recurring pattern.
-3. **Node removal**: required for v1, or **append-only** graphs only until a follow-on RFC?
-4. **Payload typing** on the Incan side: opaque handle only for v1, or a
-generic `DiGraph[T]` / `Graph[NodePayload, EdgeKind]` style surface?
-5. **Serialization**: stable JSON, or another snapshot format, in v1, or
-explicitly out of scope until a dedicated RFC?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+1. **The stable graph family includes `DiGraph[T]`, `Dag[T]`, and `MultiDiGraph[T]`.** `DiGraph[T]` is the ordinary directed graph, `Dag[T]` is the acyclicity-preserving directed graph for dependency and workflow domains, and `MultiDiGraph[T]` is the parallel-edge variant.
+2. **`Dag[T]` is not a follow-up.** Domains such as workflow and dependency modeling need acyclicity in the type they pass around, not just an optional helper call on a general graph.
+3. **Parallel edges are first-class through `MultiDiGraph[T]`.** `DiGraph[T]` stays simple, but the RFC includes a multigraph type for domains that need multiple labeled edges between the same ordered node pair.
+4. **Graph construction should use ordinary Incan call syntax.** Examples use `DiGraph[T]()`, `Dag[T]()`, and `MultiDiGraph[T]()` rather than Rust-style `.new()` calls.
+5. **Node ids are stable and not reused.** Removing a node removes incident edges, but `NodeId` values remain non-reused within the same graph instance.
+6. **Payloads are generic.** The stdlib surface uses graph types parameterized by node payload type. Richer typed edge metadata, such as `Graph[NodePayload, EdgeKind]`, may be proposed later if string or enum-like edge kinds are not enough.
+7. **Serialization is out of scope.** This RFC does not define stable JSON or another graph snapshot format. Persistence and interchange formats require a dedicated RFC because they imply compatibility, id-stability, and payload-encoding guarantees beyond the in-memory graph contract.

@@ -1,0 +1,20 @@
+from std.fs import Path
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
+
+
+def consume_file(file: NamedTemporaryFile) -> None:
+    return
+
+
+def consume_dir(directory: TemporaryDirectory) -> None:
+    return
+
+
+def consume_path(path: Path) -> None:
+    return
+
+
+def main() -> None:
+    spool = SpooledTemporaryFile(max_size=4)
+    _ = spool.rolled_to_disk()
+    println("std.tempfile import codegen")

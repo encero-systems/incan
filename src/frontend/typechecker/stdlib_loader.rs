@@ -28,7 +28,7 @@
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::frontend::ast;
@@ -53,6 +53,7 @@ struct StdlibModuleData {
     traits: Vec<(String, TraitInfo)>,
     types: Vec<(String, TypeInfo)>,
     constants: Vec<(String, VariableInfo)>,
+    derivable_traits: Vec<String>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
 }
@@ -66,6 +67,7 @@ pub(crate) struct FunctionMeta {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TraitMeta {
     pub rust_module_path: Option<String>,
+    pub rust_derive_paths: Vec<String>,
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
@@ -120,6 +122,26 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// Look up a method declaration on a stdlib type, following prelude re-exports.
+    ///
+    /// This is intentionally AST-shaped rather than `MethodInfo`-shaped so lowering can preserve default parameter
+    /// expressions when imported type methods are called with omitted arguments.
+    pub(crate) fn lookup_type_method_decl(
+        &mut self,
+        module_path: &[String],
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<ast::MethodDecl> {
+        lookup_type_method_decl_inner(module_path, type_name, method_name, &mut HashSet::new())
+    }
+
+    /// List public type signatures in a stdlib module.
+    pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key).map(|data| data.types.clone()).unwrap_or_default()
+    }
+
     /// Look up a specific const binding in a stdlib module.
     pub fn lookup_constant(&mut self, module_path: &[String], const_name: &str) -> Option<VariableInfo> {
         self.ensure_loaded(module_path);
@@ -146,6 +168,27 @@ impl StdlibAstCache {
         self.cache.get(&key)?.trait_meta.get(trait_name).cloned()
     }
 
+    /// Return the traits listed by a module-level `__derives__ = [...]` declaration.
+    pub fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        let traits = &self.cache.get(&key)?.derivable_traits;
+        (!traits.is_empty()).then(|| traits.clone())
+    }
+
+    /// Return the already-loaded stdlib module path that exports `trait_name`, if known.
+    ///
+    /// This intentionally scans only cached modules. Callers use it after ordinary import/type lookup has loaded the
+    /// relevant stdlib module, avoiding a broad filesystem scan from the typechecker hot path.
+    pub fn loaded_trait_module_path(&self, trait_name: &str) -> Option<Vec<String>> {
+        self.cache.iter().find_map(|(module_path, data)| {
+            data.traits
+                .iter()
+                .any(|(name, _)| name == trait_name)
+                .then(|| module_path.split('.').map(str::to_string).collect())
+        })
+    }
+
     /// Ensure a module is loaded into the cache, loading it on first access.
     fn ensure_loaded(&mut self, module_path: &[String]) {
         let key = module_path.join(".");
@@ -164,6 +207,30 @@ impl StdlibAstCache {
 ///
 /// Returns `None` if the file cannot be found or parsed.
 fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
+    load_stdlib_module_data_inner(module_path, &mut HashSet::new())
+}
+
+/// Load one stdlib module while tracking the current re-export chain.
+///
+/// Returns `None` for recursive re-entry so cyclic stdlib preludes cannot overflow the loader stack.
+fn load_stdlib_module_data_inner(module_path: &[String], loading: &mut HashSet<String>) -> Option<StdlibModuleData> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+
+    let data = load_stdlib_module_data_unguarded(module_path, loading);
+    loading.remove(&key);
+    data
+}
+
+/// Load one stdlib module without inserting it into the active-cycle guard.
+///
+/// Call through `load_stdlib_module_data_inner` unless the caller has already marked `module_path` as in progress.
+fn load_stdlib_module_data_unguarded(
+    module_path: &[String],
+    loading: &mut HashSet<String>,
+) -> Option<StdlibModuleData> {
     let relative = stdlib::stdlib_stub_path(module_path)?;
     let abs_path = find_stdlib_file(&relative)?;
 
@@ -197,24 +264,34 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
     // We recursively load each referenced submodule and merge the imported names' metadata so that
     // `lookup_function_meta(["std", "web"], "route")` finds `route` even though it's declared in
     // `std.web.routing`.
-    merge_reexported_metadata(
-        &program,
-        &mut functions,
-        &mut traits,
-        &mut types,
-        &mut constants,
-        &mut function_meta,
-        &mut trait_meta,
-    );
+    let mut reexport_targets = ReexportMetadataTargets {
+        functions: &mut functions,
+        traits: &mut traits,
+        types: &mut types,
+        constants: &mut constants,
+        function_meta: &mut function_meta,
+        trait_meta: &mut trait_meta,
+    };
+    merge_reexported_metadata(&program, &mut reexport_targets, loading);
 
     Some(StdlibModuleData {
         functions,
         traits,
         types,
         constants,
+        derivable_traits: extract_derivable_traits(&program),
         function_meta,
         trait_meta,
     })
+}
+
+struct ReexportMetadataTargets<'a> {
+    functions: &'a mut Vec<(String, FunctionInfo)>,
+    traits: &'a mut Vec<(String, TraitInfo)>,
+    types: &'a mut Vec<(String, TypeInfo)>,
+    constants: &'a mut Vec<(String, VariableInfo)>,
+    function_meta: &'a mut HashMap<String, FunctionMeta>,
+    trait_meta: &'a mut HashMap<String, TraitMeta>,
 }
 
 /// Scan a program's import declarations and merge metadata from referenced stdlib submodules.
@@ -223,12 +300,8 @@ fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
 /// corresponding function/trait signatures and metadata into the parent module's collections.
 fn merge_reexported_metadata(
     program: &ast::Program,
-    functions: &mut Vec<(String, FunctionInfo)>,
-    traits: &mut Vec<(String, TraitInfo)>,
-    types: &mut Vec<(String, TypeInfo)>,
-    constants: &mut Vec<(String, VariableInfo)>,
-    function_meta: &mut HashMap<String, FunctionMeta>,
-    trait_meta: &mut HashMap<String, TraitMeta>,
+    targets: &mut ReexportMetadataTargets<'_>,
+    loading: &mut HashSet<String>,
 ) {
     for decl in &program.declarations {
         let ast::Declaration::Import(import) = &decl.node else {
@@ -246,7 +319,7 @@ fn merge_reexported_metadata(
             continue;
         }
 
-        let Some(sub_data) = load_stdlib_module_data(&module.segments) else {
+        let Some(sub_data) = load_stdlib_module_data_inner(&module.segments, loading) else {
             continue;
         };
 
@@ -255,42 +328,44 @@ fn merge_reexported_metadata(
 
             // Merge function signature.
             if let Some((_, info)) = sub_data.functions.iter().find(|(n, _)| n == &item.name)
-                && !functions.iter().any(|(n, _)| n == effective_name)
+                && !targets.functions.iter().any(|(n, _)| n == effective_name)
             {
-                functions.push((effective_name.to_string(), info.clone()));
+                targets.functions.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge trait signature.
             if let Some((_, info)) = sub_data.traits.iter().find(|(n, _)| n == &item.name)
-                && !traits.iter().any(|(n, _)| n == effective_name)
+                && !targets.traits.iter().any(|(n, _)| n == effective_name)
             {
-                traits.push((effective_name.to_string(), info.clone()));
+                targets.traits.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge type signature.
             if let Some((_, info)) = sub_data.types.iter().find(|(n, _)| n == &item.name)
-                && !types.iter().any(|(n, _)| n == effective_name)
+                && !targets.types.iter().any(|(n, _)| n == effective_name)
             {
-                types.push((effective_name.to_string(), info.clone()));
+                targets.types.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge const signature.
             if let Some((_, info)) = sub_data.constants.iter().find(|(n, _)| n == &item.name)
-                && !constants.iter().any(|(n, _)| n == effective_name)
+                && !targets.constants.iter().any(|(n, _)| n == effective_name)
             {
-                constants.push((effective_name.to_string(), info.clone()));
+                targets.constants.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge function meta.
             if let Some(meta) = sub_data.function_meta.get(&item.name) {
-                function_meta
+                targets
+                    .function_meta
                     .entry(effective_name.to_string())
                     .or_insert_with(|| meta.clone());
             }
 
             // Merge trait meta.
             if let Some(meta) = sub_data.trait_meta.get(&item.name) {
-                trait_meta
+                targets
+                    .trait_meta
                     .entry(effective_name.to_string())
                     .or_insert_with(|| meta.clone());
             }
@@ -375,6 +450,84 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
     None
 }
 
+/// Find a method declaration on a stdlib type, following prelude-style re-exports.
+fn lookup_type_method_decl_inner(
+    module_path: &[String],
+    type_name: &str,
+    method_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::MethodDecl> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+    let result = load_stdlib_program(module_path).and_then(|program| {
+        find_method_decl_in_program(&program, type_name, method_name)
+            .or_else(|| find_reexported_type_method_decl(&program, type_name, method_name, loading))
+    });
+    loading.remove(&key);
+    result
+}
+
+/// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
+fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
+    let relative = stdlib::stdlib_stub_path(module_path)?;
+    let path = find_stdlib_file(&relative)?;
+    let source = std::fs::read_to_string(path).ok()?;
+    let tokens = crate::frontend::lexer::lex(&source).ok()?;
+    crate::frontend::parser::parse(&tokens).ok()
+}
+
+/// Find a method declaration directly in a parsed stdlib program.
+fn find_method_decl_in_program(program: &ast::Program, type_name: &str, method_name: &str) -> Option<ast::MethodDecl> {
+    program.declarations.iter().find_map(|decl| match &decl.node {
+        ast::Declaration::Model(model) if model.name == type_name => find_method_decl(&model.methods, method_name),
+        ast::Declaration::Class(class) if class.name == type_name => find_method_decl(&class.methods, method_name),
+        ast::Declaration::Newtype(newtype) if newtype.name == type_name => {
+            find_method_decl(&newtype.methods, method_name)
+        }
+        ast::Declaration::Enum(enum_decl) if enum_decl.name == type_name => {
+            find_method_decl(&enum_decl.methods, method_name)
+        }
+        _ => None,
+    })
+}
+
+/// Find one named method in a type declaration's method list.
+fn find_method_decl(methods: &[ast::Spanned<ast::MethodDecl>], method_name: &str) -> Option<ast::MethodDecl> {
+    methods
+        .iter()
+        .find(|method| method.node.name == method_name)
+        .map(|method| method.node.clone())
+}
+
+/// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type declaration.
+fn find_reexported_type_method_decl(
+    program: &ast::Program,
+    type_name: &str,
+    method_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::MethodDecl> {
+    program.declarations.iter().find_map(|decl| {
+        let ast::Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            return None;
+        };
+        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        items.iter().find_map(|item| {
+            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
+            if effective_name != type_name {
+                return None;
+            }
+            lookup_type_method_decl_inner(&module.segments, &item.name, method_name, loading)
+        })
+    })
+}
+
 /// Extract function signatures from a parsed stdlib `.incn` program.
 ///
 /// Only top-level `def` declarations are extracted. Methods and other declarations are ignored.
@@ -411,6 +564,9 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
         let ast::Declaration::Const(konst) = &decl.node else {
             continue;
         };
+        if konst.name == "__derives__" {
+            continue;
+        }
         let ty = konst
             .ty
             .as_ref()
@@ -426,6 +582,32 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
         ));
     }
     consts
+}
+
+/// Extract RFC 024 module-level derivable trait declarations.
+fn extract_derivable_traits(program: &ast::Program) -> Vec<String> {
+    for decl in &program.declarations {
+        let ast::Declaration::Const(konst) = &decl.node else {
+            continue;
+        };
+        if konst.name != "__derives__" {
+            continue;
+        }
+        let ast::Expr::List(entries) = &konst.value.node else {
+            return Vec::new();
+        };
+        return entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ast::ListEntry::Element(expr) => match &expr.node {
+                    ast::Expr::Ident(name) => Some(name.clone()),
+                    _ => None,
+                },
+                ast::ListEntry::Spread(_) => None,
+            })
+            .collect();
+    }
+    Vec::new()
 }
 
 /// Map one `with` supertrait bound to `(trait_name, type_arguments)` for stdlib trait metadata (RFC 042).
@@ -471,6 +653,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                     supertraits,
                     methods,
                     method_aliases: std::collections::HashMap::new(),
+                    properties: std::collections::HashMap::new(),
                     requires: Vec::new(),
                 },
             ));
@@ -501,6 +684,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&model.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),
@@ -521,6 +705,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
+                        properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
                         method_aliases: std::collections::HashMap::new(),
@@ -912,15 +1097,39 @@ fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
     let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
     for decl in &program.declarations {
         if let ast::Declaration::Trait(tr) = &decl.node {
+            let rust_derive_paths = rust_derive_paths_from_decorators(&tr.decorators);
             meta.insert(
                 tr.name.clone(),
                 TraitMeta {
                     rust_module_path: rust_module_path.clone(),
+                    rust_derive_paths,
                 },
             );
         }
     }
     meta
+}
+
+/// Extract RFC 024 `@rust.derive(...)` path strings from stdlib trait decorators.
+fn rust_derive_paths_from_decorators(decorators: &[ast::Spanned<ast::Decorator>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for decorator in decorators {
+        if decorators::from_str(&decorator.node.path.segments.join(".")) != Some(DecoratorId::RustDerive) {
+            continue;
+        }
+        for arg in &decorator.node.args {
+            let ast::DecoratorArg::Positional(expr) = arg else {
+                continue;
+            };
+            let ast::Expr::Literal(ast::Literal::String(path)) = &expr.node else {
+                continue;
+            };
+            if !out.iter().any(|existing| existing == path) {
+                out.push(path.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Convert an AST `Type` to a `ResolvedType`.
@@ -964,10 +1173,14 @@ fn ast_type_to_resolved_with_rust_imports(
 
             // Resolve through incan_core registries (numerics, strings, unit).
             if let Some(id) = numeric_types::from_str(name) {
-                return match id {
-                    NumericTypeId::Int => ResolvedType::Int,
-                    NumericTypeId::Float => ResolvedType::Float,
-                    NumericTypeId::Bool => ResolvedType::Bool,
+                return match name.as_str() {
+                    "int" => ResolvedType::Int,
+                    "float" => ResolvedType::Float,
+                    "bool" => ResolvedType::Bool,
+                    _ => match id {
+                        NumericTypeId::Bool => ResolvedType::Bool,
+                        _ => ResolvedType::Numeric(id),
+                    },
                 };
             }
             if let Some(id) = string_types::from_str(name) {
@@ -1059,6 +1272,7 @@ fn ast_type_to_resolved_with_rust_imports(
                 .collect();
             ResolvedType::Tuple(elem_types)
         }
+        ast::Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         ast::Type::Infer => ResolvedType::CallSiteInfer,
     }
 }
@@ -1208,6 +1422,78 @@ pub enum Token with Convert[int], Convert[float]:
     }
 
     #[test]
+    fn test_std_fs_path_lookup_uses_ast_cache_not_web_surface_type() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from rust::std::path import PathBuf as RustPathBuf
+from rust::std::fs import File as RustFile
+
+pub type Path = rusttype RustPathBuf:
+  """Filesystem path wrapper."""
+
+pub type File = rusttype RustFile:
+  """Filesystem file handle wrapper."""
+"#;
+        let tokens = crate::frontend::lexer::lex(source)
+            .map_err(|errs| format!("synthetic std.fs source should lex: {errs:?}"))?;
+        let program = crate::frontend::parser::parse(&tokens)
+            .map_err(|errs| format!("synthetic std.fs source should parse: {errs:?}"))?;
+        let module_data = StdlibModuleData {
+            functions: extract_function_signatures(&program),
+            traits: extract_trait_signatures(&program),
+            types: extract_type_signatures(&program),
+            constants: extract_const_signatures(&program),
+            derivable_traits: extract_derivable_traits(&program),
+            function_meta: extract_function_meta(&program),
+            trait_meta: extract_trait_meta(&program),
+        };
+        let mut cache = StdlibAstCache::new();
+        cache.cache.insert("std.fs".to_string(), module_data);
+        let path = vec!["std".to_string(), "fs".to_string()];
+        let fs_path = cache
+            .lookup_type(&path, "Path")
+            .ok_or("std.fs Path should resolve through StdlibAstCache::lookup_type")?;
+        match fs_path {
+            TypeInfo::Newtype(info) => {
+                assert!(info.is_rusttype);
+                assert_eq!(
+                    info.underlying,
+                    ResolvedType::RustPath("std::path::PathBuf".to_string())
+                );
+            }
+            other => return Err(format!("std.fs Path should be an AST-loaded rusttype, got {other:?}").into()),
+        }
+        assert!(
+            cache.lookup_type(&path, "File").is_some(),
+            "std.fs File should resolve through the same AST cache path"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_std_fs_prelude_handles_reexport_cycles() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "fs".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load std.fs prelude")?;
+        assert!(
+            module.types.iter().any(|(name, _)| name == "Path"),
+            "std.fs should re-export Path from std.fs.path"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "File"),
+            "std.fs should re-export File from std.fs.file"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "OpenFileMode"),
+            "std.fs should re-export OpenFileMode from std.fs.file"
+        );
+        assert!(
+            module.types.iter().any(|(name, _)| name == "PathStat"),
+            "std.fs should re-export PathStat from std.fs.metadata"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_load_async_time_module() -> Result<(), Box<dyn std::error::Error>> {
         let path = vec!["std".to_string(), "async".to_string(), "time".to_string()];
         let module = load_stdlib_module_data(&path);
@@ -1288,6 +1574,7 @@ pub enum Token with Convert[int], Convert[float]:
     // ---- Phase 6: Derive trait extraction tests ----
 
     use incan_core::lang::derives::{self as derive_reg, DeriveId};
+    use incan_core::lang::traits::{self as core_traits, TraitId};
 
     /// Helper: canonical derive name from the registry (avoids stringly-typed vocab checks).
     fn derive_name(id: DeriveId) -> &'static str {
@@ -1417,6 +1704,63 @@ pub enum Token with Convert[int], Convert[float]:
         assert!(
             !display_info.methods["__str__"].has_body,
             "__str__ is abstract (no body)"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_derives_collection_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+        let module = load_stdlib_module_data(&path);
+        let module = module.ok_or("failed to load stdlib/derives/collection.incn")?;
+
+        for name in [
+            "Contains",
+            "Bool",
+            "Len",
+            core_traits::as_str(TraitId::Iterable),
+            core_traits::as_str(TraitId::Iterator),
+            core_traits::as_str(TraitId::Sum),
+        ] {
+            assert!(
+                module.traits.iter().any(|(trait_name, _)| trait_name == name),
+                "should find {name} trait"
+            );
+        }
+
+        let iterator_info = module
+            .traits
+            .iter()
+            .find(|(name, _)| name == core_traits::as_str(TraitId::Iterator))
+            .ok_or("Iterator not found")?
+            .1
+            .clone();
+        assert!(iterator_info.methods.contains_key("map"));
+        assert!(iterator_info.methods.contains_key("flat_map"));
+        assert!(iterator_info.methods.contains_key("sum"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_serde_json_derivable_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load stdlib/serde/json.incn")?;
+
+        assert_eq!(
+            module.derivable_traits,
+            vec!["Serialize".to_string(), "Deserialize".to_string()]
+        );
+        let serialize_meta = module.trait_meta.get("Serialize").ok_or("Serialize metadata missing")?;
+        assert_eq!(serialize_meta.rust_derive_paths, vec!["serde::Serialize".to_string()]);
+        let deserialize_meta = module
+            .trait_meta
+            .get("Deserialize")
+            .ok_or("Deserialize metadata missing")?;
+        assert_eq!(
+            deserialize_meta.rust_derive_paths,
+            vec!["serde::Deserialize".to_string()]
         );
 
         Ok(())

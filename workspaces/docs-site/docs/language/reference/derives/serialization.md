@@ -9,9 +9,31 @@ See also:
 
 ---
 
+## Module derive
+
+Import `std.serde`'s `json` module when a type should adopt both JSON traits through one derive:
+
+```incan
+from std.serde import json
+
+@derive(json)
+model User:
+    name: str
+    age: int
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+```
+
+`@derive(json)` adopts `json.Serialize` and `json.Deserialize`, forwards the required Rust serde derives, and makes the
+adopted traits available to method lookup and generic bounds. Import from `std.serde.json` directly when you want only
+one side of the protocol.
+
+---
+
 ## Serialize
 
-- **Derive**: `@derive(Serialize)`
+- **Derive**: `@derive(Serialize)` or `@derive(json)`
 - **API**: `json_stringify(value) -> str`
 - **Trait import**: `from std.serde.json import Serialize` + `with Serialize` gives a default `.to_json()` implementation
 
@@ -41,7 +63,7 @@ def main() -> None:
 
 ## Deserialize
 
-- **Derive**: `@derive(Deserialize)`
+- **Derive**: `@derive(Deserialize)` or `@derive(json)`
 - **API**: `T.from_json(input: str) -> Result[T, str]`
 - **Trait import**: `with Deserialize` still requires either `@derive(Deserialize)` or an explicit `from_json()` implementation
 

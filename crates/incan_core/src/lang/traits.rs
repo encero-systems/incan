@@ -28,6 +28,8 @@ pub enum TraitId {
     Iterator,
     IntoIterator,
     Error,
+    Iterable,
+    Sum,
 }
 
 /// Metadata for a builtin trait.
@@ -135,6 +137,20 @@ pub const TRAITS: &[TraitInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    info(
+        TraitId::Iterable,
+        "Iterable",
+        "Trait for values that produce iterators.",
+        RFC::_006,
+        Since(0, 3),
+    ),
+    info(
+        TraitId::Sum,
+        "Sum",
+        "Trait for values that can be produced by summing iterator items.",
+        RFC::_088,
+        Since(0, 3),
+    ),
 ];
 
 /// Resolve a spelling to a builtin trait identifier.
@@ -171,6 +187,8 @@ pub fn info_for(id: TraitId) -> TraitInfo {
         TraitId::Iterator => TRAITS[13],
         TraitId::IntoIterator => TRAITS[14],
         TraitId::Error => TRAITS[15],
+        TraitId::Iterable => TRAITS[16],
+        TraitId::Sum => TRAITS[17],
     }
 }
 

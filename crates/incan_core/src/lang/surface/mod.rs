@@ -10,6 +10,7 @@
 //! The goal is the same as other `incan_core::lang` registries: avoid stringly-typed checks
 //! scattered through the compiler/tooling by providing stable IDs + metadata.
 
+pub mod collection_helpers;
 pub mod constructors;
 pub mod functions;
 pub mod methods;
@@ -19,5 +20,5 @@ pub mod types;
 // `crate::lang::surface::string_methods`, `crate::lang::surface::list_methods`, ...
 pub use methods::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    list_methods, option_methods, set_methods, string_methods,
+    list_methods, option_methods, result_methods, set_methods, string_methods,
 };

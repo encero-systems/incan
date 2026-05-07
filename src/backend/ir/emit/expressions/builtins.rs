@@ -8,6 +8,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::super::expr::{BuiltinFn, IrExprKind, TypedExpr};
+use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::builtins::{self, BuiltinFnId};
@@ -272,6 +273,20 @@ impl<'a> IrEmitter<'a> {
                     })
                 } else {
                     Ok(quote! { String::from("null") })
+                }
+            }
+            BuiltinFn::ListRepeat => {
+                if args.len() >= 2 {
+                    let value = self.emit_expr_for_use(
+                        &args[0],
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(&args[0].ty),
+                        },
+                    )?;
+                    let count = self.emit_expr(&args[1])?;
+                    Ok(quote! { incan_stdlib::collections::list_repeat(#value, (#count) as i64) })
+                } else {
+                    Ok(quote! { incan_stdlib::collections::list_repeat((), 0i64) })
                 }
             }
         }

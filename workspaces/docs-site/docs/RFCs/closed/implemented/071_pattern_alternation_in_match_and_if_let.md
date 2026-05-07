@@ -1,6 +1,6 @@
 # RFC 071: Pattern alternation in `match` and `if let`
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-04-23
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/387
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.38
 
 ## Summary
 
@@ -178,7 +178,7 @@ For example:
 
 ```incan
 match value:
-    int(n) | str(n) => use(n)
+    int(_) | str(_) => use_present_value()
     None => pass
 ```
 
@@ -248,10 +248,81 @@ Non-normative recommended shape:
 - **Formatter**: formatter support is needed so long alternation arms remain readable and stable.
 - **LSP / Tooling**: completions, hover, and diagnostics should treat grouped alternatives as one branch with ordinary per-pattern checking.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should pattern alternation be limited to `match` and `if let` for the first release, or should every future pattern-bearing construct automatically inherit it once it reuses the same pattern grammar?
-- Should the formatter prefer keeping short alternations on one line and force multiline layout past a certain width, or should it preserve author grouping more aggressively?
-- Should `_` be freely mixable with other alternatives in the same arm, or should `A | _` be diagnosed as redundant style-by-default?
+### Phase 1: Parser, AST, and formatter
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Extend the pattern AST with a first-class alternation shape.
+- Parse `|` as pattern alternation in `match` arm and `if let` pattern positions.
+- Preserve ordinary value-level and type-level `|` behavior outside pattern positions.
+- Format short alternations on one line and wrap long alternatives with existing multiline grouping rules.
+
+### Phase 2: Typechecker and diagnostics
+
+- Type-check every alternative against the same scrutinee type.
+- Enforce identical binding name sets across alternatives.
+- Enforce identical binding types across alternatives.
+- Emit span-precise diagnostics for mismatched bindings and mismatched binding types.
+- Treat wildcard-containing alternations such as `A | _` as valid patterns without adding a style diagnostic.
+
+### Phase 3: Lowering, IR, and emission
+
+- Lower AST alternation into the existing IR pattern alternation representation.
+- Emit Rust pattern alternation or an equivalent lowered form without changing branch semantics.
+- Preserve exhaustiveness behavior as though each alternative appeared as a separate arm with the same body.
+
+### Phase 4: Tests and docs
+
+- Add parser and formatter coverage for `match` and `if let` alternation.
+- Add typechecker coverage for valid no-binding and same-binding alternatives.
+- Add diagnostic coverage for missing bindings, different binding names, and different binding types.
+- Add codegen snapshot coverage showing emitted branch sharing.
+- Update user-facing language docs and release notes for the new pattern syntax.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Resolve scope inheritance: RFC 071 applies to `match` arms and `if let`; future pattern-bearing constructs opt in deliberately.
+- [x] Resolve formatter policy: short alternations stay inline; long alternatives use existing multiline grouping behavior, including parenthesized grouping when needed.
+- [x] Resolve wildcard policy: `_` may appear in alternations, `A | _` is valid and exhaustive, and this RFC does not add redundancy/style diagnostics.
+
+### Parser / AST / formatter
+
+- [x] AST: add a first-class pattern alternation shape.
+- [x] Parser: parse `|` alternation in `match` arm patterns.
+- [x] Parser: parse `|` alternation in `if let` patterns.
+- [x] Parser: keep expression/type `|` behavior unchanged outside pattern positions.
+- [x] Formatter: render short alternations stably.
+- [x] Formatter: render long alternations with stable multiline grouping.
+
+### Typechecker / diagnostics
+
+- [x] Typechecker: validate each alternative against the scrutinee type.
+- [x] Typechecker: accept alternatives with identical empty binding sets.
+- [x] Typechecker: accept alternatives with identical binding names and types.
+- [x] Diagnostic: reject alternatives where one side binds a name and another does not.
+- [x] Diagnostic: reject alternatives with different binding names.
+- [x] Diagnostic: reject alternatives with different inferred binding types.
+
+### Lowering / IR / emission
+
+- [x] Lowering: map AST alternation to IR pattern alternation.
+- [x] Emission: emit faithful Rust grouped patterns or equivalent lowered branches.
+- [x] Exhaustiveness: count every alternative as branch coverage for `match`.
+
+### Tests / docs / release
+
+- [x] Parser tests cover `match` and `if let` alternation.
+- [x] Formatter tests cover inline and multiline alternation formatting.
+- [x] Typechecker tests cover valid and invalid binding agreement.
+- [x] Codegen snapshots cover emitted alternation.
+- [x] User-facing language docs explain pattern alternation.
+- [x] Release notes mention RFC 071 and issue #387.
+- [x] Development version is bumped from the active `0.3.0-dev.N` line.
+
+## Design Decisions
+
+- Pattern alternation is limited to `match` arms and `if let` for this RFC. Future pattern-bearing constructs should opt in deliberately when they adopt the same pattern grammar.
+- The formatter should keep short alternations on one line. When an alternation becomes too long, it may use multiline parenthesized grouping so the result remains parseable as one pattern.
+- `_` may appear in an alternation like any other no-binding pattern. `A | _` is valid and exhaustive. This RFC does not introduce redundancy or style diagnostics for wildcard-containing alternations; a future lint policy may add those separately.

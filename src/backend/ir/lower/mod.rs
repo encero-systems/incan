@@ -45,6 +45,7 @@ use crate::frontend::decorator_resolution;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 // Re-export error types
@@ -84,6 +85,8 @@ pub struct AstLowering {
     pub(super) trait_methods: HashMap<String, Vec<String>>,
     /// Track full trait declarations for default-method expansion into impl blocks.
     pub(super) trait_decls: HashMap<String, ast::TraitDecl>,
+    /// Concrete nominal types that explicitly adopt the stdlib Iterator protocol.
+    pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Newtype -> chosen validated constructor method name (e.g. "from_underlying", "from_str"),
@@ -112,6 +115,8 @@ pub struct AstLowering {
     pub(super) non_linear_context_depth: usize,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Function-typed parameters for the currently lowered callable body.
+    pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub(super) symbol_aliases: HashMap<String, String>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
@@ -218,6 +223,7 @@ impl AstLowering {
             class_decls: HashMap::new(),
             trait_methods: HashMap::new(),
             trait_decls: HashMap::new(),
+            iterator_adopter_names: HashSet::new(),
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
             current_impl_type: None,
@@ -226,6 +232,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
+            callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
             rusttype_underlying: HashMap::new(),
@@ -239,6 +246,28 @@ impl AstLowering {
         let mut s = Self::new();
         s.type_info = Some(type_info);
         s
+    }
+
+    /// Seed trait declarations from imported source modules so RFC 024 default methods can be expanded into adopter
+    /// impls.
+    pub fn seed_dependency_trait_decls(&mut self, dependency_modules: &[(&str, &ast::Program, Option<Vec<String>>)]) {
+        for (module_name, module_ast, path_segments) in dependency_modules {
+            let mut module_keys = vec![(*module_name).to_string()];
+            if let Some(path_segments) = path_segments {
+                let dotted = path_segments.join(".");
+                if !module_keys.iter().any(|key| key == &dotted) {
+                    module_keys.push(dotted);
+                }
+            }
+            for decl in &module_ast.declarations {
+                let ast::Declaration::Trait(tr) = &decl.node else {
+                    continue;
+                };
+                for module_key in &module_keys {
+                    self.trait_decls.insert(format!("{module_key}.{}", tr.name), tr.clone());
+                }
+            }
+        }
     }
 
     /// Seed alias maps for types that may be referenced from other modules.
@@ -331,6 +360,49 @@ impl AstLowering {
         }
         if is_static_binding && let Some(scope) = self.static_binding_scopes.last_mut() {
             scope.insert(name);
+        }
+    }
+
+    /// Replace the nearest local binding type for `name` after lowering refines it.
+    pub(super) fn update_local_binding(&mut self, name: &str, ty: IrType) {
+        if let Some(scope) = self.scopes.iter_mut().rev().find(|scope| scope.contains_key(name)) {
+            scope.insert(name.to_string(), ty);
+        }
+    }
+
+    /// Track function-typed parameters for the callable body currently being lowered.
+    pub(super) fn push_callable_param_scope(&mut self, params: &[FunctionParam]) {
+        self.callable_param_scopes.push(
+            params
+                .iter()
+                .filter(|param| matches!(param.ty, IrType::Function { .. }))
+                .map(|param| param.name.clone())
+                .collect(),
+        );
+    }
+
+    /// Drop the current callable parameter tracking scope.
+    pub(super) fn pop_callable_param_scope(&mut self) {
+        let _ = self.callable_param_scopes.pop();
+    }
+
+    /// Return whether the current callable body has a function-typed parameter named `name`.
+    pub(super) fn current_callable_param_scope_contains(&self, name: &str) -> bool {
+        self.callable_param_scopes
+            .last()
+            .is_some_and(|params| params.contains(name))
+    }
+
+    /// Refresh the root-scope function binding after lowering has refined the function signature.
+    fn update_root_function_binding(&mut self, name: &str, params: &[FunctionParam], return_type: &IrType) {
+        if let Some(scope) = self.scopes.first_mut() {
+            scope.insert(
+                name.to_string(),
+                IrType::Function {
+                    params: params.iter().map(|param| param.ty.clone()).collect(),
+                    ret: Box::new(return_type.clone()),
+                },
+            );
         }
     }
 
@@ -470,6 +542,7 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
+        self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
             .iter()
@@ -505,12 +578,24 @@ impl AstLowering {
                 }
             }
             if let ast::Declaration::Model(ref m) = decl.node {
+                if m.traits
+                    .iter()
+                    .any(|bound| bound.node.name == core_traits::as_str(TraitId::Iterator))
+                {
+                    self.iterator_adopter_names.insert(m.name.clone());
+                }
                 let aliases = Self::method_alias_rebindings(&m.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(m.name.clone(), aliases);
                 }
             }
             if let ast::Declaration::Class(ref c) = decl.node {
+                if c.traits
+                    .iter()
+                    .any(|bound| bound.node.name == core_traits::as_str(TraitId::Iterator))
+                {
+                    self.iterator_adopter_names.insert(c.name.clone());
+                }
                 let aliases = Self::method_alias_rebindings(&c.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(c.name.clone(), aliases);
@@ -553,11 +638,15 @@ impl AstLowering {
                 }
             }
         }
+        ir_program.newtype_checked_ctor = self.newtype_checked_ctor.clone();
 
         // Pass 1.5: register module-level const names into the root scope for lookups.
         // (Type inference/refinement happens later; Unknown is fine for non-const contexts.)
         for decl in &program.declarations {
             if let ast::Declaration::Const(ref c) = decl.node {
+                if c.name == "__derives__" {
+                    continue;
+                }
                 let ty = if let Some(ann) = &c.ty {
                     self.lower_const_annotation_type(&ann.node)
                 } else {
@@ -613,7 +702,10 @@ impl AstLowering {
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
                 ir_program
                     .function_registry
-                    .register(f.name.clone(), params.clone(), return_type);
+                    .register(f.name.clone(), params.clone(), return_type.clone());
+                if let Some(signature) = ir_program.function_registry.get(&f.name).cloned() {
+                    self.update_root_function_binding(&f.name, &signature.params, &signature.return_type);
+                }
                 if self
                     .type_info
                     .as_ref()
@@ -656,7 +748,13 @@ impl AstLowering {
                             }
 
                             // Generate impl block (may be empty if no methods, serde methods added during emission)
-                            match self.lower_model_methods(&struct_ir.name, &m.type_params, &m.methods) {
+                            match self.lower_model_methods(
+                                &struct_ir.name,
+                                &m.type_params,
+                                &m.methods,
+                                &m.properties,
+                                &m.traits,
+                            ) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
@@ -668,17 +766,13 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &m.type_params)
                                 {
-                                    if !self.trait_decls.contains_key(&trait_name)
-                                        && Self::is_stdlib_serde_trait_name(&trait_name)
-                                    {
-                                        continue;
-                                    }
                                     match self.lower_trait_impl(
                                         &struct_ir.name,
                                         &m.type_params,
                                         &trait_name,
                                         trait_type_args,
                                         &m.methods,
+                                        &m.properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
@@ -687,12 +781,30 @@ impl AstLowering {
                                     }
                                 }
                             }
+                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&m.decorators) {
+                                match self.lower_trait_impl(
+                                    &struct_ir.name,
+                                    &m.type_params,
+                                    &trait_name,
+                                    trait_type_args,
+                                    &m.methods,
+                                    &m.properties,
+                                ) {
+                                    Ok(trait_impl) => {
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
+                                }
+                            }
                         }
                         Err(e) => errors.push(e),
                     }
                 }
                 ast::Declaration::Docstring(_) | ast::Declaration::TestModule(_) => {
                     // Module-level docstrings and inline test modules are not part of production IR.
+                    continue;
+                }
+                ast::Declaration::Const(c) if c.name == "__derives__" => {
                     continue;
                 }
                 ast::Declaration::Class(c) => {
@@ -710,14 +822,24 @@ impl AstLowering {
                             if let Err(e) = self.collect_inherited_methods(&c.name, &mut all_methods) {
                                 errors.push(e);
                             }
+                            let mut all_properties = Vec::new();
+                            if let Err(e) = self.collect_inherited_properties(&c.name, &mut all_properties) {
+                                errors.push(e);
+                            }
 
-                            // Generate impl block for all methods (inherited + own)
-                            if !all_methods.is_empty() {
+                            // Generate impl block for all methods/properties (inherited + own)
+                            if !all_methods.is_empty() || !all_properties.is_empty() {
                                 match self.lower_decorated_method_statics(&struct_ir.name, &all_methods) {
                                     Ok(statics) => ir_program.declarations.extend(statics),
                                     Err(e) => errors.push(e),
                                 }
-                                match self.lower_class_methods(&struct_ir.name, &c.type_params, &all_methods) {
+                                match self.lower_class_methods(
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                    &all_methods,
+                                    &all_properties,
+                                    &c.traits,
+                                ) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -730,23 +852,34 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &c.type_params)
                                 {
-                                    if !self.trait_decls.contains_key(&trait_name)
-                                        && Self::is_stdlib_serde_trait_name(&trait_name)
-                                    {
-                                        continue;
-                                    }
                                     match self.lower_trait_impl(
                                         &struct_ir.name,
                                         &c.type_params,
                                         &trait_name,
                                         trait_type_args,
                                         &all_methods,
+                                        &all_properties,
                                     ) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                         }
                                         Err(e) => errors.push(e),
                                     }
+                                }
+                            }
+                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&c.decorators) {
+                                match self.lower_trait_impl(
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                    &trait_name,
+                                    trait_type_args,
+                                    &all_methods,
+                                    &all_properties,
+                                ) {
+                                    Ok(trait_impl) => {
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
                                 }
                             }
                         }
@@ -778,7 +911,7 @@ impl AstLowering {
                                     Ok(statics) => ir_program.declarations.extend(statics),
                                     Err(e) => errors.push(e),
                                 }
-                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods) {
+                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[], &[]) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -802,7 +935,7 @@ impl AstLowering {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
                             }
-                            match self.lower_enum_methods(&enum_ir.name, &e.type_params, &e.methods) {
+                            match self.lower_enum_methods(&enum_ir.name, &e.type_params, &e.methods, &e.traits) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
@@ -814,23 +947,34 @@ impl AstLowering {
                             for (trait_name, trait_type_args) in
                                 self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &e.type_params)
                             {
-                                if !self.trait_decls.contains_key(&trait_name)
-                                    && Self::is_stdlib_serde_trait_name(&trait_name)
-                                {
-                                    continue;
-                                }
                                 match self.lower_trait_impl(
                                     &enum_ir.name,
                                     &e.type_params,
                                     &trait_name,
                                     trait_type_args,
                                     &e.methods,
+                                    &[],
                                 ) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
                                     Err(e) => errors.push(e),
                                 }
+                            }
+                        }
+                        for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&e.decorators) {
+                            match self.lower_trait_impl(
+                                &enum_ir.name,
+                                &e.type_params,
+                                &trait_name,
+                                trait_type_args,
+                                &e.methods,
+                                &[],
+                            ) {
+                                Ok(trait_impl) => {
+                                    ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                }
+                                Err(e) => errors.push(e),
                             }
                         }
                     }
@@ -840,6 +984,16 @@ impl AstLowering {
                     Ok(decls) => {
                         if f.name == conventions::ENTRYPOINT_NAME {
                             ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
+                        }
+                        for decl in &decls {
+                            if let IrDeclKind::Function(func) = &decl.kind {
+                                ir_program.function_registry.register(
+                                    func.name.clone(),
+                                    func.params.clone(),
+                                    func.return_type.clone(),
+                                );
+                                self.update_root_function_binding(&func.name, &func.params, &func.return_type);
+                            }
                         }
                         ir_program.declarations.extend(decls);
                     }
@@ -853,6 +1007,14 @@ impl AstLowering {
                                 && func.name == conventions::ENTRYPOINT_NAME
                             {
                                 ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
+                            }
+                            if let IrDeclKind::Function(ref func) = ir_decl.kind {
+                                ir_program.function_registry.register(
+                                    func.name.clone(),
+                                    func.params.clone(),
+                                    func.return_type.clone(),
+                                );
+                                self.update_root_function_binding(&func.name, &func.params, &func.return_type);
                             }
                             ir_program.declarations.push(ir_decl);
                         }
@@ -986,11 +1148,29 @@ impl AstLowering {
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
             is_async: f.is_async(),
+            is_generator: false,
             visibility: Self::map_visibility(f.visibility),
             type_params: Vec::new(),
             is_extern: false,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
+        }
+    }
+
+    /// Add alias-qualified dependency trait declarations so default methods can expand for imported derive aliases.
+    fn alias_imported_dependency_trait_decls(&mut self) {
+        let existing = self.trait_decls.clone();
+        for (alias, path) in self.import_aliases.clone() {
+            let module_key = path.join(".");
+            let prefix = format!("{module_key}.");
+            for (qualified, decl) in &existing {
+                let Some(trait_name) = qualified.strip_prefix(&prefix) else {
+                    continue;
+                };
+                self.trait_decls
+                    .entry(format!("{alias}.{trait_name}"))
+                    .or_insert_with(|| decl.clone());
+            }
         }
     }
 

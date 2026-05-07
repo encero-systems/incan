@@ -1,0 +1,233 @@
+from rust::std::fs import Metadata as RustMetadata, metadata, symlink_metadata
+from rust::std::path import Path as RustPath
+from rust::std::time import SystemTime, UNIX_EPOCH
+from std.fs.path import Path, IoError, _io_error
+
+
+@derive(Clone)
+pub model DirEntry:
+    """
+    Directory entry wrapper returned by `Path.scandir()`.
+
+    A `DirEntry` stores the child `Path` discovered during a scan. Its methods are convenience accessors over that path:
+    `file_name()` returns `path.name()`, `is_file()` delegates to `path.is_file()`, and `metadata()` delegates to
+    `path.stat()`.
+
+    Example:
+
+    ```incan
+    for entry in Path(".").scandir()?:
+        # `entry.path` is the child path; the helper methods below use it.
+        if entry.is_file():
+            println(entry.path)
+    ```
+    """
+
+    pub path: Path
+
+    def file_name(self) -> str:
+        """
+        Return the entry name.
+
+        Returns:
+            The final path component for this directory entry.
+        """
+        return self.path.name()
+
+    def is_file(self) -> bool:
+        """
+        Check whether this entry resolves to a regular file.
+
+        Returns:
+            `true` when the entry currently resolves to a regular file.
+        """
+        return self.path.is_file()
+
+    def is_dir(self) -> bool:
+        """
+        Check whether this entry resolves to a directory.
+
+        Returns:
+            `true` when the entry currently resolves to a directory.
+        """
+        return self.path.is_dir()
+
+    def is_symlink(self) -> bool:
+        """
+        Check whether this entry itself is a symbolic link.
+
+        Returns:
+            `true` when the entry path is a symlink.
+        """
+        return self.path.is_symlink()
+
+    def metadata(self) -> Result[PathStat, IoError]:
+        """
+        Create a metadata view for this entry.
+
+        Returns:
+            A `PathStat` view that follows symlinks, or `Err(IoError)`.
+        """
+        return self.path.stat()
+
+
+@derive(Clone)
+pub model PathStat:
+    """
+    Filesystem metadata view for a path.
+
+    `stat()` creates a view that follows symlinks; `lstat()` creates one that inspects the path itself. Accessors
+    re-read host metadata so filesystem changes can still surface as `IoError`.
+
+    Example:
+
+    ```incan
+    stat = Path("data.bin").stat()?
+    println(stat.size()?)
+    println(stat.modified_unix()?)
+    ```
+    """
+
+    pub path: Path
+    pub follow_symlinks: bool
+
+    def size(self) -> Result[int, IoError]:
+        """
+        Return the metadata size.
+
+        Returns:
+            Size in bytes, or `Err(IoError)` if metadata cannot be read.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        return Ok(int(meta.len()))
+
+    def is_file(self) -> Result[bool, IoError]:
+        """
+        Check whether the metadata describes a regular file.
+
+        Returns:
+            `Ok(true)` for a regular file, `Ok(false)` for other file kinds, or `Err(IoError)`.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        return Ok(meta.is_file())
+
+    def is_dir(self) -> Result[bool, IoError]:
+        """
+        Check whether the metadata describes a directory.
+
+        Returns:
+            `Ok(true)` for a directory, `Ok(false)` for other file kinds, or `Err(IoError)`.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        return Ok(meta.is_dir())
+
+    def is_symlink(self) -> Result[bool, IoError]:
+        """
+        Check whether the original path is a symbolic link.
+
+        Returns:
+            `Ok(true)` when the path itself is a symlink.
+        """
+        return Ok(self.path.is_symlink())
+
+    def readonly(self) -> Result[bool, IoError]:
+        """
+        Check whether host permissions mark the path readonly.
+
+        Returns:
+            `Ok(true)` when the path is readonly, `Ok(false)` otherwise, or `Err(IoError)`.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        return Ok(meta.permissions().readonly())
+
+    def modified_unix(self) -> Result[int, IoError]:
+        """
+        Return the last modification time.
+
+        Returns:
+            Seconds since the Unix epoch, or `Err(IoError)` when the host cannot provide the timestamp.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        match meta.modified():
+            Ok(value) => return _system_time_to_unix(self.path, value)
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def accessed_unix(self) -> Result[int, IoError]:
+        """
+        Return the last access time.
+
+        Returns:
+            Seconds since the Unix epoch, or `Err(IoError)` when the host cannot provide the timestamp.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        match meta.accessed():
+            Ok(value) => return _system_time_to_unix(self.path, value)
+            Err(err) => return Err(_io_error(self.path, err))
+
+    def created_unix(self) -> Result[int, IoError]:
+        """
+        Return the creation time.
+
+        Returns:
+            Seconds since the Unix epoch, or `Err(IoError)` when the host does not provide a creation timestamp.
+        """
+        meta = _path_stat_metadata(self.path, self.follow_symlinks)?
+        match meta.created():
+            Ok(value) => return _system_time_to_unix(self.path, value)
+            Err(err) => return Err(_io_error(self.path, err))
+
+
+@derive(Clone)
+pub model DiskUsage:
+    """
+    Capacity information for the filesystem containing a path.
+
+    Values are byte counts for total capacity, used space, and free space as reported by the host.
+
+    Example:
+
+    ```incan
+    usage = Path(".").disk_usage()?
+    println(usage.free)
+    ```
+    """
+
+    pub total: int
+    pub used: int
+    pub free: int
+
+
+def _path_stat_metadata(path: Path, follow_symlinks: bool) -> Result[RustMetadata, IoError]:
+    """
+    Read metadata for `PathStat` accessors.
+
+    Args:
+        path: Path whose metadata should be read.
+        follow_symlinks: Use `metadata()` when true and `symlink_metadata()` when false.
+
+    Returns:
+        Host metadata, or `Err(IoError)` anchored to `path`.
+    """
+    if follow_symlinks:
+        match metadata(RustPath.new(path.0)):
+            Ok(meta) => return Ok(meta)
+            Err(err) => return Err(_io_error(path, err))
+    match symlink_metadata(RustPath.new(path.0)):
+        Ok(meta) => return Ok(meta)
+        Err(err) => return Err(_io_error(path, err))
+
+
+def _system_time_to_unix(path: Path, value: SystemTime) -> Result[int, IoError]:
+    """
+    Convert a host timestamp to Unix seconds.
+
+    Args:
+        path: Path used for error context.
+        value: Host timestamp to convert.
+
+    Returns:
+        Seconds since `UNIX_EPOCH`, or `Err(IoError)` if the timestamp predates the epoch.
+    """
+    match value.duration_since(UNIX_EPOCH):
+        Ok(duration) => return Ok(int(duration.as_secs()))
+        Err(err) => return Err(_io_error(path, err))

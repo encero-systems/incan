@@ -287,6 +287,241 @@ def test_smoke() -> None:
 }
 
 #[test]
+fn test_lock_with_path_rust_dependency_stays_fresh_for_test_issue505() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_lock_path_dep_fresh_for_test_project",
+        r#"
+
+[rust-dependencies]
+tiny_helper = { path = "rust/tiny_helper" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tiny_helper import plus_one
+
+pub def value() -> int:
+  return plus_one(0)
+
+def main() -> None:
+  println(value())
+"#,
+    )?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.testing import assert_eq
+from crate.main import value
+
+def test_value() -> None:
+  assert_eq(value(), 1)
+"#,
+    )?;
+    let helper_src = tmp.path().join("rust").join("tiny_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "tiny_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        "pub fn plus_one(value: i64) -> i64 { value + 1 }\n",
+    )?;
+
+    let lock_output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock_output, "incan lock with path Rust dependency");
+
+    let test_output = run_incan(tmp.path(), &["test"])?;
+
+    assert_success(&test_output, "incan test after lock with path Rust dependency");
+    let stderr = String::from_utf8_lossy(&test_output.stderr);
+    assert!(
+        !stderr.contains("incan.lock is out of date"),
+        "fresh lock should not warn as stale for path Rust dependencies, got:\n{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn multi_entrypoint_lock_covers_project_scripts_and_tests_issue505() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_multi_entry_lock_freshness_project",
+        r#"
+extra = "src/extra.incn"
+
+[rust-dependencies]
+tiny_helper = { path = "rust/tiny_helper" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"pub def value() -> int:
+  return 1
+
+def main() -> None:
+  println(value())
+"#,
+    )?;
+    let extra_path = tmp.path().join("src").join("extra.incn");
+    fs::write(
+        &extra_path,
+        r#"from rust::tiny_helper import plus_one
+
+def main() -> None:
+  println(plus_one(1))
+"#,
+    )?;
+
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.serde.json import Serialize
+from std.testing import assert_eq
+from crate.main import value
+
+model Event with Serialize:
+  id: int
+
+def test_value() -> None:
+  event = Event(id=1)
+  assert_eq(event.to_json(), "{\"id\":1}")
+  assert_eq(value(), 1)
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("tiny_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "tiny_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        "pub fn plus_one(value: i64) -> i64 { value + 1 }\n",
+    )?;
+
+    let assert_no_stale_warning = |output: &Output, context: &str| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("incan.lock is out of date"),
+            "{context} should not warn that incan.lock is stale, got:\n{stderr}"
+        );
+    };
+
+    let default_lock_output = run_incan(tmp.path(), &["lock"])?;
+    assert_success(&default_lock_output, "default incan lock");
+
+    let test_after_default_lock = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_after_default_lock, "incan test after default lock");
+    assert_no_stale_warning(&test_after_default_lock, "incan test after default lock");
+
+    let extra_after_default_lock = run_incan(
+        tmp.path(),
+        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_after_default_lock, "incan run extra after default lock");
+    assert_no_stale_warning(&extra_after_default_lock, "incan run extra after default lock");
+
+    let extra_lock_output = run_incan(
+        tmp.path(),
+        &["lock", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_lock_output, "incan lock extra");
+
+    let extra_after_extra_lock = run_incan(
+        tmp.path(),
+        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_after_extra_lock, "incan run extra after extra lock");
+    assert_no_stale_warning(&extra_after_extra_lock, "incan run extra after extra lock");
+
+    let test_after_extra_lock = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_after_extra_lock, "incan test after extra lock");
+    assert_no_stale_warning(&test_after_extra_lock, "incan test after extra lock");
+
+    Ok(())
+}
+
+#[test]
+fn run_accepts_owned_incan_value_for_borrowed_generic_rust_param_issue506() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_borrowed_generic_rust_param_project",
+        r#"
+
+[rust-dependencies]
+borrow_helper = { path = "rust/borrow_helper" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::borrow_helper import takes_ref
+
+model Payload:
+  name: str
+
+def main() -> None:
+  payload = Payload(name="demo")
+  println(takes_ref(payload))
+"#,
+    )?;
+    let helper_src = tmp.path().join("rust").join("borrow_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "borrow_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        "pub fn takes_ref<TValue>(_value: &TValue) -> i64 { 1 }\n",
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+
+    assert_success(&output, "incan run with borrowed generic Rust param");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains('1'),
+        "expected borrowed generic Rust helper output, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_locked_rejects_stale_lockfile() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_locked_project", "")?;

@@ -23,8 +23,8 @@
 //! - import-path traversal
 
 use crate::frontend::ast::{
-    AssertKind, CallArg, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr, ListEntry,
-    MatchBody, Program, Spanned, Statement,
+    AssertKind, CallArg, ComprehensionClause, Condition, Declaration, DecoratorArg, DecoratorArgValue, DictEntry, Expr,
+    ListEntry, MatchBody, Program, Spanned, Statement,
 };
 
 /// Returns `true` if any expression in `program` satisfies `pred`.
@@ -318,6 +318,13 @@ where
                     .is_some_and(|else_body| any_expr_in_body_impl(else_body, pred))
         }
         Expr::Loop(loop_expr) => any_expr_in_body_impl(&loop_expr.body, pred),
+        Expr::Generator(generator) => {
+            expr_has(&generator.expr.node, pred)
+                || generator.clauses.iter().any(|clause| match clause {
+                    ComprehensionClause::For { iter, .. } => expr_has(&iter.node, pred),
+                    ComprehensionClause::If(condition) => expr_has(&condition.node, pred),
+                })
+        }
         Expr::ListComp(comp) => {
             expr_has(&comp.expr.node, pred)
                 || expr_has(&comp.iter.node, pred)

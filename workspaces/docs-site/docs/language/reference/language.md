@@ -21,6 +21,7 @@
 - [Builtin types](#builtin-types)
 - [Surface constructors](#surface-constructors)
 - [Surface functions](#surface-functions)
+- [Built-in collection helpers](#built-in-collection-helpers)
 - [Surface string methods](#surface-string-methods)
 - [Surface types](#surface-types)
 - [Surface methods](#surface-methods)
@@ -102,9 +103,14 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
+| `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
+| `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
+| `std.graph` | - | - | - |
+| `std.io` | - | - | - |
+| `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 
 ## Builtin exceptions
@@ -307,6 +313,7 @@ and `@requires` keep their existing special behavior.
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
+| RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
 | RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
 | RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
@@ -351,6 +358,8 @@ and `@requires` keep their existing special behavior.
 | Iterator | `Iterator` |  | Trait for iterator behavior. | RFC 000 | 0.1 | Stable |
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |
+| Iterable | `Iterable` |  | Trait for values that produce iterators. | RFC 006 | 0.3 | Stable |
+| Sum | `Sum` |  | Trait for values that can be produced by summing iterator items. | RFC 088 | 0.3 | Stable |
 
 ## Operators
 
@@ -444,8 +453,20 @@ and `@requires` keep their existing special behavior.
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Int | `int` | `i64`, `i32` | Builtin signed integer type. | RFC 000 | 0.1 | Stable |
-| Float | `float` | `f64`, `f32` | Builtin floating-point type. | RFC 000 | 0.1 | Stable |
+| I8 | `i8` |  | Signed 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| I16 | `i16` | `short`, `smallint` | Signed 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| I32 | `i32` | `integer` | Signed 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| I64 | `i64` | `int`, `bigint`, `long` | Signed 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| I128 | `i128` | `hugeint` | Signed 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| U8 | `u8` | `byte` | Unsigned 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| U16 | `u16` |  | Unsigned 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| U32 | `u32` |  | Unsigned 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| U64 | `u64` |  | Unsigned 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| U128 | `u128` |  | Unsigned 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| F32 | `f32` | `real`, `fp32` | 32-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| F64 | `f64` | `float`, `double`, `fp64` | 64-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| ISize | `isize` |  | Pointer-sized signed integer type. | RFC 009 | 0.3 | Stable |
+| USize | `usize` |  | Pointer-sized unsigned integer type. | RFC 009 | 0.3 | Stable |
 | Bool | `bool` |  | Builtin boolean type. | RFC 000 | 0.1 | Stable |
 
 
@@ -462,6 +483,7 @@ and `@requires` keep their existing special behavior.
 | FrozenList | `FrozenList` | `frozenlist` | Immutable/const-friendly list type. | RFC 009 | 0.1 | Stable |
 | FrozenDict | `FrozenDict` | `frozendict` | Immutable/const-friendly dict type. | RFC 009 | 0.1 | Stable |
 | FrozenSet | `FrozenSet` | `frozenset` | Immutable/const-friendly set type. | RFC 009 | 0.1 | Stable |
+| Generator | `Generator` | `generator` | Lazy resumable producer type. | RFC 006 | 0.3 | Stable |
 
 ## Surface constructors
 
@@ -486,6 +508,12 @@ and `@requires` keep their existing special behavior.
 | Channel | `channel` |  | Create a bounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | UnboundedChannel | `unbounded_channel` |  | Create an unbounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | Oneshot | `oneshot` |  | Create a oneshot channel (sender, receiver). | RFC 000 | 0.1 | Stable |
+
+## Built-in collection helpers
+
+| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|---|---|
+| ListRepeat | `list` | `repeat` | `list.repeat[T](value: T, count: int) -> list[T]` |  | Create a list containing `count` clone-derived copies of `value`; negative counts raise `ValueError`. | RFC 069 | 0.3 | Stable |
 
 ## Surface string methods
 
@@ -514,6 +542,7 @@ and `@requires` keep their existing special behavior.
 | Semaphore | `Semaphore` |  | Named | Async/runtime semaphore. | RFC 000 | 0.1 | Stable |
 | Barrier | `Barrier` |  | Named | Async/runtime barrier. | RFC 000 | 0.1 | Stable |
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
+| TaskJoinError | `TaskJoinError` |  | Named | Error returned when a spawned task fails to join. | RFC 000 | 0.1 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |
@@ -595,6 +624,18 @@ and `@requires` keep their existing special behavior.
 | Copied | `copied` |  | Copy from Option[&T] to Option[T] when T: Copy. | RFC 000 | 0.1 | Stable |
 | UnwrapOr | `unwrap_or` |  | Return the contained value or a default. | RFC 000 | 0.1 | Stable |
 | Unwrap | `unwrap` |  | Return the contained value or panic. | RFC 000 | 0.1 | Stable |
+
+
+### Result methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Map | `map` |  | Transform an Ok payload while preserving Err. | RFC 070 | 0.3 | Stable |
+| MapErr | `map_err` |  | Transform an Err payload while preserving Ok. | RFC 070 | 0.3 | Stable |
+| AndThen | `and_then` |  | Chain a Result-returning operation from an Ok payload. | RFC 070 | 0.3 | Stable |
+| OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
+| Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
 
 
 ### FrozenList methods

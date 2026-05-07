@@ -19,6 +19,36 @@ use incan_core::lang::surface::constructors::{self, ConstructorId};
 const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
 
 impl<'a> IrEmitter<'a> {
+    /// Return the borrowed helper function item for a named function argument when the target parameter expects one.
+    fn borrowed_function_adapter_arg(&self, arg: &TypedExpr, target_ty: Option<&IrType>) -> Option<TokenStream> {
+        let IrType::Function { params, .. } = target_ty? else {
+            return None;
+        };
+        let borrowed_indices: Vec<usize> = params
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ty)| matches!(ty, IrType::Ref(_)).then_some(idx))
+            .collect();
+        if borrowed_indices.is_empty() {
+            return None;
+        }
+        let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &arg.kind
+        else {
+            return None;
+        };
+        if !matches!(arg.ty, IrType::Function { .. }) || !self.needs_borrowed_function_adapter(name, &borrowed_indices)
+        {
+            return None;
+        }
+        let helper_name = Self::borrowed_function_adapter_name(name, &borrowed_indices);
+        let helper = Self::rust_ident(&helper_name);
+        Some(quote! { #helper })
+    }
+
     /// Heuristic: detect whether a type still has unresolved generic parts.
     ///
     /// This is used when seeding emitted literals (`None`, `Ok`, `Err`) with explicit Rust type arguments to help
@@ -138,7 +168,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a concrete payload argument for a `Union[...]` parameter as the generated enum variant.
-    fn emit_union_payload_arg(
+    pub(super) fn emit_union_payload_arg(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,
@@ -555,11 +585,17 @@ impl<'a> IrEmitter<'a> {
                 }
                 let emitted = emitted?;
 
+                if let Some(adapter) = self.borrowed_function_adapter_arg(a, target_ty) {
+                    return Ok(adapter);
+                }
+
                 // Check VarAccess for explicit borrow requirements
                 if let IrExprKind::Var { access, .. } = &a.kind {
                     match access {
                         VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                        VarAccess::Borrow => return Ok(quote! { &#emitted }),
+                        VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
+                            return Ok(quote! { &#emitted });
+                        }
                         _ => {}
                     }
                 }
@@ -1072,6 +1108,10 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit one positional or named argument for a non-rest call.
+    ///
+    /// The caller supplies the selected parameter so this path can apply literal inference, union wrapping, and borrow
+    /// preservation with the same target type information used by ordinary Incan calls.
     fn emit_regular_call_arg(
         &self,
         func: &TypedExpr,
@@ -1080,6 +1120,9 @@ impl<'a> IrEmitter<'a> {
         param: &FunctionParam,
     ) -> Result<TokenStream, EmitError> {
         let target_ty = Some(&param.ty);
+        if let Some(adapter) = self.borrowed_function_adapter_arg(arg, target_ty) {
+            return Ok(adapter);
+        }
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
             seed
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
@@ -1095,7 +1138,9 @@ impl<'a> IrEmitter<'a> {
         if let IrExprKind::Var { access, .. } = &arg.kind {
             match access {
                 VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                VarAccess::Borrow => return Ok(quote! { &#emitted }),
+                VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
+                    return Ok(quote! { &#emitted });
+                }
                 _ => {}
             }
         }

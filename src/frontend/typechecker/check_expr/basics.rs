@@ -4,7 +4,7 @@
 //! name resolution against the [`SymbolTable`], literal typing, and resolving `self` inside methods.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -16,6 +16,16 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker::check_expr) fn check_ident(&mut self, name: &str, span: Span) -> ResolvedType {
         // Note: `math` module requires `import math` (like Python).
         // When imported, it's registered as a Module symbol and found via normal lookup.
+
+        if let Some(consumed_span) = self.consumed_iterator_bindings.get(name).copied() {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "iterator binding `{name}` was consumed by a terminal iterator method at byte range {}..{}; clone or recreate the iterator before reusing it",
+                    consumed_span.start, consumed_span.end
+                ),
+                span,
+            ));
+        }
 
         let Some(sym) = self.lookup_symbol(name) else {
             self.errors.push(errors::unknown_symbol(name, span));
@@ -38,6 +48,7 @@ impl TypeChecker {
             SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
+            SymbolKind::Property(info) => (IdentKind::Value, info.return_type.clone()),
             SymbolKind::Module(info) => {
                 // Some `from rust::... import ...` forms are represented as module symbols instead of dedicated
                 // Rust-module placeholders. Keep them on the external-Rust path, but do not guess a concrete type from
@@ -69,7 +80,7 @@ impl TypeChecker {
                                 .iter()
                                 .map(|p| {
                                     CallableParam::positional(
-                                        self.resolved_type_from_rust_display(p.type_display.as_str()),
+                                        self.resolved_param_type_from_rust_display(p.type_display.as_str()),
                                     )
                                 })
                                 .collect();
@@ -104,6 +115,7 @@ impl TypeChecker {
         match lit {
             Literal::Int(_) => ResolvedType::Int,
             Literal::Float(_) => ResolvedType::Float,
+            Literal::Decimal(_) => ResolvedType::Unknown,
             Literal::String(_) => ResolvedType::Str,
             Literal::Bytes(_) => ResolvedType::Bytes,
             Literal::Bool(_) => ResolvedType::Bool,

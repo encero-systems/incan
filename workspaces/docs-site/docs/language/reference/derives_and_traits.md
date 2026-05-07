@@ -755,6 +755,20 @@ def main() -> None:
     println(User(name="Alice", age=30).to_json())
 ```
 
+Use the RFC 024 module derive when a model should adopt both JSON traits and expose module-qualified bounds:
+
+```incan
+from std.serde import json
+
+@derive(json)
+model User:
+    name: str
+    age: int
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+```
+
 ---
 
 ## Deserialize

@@ -121,8 +121,10 @@ nav:
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
+          - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
+          - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
           - Testing: language/how-to/testing_stdlib.md
@@ -134,6 +136,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
+          - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
@@ -148,7 +151,12 @@ nav:
               - Overview: language/reference/stdlib/index.md
               - std.async: language/reference/stdlib/async.md
               - std.derives.*: language/reference/stdlib/derives.md
+              - std.fs: language/reference/stdlib/fs.md
+              - std.graph: language/reference/stdlib/graph.md
+              - std.io: language/reference/stdlib/io.md
+              - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
+              - std.result: language/reference/stdlib/result.md
               - std.traits.*: language/reference/stdlib/traits.md
               - std.testing: language/reference/stdlib/testing.md
               - std.math: language/reference/stdlib/math.md
@@ -171,10 +179,14 @@ nav:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
+          - Compile time and runtime: language/explanation/compile_time_and_runtime.md
+          - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
+          - Generators: language/explanation/generators.md
           - Module static storage: language/explanation/static_storage.md
+          - Numeric types: language/explanation/numeric_types.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md
@@ -243,6 +255,7 @@ nav:
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md
+      - Release 0.3: release_notes/0_3.md
       - Release 0.2: release_notes/0_2.md
       - Release 0.1: release_notes/0_1.md
   - Roadmap: roadmap.md

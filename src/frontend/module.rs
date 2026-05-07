@@ -836,6 +836,7 @@ source-root = "library"
             docstring: None,
             fields: vec![],
             method_aliases: vec![],
+            properties: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -863,6 +864,7 @@ source-root = "library"
             docstring: None,
             fields: vec![],
             method_aliases: vec![],
+            properties: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -973,6 +975,7 @@ source-root = "library"
             traits: vec![],
             docstring: None,
             method_aliases: vec![],
+            properties: vec![],
             methods: vec![],
         };
         let program = Program {
@@ -1137,6 +1140,7 @@ source-root = "library"
             docstring: None,
             fields: vec![],
             method_aliases: vec![],
+            properties: vec![],
             methods: vec![],
         };
         let func = FunctionDecl {
@@ -1157,6 +1161,7 @@ source-root = "library"
             traits: vec![],
             docstring: None,
             method_aliases: vec![],
+            properties: vec![],
             methods: vec![],
         };
         let program = Program {

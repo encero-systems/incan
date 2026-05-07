@@ -80,9 +80,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a single trait bound: `Eq` or `From[U]`.
+    /// Parse a single trait bound: `Eq`, `From[U]`, or a module-qualified bound like `json.Serialize`.
     fn trait_bound(&mut self) -> Result<TraitBound, CompileError> {
-        let name = self.identifier_or_from_keyword()?;
+        let mut name = self.identifier_or_from_keyword()?;
+        while self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
+            let segment = self.identifier_or_from_keyword()?;
+            name.push('.');
+            name.push_str(&segment);
+        }
         let type_args = if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             let args = self.type_list()?;
             self.expect(
@@ -228,6 +233,13 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::Keyword(KeywordId::None)) {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(Type::Simple("None".to_string()), Span::new(start, end)));
+        }
+
+        if let TokenKind::Int(value) = &self.peek().kind {
+            let value = value.clone();
+            self.advance();
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(Type::IntLiteral(value), Span::new(start, end)));
         }
 
         // Named type (optionally `::`-qualified for Rust paths: `proto_mod::Binary`)

@@ -22,15 +22,16 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
+use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::{conventions, magic_methods};
 
 use super::super::decl::{
     IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrTraitBound, IrTypeParam, Visibility,
 };
-use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, Pattern, VarRefKind};
+use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use super::super::stmt::AssignTarget;
 use super::super::types::IrType;
-use super::super::{IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
+use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
 
 /// Import tracking for warning-free codegen.
@@ -67,11 +68,11 @@ impl ImportTracker {
         }
     }
 
+    /// Scan one statement for generated Rust dependencies needed by import tracking.
     fn scan_stmt(&mut self, stmt: &IrStmt) {
         match &stmt.kind {
             IrStmtKind::Let { value, .. } => self.scan_expr(value),
-            IrStmtKind::Expr(e) => self.scan_expr(e),
-            IrStmtKind::Return(Some(e)) => self.scan_expr(e),
+            IrStmtKind::Expr(e) | IrStmtKind::Return(Some(e)) | IrStmtKind::Yield(e) => self.scan_expr(e),
             IrStmtKind::Assign { value, .. } => self.scan_expr(value),
             IrStmtKind::If {
                 condition,
@@ -198,6 +199,15 @@ impl ImportTracker {
                     self.scan_expr(e);
                 }
             }
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr(element);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => self.scan_expr(iterable),
+                        IrGeneratorClause::If(condition) => self.scan_expr(condition),
+                    }
+                }
+            }
             IrExprKind::InteropCoerce { expr, .. } => self.scan_expr(expr),
             _ => {}
         }
@@ -210,6 +220,7 @@ impl ImportTracker {
 /// generated entrypoints/public surface and can avoid generated `unused_imports`/`dead_code` suppressions.
 struct GeneratedUseAnalyzer<'program> {
     declarations_by_name: HashMap<String, &'program IrDecl>,
+    function_registry: &'program FunctionRegistry,
     impls_by_target: HashMap<String, Vec<&'program super::super::decl::IrImpl>>,
     rust_extension_trait_imports_by_method: HashMap<String, Vec<String>>,
     external_error_trait_types: HashSet<String>,
@@ -228,6 +239,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     ) -> GeneratedUseAnalysis {
         let mut analyzer = Self {
             declarations_by_name: HashMap::new(),
+            function_registry: &program.function_registry,
             impls_by_target: HashMap::new(),
             rust_extension_trait_imports_by_method: HashMap::new(),
             external_error_trait_types: external_error_trait_types.clone(),
@@ -558,7 +570,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Scan one IR statement for generated Rust dependencies.
     fn scan_stmt(&mut self, stmt: &IrStmt) {
         match &stmt.kind {
-            IrStmtKind::Expr(expr) => self.scan_expr(expr),
+            IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => self.scan_expr(expr),
             IrStmtKind::Let { ty, value, .. } => {
                 self.scan_type(ty);
                 self.scan_expr(value);
@@ -692,13 +704,19 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Await(operand)
             | IrExprKind::Try(operand)
             | IrExprKind::InteropCoerce { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::Cast { expr: operand, .. } => self.scan_expr(operand),
             IrExprKind::Call {
-                func, args, type_args, ..
+                func,
+                args,
+                type_args,
+                callable_signature,
+                canonical_path,
             } => {
                 if let IrExprKind::Var { name, .. } = &func.kind {
                     self.analysis.used_constructors.insert(name.clone());
                 }
+                self.record_borrowed_function_value_adapters(func, args, callable_signature.as_ref(), canonical_path);
                 self.scan_expr(func);
                 for ty in type_args {
                     self.scan_type(ty);
@@ -741,8 +759,11 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_expr(&arg.expr);
                 }
             }
-            IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            IrExprKind::KnownMethodCall { receiver, kind, args } => {
                 self.scan_expr(receiver);
+                if let MethodKind::Result(kind @ (ResultMethodId::Inspect | ResultMethodId::InspectErr)) = kind {
+                    self.record_result_observer_callback(*kind, &receiver.ty, args.first().map(|arg| &arg.expr));
+                }
                 for arg in args {
                     self.scan_expr(&arg.expr);
                 }
@@ -792,6 +813,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(value);
                 if let Some(expr) = filter {
                     self.scan_expr(expr);
+                }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr(element);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => self.scan_expr(iterable),
+                        IrGeneratorClause::If(condition) => self.scan_expr(condition),
+                    }
                 }
             }
             IrExprKind::List(items) => {
@@ -881,11 +911,137 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
             | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson => {}
+        }
+    }
+
+    /// Record non-Copy observer callbacks that need generated borrowed helper items.
+    fn record_result_observer_callback(
+        &mut self,
+        method: ResultMethodId,
+        receiver_ty: &IrType,
+        callback: Option<&TypedExpr>,
+    ) {
+        let Some(callback) = callback else {
+            return;
+        };
+        let Some(observed_ty) = Self::result_observed_type(method, receiver_ty, callback) else {
+            return;
+        };
+        if observed_ty.is_copy() {
+            return;
+        }
+
+        match &callback.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } if matches!(callback.ty, IrType::Function { .. }) => {
+                self.analysis.borrowed_function_adapters.insert((name.clone(), vec![0]));
+            }
+            _ if !matches!(callback.ty, IrType::Function { .. }) => {
+                if let Some(type_name) = callback.ty.nominal_type_name() {
+                    self.analysis
+                        .result_observer_callable_types
+                        .insert(type_name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve the most precise callable signature available for adapter analysis at a call site.
+    fn function_signature_for_call(
+        &self,
+        func: &TypedExpr,
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: &Option<Vec<String>>,
+    ) -> Option<FunctionSignature> {
+        let local_name = match &func.kind {
+            IrExprKind::Var { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        let canonical_name = canonical_path.as_ref().and_then(|path| path.last()).map(String::as_str);
+        local_name
+            .and_then(|name| self.function_registry.get(name).cloned())
+            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
+            .or_else(|| callable_signature.cloned())
+            .or_else(|| match &func.ty {
+                IrType::Function { params, ret } => Some(FunctionSignature {
+                    params: params
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, ty)| super::super::decl::FunctionParam {
+                            name: format!("__incan_arg_{idx}"),
+                            ty: ty.clone(),
+                            mutability: super::super::types::Mutability::Immutable,
+                            is_self: false,
+                            kind: crate::frontend::ast::ParamKind::Normal,
+                            default: None,
+                        })
+                        .collect(),
+                    return_type: ret.as_ref().clone(),
+                }),
+                _ => None,
+            })
+    }
+
+    /// Record named function arguments that need private adapters for borrowed function-pointer parameters.
+    fn record_borrowed_function_value_adapters(
+        &mut self,
+        func: &TypedExpr,
+        args: &[super::super::expr::IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: &Option<Vec<String>>,
+    ) {
+        let Some(signature) = self.function_signature_for_call(func, callable_signature, canonical_path) else {
+            return;
+        };
+        for (idx, arg) in args.iter().enumerate() {
+            let Some(param) = signature.params.get(idx) else {
+                continue;
+            };
+            let IrType::Function { params, .. } = &param.ty else {
+                continue;
+            };
+            let borrowed_indices: Vec<usize> = params
+                .iter()
+                .enumerate()
+                .filter_map(|(param_idx, ty)| matches!(ty, IrType::Ref(_)).then_some(param_idx))
+                .collect();
+            if borrowed_indices.is_empty() {
+                continue;
+            }
+            if let IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } = &arg.expr.kind
+                && matches!(arg.expr.ty, IrType::Function { .. })
+            {
+                self.analysis
+                    .borrowed_function_adapters
+                    .insert((name.clone(), borrowed_indices));
+            }
+        }
+    }
+
+    /// Return the branch payload type observed by `inspect` or `inspect_err` during generated-use analysis.
+    fn result_observed_type(method: ResultMethodId, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
+        match (method, receiver_ty) {
+            (ResultMethodId::Inspect, IrType::Result(ok, _)) => Some(ok.as_ref().clone()),
+            (ResultMethodId::InspectErr, IrType::Result(_, err)) => Some(err.as_ref().clone()),
+            (ResultMethodId::Inspect | ResultMethodId::InspectErr, _) => match &callback.ty {
+                IrType::Function { params, .. } => params.first().cloned(),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -923,6 +1079,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
         ) {
             return false;
+        }
+        if matches!(receiver.ty, IrType::Unknown) {
+            return true;
         }
         let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
             return false;
@@ -974,7 +1133,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Bool
             | IrType::Int
             | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1035,7 +1197,10 @@ impl<'a> IrEmitter<'a> {
             | IrType::Bool
             | IrType::Int
             | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -1079,6 +1244,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Try(operand)
             | IrExprKind::Await(operand)
             | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::InteropCoerce { expr: operand, .. } => Self::collect_union_types_from_expr(operand, out),
             IrExprKind::Index { object, index } => {
                 Self::collect_union_types_from_expr(object, out);
@@ -1206,11 +1372,21 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_expr(filter, out);
                 }
             }
+            IrExprKind::Generator { element, clauses } => {
+                Self::collect_union_types_from_expr(element, out);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => Self::collect_union_types_from_expr(iterable, out),
+                        IrGeneratorClause::If(condition) => Self::collect_union_types_from_expr(condition, out),
+                    }
+                }
+            }
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
             | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::AssociatedFunction { .. }
@@ -1231,7 +1407,7 @@ impl<'a> IrEmitter<'a> {
                 Self::collect_union_types_from_type(ty, out);
                 Self::collect_union_types_from_expr(value, out);
             }
-            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) => {
+            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
                 Self::collect_union_types_from_expr(expr, out);
             }
             IrStmtKind::Assign { value, .. } => Self::collect_union_types_from_expr(value, out),
@@ -1385,6 +1561,8 @@ impl<'a> IrEmitter<'a> {
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
         }
+        self.seed_nominal_metadata_from_program(program);
+        self.newtype_checked_ctor = program.newtype_checked_ctor.clone();
 
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();
@@ -1475,6 +1653,10 @@ impl<'a> IrEmitter<'a> {
             &self.external_error_trait_types,
         );
         let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
+        let result_observer_callable_types = analysis.result_observer_callable_types.clone();
+        let borrowed_function_adapters = analysis.borrowed_function_adapters.clone();
+        self.set_result_observer_callable_types(result_observer_callable_types);
+        self.set_borrowed_function_adapters(borrowed_function_adapters);
         self.set_generated_use_analysis(analysis);
 
         let emitted_declarations: Vec<&IrDecl> = program
@@ -1482,7 +1664,6 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .filter(|decl| self.should_emit_decl(decl))
             .collect();
-
         let static_names: Vec<String> = emitted_declarations
             .iter()
             .filter_map(|decl| match &decl.kind {
@@ -1566,6 +1747,20 @@ impl<'a> IrEmitter<'a> {
         let mut decl_items = Vec::new();
         for decl in emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
+            if let IrDeclKind::Function(func) = &decl.kind {
+                let adapters = self.borrowed_function_adapters.borrow();
+                let mut matching_adapters: Vec<Vec<usize>> = adapters
+                    .iter()
+                    .filter_map(|(name, indices)| (name == &func.name).then_some(indices.clone()))
+                    .collect();
+                drop(adapters);
+                matching_adapters.sort();
+                for indices in matching_adapters {
+                    if let Some(helper) = self.emit_borrowed_function_adapter(func, &indices)? {
+                        decl_items.push(helper);
+                    }
+                }
+            }
         }
 
         // Add the declarations after imports

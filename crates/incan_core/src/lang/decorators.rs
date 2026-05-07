@@ -19,6 +19,7 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorId {
     Derive,
+    RustDerive,
     RustExtern,
     RustAllow,
     StaticMethod,
@@ -73,6 +74,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         "Derive common trait implementations.",
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        DecoratorId::RustDerive,
+        "rust.derive",
+        &[],
+        "Declare a Rust derive path required by a derivable Incan trait.",
+        RFC::_024,
+        Since(0, 3),
     ),
     info(
         DecoratorId::RustExtern,

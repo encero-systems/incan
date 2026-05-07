@@ -5,9 +5,11 @@
 pub enum CoercionPolicy {
     /// Canonical exact lowering (`int -> i64`, `bool -> bool`, etc.).
     Exact,
+    /// Provably lossless numeric widening that needs an emitted cast at the Rust boundary.
+    Lossless,
     /// Borrow-based adaptation (`str -> &str`, `bytes -> &[u8]`).
     Borrow,
-    /// Explicitly admitted lossy adaptation (`float -> f32` in the initial RFC matrix).
+    /// Explicitly admitted lossy adaptation. Not used by implicit RFC 009 numeric boundary matching.
     Lossy,
 }
 
@@ -55,12 +57,14 @@ pub fn admitted_builtin_coercion(incan_type: &str, rust_target: &str) -> Option<
     admitted_structural_coercion(&incan, &rust)
 }
 
+/// Return the scalar builtin coercion policy for one normalized Incan/Rust boundary pair.
 fn admitted_scalar_coercion(incan_type: &str, rust_target: &str) -> Option<CoercionPolicy> {
     match (incan_type, rust_target) {
         ("int", "i64") => Some(CoercionPolicy::Exact),
         ("float", "f64") => Some(CoercionPolicy::Exact),
-        ("float", "f32") => Some(CoercionPolicy::Lossy),
         ("bool", "bool") => Some(CoercionPolicy::Exact),
+        (incan, rust) if incan == rust && is_exact_numeric_spelling(incan) => Some(CoercionPolicy::Exact),
+        (incan, rust) if numeric_boundary_losslessly_widens(incan, rust) => Some(CoercionPolicy::Lossless),
         ("str", "String") | ("frozenstr", "String") => Some(CoercionPolicy::Exact),
         ("str", "std::string::String") | ("frozenstr", "std::string::String") => Some(CoercionPolicy::Exact),
         ("str", "&String") | ("frozenstr", "&String") => Some(CoercionPolicy::Borrow),
@@ -74,6 +78,48 @@ fn admitted_scalar_coercion(incan_type: &str, rust_target: &str) -> Option<Coerc
         ("bytes", "&alloc::vec::Vec<u8>") | ("frozenbytes", "&alloc::vec::Vec<u8>") => Some(CoercionPolicy::Borrow),
         ("bytes", "&[u8]") | ("frozenbytes", "&[u8]") => Some(CoercionPolicy::Borrow),
         ("none", "()") | ("unit", "()") => Some(CoercionPolicy::Exact),
+        _ => None,
+    }
+}
+
+/// Return whether `name` is an exact-width Rust/Incan numeric spelling with no alias expansion needed.
+fn is_exact_numeric_spelling(name: &str) -> bool {
+    numeric_rank(name).is_some() || matches!(name, "f32" | "f64")
+}
+
+/// Return whether an exact numeric scalar can flow to the Rust boundary without value loss.
+fn numeric_boundary_losslessly_widens(incan_type: &str, rust_target: &str) -> bool {
+    if matches!((incan_type, rust_target), ("f32", "f64")) {
+        return true;
+    }
+    let Some((from_signed, from_bits)) = numeric_rank(incan_type) else {
+        return false;
+    };
+    let Some((to_signed, to_bits)) = numeric_rank(rust_target) else {
+        return false;
+    };
+    match (from_signed, to_signed) {
+        (true, true) | (false, false) => to_bits >= from_bits,
+        (false, true) => to_bits > from_bits,
+        (true, false) => false,
+    }
+}
+
+/// Return signedness and fixed bit width for numeric widening checks.
+fn numeric_rank(name: &str) -> Option<(bool, u16)> {
+    match name {
+        "i8" => Some((true, 8)),
+        "i16" => Some((true, 16)),
+        "i32" => Some((true, 32)),
+        "i64" => Some((true, 64)),
+        "i128" => Some((true, 128)),
+        "isize" => None,
+        "u8" => Some((false, 8)),
+        "u16" => Some((false, 16)),
+        "u32" => Some((false, 32)),
+        "u64" => Some((false, 64)),
+        "u128" => Some((false, 128)),
+        "usize" => None,
         _ => None,
     }
 }
@@ -305,10 +351,12 @@ fn combine_policies(left: Option<CoercionPolicy>, right: Option<CoercionPolicy>)
     Some(fold_policy(left?, right?))
 }
 
+/// Merge two admitted child coercion policies into the policy required for their parent container.
 fn fold_policy(left: CoercionPolicy, right: CoercionPolicy) -> CoercionPolicy {
     match (left, right) {
         (CoercionPolicy::Lossy, _) | (_, CoercionPolicy::Lossy) => CoercionPolicy::Lossy,
         (CoercionPolicy::Borrow, _) | (_, CoercionPolicy::Borrow) => CoercionPolicy::Borrow,
+        (CoercionPolicy::Lossless, _) | (_, CoercionPolicy::Lossless) => CoercionPolicy::Lossless,
         _ => CoercionPolicy::Exact,
     }
 }
@@ -319,7 +367,11 @@ mod tests {
 
     #[test]
     fn scalar_edges_still_match() {
-        assert_eq!(admitted_builtin_coercion("float", "f32"), Some(CoercionPolicy::Lossy));
+        assert_eq!(admitted_builtin_coercion("float", "f32"), None);
+        assert_eq!(admitted_builtin_coercion("f32", "f64"), Some(CoercionPolicy::Lossless));
+        assert_eq!(admitted_builtin_coercion("i16", "i64"), Some(CoercionPolicy::Lossless));
+        assert_eq!(admitted_builtin_coercion("u8", "i16"), Some(CoercionPolicy::Lossless));
+        assert_eq!(admitted_builtin_coercion("i16", "u32"), None);
         assert_eq!(admitted_builtin_coercion("str", "&str"), Some(CoercionPolicy::Borrow));
         assert_eq!(
             admitted_builtin_coercion("str", "&String"),
@@ -338,26 +390,20 @@ mod tests {
 
     #[test]
     fn option_coercion_recurses_into_inner_slot() {
-        assert_eq!(
-            admitted_builtin_coercion("Option[float]", "Option<f32>"),
-            Some(CoercionPolicy::Lossy)
-        );
+        assert_eq!(admitted_builtin_coercion("Option[float]", "Option<f32>"), None);
     }
 
     #[test]
     fn result_coercion_combines_ok_and_err_slots() {
         assert_eq!(
             admitted_builtin_coercion("Result[str, float]", "Result<&str, f32>"),
-            Some(CoercionPolicy::Lossy)
+            None
         );
     }
 
     #[test]
     fn tuple_coercion_requires_same_arity_and_recursive_admission() {
-        assert_eq!(
-            admitted_builtin_coercion("(str, float)", "(&str,f32)"),
-            Some(CoercionPolicy::Lossy)
-        );
+        assert_eq!(admitted_builtin_coercion("(str, float)", "(&str,f32)"), None);
         assert_eq!(admitted_builtin_coercion("(int, str)", "(i64)"), None);
     }
 
@@ -369,7 +415,7 @@ mod tests {
         );
         assert_eq!(
             admitted_builtin_coercion("Dict[str, float]", "std::collections::HashMap<&str, f32>"),
-            Some(CoercionPolicy::Lossy)
+            None
         );
         assert_eq!(
             admitted_builtin_coercion("Set[bytes]", "HashSet<&[u8]>"),
@@ -381,7 +427,7 @@ mod tests {
         );
         assert_eq!(
             admitted_builtin_coercion("FrozenDict[str, float]", "HashMap<&str, f32>"),
-            Some(CoercionPolicy::Lossy)
+            None
         );
         assert_eq!(
             admitted_builtin_coercion("FrozenSet[bytes]", "std::collections::HashSet<&[u8]>"),

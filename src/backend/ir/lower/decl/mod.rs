@@ -52,6 +52,12 @@ impl AstLowering {
         let kind = match decl {
             ast::Declaration::Function(f) => IrDeclKind::Function(self.lower_function(f)?),
             ast::Declaration::Const(c) => {
+                if c.name == "__derives__" {
+                    return Err(LoweringError {
+                        message: "internal __derives__ metadata is not emitted".to_string(),
+                        span: IrSpan::default(),
+                    });
+                }
                 let value = self.lower_expr_spanned(&c.value)?;
                 // RFC 008: In const context, annotations imply frozen/static types.
                 // Prefer frozen annotation if present; otherwise use the initializer type.

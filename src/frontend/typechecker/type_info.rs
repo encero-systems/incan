@@ -46,12 +46,27 @@ pub struct TypeCheckInfo {
     /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
     /// without relying on local AST declarations.
     pub trait_type_params: HashMap<String, Vec<String>>,
+    /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
+    ///
+    /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
+    /// user-authored derivable modules participate in the same derive expansion path as stdlib modules.
+    pub derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024: Trait-level Rust derive paths keyed by module-qualified trait name, such as `yaml.Serialize`.
+    ///
+    /// The typechecker owns this because dependency modules are already imported and validated there. Lowering should
+    /// not re-run module resolution or assume RFC 024 metadata only exists in stdlib source.
+    pub trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.
     pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// RFC 046 computed property reads keyed by the full field-access expression span.
+    ///
+    /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while
+    /// still consuming the same resolved expression type map for the property return type.
+    pub computed_property_accesses: HashMap<(usize, usize), ComputedPropertyAccessInfo>,
     /// RFC 038: unpack operands whose static shape has been proven by call binding.
     ///
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
@@ -113,6 +128,11 @@ pub struct TypeCheckInfo {
     /// Lowering consumes this map so `a + b`, `-a`, and `a[b]` can become direct dunder method calls without
     /// re-running backend-side infix/index semantics. Primitive operators are intentionally absent from this map.
     pub resolved_operator_calls: HashMap<(usize, usize), ResolvedOperatorCall>,
+    /// Trait-backed method dispatch selected by overload resolution.
+    ///
+    /// Lowering consumes this for calls whose selected method lives in a trait impl rather than an inherent Rust impl.
+    /// This keeps codegen from re-deriving dispatch from method names or argument shapes.
+    pub resolved_method_calls: HashMap<(usize, usize), ResolvedMethodCall>,
     /// `std.testing.fixture` declarations resolved during typechecking.
     ///
     /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
@@ -133,6 +153,28 @@ pub struct ResolvedOperatorCall {
     pub kind: ResolvedOperatorKind,
 }
 
+/// A typechecker-resolved method call consumed by IR lowering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedMethodCall {
+    /// The concrete source-level method name selected by frontend method/trait dispatch.
+    pub method: String,
+    /// How the backend should emit this method call.
+    pub dispatch: ResolvedMethodDispatch,
+}
+
+/// Backend-relevant dispatch target for a resolved method call.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedMethodDispatch {
+    /// Emit as a fully-qualified trait call, e.g. `Trait::<T>::method(&receiver, ...)`.
+    Trait {
+        /// Rust-visible trait path. Local traits use their source name; imported stdlib traits use a fully-qualified
+        /// `crate::__incan_std::...` path so callers do not need to import implementation traits explicitly.
+        trait_path: String,
+        /// Concrete trait type arguments selected by overload resolution.
+        type_args: Vec<ResolvedType>,
+    },
+}
+
 /// Typechecker-resolved custom iteration protocol consumed by IR lowering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProtocolIterationInfo {
@@ -144,6 +186,13 @@ pub struct ProtocolIterationInfo {
     pub next_method: String,
     /// Element type unwrapped from `__next__() -> Option[T]`.
     pub item_type: ResolvedType,
+}
+
+/// Lowering metadata for one RFC 046 computed property read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputedPropertyAccessInfo {
+    pub owner_type: String,
+    pub property: String,
 }
 
 /// Operator expression shape for a resolved user-defined operator call.
@@ -190,7 +239,7 @@ pub enum IdentKind {
 /// Coercion category selected by the typechecker for a Rust-boundary call argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustArgCoercionKind {
-    /// Builtin scalar matrix coercion (`float -> f32`, `str -> &str`, ...).
+    /// Builtin boundary matrix coercion (`i16 -> i64`, `str -> &str`, ...).
     Builtin(CoercionPolicy),
     /// Rusttype alias can flow to its backing Rust type without an explicit adapter call.
     RustTypeUnwrap,
@@ -256,6 +305,22 @@ impl TypeCheckInfo {
         self.expr_types.get(&(span.start, span.end))
     }
 
+    /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
+    pub fn computed_property_access(&self, span: Span) -> Option<&ComputedPropertyAccessInfo> {
+        self.computed_property_accesses.get(&(span.start, span.end))
+    }
+
+    /// Record that a field-access expression resolved to a computed property read.
+    pub(crate) fn record_computed_property_access(&mut self, span: Span, owner_type: &str, property: &str) {
+        self.computed_property_accesses.insert(
+            (span.start, span.end),
+            ComputedPropertyAccessInfo {
+                owner_type: owner_type.to_string(),
+                property: property.to_string(),
+            },
+        );
+    }
+
     /// Return the RFC 038 fixed/static unpack plan recorded for an unpack operand, if any.
     pub fn fixed_unpack_plan(&self, span: Span) -> Option<&FixedUnpackPlan> {
         self.fixed_unpack_plans.get(&(span.start, span.end))
@@ -318,7 +383,10 @@ impl TypeCheckInfo {
 
     /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
     pub(crate) fn record_call_site_callable_params(&mut self, span: Span, params: &[CallableParam]) {
-        if params.iter().any(|param| param.kind != ParamKind::Normal) {
+        if params
+            .iter()
+            .any(|param| param.kind != ParamKind::Normal || callable_param_needs_boundary_snapshot(&param.ty))
+        {
             self.call_site_callable_params
                 .insert((span.start, span.end), params.to_vec());
         }
@@ -327,6 +395,11 @@ impl TypeCheckInfo {
     /// Return a typechecker-resolved user-defined operator call for `span`, if any.
     pub fn resolved_operator_call(&self, span: Span) -> Option<&ResolvedOperatorCall> {
         self.resolved_operator_calls.get(&(span.start, span.end))
+    }
+
+    /// Return a typechecker-resolved method call for `span`, if any.
+    pub fn resolved_method_call(&self, span: Span) -> Option<&ResolvedMethodCall> {
+        self.resolved_method_calls.get(&(span.start, span.end))
     }
 
     /// Return custom iteration protocol metadata for `span`, if any.
@@ -350,8 +423,46 @@ impl TypeCheckInfo {
         );
     }
 
+    /// Record a resolved method dispatch that lowering should preserve explicitly.
+    pub(crate) fn record_resolved_method_call(
+        &mut self,
+        span: Span,
+        method: impl Into<String>,
+        dispatch: ResolvedMethodDispatch,
+    ) {
+        self.resolved_method_calls.insert(
+            (span.start, span.end),
+            ResolvedMethodCall {
+                method: method.into(),
+                dispatch,
+            },
+        );
+    }
+
     /// Record a custom `for` iteration protocol route.
     pub(crate) fn record_protocol_iteration(&mut self, span: Span, info: ProtocolIterationInfo) {
         self.protocol_iterations.insert((span.start, span.end), info);
+    }
+}
+
+/// Return whether a callable parameter type carries borrow shape that lowering cannot recover from the callee alone.
+fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
+        ResolvedType::Function(params, ret) => {
+            params
+                .iter()
+                .any(|param| callable_param_needs_boundary_snapshot(&param.ty))
+                || callable_param_needs_boundary_snapshot(ret)
+        }
+        ResolvedType::Generic(_, args) => args.iter().any(callable_param_needs_boundary_snapshot),
+        ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+            callable_param_needs_boundary_snapshot(inner)
+        }
+        ResolvedType::FrozenDict(key, value) => {
+            callable_param_needs_boundary_snapshot(key) || callable_param_needs_boundary_snapshot(value)
+        }
+        ResolvedType::Tuple(items) => items.iter().any(callable_param_needs_boundary_snapshot),
+        _ => false,
     }
 }

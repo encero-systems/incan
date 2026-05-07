@@ -198,6 +198,22 @@ model Point:
         return self.x * self.y
 ```
 
+For derived field-like values, use a computed property instead of a zero-argument method:
+
+```incan
+model Point:
+    x: int
+    y: int
+
+    property area -> int:
+        return self.x * self.y
+
+def demo(p: Point) -> int:
+    return p.area
+```
+
+See: [Computed properties](../../reference/computed_properties.md).
+
 Models also support `@staticmethod` for methods that belong to the type rather than an instance:
 
 ```incan

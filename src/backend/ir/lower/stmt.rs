@@ -74,6 +74,14 @@ struct BranchTail<'a> {
     else_body: Option<&'a [Spanned<ast::Statement>]>,
 }
 
+/// Consecutive independent `isinstance` statements that can lower through the existing narrowing chain.
+struct IndependentIsInstanceChain {
+    condition: Spanned<ast::Expr>,
+    then_body: Vec<Spanned<ast::Statement>>,
+    elif_branches: Vec<(Spanned<ast::Expr>, Vec<Spanned<ast::Statement>>)>,
+    consumed: usize,
+}
+
 impl AstLowering {
     fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
         let direct_static = self
@@ -121,7 +129,10 @@ impl AstLowering {
                     self.define_for_pattern_bindings(&item.node, &item_ty);
                 }
             }
-            ast::Pattern::Literal(_) | ast::Pattern::Constructor(_, _) => {}
+            ast::Pattern::Literal(_)
+            | ast::Pattern::Constructor(_, _)
+            | ast::Pattern::Group(_)
+            | ast::Pattern::Or(_) => {}
         }
     }
 
@@ -261,6 +272,115 @@ impl AstLowering {
     fn is_none_expr(expr: &Spanned<ast::Expr>) -> bool {
         matches!(&expr.node, ast::Expr::Literal(ast::Literal::None))
             || matches!(&expr.node, ast::Expr::Ident(name) if name == constructors::as_str(ConstructorId::None))
+    }
+
+    /// Return the narrowed binding name from a source-level `isinstance(binding, T)` condition.
+    fn isinstance_condition_binding(condition: &Spanned<ast::Expr>) -> Option<&str> {
+        let ast::Expr::Call(callee, _, args) = &condition.node else {
+            return None;
+        };
+        let ast::Expr::Ident(call_name) = &callee.node else {
+            return None;
+        };
+        if core_builtins::from_str(call_name) != Some(BuiltinFnId::IsInstance) || args.len() != 2 {
+            return None;
+        }
+        let ast::CallArg::Positional(value) = &args[0] else {
+            return None;
+        };
+        let ast::Expr::Ident(binding) = &value.node else {
+            return None;
+        };
+        Some(binding)
+    }
+
+    /// Return whether a statement body exits the current function on all straightforward paths.
+    ///
+    /// This intentionally stays conservative because it is used to fold consecutive independent `isinstance` branches
+    /// into one narrowing chain. Folding is semantics-preserving only when a taken branch does not continue into the
+    /// following sibling statements.
+    fn statements_definitely_return(stmts: &[Spanned<ast::Statement>]) -> bool {
+        stmts
+            .last()
+            .is_some_and(|stmt| Self::statement_definitely_returns(&stmt.node))
+    }
+
+    /// Return whether one statement exits the current function on all straightforward paths.
+    fn statement_definitely_returns(stmt: &ast::Statement) -> bool {
+        match stmt {
+            ast::Statement::Return(_) => true,
+            ast::Statement::If(if_stmt) => {
+                let Some(else_body) = if_stmt.else_body.as_deref() else {
+                    return false;
+                };
+                Self::statements_definitely_return(&if_stmt.then_body)
+                    && if_stmt
+                        .elif_branches
+                        .iter()
+                        .all(|(_, body)| Self::statements_definitely_return(body))
+                    && Self::statements_definitely_return(else_body)
+            }
+            _ => false,
+        }
+    }
+
+    /// Collect consecutive simple returning `if isinstance(same_binding, T)` statements as an `elif` chain.
+    fn independent_isinstance_chain(
+        &self,
+        stmts: &[Spanned<ast::Statement>],
+        start: usize,
+    ) -> Option<IndependentIsInstanceChain> {
+        let ast::Statement::If(first_if) = &stmts.get(start)?.node else {
+            return None;
+        };
+        if !first_if.elif_branches.is_empty() || first_if.else_body.is_some() {
+            return None;
+        }
+        let ast::Condition::Expr(first_condition) = &first_if.condition else {
+            return None;
+        };
+        if !Self::statements_definitely_return(&first_if.then_body) {
+            return None;
+        }
+        if self.union_isinstance_test(first_condition).is_none()
+            && self.option_isinstance_test(first_condition).is_none()
+        {
+            return None;
+        }
+        let binding = Self::isinstance_condition_binding(first_condition)?;
+        let mut elif_branches = Vec::new();
+        let mut consumed = 1;
+
+        for stmt in &stmts[start + 1..] {
+            let ast::Statement::If(next_if) = &stmt.node else {
+                break;
+            };
+            if !next_if.elif_branches.is_empty() || next_if.else_body.is_some() {
+                break;
+            }
+            let ast::Condition::Expr(next_condition) = &next_if.condition else {
+                break;
+            };
+            if Self::isinstance_condition_binding(next_condition) != Some(binding) {
+                break;
+            }
+            if !Self::statements_definitely_return(&next_if.then_body) {
+                break;
+            }
+            elif_branches.push((next_condition.clone(), next_if.then_body.clone()));
+            consumed += 1;
+        }
+
+        if elif_branches.is_empty() {
+            return None;
+        }
+
+        Some(IndependentIsInstanceChain {
+            condition: first_condition.clone(),
+            then_body: first_if.then_body.clone(),
+            elif_branches,
+            consumed,
+        })
     }
 
     /// Extract an `x is None` or `x is not None` test for an option-typed local.
@@ -422,9 +542,24 @@ impl AstLowering {
 
         let lowered = (|| -> Result<Vec<IrStmt>, LoweringError> {
             let mut result = Vec::new();
-            for s in stmts {
+            let mut index = 0;
+            while index < stmts.len() {
+                if let Some(chain) = self.independent_isinstance_chain(stmts, index) {
+                    let stmt = IrStmt::new(self.lower_if_expr_stmt_kind(
+                        &chain.condition,
+                        &chain.then_body,
+                        &chain.elif_branches,
+                        None,
+                    )?);
+                    result.push(stmt);
+                    index += chain.consumed;
+                    continue;
+                }
+
+                let s = &stmts[index];
                 let stmt = self.lower_statement(&s.node, s.span)?;
                 result.push(stmt);
+                index += 1;
             }
             Ok(result)
         })();
@@ -812,7 +947,13 @@ impl AstLowering {
         stmt_span: ast::Span,
     ) -> Result<IrStmt, LoweringError> {
         let kind = match stmt {
-            ast::Statement::Expr(e) => IrStmtKind::Expr(self.lower_expr_spanned(e)?),
+            ast::Statement::Expr(e) => {
+                if let ast::Expr::Yield(Some(value)) = &e.node {
+                    IrStmtKind::Yield(self.lower_expr_spanned(value)?)
+                } else {
+                    IrStmtKind::Expr(self.lower_expr_spanned(e)?)
+                }
+            }
             ast::Statement::Assert(assert_stmt) => return Ok(IrStmt::new(self.lower_assert_stmt(assert_stmt)?)),
 
             ast::Statement::Assignment(a) => {
@@ -939,6 +1080,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(object),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![
                                 IrCallArg {
@@ -1121,6 +1263,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(iterable),
                             method: protocol.iter_method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: self.callable_signature_for_call_span(f.iter.span),
@@ -1140,6 +1283,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(iter_var),
                             method: protocol.next_method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: None,
@@ -1261,6 +1405,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(lhs_expr),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,
@@ -1955,6 +2100,19 @@ impl AstLowering {
             ast::Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
+            ast::Expr::Generator(generator) => {
+                self.count_expr_ident_reads(&generator.expr.node, counts);
+                for clause in &generator.clauses {
+                    match clause {
+                        ast::ComprehensionClause::For { iter, .. } => {
+                            self.count_expr_ident_reads(&iter.node, counts);
+                        }
+                        ast::ComprehensionClause::If(condition) => {
+                            self.count_expr_ident_reads(&condition.node, counts);
+                        }
+                    }
                 }
             }
             ast::Expr::ListComp(comp) => {

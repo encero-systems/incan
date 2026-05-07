@@ -354,6 +354,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
+        let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+  return (x*y for x in xs if x>0 for y in ys if y>x)
+"#;
+        let expected = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
         let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
   mat=a@b
@@ -520,6 +534,40 @@ def MixedName() -> int:
             !formatted.contains("PrismNodeKind.ReadNamedTable => \n"),
             "formatter should not split short return arm after fat arrow; got:\n{formatted}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter|PrismNodeKind.OrderBy|_=>return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter | PrismNodeKind.OrderBy | _ => return str("passthrough")
+"#;
+        assert_eq!(format_source(source)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_wraps_long_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.FilterStageWithLongName | PrismNodeKind.OrderByStageWithLongName | PrismNodeKind.LimitStageWithLongName => return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        (
+            PrismNodeKind.FilterStageWithLongName
+            | PrismNodeKind.OrderByStageWithLongName
+            | PrismNodeKind.LimitStageWithLongName
+        ) => return str("passthrough")
+"#;
+        let config = FormatConfig::new().with_line_length(80);
+        assert_eq!(format_source_with_config(source, config.clone())?, expected);
+        assert_eq!(format_source_with_config(expected, config)?, expected);
         Ok(())
     }
 
@@ -1218,6 +1266,7 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     c = 1_000
     d = 1e6
     e = 1000.0
+    f = 19.99d
 "#;
         let formatted = format_source(source)?;
         assert!(
@@ -1239,6 +1288,10 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
         assert!(
             formatted.contains("e = 1000.0"),
             "expected plain 1000.0 preserved; got: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("f = 19.99d"),
+            "expected decimal literal suffix preserved; got: {formatted:?}"
         );
         Ok(())
     }
@@ -1987,6 +2040,51 @@ pub def allocate_prism_store_id() -> int:
 
     def reset(self) -> None:
         pass
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_computed_properties() -> Result<(), FormatError> {
+        let source = r#"class Dataset:
+  fields: list[str]
+  property schema_fields -> list[str]:
+    return self.fields
+  def len(self) -> int:
+    return 0
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"class Dataset:
+    fields: list[str]
+
+    property schema_fields -> list[str]:
+        return self.fields
+
+    def len(self) -> int:
+        return 0
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_trait_abstract_properties_stay_tight() -> Result<(), FormatError> {
+        let source = r#"trait HasShape:
+  property area -> float: ...
+  property perimeter -> float: ...
+  def describe(self) -> str:
+    return "shape"
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"trait HasShape:
+    property area -> float
+    property perimeter -> float
+
+    def describe(self) -> str:
+        return "shape"
 "#;
         assert_eq!(result, expected);
         Ok(())

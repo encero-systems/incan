@@ -13,19 +13,72 @@ mod patterns;
 
 use super::super::TypedExpr;
 use super::super::expr::{
-    CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, MethodCallArgPolicy,
-    MethodKind, UnaryOp, VarAccess, VarRefKind,
+    BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
+    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
-use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
+use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Lower `list.repeat(...)` arguments in canonical helper-parameter order.
+    ///
+    /// The surface helper accepts named arguments, but `BuiltinFn::ListRepeat` stores arguments positionally for
+    /// emission, so lowering must bind `value` before `count` instead of preserving source order.
+    fn lower_builtin_list_repeat_args(&mut self, args: &[ast::CallArg]) -> Result<Vec<TypedExpr>, LoweringError> {
+        let mut value = None;
+        let mut count = None;
+        let mut positional_index = 0usize;
+
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(expr) => {
+                    match positional_index {
+                        0 if value.is_none() => value = Some(expr),
+                        1 if count.is_none() => count = Some(expr),
+                        _ => {}
+                    }
+                    positional_index += 1;
+                }
+                ast::CallArg::Named(name, expr) => match name.as_str() {
+                    "value" if value.is_none() => value = Some(expr),
+                    "count" if count.is_none() => count = Some(expr),
+                    _ => {}
+                },
+                ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_) => {}
+            }
+        }
+
+        let mut lowered = Vec::with_capacity(2);
+        if let Some(value) = value {
+            lowered.push(self.lower_expr_spanned(value)?);
+        }
+        if let Some(count) = count {
+            lowered.push(self.lower_expr_spanned(count)?);
+        }
+        Ok(lowered)
+    }
+
+    /// Return whether a concrete receiver type explicitly adopts the Incan `Iterator` protocol.
+    fn receiver_adopts_iterator_protocol(&self, ty: &IrType) -> bool {
+        let mut ty = ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = ty {
+            ty = inner.as_ref();
+        }
+        match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => self.iterator_adopter_names.contains(name),
+            _ => false,
+        }
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::backend::ir::lower) fn lower_condition_expr(
         &mut self,
@@ -42,6 +95,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: Vec::new(),
                     callable_signature: self.callable_signature_for_call_span(expr.span),
@@ -214,8 +268,9 @@ impl AstLowering {
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::Int(il) => (IrExprKind::Int(il.value), IrType::Int),
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
+                ast::Literal::Decimal(dl) => (IrExprKind::Decimal(dl.repr.clone()), IrType::Unknown),
                 ast::Literal::String(s) => (IrExprKind::String(s.clone()), IrType::String),
-                ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Unknown),
+                ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Bytes),
                 ast::Literal::Bool(b) => (IrExprKind::Bool(*b), IrType::Bool),
                 ast::Literal::None => (IrExprKind::None, IrType::Option(Box::new(IrType::Unknown))),
             },
@@ -252,6 +307,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,
@@ -274,6 +330,7 @@ impl AstLowering {
                     let contains_call = IrExprKind::MethodCall {
                         receiver: Box::new(receiver),
                         method: resolved_operator.method,
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: vec![IrCallArg {
                             name: None,
@@ -335,6 +392,7 @@ impl AstLowering {
                                 IrExprKind::MethodCall {
                                     receiver: Box::new(collection),
                                     method: "contains".to_string(),
+                                    dispatch: None,
                                     type_args: Vec::new(),
                                     args: contains_args,
                                     callable_signature: None,
@@ -397,6 +455,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(operand),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: self.callable_signature_for_call_span(expr_span),
@@ -429,6 +488,30 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if matches!(&o.node, ast::Expr::Ident(name)
+                    if collection_helpers::from_parts(name, m) == Some(BuiltinCollectionHelperId::ListRepeat)
+                        && collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List))
+                    && self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| matches!(info.ident_kind(o.span), Some(IdentKind::TypeName)))
+                {
+                    let args_ir = self.lower_builtin_list_repeat_args(args)?;
+                    let expr_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    return Ok(TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::ListRepeat,
+                            args: args_ir,
+                        },
+                        expr_ty,
+                    ));
+                }
+
                 let receiver = if let ast::Expr::Index(base, _) = &o.node
                     && let ast::Expr::Ident(name) = &base.node
                     && self.type_info.as_ref().is_some_and(|info| {
@@ -467,28 +550,80 @@ impl AstLowering {
                     }
                 }
 
-                // Check for known methods (enum-based dispatch)
-                if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name) {
+                let expr_ty = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span))
+                    .map(|ty| self.lower_resolved_type(ty))
+                    .unwrap_or(IrType::Unknown);
+                let dispatch = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_method_call(expr_span).cloned())
+                    .map(|resolved| match resolved.dispatch {
+                        ResolvedMethodDispatch::Trait { trait_path, type_args } => IrMethodDispatch::Trait {
+                            trait_path,
+                            type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
+                        },
+                    });
+
+                if let Some(policy) = numeric_resize_policy(&method_name)
+                    && args_ir.is_empty()
+                    && lowered_type_args.is_empty()
+                {
+                    let target_ty = match (policy, &expr_ty) {
+                        (NumericResizePolicy::Try, IrType::Option(inner)) => (**inner).clone(),
+                        _ => expr_ty.clone(),
+                    };
+                    (
+                        IrExprKind::NumericResize {
+                            expr: Box::new(receiver),
+                            policy,
+                            to_type: target_ty,
+                        },
+                        expr_ty,
+                    )
+                } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
+                    if self.receiver_adopts_iterator_protocol(&receiver.ty) {
+                        MethodKind::for_iterator_method_name(&method_name)
+                    } else if matches!(
+                        MethodKind::for_result_method_name(&method_name),
+                        Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
+                    ) {
+                        MethodKind::for_result_method_name(&method_name)
+                    } else {
+                        None
+                    }
+                }) {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
                             kind,
                             args: args_ir,
                         },
-                        IrType::Unknown,
+                        expr_ty,
                     )
                 } else {
+                    let imported_type_method_signature =
+                        match &o.node {
+                            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned().and_then(|path| {
+                                self.callable_signature_for_imported_stdlib_type_method_path(&path, m)
+                            }),
+                            _ => None,
+                        };
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
                             method: method_name,
+                            dispatch,
                             type_args: lowered_type_args,
                             args: args_ir,
-                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            callable_signature: imported_type_method_signature
+                                .or_else(|| self.callable_signature_for_call_span(expr_span)),
                             arg_policy,
                         },
-                        IrType::Unknown,
+                        expr_ty,
                     )
                 }
             }
@@ -513,6 +648,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(obj),
                             method: resolved_operator.method,
+                            dispatch: None,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,
@@ -557,22 +693,47 @@ impl AstLowering {
                 // Prefer spanned lowering so typechecker output can drive the receiver type.
                 // This is important for RFC 021 alias-aware field access, especially for `self.<alias>`.
                 let obj = self.lower_expr_spanned(o)?;
-                // RFC 021: resolve field alias to canonical name if object is a known struct type
-                let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
-                    IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
-                    _ => None,
-                });
-                let field = match struct_name {
-                    Some(struct_name) => self.resolve_field_alias(struct_name, f),
-                    None => f.clone(),
-                };
-                (
-                    IrExprKind::Field {
-                        object: Box::new(obj),
-                        field,
-                    },
-                    IrType::Unknown,
-                )
+                if let Some(access) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.computed_property_access(expr_span))
+                {
+                    let result_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(obj),
+                            method: access.property.clone(),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            dispatch: None,
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        result_ty,
+                    )
+                } else {
+                    // RFC 021: resolve field alias to canonical name if object is a known struct type
+                    let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
+                        IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
+                        _ => None,
+                    });
+                    let field = match struct_name {
+                        Some(struct_name) => self.resolve_field_alias(struct_name, f),
+                        None => f.clone(),
+                    };
+                    (
+                        IrExprKind::Field {
+                            object: Box::new(obj),
+                            field,
+                        },
+                        IrType::Unknown,
+                    )
+                }
             }
 
             // ---- Surface expressions (routed through semantics registry) ----
@@ -849,6 +1010,7 @@ impl AstLowering {
             }
 
             // ---- Comprehensions (delegated to comprehensions submodule) ----
+            ast::Expr::Generator(generator) => self.lower_generator_expr(generator)?,
             ast::Expr::ListComp(comp) => self.lower_list_comp(comp)?,
             ast::Expr::DictComp(comp) => self.lower_dict_comp(comp)?,
 
@@ -856,5 +1018,16 @@ impl AstLowering {
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
         };
         Ok(TypedExpr::new(kind, ty))
+    }
+}
+
+/// Return the IR resize policy represented by a built-in numeric resize helper name.
+fn numeric_resize_policy(method: &str) -> Option<NumericResizePolicy> {
+    match method {
+        "resize" => Some(NumericResizePolicy::Lossless),
+        "try_resize" => Some(NumericResizePolicy::Try),
+        "wrapping_resize" => Some(NumericResizePolicy::Wrapping),
+        "saturating_resize" => Some(NumericResizePolicy::Saturating),
+        _ => None,
     }
 }

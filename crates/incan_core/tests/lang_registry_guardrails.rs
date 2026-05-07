@@ -209,7 +209,7 @@ fn types_spellings_unique_and_resolvable() {
 
     assert_registry_round_trip(RegistryRoundTrip {
         label: "numeric",
-        expected_len: 3,
+        expected_len: 15,
         items: numerics::NUMERIC_TYPES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -220,7 +220,7 @@ fn types_spellings_unique_and_resolvable() {
 
     assert_registry_round_trip(RegistryRoundTrip {
         label: "collection",
-        expected_len: 9,
+        expected_len: 10,
         items: collections::COLLECTION_TYPES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -248,7 +248,7 @@ fn derives_spellings_unique_and_resolvable() {
 fn traits_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "trait",
-        expected_len: 16,
+        expected_len: 18,
         items: traits::TRAITS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -304,7 +304,7 @@ fn surface_functions_spellings_unique_and_resolvable() {
 fn surface_types_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "surface type",
-        expected_len: 20,
+        expected_len: 21,
         items: surface_types::SURFACE_TYPES,
         id_of: |info| info.item.id,
         canonical_of: |info| info.item.canonical,
@@ -405,6 +405,8 @@ fn no_builtin_trait_string_literals_in_compiler_layers() {
         "Iterator",
         "IntoIterator",
         "Error",
+        "Iterable",
+        "Sum",
     ];
 
     let hits = find_string_literals(&files, &trait_literals);

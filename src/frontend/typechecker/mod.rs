@@ -54,9 +54,9 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo,
+    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind,
+    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
 };
 #[cfg(test)]
 mod tests;
@@ -76,9 +76,12 @@ use crate::frontend::symbols::*;
 use crate::rust_inspect::RustMetadataCache;
 use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::StringLikeId;
 
 /// Type checker state.
@@ -108,6 +111,17 @@ pub(crate) struct LoopContext {
     pub break_types: Vec<(ResolvedType, Span)>,
 }
 
+/// Declaration context that determines how `yield` expressions are interpreted.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum YieldContext {
+    /// `yield` is not valid in the current body.
+    Disallowed,
+    /// `yield` belongs to `std.testing.fixture` lifecycle semantics.
+    Fixture,
+    /// `yield value` produces one item of the active generator's element type.
+    Generator { element_ty: ResolvedType },
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub(crate) symbols: SymbolTable,
@@ -119,14 +133,20 @@ pub struct TypeChecker {
     pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
+    /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
+    pub(crate) consumed_iterator_bindings: HashMap<String, Span>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
+    /// Active declaration-level interpretation for `yield` expressions.
+    pub(crate) current_yield_context: YieldContext,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
     /// Stack of active loop contexts, innermost last.
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
+    /// Active trait computed-property contract for default member bodies.
+    pub(crate) current_trait_properties: Option<HashMap<String, PropertyInfo>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
     /// Active nominal owner while checking a method body.
@@ -153,6 +173,12 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
+    pub(crate) dependency_derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_module_traits: HashMap<String, TraitInfo>,
+    /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
     pub(crate) library_manifests: Arc<LibraryManifestIndex>,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
@@ -223,10 +249,13 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            consumed_iterator_bindings: HashMap::new(),
             current_return_error_type: None,
+            current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
             loop_stack: Vec::new(),
             current_trait_requires: None,
+            current_trait_properties: None,
             current_trait_name: None,
             current_method_owner: None,
             current_classmethod_self_ty: None,
@@ -240,6 +269,9 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            dependency_derivable_modules: HashMap::new(),
+            dependency_module_traits: HashMap::new(),
+            dependency_trait_rust_derive_paths: HashMap::new(),
             library_manifests: Arc::new(LibraryManifestIndex::default()),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
@@ -594,7 +626,7 @@ impl TypeChecker {
             .params
             .iter()
             .skip(skip)
-            .map(|p| CallableParam::positional(self.resolved_type_from_rust_display(p.type_display.as_str())))
+            .map(|p| CallableParam::positional(self.resolved_param_type_from_rust_display(p.type_display.as_str())))
             .collect();
         let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
         ResolvedType::Function(params, Box::new(ret))
@@ -741,10 +773,20 @@ impl TypeChecker {
         }
         match normalized.as_str() {
             "bool" => ResolvedType::Bool,
-            "f32" | "f64" => ResolvedType::Float,
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-                ResolvedType::Int
-            }
+            "f64" => ResolvedType::Float,
+            "i64" => ResolvedType::Int,
+            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
+            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
+            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
+            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
+            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
+            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
+            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
+            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
+            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
+            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
+            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
+            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
@@ -793,6 +835,43 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Return a Rust generic type-parameter name when the display is the simple identifier form rust-analyzer uses
+    /// for params like `T` or `U`.
+    pub(crate) fn rust_display_type_var_name(normalized: &str) -> Option<&str> {
+        if normalized.len() == 1 && normalized.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+            Some(normalized)
+        } else {
+            None
+        }
+    }
+
+    /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
+    ///
+    /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
+    /// into owned Incan value types. Parameters need the opposite treatment: the callable signature must remember the
+    /// borrowed Rust boundary so emission can pass `&arg` instead of moving an owned `String` or `Vec<u8>`.
+    pub(crate) fn resolved_param_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
+        let trimmed = rust_ty.trim();
+        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
+        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
+            return ResolvedType::TypeVar(name.to_string());
+        }
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+            let inner_ty = match inner {
+                "str" => ResolvedType::Str,
+                "[u8]" => ResolvedType::Bytes,
+                _ => self.resolved_type_from_rust_display(inner),
+            };
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
+        self.resolved_type_from_rust_display(normalized.as_str())
     }
 
     /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.
@@ -899,41 +978,56 @@ impl TypeChecker {
         self.generic_placeholder_name(ty).is_some()
     }
 
+    /// Return declared type parameters and explicit trait adoptions for a semantic type.
+    fn semantic_type_params_and_adoptions(&self, type_name: &str) -> Option<(&[String], &[TypeBoundInfo])> {
+        match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Model(model) => Some((&model.type_params, &model.trait_adoptions)),
+            TypeInfo::Class(class) => Some((&class.type_params, &class.trait_adoptions)),
+            TypeInfo::Enum(enum_info) => Some((&enum_info.type_params, &enum_info.trait_adoptions)),
+            _ => None,
+        }
+    }
+
     /// Infer the concrete instantiation of `trait_name` for `type_name`, if the type adopts that trait.
     ///
-    /// RFC 042 currently uses the same implicit positional mapping as trait-annotation compatibility: a concrete
-    /// adopter's leading type arguments instantiate the adopted trait's type parameters, and transitive supertrait
-    /// arguments are substituted through the recorded closure.
+    /// Explicit `with Trait[...]` arguments are authoritative. The older positional mapping remains as a fallback for
+    /// nullary adoption metadata and derives.
     fn instantiated_trait_args_for_type(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],
         trait_name: &str,
     ) -> Option<Vec<ResolvedType>> {
-        let adopted = match self.lookup_semantic_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => &model.traits,
-            Some(TypeInfo::Class(class)) => &class.traits,
-            _ => return None,
-        };
+        let (type_params, adopted) = self.semantic_type_params_and_adoptions(type_name)?;
+        let concrete_subst =
+            crate::frontend::resolved_type_subst::type_param_subst_map(type_params, concrete_type_args);
 
         for adopted_trait in adopted {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(adopted_trait) else {
+            let Some(adopted_info) = self.lookup_semantic_trait_info(&adopted_trait.name) else {
                 continue;
             };
-            let direct_args: Vec<ResolvedType> = concrete_type_args
-                .iter()
-                .take(adopted_info.type_params.len())
-                .cloned()
-                .collect();
+            let direct_args: Vec<ResolvedType> = if adopted_trait.type_args.is_empty() {
+                concrete_type_args
+                    .iter()
+                    .take(adopted_info.type_params.len())
+                    .cloned()
+                    .collect()
+            } else {
+                adopted_trait
+                    .type_args
+                    .iter()
+                    .map(|arg| crate::frontend::resolved_type_subst::substitute_resolved_type(arg, &concrete_subst))
+                    .collect()
+            };
             if direct_args.len() != adopted_info.type_params.len() {
                 continue;
             }
 
-            if adopted_trait == trait_name {
+            if adopted_trait.name == trait_name {
                 return Some(direct_args);
             }
 
-            let closure = self.semantic_supertrait_closure(adopted_trait);
+            let closure = self.semantic_supertrait_closure(&adopted_trait.name);
             let subst =
                 crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
             for (supertrait_name, supertrait_args) in closure {
@@ -1000,17 +1094,17 @@ impl TypeChecker {
             return false;
         };
         let (adopted, derives) = match info {
-            TypeInfo::Model(m) => (m.traits.as_slice(), Some(m.derives.as_slice())),
-            TypeInfo::Class(c) => (c.traits.as_slice(), Some(c.derives.as_slice())),
-            TypeInfo::Enum(e) => (e.traits.as_slice(), Some(e.derives.as_slice())),
+            TypeInfo::Model(m) => (m.trait_adoptions.as_slice(), Some(m.derives.as_slice())),
+            TypeInfo::Class(c) => (c.trait_adoptions.as_slice(), Some(c.derives.as_slice())),
+            TypeInfo::Enum(e) => (e.trait_adoptions.as_slice(), Some(e.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
-            if t == trait_name {
+            if t.name == trait_name {
                 return true;
             }
             if self
-                .semantic_supertrait_closure(t)
+                .semantic_supertrait_closure(&t.name)
                 .iter()
                 .any(|(name, _)| name == trait_name)
             {
@@ -1174,6 +1268,8 @@ impl TypeChecker {
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.trait_direct_supertraits.clear();
         self.type_info.trait_type_params.clear();
+        self.type_info.derivable_modules = self.dependency_derivable_modules.clone();
+        self.type_info.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         for sym in self.symbols.all_symbols() {
             if let SymbolKind::Trait(info) = &sym.kind {
                 self.type_info
@@ -1366,6 +1462,19 @@ impl TypeChecker {
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+                }
+            }
+            Expr::Generator(generator) => {
+                self.collect_static_dependencies_from_expr(&generator.expr.node, deps, visiting_functions);
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_dependencies_from_expr(&iter.node, deps, visiting_functions);
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_dependencies_from_expr(&condition.node, deps, visiting_functions);
+                        }
+                    }
                 }
             }
             Expr::ListComp(list_comp) => {
@@ -1626,6 +1735,31 @@ impl TypeChecker {
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
+                }
+            }
+            Expr::Generator(generator) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &generator.expr,
+                    current_static,
+                    visiting_functions,
+                );
+                for clause in &generator.clauses {
+                    match clause {
+                        ComprehensionClause::For { iter, .. } => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                iter,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                        ComprehensionClause::If(condition) => {
+                            self.collect_static_initializer_static_writes_from_expr(
+                                condition,
+                                current_static,
+                                visiting_functions,
+                            );
+                        }
+                    }
                 }
             }
             Expr::ListComp(list_comp) => {
@@ -2098,7 +2232,7 @@ impl TypeChecker {
         self.validate_stdlib_type_usage_inner(&ty.node, ty.span);
     }
 
-    /// Validate one annotation node and any nested annotation types.
+    /// Validate stdlib-owned type names recursively inside a type annotation.
     fn validate_stdlib_type_usage_inner(&mut self, ty: &Type, span: Span) {
         match ty {
             Type::Simple(name) => self.validate_stdlib_type_name(name, span),
@@ -2127,7 +2261,7 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&elem.node, elem.span);
                 }
             }
-            Type::Unit | Type::SelfType | Type::Infer => {}
+            Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {}
         }
     }
 
@@ -2140,8 +2274,23 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
+        if let Type::Simple(name) = &ty.node
+            && Self::reserved_numeric_type_name(name)
+        {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "`{name}` is reserved for numeric types; use `decimal[p, s]`/`numeric[p, s]` for decimals or an exact-width integer type"
+                ),
+                ty.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        if let Some(decimal_ty) = self.resolve_decimal_type_checked(ty) {
+            return decimal_ty;
+        }
         if let Type::Simple(name) = &ty.node
             && let Some(sym) = self.lookup_symbol(name.as_str())
             && let SymbolKind::RustItem(info) = &sym.kind
@@ -2152,6 +2301,62 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         resolve_type(&ty.node, &self.symbols)
+    }
+
+    /// Return whether a simple type name is reserved for a parameterized numeric family.
+    fn reserved_numeric_type_name(name: &str) -> bool {
+        matches!(name, "decimal" | "numeric")
+    }
+
+    /// Resolve and validate a parameterized decimal type annotation.
+    fn resolve_decimal_type_checked(&mut self, ty: &Spanned<Type>) -> Option<ResolvedType> {
+        let Type::Generic(name, args) = &ty.node else {
+            return None;
+        };
+        let constructor = numerics::decimal_constructor_from_str(name.as_str())?;
+        if args.len() != 2 {
+            self.errors.push(CompileError::type_error(
+                format!("{name}[...] expects exactly 2 integer parameters: precision and scale"),
+                ty.span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let Some(precision) = decimal_type_int_arg(&args[0]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal precision must be an integer literal".to_string(),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        let Some(scale) = decimal_type_int_arg(&args[1]) else {
+            self.errors.push(CompileError::type_error(
+                "Decimal scale must be an integer literal".to_string(),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        if !(1..=38).contains(&precision) {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal precision must be between 1 and 38, found {precision}"),
+                args[0].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        if scale < 0 || scale > precision {
+            self.errors.push(CompileError::type_error(
+                format!("Decimal scale must be between 0 and precision {precision}, found {scale}"),
+                args[1].span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let canonical = numerics::decimal_constructor_info_for(constructor).canonical;
+        Some(ResolvedType::Generic(
+            canonical.to_string(),
+            vec![
+                ResolvedType::TypeVar(precision.to_string()),
+                ResolvedType::TypeVar(scale.to_string()),
+            ],
+        ))
     }
 
     /// Validate alias relationships that need declaration-level context before symbol collection flattens aliases.
@@ -2185,16 +2390,47 @@ impl TypeChecker {
                     }
                 }
                 Declaration::Model(model) => {
-                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods)
+                    self.validate_member_name_collisions(
+                        &model.name,
+                        &model.fields,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &model.name,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    )
                 }
                 Declaration::Class(class) => {
-                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods)
+                    self.validate_member_name_collisions(
+                        &class.name,
+                        &class.fields,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &class.name,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    )
                 }
                 Declaration::Trait(tr) => {
-                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
+                    self.validate_member_name_collisions(
+                        &tr.name,
+                        &[],
+                        &tr.method_aliases,
+                        &tr.properties,
+                        &tr.methods,
+                    );
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
                 }
                 Declaration::Newtype(nt) => {
-                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
                 }
                 _ => {}
             }
@@ -2231,14 +2467,19 @@ impl TypeChecker {
         &mut self,
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
         let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
         let mut alias_targets = HashMap::new();
         let mut alias_names = HashSet::new();
 
         for alias in aliases {
-            if !alias_names.insert(alias.node.name.as_str()) || method_names.contains(alias.node.name.as_str()) {
+            if !alias_names.insert(alias.node.name.as_str())
+                || method_names.contains(alias.node.name.as_str())
+                || property_names.contains(alias.node.name.as_str())
+            {
                 self.errors.push(CompileError::type_error(
                     format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
                     alias.span,
@@ -2257,6 +2498,62 @@ impl TypeChecker {
         }
 
         self.validate_method_alias_cycles(owner, &alias_targets);
+    }
+
+    /// Reject computed property names that collide with storage fields, aliases, properties, or methods.
+    fn validate_member_name_collisions(
+        &mut self,
+        owner: &str,
+        fields: &[Spanned<FieldDecl>],
+        aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let mut seen: HashMap<&str, (&str, Span)> = HashMap::new();
+        for field in fields {
+            seen.entry(field.node.name.as_str()).or_insert(("field", field.span));
+        }
+        for alias in aliases {
+            seen.entry(alias.node.name.as_str())
+                .or_insert(("method alias", alias.span));
+        }
+        let mut method_seen: HashMap<&str, Span> = HashMap::new();
+        for method in methods {
+            if method_seen.insert(method.node.name.as_str(), method.span).is_none()
+                && !seen.contains_key(method.node.name.as_str())
+            {
+                seen.insert(method.node.name.as_str(), ("method", method.span));
+            }
+        }
+        for property in properties {
+            self.validate_one_member_name(owner, "property", property.node.name.as_str(), property.span, &mut seen);
+        }
+    }
+
+    /// Validate one property name against the member names already used in the same owner declaration.
+    fn validate_one_member_name<'a>(
+        &mut self,
+        owner: &str,
+        kind: &'static str,
+        name: &'a str,
+        span: Span,
+        seen: &mut HashMap<&'a str, (&'static str, Span)>,
+    ) {
+        if let Some((previous_kind, previous_span)) = seen.insert(name, (kind, span)) {
+            self.errors.push(
+                CompileError::type_error(
+                    format!(
+                        "Duplicate member '{}.{}' declared as both {} and {}",
+                        owner, name, previous_kind, kind
+                    ),
+                    span,
+                )
+                .with_note(format!(
+                    "First declaration span: {}..{}",
+                    previous_span.start, previous_span.end
+                )),
+            );
+        }
     }
 
     /// Reject direct and indirect cycles between method aliases on one owner type.
@@ -2396,6 +2693,7 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
     }
 
     /// Import all symbols from another module's AST into the symbol table.
@@ -2413,6 +2711,95 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
+    }
+
+    /// Register RFC 024 metadata exported by a dependency source module.
+    ///
+    /// `__derives__` is compiler metadata rather than a public const, so consumers need this side channel even when the
+    /// declaration itself is not imported as a symbol.
+    fn register_dependency_derivable_metadata(&mut self, module_name: &str, module_ast: &Program) {
+        let mut module_paths = vec![module_name.to_string()];
+        let dotted_module_path = module_name.replace('_', ".");
+        if dotted_module_path != module_name {
+            module_paths.push(dotted_module_path);
+        }
+        let traits = Self::derivable_traits_from_program(module_ast);
+        if !traits.is_empty() {
+            for module_path in &module_paths {
+                self.dependency_derivable_modules
+                    .insert(module_path.clone(), traits.clone());
+            }
+        }
+
+        for decl in &module_ast.declarations {
+            let Declaration::Trait(tr) = &decl.node else {
+                continue;
+            };
+            if let Some(info) = self.lookup_trait_info(&tr.name).cloned() {
+                for module_path in &module_paths {
+                    self.dependency_module_traits
+                        .insert(format!("{module_path}.{}", tr.name), info.clone());
+                }
+            }
+            let paths = Self::rust_derive_paths_from_trait(tr);
+            if paths.is_empty() {
+                continue;
+            }
+            for module_path in &module_paths {
+                let qualified = format!("{module_path}.{}", tr.name);
+                self.dependency_trait_rust_derive_paths.insert(qualified, paths.clone());
+            }
+        }
+    }
+
+    /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
+    fn derivable_traits_from_program(program: &Program) -> Vec<String> {
+        for decl in &program.declarations {
+            let Declaration::Const(konst) = &decl.node else {
+                continue;
+            };
+            if konst.name != "__derives__" {
+                continue;
+            }
+            let Expr::List(entries) = &konst.value.node else {
+                return Vec::new();
+            };
+            return entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    ListEntry::Element(expr) => match &expr.node {
+                        Expr::Ident(name) => Some(name.clone()),
+                        _ => None,
+                    },
+                    ListEntry::Spread(_) => None,
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
+    /// Extract `@rust.derive(...)` path strings from one imported trait declaration.
+    fn rust_derive_paths_from_trait(tr: &TraitDecl) -> Vec<String> {
+        let mut paths = Vec::new();
+        for decorator in &tr.decorators {
+            let path = decorator.node.path.segments.join(".");
+            if core_decorators::from_str(&path) != Some(DecoratorId::RustDerive) {
+                continue;
+            }
+            for arg in &decorator.node.args {
+                let DecoratorArg::Positional(expr) = arg else {
+                    continue;
+                };
+                let Expr::Literal(Literal::String(path)) = &expr.node else {
+                    continue;
+                };
+                if !paths.iter().any(|existing| existing == path) {
+                    paths.push(path.clone());
+                }
+            }
+        }
+        paths
     }
 
     /// Predeclare dependency interface names before collecting imported declarations.
@@ -2447,6 +2834,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2465,6 +2853,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2480,6 +2869,7 @@ impl TypeChecker {
                         type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         methods: HashMap::new(),
                         method_aliases: HashMap::new(),
+                        properties: HashMap::new(),
                         requires: Vec::new(),
                         supertraits: Vec::new(),
                     }),
@@ -2553,6 +2943,9 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         for (name, dep_ast) in dependencies {
             self.dependency_exports
                 .insert(name.to_string(), exported_symbols(dep_ast));
@@ -2578,6 +2971,9 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             self.import_module_all(dep_ast, name);
@@ -2617,6 +3013,12 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
+                if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
+            {
+                true
+            }
+            (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
                 ResolvedType::Generic(expected_name, expected_members),
@@ -2638,6 +3040,15 @@ impl TypeChecker {
                     return false;
                 };
                 self.types_compatible(actual, inner)
+            }
+            (ResolvedType::Generic(name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator)
+                    && expected_args.len() == 1
+                    && (trait_name == builtin_traits::as_str(TraitId::Iterable)
+                        || trait_name == builtin_traits::as_str(TraitId::Iterator)
+                        || trait_name == builtin_traits::as_str(TraitId::IntoIterator)) =>
+            {
+                actual_args.len() == 1 && self.types_compatible(&actual_args[0], &expected_args[0])
             }
 
             // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
@@ -2687,6 +3098,35 @@ impl TypeChecker {
                     .iter()
                     .zip(instantiated.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
+            }
+
+            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable)
+                    && expected_args.len() == 1
+                    && actual_args.len() == 1 =>
+            {
+                let actual_is_iterable = actual_name == builtin_traits::as_str(TraitId::Iterator)
+                    || matches!(
+                        collection_type_id(actual_name.as_str()),
+                        Some(
+                            CollectionTypeId::List
+                                | CollectionTypeId::Set
+                                | CollectionTypeId::FrozenList
+                                | CollectionTypeId::FrozenSet
+                        )
+                    );
+                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+            }
+            (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
+            }
+            (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).
@@ -2917,6 +3357,70 @@ fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
         Declaration::Trait(t) => Some(t.name.as_str()),
         Declaration::Function(f) => Some(f.name.as_str()),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+    }
+}
+
+/// Extract a decimal precision or scale argument from a type-position integer literal.
+fn decimal_type_int_arg(arg: &Spanned<Type>) -> Option<i64> {
+    match &arg.node {
+        Type::IntLiteral(value) => Some(value.value),
+        _ => None,
+    }
+}
+
+/// Return whether two resolved numeric types are compatible through lossless widening.
+fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -> bool {
+    let Some(actual_id) = numeric_type_id_for_compat(actual) else {
+        return false;
+    };
+    let Some(expected_id) = numeric_type_id_for_compat(expected) else {
+        return false;
+    };
+    numeric_type_losslessly_widens_to(actual_id, expected_id)
+}
+
+/// Map an ordinary or exact numeric type to its canonical numeric id for compatibility checks.
+pub(crate) fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
+    match ty {
+        ResolvedType::Int => Some(NumericTypeId::I64),
+        ResolvedType::Float => Some(NumericTypeId::F64),
+        ResolvedType::Numeric(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Return whether one numeric id can widen to another without value loss under RFC 009 rules.
+pub(crate) fn numeric_type_losslessly_widens_to(actual: NumericTypeId, expected: NumericTypeId) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let actual_info = numerics::info_for(actual);
+    let expected_info = numerics::info_for(expected);
+    match (actual_info.family, expected_info.family) {
+        (NumericFamily::SignedInteger, NumericFamily::SignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::UnsignedInteger) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        (NumericFamily::UnsignedInteger, NumericFamily::SignedInteger) => {
+            match (actual_info.bit_width, expected_info.bit_width) {
+                (Some(actual_bits), Some(expected_bits)) => expected_bits > actual_bits,
+                _ => false,
+            }
+        }
+        (NumericFamily::BinaryFloat, NumericFamily::BinaryFloat) => {
+            width_at_least(expected_info.bit_width, actual_info.bit_width)
+        }
+        _ => false,
+    }
+}
+
+/// Compare optional bit widths for fixed-width widening decisions.
+fn width_at_least(expected: Option<u16>, actual: Option<u16>) -> bool {
+    match (expected, actual) {
+        (Some(expected), Some(actual)) => expected >= actual,
+        _ => false,
     }
 }
 

@@ -12,9 +12,10 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::ResolvedOperatorKind;
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
+use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
@@ -43,12 +44,79 @@ impl AstLowering {
         }
     }
 
+    /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
+    /// metadata boundaries.
+    fn callable_signature_from_stdlib_method_decl(&mut self, method: &ast::MethodDecl) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_type(&param.node.ty.node);
+                    let ty = Self::lower_param_container_type(param.node.kind, base_ty);
+                    FunctionParam {
+                        name: param.node.name.clone(),
+                        ty,
+                        mutability: super::super::super::types::Mutability::Immutable,
+                        is_self: false,
+                        kind: param.node.kind,
+                        default: param
+                            .node
+                            .default
+                            .as_ref()
+                            .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_type(&method.return_type.node),
+        }
+    }
+
+    /// Resolve an imported stdlib type method signature by loading the owning stdlib stub AST.
+    ///
+    /// Function metadata already has a direct stdlib lookup path, but type-member calls such as `App.run()` arrive as
+    /// method calls. The lightweight frontend import metadata only records `has_default`, so this path rehydrates the
+    /// actual default expressions from the stdlib source declaration before IR emission fills omitted arguments.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_imported_stdlib_type_method_path(
+        &mut self,
+        path: &[String],
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        if path.len() < 3 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let type_name = path.last()?;
+        let module_path = &path[..path.len() - 1];
+        let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+        let method = cache.lookup_type_method_decl(module_path, type_name, method_name)?;
+        Some(self.callable_signature_from_stdlib_method_decl(&method))
+    }
+
+    /// Resolve the signature for an imported stdlib function by its canonical import path.
+    ///
+    /// Lowered stdlib modules may import private helpers from sibling stdlib modules. Those helpers are not in the
+    /// current module's IR function registry, but their `.incn` declarations are still available through the stdlib AST
+    /// cache. Attaching the exact module-qualified signature here lets codegen apply normal Incan argument conversion
+    /// rules without merging same-named helpers from unrelated stdlib modules.
+    fn callable_signature_for_imported_stdlib_path(&self, path: &[String]) -> Option<FunctionSignature> {
+        if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let function_name = path.last()?;
+        let module_path = &path[..path.len() - 1];
+        let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
+        let info = cache.lookup_function(module_path, function_name)?;
+        Some(self.callable_signature_from_params(&info.params, &info.return_type))
+    }
+
+    /// Resolve a callable signature from the callee expression's type information.
+    ///
+    /// This covers values whose type is already known as `Function(...)`, which is separate from call-site metadata
+    /// gathered for defaults, named arguments, and other invocation-specific details.
     fn callable_signature_for_callee_span(&self, span: ast::Span) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         match info.expr_type(span)? {
-            ResolvedType::Function(params, ret) if params.iter().any(|param| param.kind != ast::ParamKind::Normal) => {
-                Some(self.callable_signature_from_params(params, ret))
-            }
+            ResolvedType::Function(params, ret) => Some(self.callable_signature_from_params(params, ret)),
             _ => None,
         }
     }
@@ -91,6 +159,91 @@ impl AstLowering {
             | ast::CallArg::PositionalUnpack(e)
             | ast::CallArg::KeywordUnpack(e) => e,
         }
+    }
+
+    /// Build a synthetic callable signature from an already-lowered function type.
+    fn function_signature_from_ir_type(params: &[IrType], ret: &IrType) -> FunctionSignature {
+        FunctionSignature {
+            params: params
+                .iter()
+                .enumerate()
+                .map(|(idx, ty)| FunctionParam {
+                    name: format!("__incan_arg_{idx}"),
+                    ty: ty.clone(),
+                    mutability: super::super::super::types::Mutability::Immutable,
+                    is_self: false,
+                    kind: ast::ParamKind::Normal,
+                    default: None,
+                })
+                .collect(),
+            return_type: ret.clone(),
+        }
+    }
+
+    /// Return whether passing `arg` to a callable parameter should refine that parameter to a shared borrow.
+    fn callable_arg_needs_implicit_borrow(arg: &TypedExpr, target_ty: &IrType) -> bool {
+        if arg.ty.is_copy() || matches!(target_ty, IrType::Ref(_) | IrType::RefMut(_)) {
+            return false;
+        }
+        matches!(
+            arg.kind,
+            IrExprKind::Var {
+                access: VarAccess::Read | VarAccess::Borrow,
+                ..
+            }
+        )
+    }
+
+    /// Refine a function-typed local parameter call when borrowing preserves a non-`Copy` argument for later use.
+    fn refine_function_typed_local_call(
+        &mut self,
+        func: &mut TypedExpr,
+        args: &[IrCallArg],
+        callable_signature: Option<FunctionSignature>,
+    ) -> Option<FunctionSignature> {
+        let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &func.kind
+        else {
+            return callable_signature;
+        };
+        let local_name = name.clone();
+        if !self.current_callable_param_scope_contains(&local_name) {
+            return callable_signature;
+        }
+
+        let IrType::Function { params, ret } = &func.ty else {
+            return callable_signature;
+        };
+        let mut signature =
+            callable_signature.unwrap_or_else(|| Self::function_signature_from_ir_type(params, ret.as_ref()));
+        let mut changed = false;
+
+        for (idx, arg) in args.iter().enumerate() {
+            if !matches!(arg.kind, IrCallArgKind::Positional | IrCallArgKind::Named) {
+                continue;
+            }
+            let Some(param) = signature.params.get_mut(idx) else {
+                continue;
+            };
+            if Self::callable_arg_needs_implicit_borrow(&arg.expr, &param.ty) {
+                param.ty = IrType::Ref(Box::new(param.ty.clone()));
+                changed = true;
+            }
+        }
+
+        if changed {
+            let refined_ty = IrType::Function {
+                params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: Box::new(signature.return_type.clone()),
+            };
+            func.ty = refined_ty.clone();
+            self.update_local_binding(&local_name, refined_ty);
+        }
+
+        Some(signature)
     }
 
     fn lower_adapter_kind(adapter_kind: ast::InteropAdapterKind) -> super::super::super::decl::IrInteropAdapterKind {
@@ -238,6 +391,33 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
+                let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
+                let receiver_ty = if lowered_type_args.is_empty() {
+                    IrType::Struct(constructor_name.clone())
+                } else {
+                    IrType::NamedGeneric(constructor_name.clone(), lowered_type_args.clone())
+                };
+                return Ok((
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: constructor_name,
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::TypeName,
+                            },
+                            receiver_ty.clone(),
+                        )),
+                        method: "__incan_new".to_string(),
+                        dispatch: None,
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    receiver_ty,
+                ));
+            }
             if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
                 && matches!(self.lookup_var(name), IrType::Unknown)
                 && let Some(owner_name) = self.current_classmethod_constructor.clone()
@@ -245,17 +425,16 @@ impl AstLowering {
                 return self.lower_constructor_call(&owner_name, args);
             }
 
-            // Use two strategies for constructor detection:
-            // 1. Known struct from current file (in struct_names map)
-            // 2. Uppercase identifier heuristic (works cross-file like old codegen)
+            // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
+            // still available through `struct_names`; imported constructors are marked as `TypeName` on the callee
+            // span by the typechecker.
             let is_known_struct = self.struct_names.contains_key(&constructor_name);
-            let is_uppercase = constructor_name
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false);
+            let is_resolved_type_name = self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
 
-            if is_known_struct || is_uppercase {
+            if is_known_struct || is_resolved_type_name {
                 return self.lower_constructor_call(&constructor_name, args);
             }
         }
@@ -264,7 +443,7 @@ impl AstLowering {
             ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
             _ => None,
         };
-        let func = self.lower_expr_spanned(f)?;
+        let mut func = self.lower_expr_spanned(f)?;
         if let Some(resolved_operator) = self
             .type_info
             .as_ref()
@@ -285,6 +464,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: Vec::new(),
                     callable_signature: self.callable_signature_for_call_span(call_span),
@@ -355,6 +535,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(func),
                     method: resolved_operator.method,
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: args_ir,
                     callable_signature: self.callable_signature_for_call_span(call_span),
@@ -363,6 +544,13 @@ impl AstLowering {
                 ret_ty,
             ));
         }
+        let callable_signature = imported_callee_path
+            .as_deref()
+            .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .or_else(|| self.callable_signature_for_call_span(call_span))
+            .or_else(|| self.callable_signature_for_callee_span(f.span));
+        let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
+
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()
         } else {
@@ -373,7 +561,7 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
-                callable_signature: self.callable_signature_for_callee_span(f.span),
+                callable_signature,
                 canonical_path: imported_callee_path,
             },
             ret_ty,
@@ -420,6 +608,7 @@ impl AstLowering {
                 IrExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     method: ctor.clone(),
+                    dispatch: None,
                     type_args: Vec::new(),
                     args: vec![IrCallArg {
                         name: None,

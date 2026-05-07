@@ -235,6 +235,12 @@ impl Formatter {
                 }
                 self.writer.dedent();
             }
+            Expr::Generator(generator) => {
+                self.writer.write("(");
+                self.format_expr(&generator.expr.node);
+                self.format_comprehension_clauses(&generator.clauses);
+                self.writer.write(")");
+            }
             Expr::Closure(params, body) => {
                 self.writer.write("(");
                 self.format_params(params);
@@ -332,14 +338,7 @@ impl Formatter {
             Expr::ListComp(comp) => {
                 self.writer.write("[");
                 self.format_expr(&comp.expr.node);
-                self.writer.write(" for ");
-                self.format_pattern(&comp.pattern.node);
-                self.writer.write(" in ");
-                self.format_expr(&comp.iter.node);
-                if let Some(filter) = &comp.filter {
-                    self.writer.write(" if ");
-                    self.format_expr(&filter.node);
-                }
+                self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("]");
             }
             Expr::DictComp(comp) => {
@@ -347,14 +346,7 @@ impl Formatter {
                 self.format_expr(&comp.key.node);
                 self.writer.write(": ");
                 self.format_expr(&comp.value.node);
-                self.writer.write(" for ");
-                self.format_pattern(&comp.pattern.node);
-                self.writer.write(" in ");
-                self.format_expr(&comp.iter.node);
-                if let Some(filter) = &comp.filter {
-                    self.writer.write(" if ");
-                    self.format_expr(&filter.node);
-                }
+                self.format_comprehension_clauses(&comp.clauses);
                 self.writer.write("}");
             }
             Expr::Yield(inner) => {
@@ -376,13 +368,33 @@ impl Formatter {
         }
     }
 
+    /// Write comprehension clauses in canonical source order.
+    fn format_comprehension_clauses(&mut self, clauses: &[ComprehensionClause]) {
+        for clause in clauses {
+            match clause {
+                ComprehensionClause::For { pattern, iter } => {
+                    self.writer.write(" for ");
+                    self.format_pattern(&pattern.node);
+                    self.writer.write(" in ");
+                    self.format_expr(&iter.node);
+                }
+                ComprehensionClause::If(condition) => {
+                    self.writer.write(" if ");
+                    self.format_expr(&condition.node);
+                }
+            }
+        }
+    }
+
     // ---- Literals ----
 
+    /// Format a literal while preserving source-sensitive numeric spellings.
     fn format_literal(&mut self, lit: &Literal) {
         match lit {
             Literal::Int(il) => self.writer.write(&il.repr),
             // Emit source `FloatLiteral::repr`, not `f64` `Display` (which drops `.0`, etc.).
             Literal::Float(fl) => self.writer.write(&fl.repr),
+            Literal::Decimal(dl) => self.writer.write(&dl.repr),
             Literal::String(s) => {
                 self.writer.write("\"");
                 self.writer.write(&escape_string(s));
@@ -550,6 +562,7 @@ impl Formatter {
         true
     }
 
+    /// Format a pattern in match-arm, `if let`, and nested constructor-pattern positions.
     pub(super) fn format_pattern(&mut self, pattern: &Pattern) {
         match pattern {
             Pattern::Wildcard => self.writer.write("_"),
@@ -587,12 +600,74 @@ impl Formatter {
                 }
                 self.writer.write(")");
             }
+            Pattern::Group(pattern) => {
+                if let Pattern::Or(patterns) = &pattern.node {
+                    self.format_grouped_or_pattern(patterns);
+                } else {
+                    self.writer.write("(");
+                    self.format_pattern(&pattern.node);
+                    self.writer.write(")");
+                }
+            }
+            Pattern::Or(patterns) => {
+                self.format_or_pattern(patterns);
+            }
+        }
+    }
+
+    /// Format pattern alternation inline first, then fall back to a grouped multiline layout when needed.
+    fn format_or_pattern(&mut self, patterns: &[Spanned<Pattern>]) {
+        let checkpoint = self.writer.checkpoint();
+        self.format_or_pattern_inline(patterns);
+        if !self.writer.line_length_exceeded() {
+            return;
+        }
+
+        self.writer.restore(checkpoint);
+        self.format_grouped_or_pattern(patterns);
+    }
+
+    /// Format alternation inside one pair of grouping parentheses.
+    ///
+    /// This helper preserves idempotence for already-grouped alternations: reformatting `(A | B)` must not produce
+    /// nested parentheses just because the inner alternation is long.
+    fn format_grouped_or_pattern(&mut self, patterns: &[Spanned<Pattern>]) {
+        let checkpoint = self.writer.checkpoint();
+        self.writer.write("(");
+        self.format_or_pattern_inline(patterns);
+        self.writer.write(")");
+        if !self.writer.line_length_exceeded() {
+            return;
+        }
+
+        self.writer.restore(checkpoint);
+        self.writer.write("(");
+        self.writer.newline();
+        self.writer.indent();
+        for (i, pattern) in patterns.iter().enumerate() {
+            if i > 0 {
+                self.writer.write("| ");
+            }
+            self.format_pattern(&pattern.node);
+            self.writer.newline();
+        }
+        self.writer.dedent();
+        self.writer.write(")");
+    }
+
+    /// Write alternation alternatives on the current line without adding grouping parentheses.
+    fn format_or_pattern_inline(&mut self, patterns: &[Spanned<Pattern>]) {
+        for (i, pattern) in patterns.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(" | ");
+            }
+            self.format_pattern(&pattern.node);
         }
     }
 
     // ---- Types ----
 
-    /// Format a type annotation using stable Incan syntax.
+    /// Format a type annotation or type argument.
     pub(super) fn format_type(&mut self, ty: &Type) {
         match ty {
             Type::Simple(name) => self.writer.write(name),
@@ -615,6 +690,7 @@ impl Formatter {
                 }
                 self.writer.write("]");
             }
+            Type::IntLiteral(value) => self.writer.write(&value.repr),
             Type::Tuple(types) => {
                 self.writer.write("Tuple[");
                 for (i, t) in types.iter().enumerate() {

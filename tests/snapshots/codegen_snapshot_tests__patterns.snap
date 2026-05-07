@@ -35,10 +35,12 @@ fn test_pattern_literals() {
 fn test_pattern_string_literal() {
     let name: String = "Alice".to_string();
     match name {
-        "Alice" => {
+        ref __incan_match_string_literal if __incan_match_string_literal.as_str()
+            == "Alice" => {
             println!("{}", "Hello Alice");
         }
-        "Bob" => {
+        ref __incan_match_string_literal if __incan_match_string_literal.as_str()
+            == "Bob" => {
             println!("{}", "Hello Bob");
         }
         _ => {

@@ -2,7 +2,7 @@
 //!
 //! Handles `emit_function`, `emit_extern_function` (RFC 023), `emit_method`, `emit_trait`, and `emit_trait_method`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -10,13 +10,393 @@ use quote::{format_ident, quote};
 use incan_core::lang::conventions;
 
 use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
-use super::super::super::expr::{IrCallArg, IrDictEntry, IrExprKind, IrListEntry, MatchArm, Pattern};
+use super::super::super::expr::{
+    IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern,
+};
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
 
 impl<'a> IrEmitter<'a> {
+    /// Rewrite expression type metadata for borrowed adapter parameters throughout a statement.
+    fn rewrite_borrowed_param_types_in_stmt(stmt: &mut IrStmt, borrowed: &HashMap<String, IrType>) {
+        match &mut stmt.kind {
+            IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
+                Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+            }
+            IrStmtKind::Let { value, .. } => Self::rewrite_borrowed_param_types_in_expr(value, borrowed),
+            IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
+                Self::rewrite_borrowed_param_types_in_assign_target(target, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+            }
+            IrStmtKind::Break { value, .. } => {
+                if let Some(expr) = value {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrStmtKind::While { condition, body, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(condition, borrowed);
+                for stmt in body {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+            }
+            IrStmtKind::For { iterable, body, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(iterable, borrowed);
+                for stmt in body {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+            }
+            IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => {
+                for stmt in body {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+            }
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::rewrite_borrowed_param_types_in_expr(condition, borrowed);
+                for stmt in then_branch {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+                if let Some(branch) = else_branch {
+                    for stmt in branch {
+                        Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                    }
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                Self::rewrite_borrowed_param_types_in_expr(scrutinee, borrowed);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
+                    }
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arm.body, borrowed);
+                }
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
+        }
+    }
+
+    /// Rewrite expression type metadata inside assignment targets that may contain borrowed parameters.
+    fn rewrite_borrowed_param_types_in_assign_target(target: &mut AssignTarget, borrowed: &HashMap<String, IrType>) {
+        match target {
+            AssignTarget::Field { object, .. } => Self::rewrite_borrowed_param_types_in_expr(object, borrowed),
+            AssignTarget::Index { object, index } => {
+                Self::rewrite_borrowed_param_types_in_expr(object, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(index, borrowed);
+            }
+            AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static(_) => {}
+        }
+    }
+
+    /// Rewrite variable expression types after a helper parameter has been changed from owned to borrowed.
+    fn rewrite_borrowed_param_types_in_expr(
+        expr: &mut super::super::super::expr::IrExpr,
+        borrowed: &HashMap<String, IrType>,
+    ) {
+        if let IrExprKind::Var { name, .. } = &expr.kind
+            && let Some(ty) = borrowed.get(name)
+        {
+            expr.ty = ty.clone();
+        }
+
+        match &mut expr.kind {
+            IrExprKind::BinOp { left, right, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(left, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(right, borrowed);
+            }
+            IrExprKind::UnaryOp { operand, .. }
+            | IrExprKind::Await(operand)
+            | IrExprKind::Try(operand)
+            | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
+            | IrExprKind::InteropCoerce { expr: operand, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(operand, borrowed);
+            }
+            IrExprKind::Call { func, args, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(func, borrowed);
+                for arg in args {
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arg.expr, borrowed);
+                }
+            }
+            IrExprKind::BuiltinCall { args, .. } => {
+                for arg in args {
+                    Self::rewrite_borrowed_param_types_in_expr(arg, borrowed);
+                }
+            }
+            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(receiver, borrowed);
+                for arg in args {
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arg.expr, borrowed);
+                }
+            }
+            IrExprKind::Field { object, .. } => Self::rewrite_borrowed_param_types_in_expr(object, borrowed),
+            IrExprKind::Index { object, index } => {
+                Self::rewrite_borrowed_param_types_in_expr(object, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(index, borrowed);
+            }
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                Self::rewrite_borrowed_param_types_in_expr(target, borrowed);
+                if let Some(expr) = start {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+                if let Some(expr) = end {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+                if let Some(expr) = step {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::ListComp {
+                element,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::rewrite_borrowed_param_types_in_expr(element, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(iterable, borrowed);
+                if let Some(expr) = filter {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::DictComp {
+                key,
+                value,
+                iterable,
+                filter,
+                ..
+            } => {
+                Self::rewrite_borrowed_param_types_in_expr(key, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(iterable, borrowed);
+                if let Some(expr) = filter {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                Self::rewrite_borrowed_param_types_in_expr(element, borrowed);
+                for clause in clauses {
+                    match clause {
+                        super::super::super::expr::IrGeneratorClause::For { iterable, .. } => {
+                            Self::rewrite_borrowed_param_types_in_expr(iterable, borrowed);
+                        }
+                        super::super::super::expr::IrGeneratorClause::If(condition) => {
+                            Self::rewrite_borrowed_param_types_in_expr(condition, borrowed);
+                        }
+                    }
+                }
+            }
+            IrExprKind::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                            Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+                        }
+                    }
+                }
+            }
+            IrExprKind::Dict(entries) => {
+                for entry in entries {
+                    match entry {
+                        IrDictEntry::Pair(key, value) => {
+                            Self::rewrite_borrowed_param_types_in_expr(key, borrowed);
+                            Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+                        }
+                        IrDictEntry::Spread(value) => Self::rewrite_borrowed_param_types_in_expr(value, borrowed),
+                    }
+                }
+            }
+            IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+                for item in items {
+                    Self::rewrite_borrowed_param_types_in_expr(item, borrowed);
+                }
+            }
+            IrExprKind::Struct { fields, .. } => {
+                for (_, value) in fields {
+                    Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+                }
+            }
+            IrExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::rewrite_borrowed_param_types_in_expr(condition, borrowed);
+                Self::rewrite_borrowed_param_types_in_expr(then_branch, borrowed);
+                if let Some(expr) = else_branch {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::Match { scrutinee, arms } => {
+                Self::rewrite_borrowed_param_types_in_expr(scrutinee, borrowed);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
+                    }
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arm.body, borrowed);
+                }
+            }
+            IrExprKind::Closure { body, .. } => Self::rewrite_borrowed_param_types_in_expr(body, borrowed),
+            IrExprKind::Block { stmts, value } => {
+                for stmt in stmts {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+                if let Some(expr) = value {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::Loop { body } => {
+                for stmt in body {
+                    Self::rewrite_borrowed_param_types_in_stmt(stmt, borrowed);
+                }
+            }
+            IrExprKind::Range { start, end, .. } => {
+                if let Some(expr) = start {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+                if let Some(expr) = end {
+                    Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                }
+            }
+            IrExprKind::Format { parts } => {
+                for part in parts {
+                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                        Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
+                    }
+                }
+            }
+            IrExprKind::Unit
+            | IrExprKind::None
+            | IrExprKind::Bool(_)
+            | IrExprKind::Int(_)
+            | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
+            | IrExprKind::String(_)
+            | IrExprKind::Bytes(_)
+            | IrExprKind::Var { .. }
+            | IrExprKind::StaticRead { .. }
+            | IrExprKind::StaticBinding { .. }
+            | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::Literal(_)
+            | IrExprKind::FieldsList(_)
+            | IrExprKind::SerdeToJson
+            | IrExprKind::SerdeFromJson(_) => {}
+        }
+    }
+
+    /// Clone a source function into a private helper whose selected parameters are shared borrows.
+    fn borrowed_function_clone(
+        func: &super::super::super::decl::IrFunction,
+        helper_name: String,
+        indices: &[usize],
+    ) -> Option<super::super::super::decl::IrFunction> {
+        if func.is_extern || func.is_async || func.is_generator {
+            return None;
+        }
+
+        let mut helper = func.clone();
+        helper.name = helper_name;
+        helper.visibility = super::super::super::decl::Visibility::Private;
+        helper.rust_attributes.clear();
+        let dead_code_allow = IrRustLintAllow {
+            lint: "dead_code".to_string(),
+        };
+        if !helper.lint_allows.contains(&dead_code_allow) {
+            helper.lint_allows.push(dead_code_allow);
+        }
+
+        let mut borrowed = HashMap::new();
+        for &index in indices {
+            let param = helper.params.get_mut(index)?;
+            if param.is_self || matches!(param.ty, IrType::Ref(_) | IrType::RefMut(_)) || param.ty.is_copy() {
+                continue;
+            }
+            let original_ty = param.ty.clone();
+            let borrowed_ty = IrType::Ref(Box::new(original_ty));
+            borrowed.insert(param.name.clone(), borrowed_ty.clone());
+            param.ty = borrowed_ty;
+        }
+        if borrowed.is_empty() {
+            return None;
+        }
+        for stmt in &mut helper.body {
+            Self::rewrite_borrowed_param_types_in_stmt(stmt, &borrowed);
+        }
+        Some(helper)
+    }
+
+    /// Emit a private borrowed adapter for a named function value when a call expects `fn(&T, ...)`.
+    pub(in crate::backend::ir::emit) fn emit_borrowed_function_adapter(
+        &self,
+        func: &super::super::super::decl::IrFunction,
+        indices: &[usize],
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if !self.needs_borrowed_function_adapter(&func.name, indices) {
+            return Ok(None);
+        }
+        let helper_name = Self::borrowed_function_adapter_name(&func.name, indices);
+        let Some(helper) = Self::borrowed_function_clone(func, helper_name, indices) else {
+            return Ok(None);
+        };
+        self.emit_function(&helper).map(Some)
+    }
+
+    /// Clone a source observer function or method with one payload parameter changed to an immutable borrow.
+    fn borrowed_result_observer_clone(
+        func: &super::super::super::decl::IrFunction,
+        helper_name: String,
+        param_index: usize,
+    ) -> Option<super::super::super::decl::IrFunction> {
+        if func.is_extern || func.is_async || func.is_generator || !matches!(func.return_type, IrType::Unit) {
+            return None;
+        }
+
+        let param = func.params.get(param_index)?;
+        if param.is_self || param.ty.is_copy() {
+            return None;
+        }
+
+        let mut helper = func.clone();
+        helper.name = helper_name;
+        helper.visibility = super::super::super::decl::Visibility::Private;
+        helper.rust_attributes.clear();
+        let dead_code_allow = IrRustLintAllow {
+            lint: "dead_code".to_string(),
+        };
+        if !helper.lint_allows.contains(&dead_code_allow) {
+            helper.lint_allows.push(dead_code_allow);
+        }
+        let original_ty = helper.params[param_index].ty.clone();
+        helper.params[param_index].ty = IrType::Ref(Box::new(original_ty));
+        Some(helper)
+    }
+
+    /// Emit the borrowed helper used when a non-Copy source-owned callable object is passed to `Result.inspect`.
+    pub(in crate::backend::ir::emit) fn emit_result_observer_borrowed_method(
+        &self,
+        func: &super::super::super::decl::IrFunction,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if func.name != "__call__" || func.params.len() != 2 || !func.params.first().is_some_and(|param| param.is_self)
+        {
+            return Ok(None);
+        }
+
+        let Some(helper) =
+            Self::borrowed_result_observer_clone(func, Self::result_observer_borrowed_method_name().to_string(), 1)
+        else {
+            return Ok(None);
+        };
+        self.emit_method(&helper).map(Some)
+    }
+
     /// Rust trait methods that return `Self` from an associated function position need `where Self: Sized`.
     ///
     /// Walk the emitted return type recursively so wrappers like `Result<Self, E>` or function types preserve the same
@@ -54,7 +434,7 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_function(func);
         }
 
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let is_main = func.name == conventions::ENTRYPOINT_NAME;
         let mutated_params = self.collect_mutated_params(func);
         let used_names = Self::collect_function_used_names(func);
@@ -132,7 +512,8 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
-        let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
+        let lint_allow_values = func.lint_allows.clone();
+        let lint_allows = self.emit_rust_lint_allows(&lint_allow_values);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
@@ -152,6 +533,20 @@ impl<'a> IrEmitter<'a> {
                         eprintln!("{error}");
                         std::process::exit(1);
                     }
+                }
+            });
+        }
+
+        if func.is_generator {
+            let ret_ty = self.emit_type(&func.return_type);
+            return Ok(quote! {
+                #(#lint_allows)*
+                #(#rust_attrs)*
+                #vis fn #name #generics (#(#params),*) -> #ret_ty {
+                    #static_init_stmt
+                    incan_stdlib::iter::Generator::spawn(move |__incan_yield| {
+                        #(#body_stmts)*
+                    })
                 }
             });
         }
@@ -325,7 +720,7 @@ impl<'a> IrEmitter<'a> {
             return self.emit_extern_method(func);
         }
 
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let vis = self.emit_visibility(&func.visibility);
         let mutated_params = self.collect_mutated_params(func);
         let used_names = Self::collect_function_used_names(func);
@@ -555,7 +950,7 @@ impl<'a> IrEmitter<'a> {
         &self,
         func: &super::super::super::decl::IrFunction,
     ) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", &func.name);
+        let name = Self::rust_ident(&func.name);
         let used_names = Self::collect_function_used_names(func);
 
         let params: Vec<TokenStream> = func
@@ -751,7 +1146,9 @@ impl<'a> IrEmitter<'a> {
         used_names: &mut HashSet<String>,
     ) {
         match &stmt.kind {
-            IrStmtKind::Expr(expr) => Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names),
+            IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => {
+                Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
+            }
             IrStmtKind::Let { name, value, .. } => {
                 Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
                 shadowed_names.insert(name.clone());
@@ -902,6 +1299,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Await(operand)
             | IrExprKind::Try(operand)
             | IrExprKind::Cast { expr: operand, .. }
+            | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::InteropCoerce { expr: operand, .. } => {
                 Self::collect_expr_used_names(operand, param_names, shadowed_names, used_names);
             }
@@ -977,6 +1375,21 @@ impl<'a> IrEmitter<'a> {
                 if let Some(expr) = filter {
                     Self::collect_expr_used_names(expr, param_names, &comp_shadowed, used_names);
                 }
+            }
+            IrExprKind::Generator { element, clauses } => {
+                let mut generator_shadowed = shadowed_names.clone();
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { pattern, iterable } => {
+                            Self::collect_expr_used_names(iterable, param_names, &generator_shadowed, used_names);
+                            Self::shadow_pattern_bindings(pattern, &mut generator_shadowed);
+                        }
+                        IrGeneratorClause::If(condition) => {
+                            Self::collect_expr_used_names(condition, param_names, &generator_shadowed, used_names);
+                        }
+                    }
+                }
+                Self::collect_expr_used_names(element, param_names, &generator_shadowed, used_names);
             }
             IrExprKind::List(entries) => {
                 for entry in entries {
@@ -1065,6 +1478,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
             | IrExprKind::Float(_)
+            | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::Literal(_)
