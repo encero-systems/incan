@@ -12,6 +12,7 @@ use crate::frontend::typechecker::helpers::{
     collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
     option_ty, string_method_return,
 };
+use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
 use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
@@ -1299,8 +1300,9 @@ impl TypeChecker {
         match &metadata.kind {
             RustItemKind::Type(_) => {
                 let Some(sig) = self.rust_method_signature(rust_path, method) else {
-                    // Metadata only covers inherent methods; trait-provided or extension methods are
-                    // not yet extracted. Stay permissive rather than false-positiving on valid calls.
+                    self.record_rust_extension_trait_import_for_call(&metadata, method, span);
+                    // Metadata only covers inherent methods plus direct trait impl summaries. Stay permissive rather
+                    // than false-positiving on valid calls when no unambiguous imported trait can be selected.
                     return Some(ResolvedType::Unknown);
                 };
                 if Self::rust_signature_has_receiver(&sig)
@@ -1333,6 +1335,68 @@ impl TypeChecker {
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => Some(ResolvedType::Unknown),
         }
+    }
+
+    /// Record the imported Rust extension trait needed for a method call when metadata proves a unique match.
+    ///
+    /// Rust method lookup needs the trait binding in scope even though the emitted call remains `receiver.method(...)`.
+    /// The typechecker has both receiver metadata and import metadata, so it is the narrowest layer that can select the
+    /// import without falling back to backend method-name heuristics.
+    fn record_rust_extension_trait_import_for_call(
+        &mut self,
+        receiver_metadata: &incan_core::interop::RustItemMetadata,
+        method: &str,
+        span: Span,
+    ) {
+        let RustItemKind::Type(type_info) = &receiver_metadata.kind else {
+            return;
+        };
+        let matches = self
+            .type_info
+            .rust_trait_imports
+            .iter()
+            .filter_map(|(binding, import)| {
+                Self::rust_trait_import_matches_receiver(type_info, import, method).map(|signature| {
+                    RustMethodTraitImportUse {
+                        binding: binding.clone(),
+                        trait_path: import.trait_path.clone(),
+                        method: method.to_string(),
+                        signature,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let [import_use] = matches.as_slice() else {
+            return;
+        };
+        self.type_info
+            .record_rust_method_trait_import_use(span, import_use.clone());
+    }
+
+    /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.
+    fn rust_trait_import_matches_receiver(
+        type_info: &incan_core::interop::RustTypeInfo,
+        import: &RustTraitImportInfo,
+        method: &str,
+    ) -> Option<Option<incan_core::interop::RustFunctionSig>> {
+        if !import.methods.contains(method) {
+            return None;
+        }
+        let trait_suffix = Self::rust_trait_path_suffix(&import.trait_path);
+        let implemented = type_info.implemented_traits.iter().any(|implemented| {
+            implemented.path == import.trait_path
+                || Some(implemented.path.as_str()) == import.definition_path.as_deref()
+                || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix
+        });
+        implemented.then(|| Self::rust_trait_method_signature(import, method))
+    }
+
+    /// Return the imported trait method signature when metadata supplied it.
+    fn rust_trait_method_signature(
+        import: &RustTraitImportInfo,
+        method: &str,
+    ) -> Option<incan_core::interop::RustFunctionSig> {
+        import.method_signatures.get(method).cloned()
     }
 
     /// Check if a type is copyable.

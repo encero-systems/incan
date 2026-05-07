@@ -155,16 +155,27 @@ pub enum IrImportQualifier {
     Super(usize),
 }
 
+/// Metadata for one Rust trait import that can participate in extension-method lookup.
+#[derive(Debug, Clone)]
+pub struct IrRustTraitImport {
+    /// Canonical import path used by Incan for this trait binding.
+    pub trait_path: String,
+    /// Resolved Rust definition path after re-export resolution, when available.
+    pub definition_path: Option<String>,
+    /// Method names this trait can place in Rust method-lookup scope.
+    pub methods: Vec<String>,
+}
+
 /// An item in a from ... import statement
 #[derive(Debug, Clone)]
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
-    /// Method names provided when this item is a Rust trait import.
+    /// Metadata provided when this item is a Rust trait import.
     ///
     /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.
-    /// Codegen uses these method names to retain only trait imports that can satisfy observed method calls.
-    pub rust_trait_methods: Vec<String>,
+    /// Codegen uses this metadata to retain imports selected by frontend method-call analysis.
+    pub rust_trait_import: Option<IrRustTraitImport>,
 }
 
 /// IR trait definition

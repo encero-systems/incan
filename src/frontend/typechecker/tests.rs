@@ -7415,6 +7415,84 @@ type JoinHandle[T] = rusttype RustJoinHandle[T] with Awaitable[T]
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+fn test_rust_extension_trait_method_call_records_selected_import_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import AlphaRender, BetaRender, Widget
+
+def f(w: Widget) -> None:
+  _ = w.render()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    for trait_name in ["AlphaRender", "BetaRender"] {
+        checker
+            .rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: format!("demo::{trait_name}"),
+                    definition_path: Some(format!("demo::{trait_name}")),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Trait(RustTraitInfo {
+                        items: vec![RustTraitAssoc::Function {
+                            name: "render".to_string(),
+                            signature: RustFunctionSig {
+                                params: vec![RustParam {
+                                    name: Some("self".to_string()),
+                                    type_display: "&self".to_string(),
+                                }],
+                                return_type: "String".to_string(),
+                                is_async: false,
+                                is_unsafe: false,
+                            },
+                        }],
+                    }),
+                },
+            )
+            .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    }
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Widget".to_string(),
+                definition_path: Some("demo::Widget".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: Vec::new(),
+                    implemented_traits: vec![RustImplementedTrait {
+                        path: "demo::AlphaRender".to_string(),
+                    }],
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let uses = &checker.type_info().rust_method_trait_import_uses;
+    assert!(
+        uses.values()
+            .any(|import_use| import_use.binding == "AlphaRender" && import_use.method == "render"),
+        "expected AlphaRender import use, got {uses:?}"
+    );
+    assert!(
+        !uses.values().any(|import_use| import_use.binding == "BetaRender"),
+        "BetaRender should not be selected for Widget.render(): {uses:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
 fn test_rusttype_bodyless_rust_trait_forwarding_uses_metadata_and_skips_impl() -> Result<(), Box<dyn std::error::Error>>
 {
     let source = r#"

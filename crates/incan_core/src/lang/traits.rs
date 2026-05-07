@@ -174,6 +174,31 @@ pub fn as_str(id: TraitId) -> &'static str {
     info_for(id).canonical
 }
 
+/// Return canonical source-declared method names for builtin traits whose method set is compiler-observed.
+pub fn method_names(id: TraitId) -> &'static [&'static str] {
+    match id {
+        TraitId::Error => &["message", "source"],
+        TraitId::Debug
+        | TraitId::Display
+        | TraitId::Eq
+        | TraitId::PartialEq
+        | TraitId::Ord
+        | TraitId::PartialOrd
+        | TraitId::Hash
+        | TraitId::Clone
+        | TraitId::Default
+        | TraitId::From
+        | TraitId::Into
+        | TraitId::TryFrom
+        | TraitId::TryInto
+        | TraitId::Iterator
+        | TraitId::IntoIterator
+        | TraitId::Iterable
+        | TraitId::Sum
+        | TraitId::Awaitable => &[],
+    }
+}
+
 /// Return the full metadata entry for a builtin trait.
 ///
 /// The lookup is exhaustive over the closed enum, so adding a trait requires updating this match at compile time.

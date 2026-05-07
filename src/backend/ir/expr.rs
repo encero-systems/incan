@@ -609,6 +609,8 @@ impl BuiltinFn {
 pub enum IrMethodDispatch {
     /// Emit a fully-qualified trait method call.
     Trait { trait_path: String, type_args: Vec<IrType> },
+    /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
+    RustExtensionTraitImport { binding: String },
 }
 
 /// Known method kinds recognized by the Incan compiler.
