@@ -15,6 +15,7 @@ use crate::frontend::typechecker::helpers::{
 use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
@@ -59,6 +60,144 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Bind `list.repeat(...)` arguments to the helper's fixed `value` and `count` parameters.
+    ///
+    /// This mirrors ordinary fixed-parameter call binding closely enough for named arguments while keeping unpacking
+    /// rejected: `list.repeat` has no rest parameters and lowering expects the two canonical arguments explicitly.
+    fn bind_builtin_list_repeat_args<'a>(
+        &mut self,
+        args: &'a [CallArg],
+        span: Span,
+    ) -> (Option<&'a Spanned<Expr>>, Option<&'a Spanned<Expr>>, bool) {
+        let helper = BuiltinCollectionHelperId::ListRepeat;
+        let callee = collection_helpers::full_name(helper);
+        let mut value = None;
+        let mut count = None;
+        let mut valid = true;
+        let mut positional_index = 0usize;
+
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let target = match positional_index {
+                        0 => Some((&mut value, "value")),
+                        1 => Some((&mut count, "count")),
+                        _ => None,
+                    };
+                    positional_index += 1;
+                    if let Some((slot, name)) = target {
+                        if slot.is_some() {
+                            self.errors
+                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                            self.check_expr(expr);
+                            valid = false;
+                        } else {
+                            *slot = Some(expr);
+                        }
+                    } else {
+                        self.check_expr(expr);
+                        valid = false;
+                    }
+                }
+                CallArg::Named(name, expr) => {
+                    let slot = match name.as_str() {
+                        "value" => Some(&mut value),
+                        "count" => Some(&mut count),
+                        _ => None,
+                    };
+                    if let Some(slot) = slot {
+                        if slot.is_some() {
+                            self.errors
+                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                            self.check_expr(expr);
+                            valid = false;
+                        } else {
+                            *slot = Some(expr);
+                        }
+                    } else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, name, expr.span));
+                        self.check_expr(expr);
+                        valid = false;
+                    }
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "*", expr.span));
+                    self.check_expr(expr);
+                    valid = false;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "**", expr.span));
+                    self.check_expr(expr);
+                    valid = false;
+                }
+            }
+        }
+
+        if args.len() != 2 {
+            self.errors.push(errors::builtin_arity(callee, 2, args.len(), span));
+            valid = false;
+        }
+        if value.is_none() {
+            self.errors
+                .push(errors::missing_required_argument(callee, "value", span));
+            valid = false;
+        }
+        if count.is_none() {
+            self.errors
+                .push(errors::missing_required_argument(callee, "count", span));
+            valid = false;
+        }
+
+        (value, count, valid)
+    }
+
+    /// Type-check the built-in `list.repeat(value, count)` helper.
+    ///
+    /// The receiver is the built-in `list` collection surface, not a runtime list value, so this has to run before
+    /// ordinary receiver expression checking would report `list` as an unknown value symbol.
+    fn check_builtin_list_repeat_call(&mut self, args: &[CallArg], span: Span) -> ResolvedType {
+        let (value_arg, count_arg, valid_args) = self.bind_builtin_list_repeat_args(args, span);
+
+        let value_ty = value_arg
+            .map(|expr| self.check_expr(expr))
+            .unwrap_or(ResolvedType::Unknown);
+
+        if let Some(count_arg) = count_arg {
+            let count_ty = self.check_expr(count_arg);
+            if !self.types_compatible(&count_ty, &ResolvedType::Int) {
+                self.errors
+                    .push(errors::type_mismatch("int", &count_ty.to_string(), span));
+            }
+        }
+
+        if !matches!(value_ty, ResolvedType::Unknown) && !self.is_copy_type(&value_ty) && !self.is_clone_type(&value_ty)
+        {
+            self.errors
+                .push(errors::list_repeat_requires_clone(&value_ty.to_string(), span));
+        }
+
+        if !valid_args {
+            return ResolvedType::Unknown;
+        }
+
+        list_ty(value_ty)
+    }
+
+    /// Return whether `base` resolves to the built-in `list` collection type surface.
+    fn is_builtin_list_surface_receiver(&self, base: &Spanned<Expr>) -> bool {
+        let Expr::Ident(name) = &base.node else {
+            return false;
+        };
+        name == collection_helpers::receiver(BuiltinCollectionHelperId::ListRepeat)
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::List)
+            && self
+                .lookup_symbol(name)
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Builtin)))
+    }
+
     /// Return the canonical stdlib iterator trait name from the shared language registry.
     fn iterator_protocol_name() -> &'static str {
         core_traits::as_str(TraitId::Iterator)
@@ -2035,6 +2174,22 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if self.is_builtin_list_surface_receiver(base)
+            && method == collection_helpers::member(BuiltinCollectionHelperId::ListRepeat)
+        {
+            if !type_args.is_empty() {
+                self.errors.push(errors::type_mismatch(
+                    "inferred type arguments",
+                    "explicit type arguments",
+                    span,
+                ));
+            }
+            self.type_info
+                .ident_kinds
+                .insert((base.span.start, base.span.end), IdentKind::TypeName);
+            return self.check_builtin_list_repeat_call(args, span);
+        }
+
         let base_ty = self.check_expr(base);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.

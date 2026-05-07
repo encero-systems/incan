@@ -25,6 +25,15 @@ Use `append` to add an element at the end, and `pop()` to remove and return the 
 !!! tip "Coming from Python?"
     Incan lists are close to Python’s: out-of-range indexing and empty `list.pop()` both surface as [`IndexError`](../../reference/language.md#indexerror) panics with the same canonical messages as CPython where applicable (including `pop from empty list`).
 
+Use `list.repeat(value, count)` for fixed-length initialization when every element should start from the same clone-derived value:
+
+```incan
+ids: list[int] = list.repeat(-1, 8)
+labels: list[str] = list.repeat("pending", 3)
+```
+
+The helper is available without importing `std.collections`. `count` must be an `int`; negative counts raise [`ValueError`](../../reference/language.md#valueerror) with the provided count in the message.
+
 ## Dicts
 
 ```incan

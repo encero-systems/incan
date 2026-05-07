@@ -54,6 +54,7 @@ use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
 
@@ -2392,6 +2393,58 @@ fn rust_member_completion_context(line_prefix: &str) -> Option<(&str, &str)> {
     Some((base, partial))
 }
 
+/// Return the LSP detail string for the built-in `list.repeat` helper.
+fn builtin_list_repeat_detail() -> String {
+    collection_helpers::signature(BuiltinCollectionHelperId::ListRepeat).to_string()
+}
+
+/// Return hover markdown for the built-in `list.repeat` helper.
+fn builtin_list_repeat_markdown() -> String {
+    format!(
+        "```incan\n{}\n```\n\n*list helper*\n\nCreates a list with `count` clone-derived copies of `value`. Negative counts raise `ValueError`.",
+        builtin_list_repeat_detail()
+    )
+}
+
+/// Return hover markdown when `ident` is the `repeat` member in `list.repeat`.
+fn builtin_list_repeat_hover(source: &str, ident: &str, span: Span) -> Option<String> {
+    let helper = BuiltinCollectionHelperId::ListRepeat;
+    if ident != collection_helpers::member(helper) {
+        return None;
+    }
+    let prefix = &source[..span.start.min(source.len())];
+    let receiver_prefix = format!("{}.", collection_helpers::receiver(helper));
+    prefix
+        .trim_end()
+        .ends_with(&receiver_prefix)
+        .then(builtin_list_repeat_markdown)
+}
+
+/// Return completions for built-in members on the import-free `list` surface.
+fn builtin_list_member_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let (base, partial) = rust_member_completion_context(line_prefix)?;
+    if base != collection_helpers::receiver(BuiltinCollectionHelperId::ListRepeat) {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for helper in collection_helpers::BUILTIN_COLLECTION_HELPERS
+        .iter()
+        .filter(|helper| helper.receiver == base && helper.member.starts_with(partial))
+    {
+        push_completion(
+            &mut items,
+            &mut seen,
+            helper.member,
+            CompletionItemKind::METHOD,
+            Some(helper.signature.to_string()),
+            Some(format!("0_{}", helper.member)),
+        );
+    }
+    if items.is_empty() { None } else { Some(items) }
+}
+
 fn rust_member_completions(line_prefix: &str, symbols: &[RustOriginSymbol]) -> Option<Vec<CompletionItem>> {
     let (base, partial) = rust_member_completion_context(line_prefix)?;
     let rust_symbol = symbols.iter().find(|sym| sym.local_name == base)?;
@@ -2904,6 +2957,18 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && let Some(markdown) = builtin_list_repeat_hover(&doc.source, &ident, span)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
             // Call-site explicit type arguments: `f[T](...)`, `_.method[U](...)`
             if let Some(ty_spanned) = call_site_type_args::call_site_innermost_type_at_offset(ast, offset) {
                 let display = format_type(&ty_spanned.node);
@@ -3082,6 +3147,11 @@ impl LanguageServer for IncanLanguageServer {
         // ---- Context: decorator completions (`@` at line start) ----
         if let Some(decorator_items) = decorator_completions(&line_prefix) {
             return Ok(Some(CompletionResponse::Array(decorator_items)));
+        }
+
+        // ---- Context: built-in collection member completions (`list.<member>`) ----
+        if let Some(list_member_items) = builtin_list_member_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(list_member_items)));
         }
 
         // ---- Context: Rust-origin member completions (`Alias.<member>`) ----
@@ -3543,7 +3613,8 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
 #[cfg(test)]
 mod completion_tests {
-    use super::stdlib_module_completions;
+    use super::{builtin_list_member_completions, builtin_list_repeat_hover, stdlib_module_completions};
+    use crate::frontend::ast::Span;
 
     #[test]
     fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
@@ -3554,6 +3625,39 @@ mod completion_tests {
                 .iter()
                 .any(|item| item.label == "fs" && item.detail.as_deref() == Some("std.fs module")),
             "expected std.fs to be exposed through stdlib registry completions: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_member_completions_include_repeat() -> Result<(), String> {
+        let items = builtin_list_member_completions("let xs = list.re")
+            .ok_or_else(|| "expected built-in list member completions".to_string())?;
+        assert!(
+            items.iter().any(|item| {
+                item.label == "repeat"
+                    && item.detail.as_deref() == Some("list.repeat[T](value: T, count: int) -> list[T]")
+            }),
+            "expected list.repeat completion: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_repeat_hover_documents_helper() -> Result<(), String> {
+        let source = "let xs = list.repeat(0, 3)";
+        let start = source
+            .find("repeat")
+            .ok_or_else(|| "expected repeat in fixture".to_string())?;
+        let markdown = builtin_list_repeat_hover(source, "repeat", Span::new(start, start + "repeat".len()))
+            .ok_or_else(|| "expected list.repeat hover".to_string())?;
+        assert!(
+            markdown.contains("list.repeat[T](value: T, count: int) -> list[T]"),
+            "expected signature in hover markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("Negative counts raise `ValueError`."),
+            "expected negative-count detail in hover markdown: {markdown}"
         );
         Ok(())
     }

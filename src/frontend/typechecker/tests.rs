@@ -4167,6 +4167,70 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
 }
 
 #[test]
+fn test_list_repeat_infers_list_element_type() {
+    let source = r#"
+def main() -> None:
+  xs: List[int] = list.repeat(-1, 3)
+  ys: list[str] = list.repeat("seed", 2)
+  zs: list[int] = list.repeat(count=2, value=7)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_repeat_rejects_wrong_arity() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1)
+"#;
+    let errors = check_str_err(source, "expected list.repeat arity error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("list.repeat") && err.message.contains("expects 2")),
+        "expected list.repeat arity diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_rejects_non_int_count() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1, "two")
+"#;
+    let errors = check_str_err(source, "expected list.repeat count type error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'int'") && err.message.contains("found 'str'")),
+        "expected count type mismatch diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def make(value: Mutex) -> List[Mutex]:
+  return list.repeat(value, 2)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("list.repeat requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected list.repeat / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
 fn test_list_concat_requires_clone_for_external_type() {
     let source = r#"
 from rust::std::sync import Mutex

@@ -10,6 +10,7 @@
 //! The goal is the same as other `incan_core::lang` registries: avoid stringly-typed checks
 //! scattered through the compiler/tooling by providing stable IDs + metadata.
 
+pub mod collection_helpers;
 pub mod constructors;
 pub mod functions;
 pub mod methods;

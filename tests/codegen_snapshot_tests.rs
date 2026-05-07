@@ -1078,6 +1078,13 @@ fn test_collections_codegen() {
 }
 
 #[test]
+fn test_list_repeat_codegen() {
+    let source = load_test_file("list_repeat");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("list_repeat", rust_code);
+}
+
+#[test]
 fn test_rfc088_iterator_adapters_codegen() {
     let source = load_test_file("rfc088_iterator_adapters");
     let rust_code = generate_rust(&source);

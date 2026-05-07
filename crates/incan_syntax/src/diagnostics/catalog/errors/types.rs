@@ -1479,6 +1479,16 @@ pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     .with_hint("Add @derive(Clone) to the element type or append a Copy type")
 }
 
+/// Report that `list.repeat(value, count)` requires cloneable element values.
+pub fn list_repeat_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("list.repeat requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("list.repeat preserves the source value, so non-Copy values are cloned into the new list")
+    .with_hint("Add @derive(Clone) to the element type or repeat a Copy type")
+}
+
 pub fn list_concat_requires_clone(elem_type: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("List concatenation requires element type '{}' to be Clone", elem_type),

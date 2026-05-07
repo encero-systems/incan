@@ -552,6 +552,8 @@ pub enum BuiltinFn {
     WriteFile,
     /// `json_stringify(x)` → `incan_stdlib::json::__private::stringify_or_raise(&x, type_name)`
     JsonStringify,
+    /// `list.repeat(value, count)` → `incan_stdlib::collections::list_repeat(value, count)`
+    ListRepeat,
 }
 
 impl BuiltinFn {
