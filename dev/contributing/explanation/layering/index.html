@@ -4665,6 +4665,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#workspace-crate-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace crate categories
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-we-do-this" class="md-nav__link">
     <span class="md-ellipsis">
       Why we do this
@@ -5025,6 +5034,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#workspace-crate-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace crate categories
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-we-do-this" class="md-nav__link">
     <span class="md-ellipsis">
       Why we do this
@@ -5101,16 +5119,33 @@
 compiler and the runtime:</p>
 <ul>
 <li><code>incan</code> (compiler) may depend on <code>incan_core</code>.</li>
+<li><code>incan</code> may depend on <code>incan_syntax</code>, <code>incan_semantics_core</code>, <code>incan_semantics_stdlib</code>, and optional <code>rust_inspect</code> for compiler/toolchain work.</li>
 <li><code>incan</code> must <strong>not</strong> depend on <code>incan_stdlib</code> except as a <strong>dev-dependency</strong> for parity tests.</li>
 <li><code>incan_stdlib</code> depends on <code>incan_core</code>.</li>
 <li>Generated user programs depend on <code>incan_stdlib</code>.</li>
 </ul>
 <pre class="mermaid"><code>flowchart TD
   incanCompiler["incan (compiler)"] --&gt; incanCore["incan_core"]
+  incanCompiler --&gt; incanSyntax["incan_syntax"]
+  incanCompiler --&gt; semanticsCore["incan_semantics_core"]
+  incanCompiler --&gt; semanticsStdlib["incan_semantics_stdlib"]
+  incanCompiler -. optional CLI/LSP interop .-&gt; rustInspect["rust_inspect"]
+  incanSyntax --&gt; incanCore
+  semanticsStdlib --&gt; semanticsCore
   incanStdlib["incan_stdlib"] --&gt; incanCore
-  generatedProgram["generated program"] --&gt; incanStdlib</code></pre>
+  generatedProgram["generated program"] --&gt; incanStdlib
+  generatedProgram --&gt; incanDerive["incan_derive"]
+  generatedProgram --&gt; incanWebMacros["incan_web_macros"]</code></pre>
 <p>CI/Test guardrails enforce that <code>incan</code> keeps <code>incan_stdlib</code> out of its normal dependencies. If you need runtime helpers
 inside tests, add them under <code>[dev-dependencies]</code> only.</p>
+<h2 id="workspace-crate-categories">Workspace crate categories<a class="headerlink" href="#workspace-crate-categories" title="Permanent link">&para;</a></h2>
+<p>Use this policy when deciding where new code belongs:</p>
+<ul>
+<li><strong>Stable contracts</strong>: <code>incan_core</code>, <code>incan_syntax</code>, <code>incan_semantics_core</code>, and <code>incan_vocab</code>. Other layers build on these crates. Keep them deterministic, dependency-light, and free of runtime side effects.</li>
+<li><strong>Compiler/toolchain implementation</strong>: <code>incan</code>, <code>incan_semantics_stdlib</code>, and <code>rust_inspect</code>. These crates are tied to the current compiler/tooling. They may depend on stable contracts but should not become runtime APIs.</li>
+<li><strong>Runtime-only implementation</strong>: <code>incan_stdlib</code>, <code>incan_derive</code>, and <code>incan_web_macros</code>. Generated Rust programs use these crates. The compiler may generate references to them but must not depend on them in normal builds.</li>
+<li><strong>Transitional runtime surfaces</strong>: current <code>incan_stdlib::web</code> and related macro glue. This runtime code is not yet a stable long-term contract. Keep it quarantined and avoid treating it as compiler-owned policy.</li>
+</ul>
 <h2 id="why-we-do-this">Why we do this<a class="headerlink" href="#why-we-do-this" title="Permanent link">&para;</a></h2>
 <p>We want one “source of truth” for language behavior so the compiler and runtime don’t drift:</p>
 <ul>
@@ -5122,40 +5157,82 @@ inside tests, add them under <code>[dev-dependencies]</code> only.</p>
 </ul>
 <h2 id="what-goes-where-contracts-vs-implementations">What goes where (contracts vs implementations)<a class="headerlink" href="#what-goes-where-contracts-vs-implementations" title="Permanent link">&para;</a></h2>
 <p><strong><code>incan_core</code></strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>- Pure helpers that define *meaning/policy* (e.g., string indexing/slicing rules, numeric promotion, canonical error
-  message constants).
-- Central registries for language vocabulary and stdlib wiring (for example `incan_core::lang::stdlib::STDLIB_NAMESPACES`
-  and keyword metadata used by the lexer/parser).
-- Must be deterministic and side-effect free.
-- Should not depend on compiler internals (AST, spans, lexer/parser state).
-</code></pre></div>
+<ul>
+<li>Pure helpers that define <em>meaning/policy</em> (e.g., string indexing/slicing rules, numeric promotion, canonical error message constants).</li>
+<li>Central registries for language vocabulary and stdlib wiring (for example <code>incan_core::lang::stdlib::STDLIB_NAMESPACES</code> and keyword metadata used by the lexer/parser).</li>
+<li>Must be deterministic and side-effect free.</li>
+<li>Should not depend on compiler internals (AST, spans, lexer/parser state).</li>
+<li>Should not gain new stdlib-owned runtime surface types unless the type metadata is truly shared language policy.</li>
+</ul>
+<p><strong><code>incan_syntax</code></strong>:</p>
+<ul>
+<li>Lexer, parser, AST, and syntax diagnostics shared by compiler, formatter, LSP, and future tooling.</li>
+<li>May use language vocabulary from stable contract crates.</li>
+<li>Must not perform name resolution, typechecking, lowering, Rust interop loading, or runtime behavior.</li>
+</ul>
+<p><strong><code>incan_semantics_core</code></strong>:</p>
+<ul>
+<li>Stable action-descriptor and semantics-pack contracts that compiler stages can consume.</li>
+<li>Owns behavior descriptors, not compiler execution. Packs describe what to do; compiler stages decide how to do it.</li>
+</ul>
+<p><strong><code>incan_semantics_stdlib</code></strong>:</p>
+<ul>
+<li>Stdlib semantics-pack implementation for current built-in library surfaces.</li>
+<li>Toolchain-locked implementation crate, not a stable external API.</li>
+<li>Should return descriptors and canonical targets instead of reaching into compiler internals.</li>
+</ul>
+<p><strong><code>rust_inspect</code></strong>:</p>
+<ul>
+<li>Dedicated Rust metadata preparation, extraction, and caching subsystem.</li>
+<li>Allowed behind compiler/tooling features for Rust interop.</li>
+<li>Should remain explicit and staged: prepare/prewarm metadata at CLI/LSP/project boundaries, then read cached metadata in semantic paths.</li>
+</ul>
 <p><strong><code>incan_stdlib</code></strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>- Runtime helpers used by generated Rust code.
-- Includes facades that generated code imports (for example `incan_stdlib::r#async` backing the `std.async` namespace).
-- Should delegate behavior to `incan_core` for policy/consistency, and implement runtime-only actions (like
-  panicking) using the shared error messages/taxonomy.
-</code></pre></div>
+<ul>
+<li>Runtime helpers used by generated Rust code.</li>
+<li>Includes facades that generated code imports (for example <code>incan_stdlib::r#async</code> backing the <code>std.async</code> namespace).</li>
+<li>Should delegate behavior to <code>incan_core</code> for policy/consistency, and implement runtime-only actions (like panicking) using the shared error messages/taxonomy.</li>
+<li>May contain transitional implementation modules, but those modules must not become compiler dependencies.</li>
+</ul>
+<p><strong><code>incan_derive</code> / <code>incan_web_macros</code></strong>:</p>
+<ul>
+<li>Runtime-side macro support for generated Rust programs.</li>
+<li>Must not become a backchannel for compiler logic.</li>
+<li>Web macro/runtime glue is transitional until the web surface has a stable long-term ownership model.</li>
+</ul>
 <p><strong><code>incan</code> (compiler)</strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>- Parsing, typing, lowering, codegen, diagnostics.
-- May use `incan_core` to implement checks/const-eval and to keep error text aligned.
-- Must not use `incan_stdlib` in normal builds; only in tests for parity.
-</code></pre></div>
+<ul>
+<li>Parsing, typing, lowering, codegen, diagnostics.</li>
+<li>May use stable contract crates to implement checks/const-eval and to keep error text aligned.</li>
+<li>Must not use runtime-only crates in normal builds; only <code>incan_stdlib</code> as a dev-dependency for parity tests.</li>
+</ul>
 <h2 id="allowed-forbidden-dependencies">Allowed / forbidden dependencies<a class="headerlink" href="#allowed-forbidden-dependencies" title="Permanent link">&para;</a></h2>
 <p><strong>Allowed</strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>- `incan` → `incan_core` (normal dependency)
-- `incan_stdlib` → `incan_core` (normal dependency)
-- `incan` → `incan_stdlib` (dev-dependency only, for tests)
-</code></pre></div>
-<p><strong>*Forbidden</strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>- `incan` → `incan_stdlib` in `[dependencies]` (this breaks layering)
-- `incan_core` → `incan` or `incan_stdlib`
-</code></pre></div>
+<ul>
+<li><code>incan</code> → <code>incan_core</code>, <code>incan_syntax</code>, <code>incan_semantics_core</code>, <code>incan_semantics_stdlib</code>, <code>incan_vocab</code> as normal compiler/toolchain dependencies.</li>
+<li><code>incan</code> → <code>rust_inspect</code> behind the <code>rust_inspect</code>/CLI/LSP interop path.</li>
+<li><code>incan_stdlib</code> → <code>incan_core</code> as a normal dependency.</li>
+<li><code>incan</code> → <code>incan_stdlib</code> as a dev-dependency only, for tests.</li>
+</ul>
+<p><strong>Forbidden</strong>:</p>
+<ul>
+<li><code>incan</code> → <code>incan_stdlib</code> in <code>[dependencies]</code> (this breaks layering).</li>
+<li><code>incan</code> → <code>incan_derive</code> or <code>incan_web_macros</code> in normal dependencies.</li>
+<li><code>incan_core</code>, <code>incan_syntax</code>, or <code>incan_semantics_core</code> → compiler/toolchain/runtime implementation crates.</li>
+<li>Runtime crates calling back into compiler crates.</li>
+</ul>
 <h2 id="common-pitfalls">Common pitfalls<a class="headerlink" href="#common-pitfalls" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
 <p>Adding a “quick helper” in <code>incan_stdlib</code> and calling it from the compiler.</p>
 <ul>
 <li>Fix: move the policy/logic to <code>incan_core</code> and keep only runtime glue (panics, wrappers) in <code>incan_stdlib</code>.</li>
+</ul>
+</li>
+<li>
+<p>Adding another stdlib-specific surface type to <code>incan_core</code> because similar metadata already exists there.</p>
+<ul>
+<li>Fix: decide whether the type is true language policy or library-owned surface. Prefer library-defined ownership when possible, and document the exception when it must stay core-owned.</li>
 </ul>
 </li>
 <li>
@@ -5168,6 +5245,12 @@ inside tests, add them under <code>[dev-dependencies]</code> only.</p>
 <p>Duplicating error messages as string literals in multiple places.</p>
 <ul>
 <li>Fix: put canonical text in <code>incan_core</code> and reuse it from both compiler and runtime.</li>
+</ul>
+</li>
+<li>
+<p>Loading Rust metadata opportunistically from typechecking or lowering.</p>
+<ul>
+<li>Fix: prewarm through the explicit <code>rust_inspect</code> preparation path and keep semantic lookups cache-oriented.</li>
 </ul>
 </li>
 </ul>

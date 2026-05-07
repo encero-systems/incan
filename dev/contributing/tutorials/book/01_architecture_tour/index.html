@@ -5101,12 +5101,33 @@ continues to compose.</p>
 <li><strong>Project generation</strong>: writes a Cargo project, builds/runs it</li>
 <li><strong>Tooling</strong>: formatter, LSP, test runner, and other developer-facing workflows</li>
 </ul>
+<p>Workspace crates split across stable contracts, compiler/toolchain implementation, and runtime-only implementation. Keep that split in mind before adding a dependency: generated programs may use runtime crates, but compiler code should normally consume stable contract crates and toolchain crates only.</p>
 <h2 id="where-to-look-in-the-repository">Where to look in the repository<a class="headerlink" href="#where-to-look-in-the-repository" title="Permanent link">&para;</a></h2>
 <p>You can orient yourself with these anchors:</p>
 <ul>
 <li><code>crates/incan_syntax/</code>:<ul>
 <li>shared lexer/parser/AST/diagnostics</li>
 <li>used by compiler, formatter, and LSP to avoid drift</li>
+</ul>
+</li>
+<li><code>crates/incan_core/</code>:<ul>
+<li>pure language policy and registries shared across compiler/runtime boundaries</li>
+</ul>
+</li>
+<li><code>crates/incan_semantics_core/</code> and <code>crates/incan_semantics_stdlib/</code>:<ul>
+<li>descriptor contracts plus current stdlib semantics-pack implementation</li>
+</ul>
+</li>
+<li><code>crates/incan_vocab/</code>:<ul>
+<li>stable library manifest/desugarer contract for import-activated library DSLs</li>
+</ul>
+</li>
+<li><code>crates/rust_inspect/</code>:<ul>
+<li>staged Rust metadata preparation/cache subsystem for Rust interop</li>
+</ul>
+</li>
+<li><code>crates/incan_stdlib/</code>, <code>crates/incan_derive/</code>, and <code>crates/incan_web_macros/</code>:<ul>
+<li>runtime-only support used by generated Rust programs</li>
 </ul>
 </li>
 <li><code>src/frontend/</code>:<ul>
@@ -5133,6 +5154,7 @@ continues to compose.</p>
 <p>If you want the deep version (module layout, key types, entry points), read:</p>
 <ul>
 <li><a href="../../../explanation/architecture/">Architecture</a></li>
+<li><a href="../../../explanation/layering/">Layering rules</a></li>
 </ul>
 <h2 id="contributor-workflow-touch-points">Contributor workflow: “touch points”<a class="headerlink" href="#contributor-workflow-touch-points" title="Permanent link">&para;</a></h2>
 <p>Most changes you’ll make land in one of these patterns:</p>

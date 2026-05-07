@@ -5083,6 +5083,9 @@ cycles, leaky abstractions, or drift between tooling and the compiler.</p>
 <ul>
 <li><strong><code>incan_syntax</code> is shared</strong>: lexer/parser/AST/diagnostics are reused by compiler, formatter, and LSP.</li>
 <li><strong><code>incan_core</code> is a semantic core</strong>: shared, pure semantics and registries that must not drift.</li>
+<li><strong><code>incan_semantics_core</code> is the descriptor contract</strong>: semantics packs describe compiler actions without calling compiler internals.</li>
+<li><strong><code>incan_semantics_stdlib</code> is implementation</strong>: current stdlib packs are toolchain-locked, not general runtime APIs.</li>
+<li><strong><code>rust_inspect</code> is staged interop</strong>: prepare/prewarm Rust metadata explicitly, then use cache-oriented reads in semantic paths.</li>
 <li><strong>Compiler crates should not depend on runtime crates</strong>: runtime is for generated programs, not for the compiler.</li>
 </ul>
 <h2 id="a-common-failure-mode">A common failure mode<a class="headerlink" href="#a-common-failure-mode" title="Permanent link">&para;</a></h2>
@@ -5091,6 +5094,12 @@ cycles, leaky abstractions, or drift between tooling and the compiler.</p>
 <li>the formatter prints it differently,</li>
 <li>the LSP can’t parse it,</li>
 <li>or the language reference/keywords drift from implementation.</li>
+</ul>
+<p>Another failure mode is treating runtime convenience as compiler policy:</p>
+<ul>
+<li>adding a helper to <code>incan_stdlib</code> and calling it from <code>incan</code>,</li>
+<li>putting stdlib-owned runtime types into <code>incan_core</code> without a clear language-policy reason,</li>
+<li>or making <code>rust_inspect</code> do hidden workspace loading from a semantic hot path.</li>
 </ul>
 <p>When you feel tempted to “just implement it in the CLI”:</p>
 <ul>

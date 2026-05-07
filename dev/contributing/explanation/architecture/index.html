@@ -4665,6 +4665,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workspace-crate-boundary-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace Crate Boundary Policy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#semantic-core" class="md-nav__link">
     <span class="md-ellipsis">
       Semantic Core
@@ -4768,13 +4777,13 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-inspect-subsystem-srcrust_inspect" class="md-nav__link">
+  <a href="#rust-inspect-subsystem-cratesrust_inspect-re-exported-through-srcrust_inspect" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust inspect subsystem (src/rust_inspect/)
+      Rust inspect subsystem (crates/rust_inspect/, re-exported through src/rust_inspect/)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Rust inspect subsystem (src/rust_inspect/)">
+    <nav class="md-nav" aria-label="Rust inspect subsystem (crates/rust_inspect/, re-exported through src/rust_inspect/)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5241,6 +5250,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#workspace-crate-boundary-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace Crate Boundary Policy
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#semantic-core" class="md-nav__link">
     <span class="md-ellipsis">
       Semantic Core
@@ -5344,13 +5362,13 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rust-inspect-subsystem-srcrust_inspect" class="md-nav__link">
+  <a href="#rust-inspect-subsystem-cratesrust_inspect-re-exported-through-srcrust_inspect" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust inspect subsystem (src/rust_inspect/)
+      Rust inspect subsystem (crates/rust_inspect/, re-exported through src/rust_inspect/)
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Rust inspect subsystem (src/rust_inspect/)">
+    <nav class="md-nav" aria-label="Rust inspect subsystem (crates/rust_inspect/, re-exported through src/rust_inspect/)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5661,6 +5679,24 @@ Runtime<span class="w"> </span>crates<span class="w"> </span><span class="o">(</
 <span class="w">  </span>└──▶<span class="w"> </span>incan_derive
 <span class="w">        </span>-<span class="w"> </span>Proc-macro<span class="w"> </span>derives<span class="w"> </span>to<span class="w"> </span>generate<span class="w"> </span>impls<span class="w"> </span><span class="k">for</span><span class="w"> </span>stdlib<span class="w"> </span>traits
 </code></pre></div>
+<h2 id="workspace-crate-boundary-policy">Workspace Crate Boundary Policy<a class="headerlink" href="#workspace-crate-boundary-policy" title="Permanent link">&para;</a></h2>
+<p>Workspace crates are not interchangeable buckets for compiler code. Treat each crate as one of these ownership categories:</p>
+<ul>
+<li><strong>Stable contract crates</strong>: <code>incan_core</code>, <code>incan_syntax</code>, <code>incan_semantics_core</code>, and <code>incan_vocab</code>. These crates hold shared language contracts used across compiler, tooling, library manifests, and generated-package boundaries. Keep them deterministic, dependency-light, and explicit about what is stable.</li>
+<li><strong>Compiler/toolchain implementation crates</strong>: <code>incan</code>, <code>incan_semantics_stdlib</code>, and <code>rust_inspect</code>. These crates own compiler orchestration, stdlib semantics packs, and Rust metadata preparation. They may evolve with the toolchain and should not be treated as general runtime APIs.</li>
+<li><strong>Runtime-only crates</strong>: <code>incan_stdlib</code>, <code>incan_derive</code>, and <code>incan_web_macros</code>. These crates back generated Rust programs and runtime behavior. The compiler must not depend on them in normal builds.</li>
+<li><strong>Transitional runtime surfaces</strong>: the current <code>incan_stdlib::web</code> backing plus related macro glue. Keep transitional runtime code quarantined behind runtime-only crates until it is either stabilized or replaced by Incan-authored library code.</li>
+</ul>
+<p>The useful distinction is stable contract versus implementation detail, not "more crates" versus "fewer crates." A new crate boundary is justified when it protects a real contract: syntax shared with formatter/LSP, pure semantic policy shared with runtime, a semantics-pack interface, a library manifest ABI, or a staged interop subsystem. It is not justified when it only hides a pile of toolchain internals behind a new package name.</p>
+<p>When moving code, preserve these rules:</p>
+<ul>
+<li>Language policy that both compiler and runtime must share belongs in <code>incan_core</code> or another stable contract crate.</li>
+<li>Syntax shapes, parser diagnostics, and AST vocabulary belong in <code>incan_syntax</code>; compiler-only name resolution and typechecking stay out of that crate.</li>
+<li>Surface semantics packs return descriptors through <code>incan_semantics_core</code>; they do not call compiler frontend/backend code directly.</li>
+<li>Runtime facades, proc macros, web glue, panics, allocation-heavy wrappers, and generated-program helpers stay in runtime-only crates.</li>
+<li>Rust interop metadata loading stays staged and cache-oriented in <code>rust_inspect</code>; semantic hot paths should read prepared metadata rather than performing hidden workspace extraction.</li>
+<li>If a type looks stdlib-owned (<code>Mutex</code>, <code>JoinHandle</code>, <code>App</code>, <code>Response</code>, etc.), do not add more core-owned surface metadata without an explicit rationale. Prefer library-defined ownership when the current manifest and semantics-pack machinery can express it.</li>
+</ul>
 <h2 id="semantic-core">Semantic Core<a class="headerlink" href="#semantic-core" title="Permanent link">&para;</a></h2>
 <p>Incan has a <strong>semantic core</strong> crate (<code>incan_core</code>) that holds pure, deterministic helpers shared by the compiler and
 runtime, without creating dependency cycles.</p>
@@ -5672,6 +5708,7 @@ runtime, without creating dependency cycles.</p>
 <li><strong>Stdlib registry</strong>: <code>incan_core::lang::stdlib::STDLIB_NAMESPACES</code> drives stdlib import validation, stub path resolution,
   unknown-module hints, and import-activated language features (soft keywords like <code>async</code>/<code>await</code>).</li>
 </ul>
+<p><code>incan_core</code> should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.</p>
 <p>See crate-level documentation in <code>crates/incan_core</code> for the contract, extension checklist,
 and drift-prevention expectations; tests in <code>tests/semantic_core_*</code> serve as the source of truth
 for covered domains.</p>
@@ -5948,8 +5985,8 @@ descriptors represent compiler behavior patterns, not individual keywords.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="rust-inspect-subsystem-srcrust_inspect">Rust inspect subsystem (<code>src/rust_inspect/</code>)<a class="headerlink" href="#rust-inspect-subsystem-srcrust_inspect" title="Permanent link">&para;</a></h3>
-<p><code>rust_inspect/</code> powers RFC 041 interop checks that need Rust-side signatures and item shapes.</p>
+<h3 id="rust-inspect-subsystem-cratesrust_inspect-re-exported-through-srcrust_inspect">Rust inspect subsystem (<code>crates/rust_inspect/</code>, re-exported through <code>src/rust_inspect/</code>)<a class="headerlink" href="#rust-inspect-subsystem-cratesrust_inspect-re-exported-through-srcrust_inspect" title="Permanent link">&para;</a></h3>
+<p><code>rust_inspect</code> is a staged interop subsystem for checks that need Rust-side signatures and item shapes. It is toolchain-locked implementation code, not a stable language contract crate.</p>
 <table>
 <thead>
 <tr>
@@ -5980,6 +6017,7 @@ descriptors represent compiler behavior patterns, not individual keywords.</p>
 </tr>
 </tbody>
 </table>
+<p>Keep Rust inspection as explicit preparation followed by cache reads. CLI/LSP/project setup may prepare the inspection workspace and prewarm metadata; parser/typechecker/lowering paths should not silently trigger expensive Rust workspace loading.</p>
 <h4 id="expression-emission-srcbackendiremitexpressions">Expression Emission (<code>src/backend/ir/emit/expressions/</code>)<a class="headerlink" href="#expression-emission-srcbackendiremitexpressions" title="Permanent link">&para;</a></h4>
 <p>The expression emitter is split into focused submodules for maintainability:</p>
 <table>
