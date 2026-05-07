@@ -1773,6 +1773,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#built-in-collection-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in collection helpers
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#surface-string-methods" class="md-nav__link">
     <span class="md-ellipsis">
       Surface string methods
@@ -5424,6 +5433,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#built-in-collection-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in collection helpers
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#surface-string-methods" class="md-nav__link">
     <span class="md-ellipsis">
       Surface string methods
@@ -5577,6 +5595,7 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <li><a href="#builtin-types">Builtin types</a></li>
 <li><a href="#surface-constructors">Surface constructors</a></li>
 <li><a href="#surface-functions">Surface functions</a></li>
+<li><a href="#built-in-collection-helpers">Built-in collection helpers</a></li>
 <li><a href="#surface-string-methods">Surface string methods</a></li>
 <li><a href="#surface-types">Surface types</a></li>
 <li><a href="#surface-methods">Surface methods</a></li>
@@ -8136,6 +8155,35 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>Create a oneshot channel (sender, receiver).</td>
 <td>RFC 000</td>
 <td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h2 id="built-in-collection-helpers">Built-in collection helpers<a class="headerlink" href="#built-in-collection-helpers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Receiver</th>
+<th>Member</th>
+<th>Signature</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ListRepeat</td>
+<td><code>list</code></td>
+<td><code>repeat</code></td>
+<td><code>list.repeat[T](value: T, count: int) -&gt; list[T]</code></td>
+<td></td>
+<td>Create a list containing <code>count</code> clone-derived copies of <code>value</code>; negative counts raise <code>ValueError</code>.</td>
+<td>RFC 069</td>
+<td>0.3</td>
 <td>Stable</td>
 </tr>
 </tbody>
