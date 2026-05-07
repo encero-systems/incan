@@ -95,6 +95,11 @@ pub struct TypeCheckInfo {
     /// Lowering carries this into IR import items so codegen can retain extension-trait imports that Rust method
     /// lookup needs even when the generated Rust tokens do not otherwise mention the trait name.
     pub rust_trait_import_methods: HashMap<String, HashSet<String>>,
+    /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias.
+    ///
+    /// Lowering must not emit an `impl Trait for Alias` for these entries because Rust coherence treats the alias as
+    /// the foreign backing type. The typechecker records only non-generic trait paths that metadata proved.
+    pub rusttype_forwarded_trait_adoptions: HashSet<(String, String)>,
     /// Rust-boundary coercion decisions for method return values, keyed by the call expression span.
     ///
     /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the

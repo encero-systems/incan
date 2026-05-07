@@ -1304,8 +1304,11 @@ impl TypeChecker {
             constraints: Vec::new(),
             implicit_coercion_enabled: true,
             method_rebindings: std::collections::HashMap::new(),
+            traits: export.traits.clone(),
+            trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             method_aliases: std::collections::HashMap::new(),
             methods: self.methods_from_manifest(&export.methods),
+            method_overloads: self.method_overloads_from_manifest(&export.methods),
         }
     }
 
@@ -1428,6 +1431,7 @@ impl TypeChecker {
                     )
                 })
                 .collect(),
+            trait_target: None,
             receiver: self.receiver_from_manifest(method.receiver.as_ref()),
             params: self.params_from_manifest(&method.params),
             return_type: resolved_type_from_manifest_type_ref(&method.return_type),

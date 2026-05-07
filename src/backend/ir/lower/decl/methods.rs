@@ -2,12 +2,13 @@
 
 use std::collections::HashSet;
 
-use super::super::super::decl::{FunctionParam, IrDecl, IrDeclKind, IrFunction, IrImpl, Visibility};
+use super::super::super::decl::{FunctionParam, IrAssociatedType, IrDecl, IrDeclKind, IrFunction, IrImpl, Visibility};
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::super::super::stmt::{IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::super::{IrSpan, Mutability, TypedExpr};
 use super::super::AstLowering;
+use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
@@ -202,6 +203,18 @@ impl AstLowering {
         )]
     }
 
+    /// Return whether the typechecker proved a body-less rusttype Rust-trait adoption is satisfied by the backing type.
+    pub(in crate::backend::ir::lower) fn rusttype_forwarding_satisfied_by_alias(
+        &self,
+        type_name: &str,
+        trait_name: &str,
+    ) -> bool {
+        self.type_info.as_ref().is_some_and(|info| {
+            info.rusttype_forwarded_trait_adoptions
+                .contains(&(type_name.to_string(), trait_name.to_string()))
+        })
+    }
+
     /// Lower model methods into an impl block.
     pub(in crate::backend::ir::lower) fn lower_model_methods(
         &mut self,
@@ -242,6 +255,7 @@ impl AstLowering {
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
             trait_type_args: Vec::new(),
+            associated_types: Vec::new(),
             methods: lowered_methods,
         })
     }
@@ -629,6 +643,38 @@ impl AstLowering {
         trait_sig == candidate_sig
     }
 
+    /// Return whether a source-level trait target names the current Rust impl target.
+    fn trait_bound_matches_impl_target(
+        &mut self,
+        target: &ast::TraitBound,
+        trait_name: &str,
+        trait_type_args: &[IrType],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+    ) -> bool {
+        if target.name != trait_name {
+            return false;
+        }
+        let lowered_args = target
+            .type_args
+            .iter()
+            .map(|arg| self.lower_type_with_type_params(&arg.node, Some(owner_type_param_names)))
+            .collect::<Vec<_>>();
+        lowered_args == trait_type_args
+    }
+
+    /// Return whether a concrete method is eligible for the current trait impl.
+    fn method_trait_target_matches_impl(
+        &mut self,
+        method: &ast::MethodDecl,
+        trait_name: &str,
+        trait_type_args: &[IrType],
+        owner_type_param_names: &std::collections::HashSet<&str>,
+    ) -> bool {
+        method.trait_target.as_ref().is_none_or(|target| {
+            self.trait_bound_matches_impl_target(&target.node, trait_name, trait_type_args, owner_type_param_names)
+        })
+    }
+
     /// Return whether a concrete method should be lowered only inside an adopted trait impl.
     fn method_matches_adopted_trait_impl(
         &mut self,
@@ -646,6 +692,12 @@ impl AstLowering {
                 };
                 for trait_method in &trait_decl.methods {
                     if trait_method.node.name == method.name
+                        && self.method_trait_target_matches_impl(
+                            method,
+                            &trait_name,
+                            &trait_type_args,
+                            owner_type_param_names,
+                        )
                         && self.trait_impl_override_matches(
                             &trait_method.node,
                             method,
@@ -716,16 +768,32 @@ impl AstLowering {
     /// Only methods matching trait signatures go in `impl Trait for Type`.
     pub(in crate::backend::ir::lower) fn lower_trait_impl(
         &mut self,
-        type_name: &str,
-        type_params: &[ast::TypeParam],
-        trait_name: &str,
-        trait_type_args: Vec<IrType>,
-        impl_methods: &[Spanned<ast::MethodDecl>],
-        impl_properties: &[Spanned<ast::PropertyDecl>],
+        input: TraitImplLoweringInput<'_>,
     ) -> Result<IrImpl, LoweringError> {
+        let TraitImplLoweringInput {
+            type_name,
+            type_params,
+            trait_name,
+            trait_type_args,
+            impl_methods,
+            impl_properties,
+            impl_associated_types,
+        } = input;
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
         let lowered_result = (|| {
+            let has_local_trait_decl = self.trait_decls.contains_key(trait_name);
+            let associated_types = if has_local_trait_decl {
+                // Source Incan traits do not currently lower associated type declarations into the trait header.
+                Vec::new()
+            } else {
+                self.lower_associated_types_for_trait_impl(
+                    impl_associated_types,
+                    trait_name,
+                    &trait_type_args,
+                    &type_param_names,
+                )
+            };
             // Avoid holding an immutable borrow of `self` across lowering calls.
             //
             // In multi-module lowering, imported trait declarations may live in a different module AST and therefore
@@ -735,7 +803,14 @@ impl AstLowering {
             let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
                 let mut methods: Vec<IrFunction> = Vec::new();
                 for method in impl_methods {
-                    methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
+                    if self.method_trait_target_matches_impl(
+                        &method.node,
+                        trait_name,
+                        &trait_type_args,
+                        &type_param_names,
+                    ) {
+                        methods.push(self.lower_impl_method_for_trait(&method.node, Some(&type_param_names))?);
+                    }
                 }
                 for property in impl_properties {
                     methods.push(self.lower_property_with_type_params(
@@ -749,6 +824,7 @@ impl AstLowering {
                     type_params: Self::lower_type_params(type_params),
                     trait_name: Some(trait_name.to_string()),
                     trait_type_args,
+                    associated_types,
                     methods,
                 });
             };
@@ -802,6 +878,12 @@ impl AstLowering {
                 let mut found_override: Option<&ast::MethodDecl> = None;
                 for m in impl_methods {
                     if m.node.name == method_name
+                        && self.method_trait_target_matches_impl(
+                            &m.node,
+                            trait_name,
+                            &trait_type_args,
+                            &type_param_names,
+                        )
                         && self.trait_impl_override_matches(
                             &trait_method.node,
                             &m.node,
@@ -839,6 +921,7 @@ impl AstLowering {
                 type_params: Self::lower_type_params(type_params),
                 trait_name: Some(trait_name.to_string()),
                 trait_type_args,
+                associated_types,
                 methods,
             })
         })();
@@ -984,6 +1067,7 @@ impl AstLowering {
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
             trait_type_args: Vec::new(),
+            associated_types: Vec::new(),
             methods: lowered_methods,
         })
     }
@@ -1014,8 +1098,36 @@ impl AstLowering {
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
             trait_type_args: Vec::new(),
+            associated_types: Vec::new(),
             methods: lowered_methods,
         })
+    }
+
+    /// Lower associated type items whose `for Trait[...]` target matches this impl.
+    fn lower_associated_types_for_trait_impl(
+        &mut self,
+        associated_types: &[Spanned<ast::AssociatedTypeDecl>],
+        trait_name: &str,
+        trait_type_args: &[IrType],
+        type_param_names: &std::collections::HashSet<&str>,
+    ) -> Vec<IrAssociatedType> {
+        associated_types
+            .iter()
+            .filter_map(|associated_type| {
+                if !self.trait_bound_matches_impl_target(
+                    &associated_type.node.trait_target.node,
+                    trait_name,
+                    trait_type_args,
+                    type_param_names,
+                ) {
+                    return None;
+                }
+                Some(IrAssociatedType {
+                    name: associated_type.node.name.clone(),
+                    ty: self.lower_type_with_type_params(&associated_type.node.ty.node, Some(type_param_names)),
+                })
+            })
+            .collect()
     }
 
     /// Lower an inherent method while preserving owner and method generic parameters in signatures and bodies.

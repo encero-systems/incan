@@ -3,13 +3,13 @@
 use std::collections::BTreeMap;
 
 use incan_core::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild,
-    RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape,
-    RustVariantInfo, RustVisibility,
+    RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
+    RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
+    RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use ra_ap_hir::{
-    Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, ItemInNs,
-    Module, ModuleDef, Name, ScopeDef, Trait, Type, Variant, VariantDef, Visibility, attach_db,
+    Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
+    ItemInNs, Module, ModuleDef, Name, ScopeDef, Trait, Type, Variant, VariantDef, Visibility, attach_db,
 };
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_syntax::{
@@ -631,6 +631,20 @@ fn collect_inherent_methods(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) 
     by_name.into_values().collect()
 }
 
+/// Collect non-blanket trait impls that rust-analyzer can associate directly with `ty`.
+fn collect_implemented_traits(ty: Type<'_>, db: &RootDatabase) -> Vec<RustImplementedTrait> {
+    let mut traits = BTreeMap::new();
+    for impl_def in Impl::all_for_type(db, ty) {
+        let Some(trait_def) = impl_def.trait_(db) else {
+            continue;
+        };
+        let path = canonical_module_def_path(ModuleDef::Trait(trait_def), db)
+            .unwrap_or_else(|| trait_def.name(db).as_str().to_owned());
+        traits.insert(path.clone(), RustImplementedTrait { path });
+    }
+    traits.into_values().collect()
+}
+
 fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, crate_name: &str) -> Vec<RustFieldInfo> {
     if let Some(adt) = ty.as_adt() {
         let type_args: Vec<Type<'_>> = ty.type_arguments().collect();
@@ -865,6 +879,7 @@ pub fn extract_rust_item(
     attach_db(db, || extract_rust_item_inner(workspace, db, canonical_path))
 }
 
+/// Extract metadata after the rust-analyzer database has been attached for the current thread.
 fn extract_rust_item_inner(
     workspace: &RustWorkspace,
     db: &RootDatabase,
@@ -883,6 +898,7 @@ fn extract_rust_item_inner(
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
+                implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty.clone(), db, dt, crate_name),
                 variants: match adt {
                     Adt::Enum(enum_) => collect_enum_variant_payloads(enum_, ty, db, dt, crate_name),
@@ -894,6 +910,7 @@ fn extract_rust_item_inner(
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
+                implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
                 variants: Vec::new(),
             })
@@ -909,6 +926,7 @@ fn extract_rust_item_inner(
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 methods: collect_inherent_methods(ty.clone(), db, dt),
+                implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
                 variants: Vec::new(),
             })
@@ -926,4 +944,50 @@ fn extract_rust_item_inner(
         visibility: vis,
         kind,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use incan_core::interop::RustItemKind;
+
+    use super::{RustWorkspace, extract_rust_item};
+
+    #[test]
+    fn type_metadata_records_direct_trait_impls() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_trait_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub trait Labelled {}
+
+pub struct Thing;
+
+impl Labelled for Thing {}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_trait_probe::Thing")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        assert!(
+            info.implemented_traits
+                .iter()
+                .any(|implemented| implemented.path == "demo_trait_probe::Labelled"),
+            "expected direct Labelled impl in metadata, got {:?}",
+            info.implemented_traits
+        );
+        Ok(())
+    }
 }

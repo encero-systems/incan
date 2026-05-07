@@ -2897,6 +2897,7 @@ pub def forward(payload: Payload) -> int:
                                 },
                             },
                         ],
+                        implemented_traits: Vec::new(),
                         fields: Vec::new(),
                         variants: Vec::new(),
                     }),

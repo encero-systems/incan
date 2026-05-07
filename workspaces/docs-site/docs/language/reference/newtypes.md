@@ -14,6 +14,38 @@ user_id = UserId(42)
 
 The wrapped value is available as `.0`.
 
+## Trait Adoption
+
+Newtypes can adopt traits with the same `with TraitName` clause used by models, classes, and enums:
+
+```incan
+trait ToInt:
+    def convert(self) -> int: ...
+
+type UserId = newtype int with ToInt:
+    def convert(self) -> int:
+        return self.0
+```
+
+When two adopted traits require the same method name, target each method implementation with `for TraitName` before the return arrow:
+
+```incan
+trait ToInt:
+    def convert(self) -> int: ...
+
+trait ToStr:
+    def convert(self) -> str: ...
+
+type UserId = newtype int with ToInt, ToStr:
+    def convert(self) for ToInt -> int:
+        return self.0
+
+    def convert(self) for ToStr -> str:
+        return str(self.0)
+```
+
+The `for ToInt` qualifier belongs to the method declaration. It says which adopted trait the method satisfies; it does not modify the return type.
+
 ## Validated Construction
 
 A newtype may define the canonical validation hook `from_underlying`:

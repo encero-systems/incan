@@ -148,6 +148,15 @@ impl<'a> IrEmitter<'a> {
         }
 
         let main_impl = if let Some(trait_name) = &impl_block.trait_name {
+            let associated_types: Vec<TokenStream> = impl_block
+                .associated_types
+                .iter()
+                .map(|associated_type| {
+                    let name = format_ident!("{}", associated_type.name);
+                    let ty = self.emit_type(&associated_type.ty);
+                    quote! { type #name = #ty; }
+                })
+                .collect();
             let mut trait_methods: Vec<TokenStream> = impl_block
                 .methods
                 .iter()
@@ -188,6 +197,7 @@ impl<'a> IrEmitter<'a> {
             let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
             quote! {
                 impl #generics #trait_tokens for #target_type #generics_bare {
+                    #(#associated_types)*
                     #(#trait_methods)*
                 }
             }

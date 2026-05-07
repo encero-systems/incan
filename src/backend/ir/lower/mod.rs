@@ -52,6 +52,16 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 // Re-export error types
 pub use errors::{LoweringError, LoweringErrors};
 
+pub(in crate::backend::ir::lower) struct TraitImplLoweringInput<'a> {
+    pub type_name: &'a str,
+    pub type_params: &'a [ast::TypeParam],
+    pub trait_name: &'a str,
+    pub trait_type_args: Vec<IrType>,
+    pub impl_methods: &'a [ast::Spanned<ast::MethodDecl>],
+    pub impl_properties: &'a [ast::Spanned<ast::PropertyDecl>],
+    pub impl_associated_types: &'a [ast::Spanned<ast::AssociatedTypeDecl>],
+}
+
 /// AST to IR lowering context.
 ///
 /// Maintains state needed during the lowering pass:
@@ -458,6 +468,7 @@ impl AstLowering {
                     surface_modifiers: target.node.surface_modifiers.clone(),
                     name: partial.node.name.clone(),
                     type_params: target.node.type_params.clone(),
+                    trait_target: target.node.trait_target.clone(),
                     receiver: target.node.receiver,
                     params,
                     return_type: target.node.return_type.clone(),
@@ -1141,14 +1152,15 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &m.type_params)
                                 {
-                                    match self.lower_trait_impl(
-                                        &struct_ir.name,
-                                        &m.type_params,
-                                        &trait_name,
+                                    match self.lower_trait_impl(TraitImplLoweringInput {
+                                        type_name: &struct_ir.name,
+                                        type_params: &m.type_params,
+                                        trait_name: &trait_name,
                                         trait_type_args,
-                                        &model_methods,
-                                        &m.properties,
-                                    ) {
+                                        impl_methods: &model_methods,
+                                        impl_properties: &m.properties,
+                                        impl_associated_types: &[],
+                                    }) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                         }
@@ -1157,14 +1169,15 @@ impl AstLowering {
                                 }
                             }
                             for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&m.decorators) {
-                                match self.lower_trait_impl(
-                                    &struct_ir.name,
-                                    &m.type_params,
-                                    &trait_name,
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &struct_ir.name,
+                                    type_params: &m.type_params,
+                                    trait_name: &trait_name,
                                     trait_type_args,
-                                    &model_methods,
-                                    &m.properties,
-                                ) {
+                                    impl_methods: &model_methods,
+                                    impl_properties: &m.properties,
+                                    impl_associated_types: &[],
+                                }) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
@@ -1227,14 +1240,15 @@ impl AstLowering {
                                 for (trait_name, trait_type_args) in
                                     self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &c.type_params)
                                 {
-                                    match self.lower_trait_impl(
-                                        &struct_ir.name,
-                                        &c.type_params,
-                                        &trait_name,
+                                    match self.lower_trait_impl(TraitImplLoweringInput {
+                                        type_name: &struct_ir.name,
+                                        type_params: &c.type_params,
+                                        trait_name: &trait_name,
                                         trait_type_args,
-                                        &all_methods,
-                                        &all_properties,
-                                    ) {
+                                        impl_methods: &all_methods,
+                                        impl_properties: &all_properties,
+                                        impl_associated_types: &[],
+                                    }) {
                                         Ok(trait_impl) => {
                                             ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                         }
@@ -1243,14 +1257,15 @@ impl AstLowering {
                                 }
                             }
                             for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&c.decorators) {
-                                match self.lower_trait_impl(
-                                    &struct_ir.name,
-                                    &c.type_params,
-                                    &trait_name,
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &struct_ir.name,
+                                    type_params: &c.type_params,
+                                    trait_name: &trait_name,
                                     trait_type_args,
-                                    &all_methods,
-                                    &all_properties,
-                                ) {
+                                    impl_methods: &all_methods,
+                                    impl_properties: &all_properties,
+                                    impl_associated_types: &[],
+                                }) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
@@ -1270,6 +1285,29 @@ impl AstLowering {
                                 ir_program.declarations.push(ir_decl);
                             }
                             Err(e) => errors.push(e),
+                        }
+                        for trait_ref in &n.traits {
+                            if self.rusttype_forwarding_satisfied_by_alias(&n.name, &trait_ref.node.name) {
+                                continue;
+                            }
+                            for (trait_name, trait_type_args) in
+                                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &n.type_params)
+                            {
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &n.name,
+                                    type_params: &n.type_params,
+                                    trait_name: &trait_name,
+                                    trait_type_args,
+                                    impl_methods: &n.methods,
+                                    impl_properties: &[],
+                                    impl_associated_types: &n.associated_types,
+                                }) {
+                                    Ok(trait_impl) => {
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
+                                }
+                            }
                         }
                         continue;
                     }
@@ -1293,12 +1331,32 @@ impl AstLowering {
                                     &n.type_params,
                                     &newtype_methods,
                                     &[],
-                                    &[],
+                                    &n.traits,
                                 ) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
                                     Err(e) => errors.push(e),
+                                }
+                            }
+                            for trait_ref in &n.traits {
+                                for (trait_name, trait_type_args) in
+                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &n.type_params)
+                                {
+                                    match self.lower_trait_impl(TraitImplLoweringInput {
+                                        type_name: &struct_ir.name,
+                                        type_params: &n.type_params,
+                                        trait_name: &trait_name,
+                                        trait_type_args,
+                                        impl_methods: &n.methods,
+                                        impl_properties: &[],
+                                        impl_associated_types: &n.associated_types,
+                                    }) {
+                                        Ok(trait_impl) => {
+                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                        }
+                                        Err(e) => errors.push(e),
+                                    }
                                 }
                             }
                         }
@@ -1330,14 +1388,15 @@ impl AstLowering {
                             for (trait_name, trait_type_args) in
                                 self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &e.type_params)
                             {
-                                match self.lower_trait_impl(
-                                    &enum_ir.name,
-                                    &e.type_params,
-                                    &trait_name,
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &enum_ir.name,
+                                    type_params: &e.type_params,
+                                    trait_name: &trait_name,
                                     trait_type_args,
-                                    &e.methods,
-                                    &[],
-                                ) {
+                                    impl_methods: &e.methods,
+                                    impl_properties: &[],
+                                    impl_associated_types: &[],
+                                }) {
                                     Ok(trait_impl) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
@@ -1346,14 +1405,15 @@ impl AstLowering {
                             }
                         }
                         for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&e.decorators) {
-                            match self.lower_trait_impl(
-                                &enum_ir.name,
-                                &e.type_params,
-                                &trait_name,
+                            match self.lower_trait_impl(TraitImplLoweringInput {
+                                type_name: &enum_ir.name,
+                                type_params: &e.type_params,
+                                trait_name: &trait_name,
                                 trait_type_args,
-                                &e.methods,
-                                &[],
-                            ) {
+                                impl_methods: &e.methods,
+                                impl_properties: &[],
+                                impl_associated_types: &[],
+                            }) {
                                 Ok(trait_impl) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                 }

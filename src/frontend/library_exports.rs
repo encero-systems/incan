@@ -175,6 +175,8 @@ pub struct CheckedEnumExport {
 pub struct CheckedNewtypeExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
     pub is_rusttype: bool,
     pub underlying: ResolvedType,
     pub methods: Vec<CheckedMethod>,
@@ -649,7 +651,9 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
     let SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
         is_rusttype,
         underlying,
-        methods,
+        traits,
+        trait_adoptions,
+        method_overloads,
         ..
     })) = &symbol.kind
     else {
@@ -659,9 +663,11 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
     Some(CheckedNewtypeExport {
         name: newtype_decl.name.clone(),
         type_params: checked_type_params(&newtype_decl.type_params, checker),
+        traits: sorted_vec(traits.clone()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
-        methods: map_methods(methods),
+        methods: map_method_overloads(method_overloads),
     })
 }
 

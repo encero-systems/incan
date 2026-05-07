@@ -194,8 +194,17 @@ pub struct IrImpl {
     pub trait_name: Option<String>,
     /// Concrete type arguments for the implemented trait (e.g. `impl<T> Boxed<T> for Cell<T>`), RFC 042.
     pub trait_type_args: Vec<IrType>,
+    /// Associated type items emitted inside trait impl blocks.
+    pub associated_types: Vec<IrAssociatedType>,
     /// Methods in this impl block
     pub methods: Vec<IrFunction>,
+}
+
+/// IR associated type item inside a trait impl.
+#[derive(Debug, Clone)]
+pub struct IrAssociatedType {
+    pub name: String,
+    pub ty: IrType,
 }
 
 /// IR function definition

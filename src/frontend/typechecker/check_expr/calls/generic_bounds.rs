@@ -555,7 +555,8 @@ impl TypeChecker {
                 en.trait_adoptions.as_slice(),
                 Some(en.derives.as_slice()),
             ),
-            TypeInfo::Builtin | TypeInfo::Newtype(_) | TypeInfo::TypeAlias => return false,
+            TypeInfo::Newtype(newtype) => (newtype.type_params.as_slice(), newtype.trait_adoptions.as_slice(), None),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => return false,
         };
 
         if expected_args.is_empty()
@@ -737,7 +738,7 @@ impl TypeChecker {
             Some(TypeInfo::Enum(info)) => {
                 info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
-            Some(TypeInfo::Newtype(_)) => false,
+            Some(TypeInfo::Newtype(info)) => info.traits.iter().any(|t| t == bound),
             Some(TypeInfo::TypeAlias) => false,
             None => false,
         }

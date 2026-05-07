@@ -235,6 +235,15 @@ pub fn method_decl_expected_body(span: Span) -> CompileError {
     CompileError::syntax("Expected ':' after method return type".to_string(), span)
 }
 
+/// Report `for Trait` after the return type, where method trait targets must appear before `->`.
+pub fn method_trait_target_after_return_type(span: Span) -> CompileError {
+    CompileError::syntax(
+        "Method trait target must appear before the return type".to_string(),
+        span,
+    )
+    .with_hint("Write `def name(self) for Trait -> ReturnType:`")
+}
+
 pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {
     CompileError::syntax(
         "`static` declarations are only allowed at module scope".to_string(),

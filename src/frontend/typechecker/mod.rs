@@ -1005,6 +1005,7 @@ impl TypeChecker {
             TypeInfo::Model(model) => Some((&model.type_params, &model.trait_adoptions)),
             TypeInfo::Class(class) => Some((&class.type_params, &class.trait_adoptions)),
             TypeInfo::Enum(enum_info) => Some((&enum_info.type_params, &enum_info.trait_adoptions)),
+            TypeInfo::Newtype(newtype) => Some((&newtype.type_params, &newtype.trait_adoptions)),
             _ => None,
         }
     }
@@ -1118,6 +1119,7 @@ impl TypeChecker {
             TypeInfo::Model(m) => (m.trait_adoptions.as_slice(), Some(m.derives.as_slice())),
             TypeInfo::Class(c) => (c.trait_adoptions.as_slice(), Some(c.derives.as_slice())),
             TypeInfo::Enum(e) => (e.trait_adoptions.as_slice(), Some(e.derives.as_slice())),
+            TypeInfo::Newtype(n) => (n.trait_adoptions.as_slice(), None),
             _ => return false,
         };
         for t in adopted {
@@ -3219,8 +3221,11 @@ impl TypeChecker {
                         constraints: Vec::new(),
                         implicit_coercion_enabled: true,
                         method_rebindings: HashMap::new(),
+                        traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
+                        trait_adoptions: Vec::new(),
                         method_aliases: HashMap::new(),
                         methods: HashMap::new(),
+                        method_overloads: HashMap::new(),
                     })),
                     span: decl.span,
                     scope: 0,

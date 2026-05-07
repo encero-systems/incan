@@ -52,7 +52,7 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword(KeywordId::Type) || self.check_keyword(KeywordId::Newtype) {
             match self.type_or_newtype_decl(decorators, visibility)? {
                 TypeOrNewtype::Alias(a) => Declaration::TypeAlias(a),
-                TypeOrNewtype::Newtype(n) => Declaration::Newtype(n),
+                TypeOrNewtype::Newtype(n) => Declaration::Newtype(*n),
             }
         } else if self.check_keyword(KeywordId::Enum) {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)

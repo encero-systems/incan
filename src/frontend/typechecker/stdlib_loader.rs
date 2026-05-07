@@ -726,6 +726,11 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                             .map(|target| (rebinding.node.name.clone(), target))
                     })
                     .collect();
+                let methods = extract_method_signatures_with_rust_imports(&nt.methods, &tp_names, &rust_imports);
+                let method_overloads = methods
+                    .iter()
+                    .map(|(name, method)| (name.clone(), vec![method.clone()]))
+                    .collect();
                 types.push((
                     nt.name.clone(),
                     TypeInfo::Newtype(NewtypeInfo {
@@ -736,8 +741,11 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         constraints: Vec::new(),
                         implicit_coercion_enabled: true,
                         method_rebindings,
+                        traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
+                        trait_adoptions: trait_adoption_infos_from_bounds(&nt.traits, &tp_names),
                         method_aliases: std::collections::HashMap::new(),
-                        methods: extract_method_signatures_with_rust_imports(&nt.methods, &tp_names, &rust_imports),
+                        methods,
+                        method_overloads,
                     }),
                 ));
             }
@@ -929,6 +937,7 @@ fn method_info_from_ast_method(
         type_params: method_type_params,
         type_param_bounds: method_type_param_bounds,
         type_param_bound_details: method_type_param_bound_details,
+        trait_target: None,
         receiver: method.receiver,
         params,
         return_type,

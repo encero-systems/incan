@@ -177,6 +177,182 @@ impl TypeChecker {
         }
     }
 
+    /// Validate direct RFC 043 `@rust.derive(...)` passthrough on concrete type declarations.
+    pub(crate) fn validate_rust_derives(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        kind: &'static str,
+        is_rusttype: bool,
+        traits: &[Spanned<TraitBound>],
+    ) {
+        let rust_derives: Vec<_> = decorators_named(decorators, &self.symbols, DecoratorId::RustDerive).collect();
+        if rust_derives.is_empty() {
+            return;
+        }
+
+        if kind != "model" && kind != "class" && kind != "enum" && kind != "newtype" {
+            for dec in rust_derives {
+                self.errors
+                    .push(errors::rust_derive_unsupported_attachment(kind, dec.span));
+            }
+            return;
+        }
+
+        if is_rusttype {
+            for dec in rust_derives {
+                self.errors.push(errors::rust_derive_unsupported_rusttype(dec.span));
+            }
+            return;
+        }
+
+        for dec in rust_derives {
+            let mut positional_count = 0usize;
+            for arg in &dec.node.args {
+                match arg {
+                    DecoratorArg::Positional(expr) => {
+                        positional_count += 1;
+                        self.validate_single_rust_derive_arg(&expr.node, expr.span, traits);
+                    }
+                    DecoratorArg::Named(name, _) => {
+                        self.errors.push(errors::rust_derive_rejects_named_args(name, dec.span));
+                    }
+                }
+            }
+            if positional_count == 0 {
+                self.errors.push(errors::rust_derive_requires_positional_arg(dec.span));
+            }
+        }
+    }
+
+    /// Validate one positional `@rust.derive(...)` argument.
+    fn validate_single_rust_derive_arg(&mut self, expr: &Expr, span: Span, traits: &[Spanned<TraitBound>]) {
+        match expr {
+            Expr::Ident(name) => {
+                let leaf = self
+                    .rust_derive_leaf_for_ident(name)
+                    .unwrap_or(name.as_str())
+                    .to_string();
+                self.validate_rust_derive_trait_conflict(&leaf, traits, span);
+                if Self::is_builtin_rust_derive(&leaf) || self.rust_import_path_for_local_name(name).is_some() {
+                    return;
+                }
+                self.errors.push(errors::rust_derive_unresolved(name, span));
+            }
+            Expr::Literal(Literal::String(path)) => {
+                let Some(leaf) = Self::rust_path_leaf(path) else {
+                    self.errors.push(errors::rust_derive_invalid_arg(span));
+                    return;
+                };
+                self.validate_rust_derive_trait_conflict(leaf, traits, span);
+                if Self::is_builtin_rust_derive(leaf) && !path.contains("::") {
+                    return;
+                }
+                if self.rust_derive_path_has_declared_crate(path) {
+                    return;
+                }
+                self.errors.push(errors::rust_derive_unresolved(path, span));
+            }
+            _ => self.errors.push(errors::rust_derive_invalid_arg(span)),
+        }
+    }
+
+    /// Reject derive names that would duplicate an explicit trait adoption.
+    fn validate_rust_derive_trait_conflict(&mut self, derive_leaf: &str, traits: &[Spanned<TraitBound>], span: Span) {
+        for trait_ref in traits {
+            let trait_leaf = self
+                .import_aliases
+                .get(&trait_ref.node.name)
+                .and_then(|segments| segments.last().map(String::as_str))
+                .unwrap_or_else(|| Self::trait_name_leaf(&trait_ref.node.name));
+            if trait_leaf == derive_leaf {
+                self.errors.push(errors::rust_derive_conflicts_with_trait_adoption(
+                    derive_leaf,
+                    &trait_ref.node.name,
+                    span,
+                ));
+            }
+        }
+    }
+
+    /// Resolve an imported derive binding to its final path segment.
+    fn rust_derive_leaf_for_ident(&self, name: &str) -> Option<&str> {
+        self.import_aliases
+            .get(name)
+            .and_then(|segments| segments.last().map(String::as_str))
+    }
+
+    /// Return the Rust path imported for a local derive binding name.
+    fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
+        if let Some(segments) = self.import_aliases.get(name)
+            && segments.first().is_some_and(|segment| segment == "rust")
+            && segments.len() >= 2
+        {
+            return Some(segments[1..].join("::"));
+        }
+        self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+            SymbolKind::RustItem(info) => Some(info.path.clone()),
+            _ => None,
+        })
+    }
+
+    /// Return whether a string Rust derive path names a crate available to generated Rust.
+    fn rust_derive_path_has_declared_crate(&self, path: &str) -> bool {
+        let segments: Vec<_> = path.split("::").collect();
+        if segments.is_empty() || !segments.iter().all(|segment| Self::is_valid_rust_path_segment(segment)) {
+            return false;
+        }
+        let Some(crate_name) = segments.first() else {
+            return false;
+        };
+        if matches!(*crate_name, "std" | "core" | "alloc") {
+            return true;
+        }
+        self.declared_crate_names
+            .as_ref()
+            .is_some_and(|declared| declared.contains(*crate_name))
+    }
+
+    /// Return the leaf segment for a syntactically valid Rust path string.
+    fn rust_path_leaf(path: &str) -> Option<&str> {
+        if path.split("::").all(Self::is_valid_rust_path_segment) {
+            return path.rsplit("::").next();
+        }
+        None
+    }
+
+    /// Return whether one Rust path segment is acceptable in a derive path string.
+    fn is_valid_rust_path_segment(segment: &str) -> bool {
+        let segment = segment.strip_prefix("r#").unwrap_or(segment);
+        let mut chars = segment.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    }
+
+    /// Return the final source trait segment for conflict comparisons.
+    fn trait_name_leaf(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+
+    /// Return whether a derive name is built into Rust and needs no dependency metadata.
+    fn is_builtin_rust_derive(name: &str) -> bool {
+        matches!(
+            derives::from_str(name),
+            Some(
+                derives::DeriveId::Clone
+                    | derives::DeriveId::Copy
+                    | derives::DeriveId::Debug
+                    | derives::DeriveId::Default
+                    | derives::DeriveId::Eq
+                    | derives::DeriveId::Hash
+                    | derives::DeriveId::Ord
+                    | derives::DeriveId::PartialEq
+                    | derives::DeriveId::PartialOrd
+            )
+        )
+    }
+
     /// Reject RFC 057 `@rust.allow(...)` on declarations that do not own a supported Rust item boundary.
     ///
     /// Parser syntax allows decorators on several declaration forms. This helper keeps the semantic support matrix

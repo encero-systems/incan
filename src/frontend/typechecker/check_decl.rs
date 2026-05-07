@@ -14,7 +14,7 @@ use crate::frontend::testing_markers::{
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
 use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
-use incan_core::interop::RustItemKind;
+use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
@@ -1604,10 +1604,10 @@ impl TypeChecker {
                 .errors
                 .push(errors::missing_trait_method(via_trait, method_name, adoption_span)),
             Some(found_group) => {
-                if !found_group
-                    .iter()
-                    .any(|found| self.method_sigs_compatible(method_info, found))
-                {
+                if !found_group.iter().any(|found| {
+                    Self::method_trait_target_matches(found, via_trait)
+                        && self.method_sigs_compatible(method_info, found)
+                }) {
                     let expected_sig = self.method_sig_string_named(method_name, method_info);
                     let found_sig = found_group
                         .first()
@@ -1818,7 +1818,11 @@ impl TypeChecker {
     }
 
     /// Reject same-name method obligations that come from unrelated adopted trait families.
-    fn validate_cross_trait_method_collisions(&mut self, adoptions: &[ResolvedTraitAdoption]) {
+    fn validate_cross_trait_method_collisions(
+        &mut self,
+        adoptions: &[ResolvedTraitAdoption],
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+    ) {
         let mut by_method: HashMap<String, Vec<(String, MethodInfo, Span)>> = HashMap::new();
         for adoption in adoptions {
             for entry in self.trait_method_entries_for_adoption(adoption) {
@@ -1848,12 +1852,32 @@ impl TypeChecker {
                 origins.push((origin, span));
             }
             if origins.len() > 1 {
+                if let Some(overloads) = method_overloads.get(&method)
+                    && origins.iter().all(|(origin, _)| {
+                        overloads.iter().any(|method_info| {
+                            method_info
+                                .trait_target
+                                .as_ref()
+                                .is_some_and(|target| target.name == *origin)
+                        })
+                    })
+                {
+                    continue;
+                }
                 let (left, span) = &origins[0];
                 let (right, _) = &origins[1];
                 self.errors
                     .push(errors::cross_trait_method_collision(left, right, &method, *span));
             }
         }
+    }
+
+    /// Return whether a collected method may satisfy the named trait target.
+    fn method_trait_target_matches(method_info: &MethodInfo, trait_name: &str) -> bool {
+        method_info
+            .trait_target
+            .as_ref()
+            .is_none_or(|target| target.name == trait_name)
     }
 
     /// Group source spans by method name so overload diagnostics can point at the matching declaration.
@@ -1894,8 +1918,10 @@ impl TypeChecker {
                 let matched_index = obligations
                     .iter()
                     .enumerate()
-                    .find(|(obligation_idx, (_, expected))| {
-                        !matched_obligations[*obligation_idx] && self.method_sigs_compatible(expected, overload)
+                    .find(|(obligation_idx, (origin_trait, expected))| {
+                        !matched_obligations[*obligation_idx]
+                            && Self::method_trait_target_matches(overload, origin_trait)
+                            && self.method_sigs_compatible(expected, overload)
                     })
                     .map(|(obligation_idx, _)| obligation_idx);
                 if let Some(obligation_idx) = matched_index {
@@ -1935,7 +1961,7 @@ impl TypeChecker {
         method_spans: &HashMap<String, Vec<Span>>,
     ) {
         self.validate_duplicate_trait_instantiations(adoptions);
-        self.validate_cross_trait_method_collisions(adoptions);
+        self.validate_cross_trait_method_collisions(adoptions, method_overloads);
         self.validate_overloaded_methods_are_trait_backed(type_name, adoptions, method_overloads, method_spans);
     }
 
@@ -2231,6 +2257,7 @@ impl TypeChecker {
         self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
+        self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
         let has_validate = derives
             .iter()
@@ -2493,6 +2520,7 @@ impl TypeChecker {
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
+        self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
 
         // Check base class exists
@@ -2755,9 +2783,179 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Return Rust trait metadata for a direct `rust::...` import used in a `with` clause.
+    fn imported_rust_trait_candidate(&self, trait_name: &str) -> Option<(String, Option<RustItemMetadata>)> {
+        let sym = self.lookup_symbol(trait_name)?;
+        let SymbolKind::RustItem(info) = &sym.kind else {
+            return None;
+        };
+        let metadata = match &info.metadata {
+            Some(metadata) if matches!(metadata.kind, RustItemKind::Trait(_)) => Some(metadata.clone()),
+            Some(_) => None,
+            None => None,
+        };
+        Some((info.path.clone(), metadata))
+    }
+
+    /// Return whether an adopted trait name denotes the RFC 039 `Awaitable` protocol.
+    fn is_awaitable_trait_name(trait_name: &str) -> bool {
+        trait_name == "Awaitable" || trait_name.ends_with(".Awaitable")
+    }
+
+    /// Compare an associated item target with an adopted trait bound by name and arity.
+    fn trait_target_matches_bound(target: &TraitBound, bound: &TraitBound) -> bool {
+        target.name == bound.name && target.type_args.len() == bound.type_args.len()
+    }
+
+    /// Return whether a rusttype declaration authors members for the imported Rust trait instead of requesting
+    /// body-less forwarding.
+    fn newtype_has_explicit_rust_trait_members(
+        nt: &NewtypeDecl,
+        trait_bound: &TraitBound,
+        trait_metadata: Option<&RustItemMetadata>,
+    ) -> bool {
+        let method_names: HashSet<String> = trait_metadata
+            .and_then(|metadata| match &metadata.kind {
+                RustItemKind::Trait(info) => Some(
+                    info.items
+                        .iter()
+                        .filter_map(|item| match item {
+                            RustTraitAssoc::Function { name, .. } => Some(name.clone()),
+                            RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => None,
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        nt.associated_types.iter().any(|associated_type| {
+            Self::trait_target_matches_bound(&associated_type.node.trait_target.node, trait_bound)
+        }) || nt.methods.iter().any(|method| {
+            method
+                .node
+                .trait_target
+                .as_ref()
+                .is_some_and(|target| Self::trait_target_matches_bound(&target.node, trait_bound))
+                || method_names.contains(&method.node.name)
+        })
+    }
+
+    /// Return the path suffix used when comparing re-exported Rust trait paths.
+    fn rust_trait_path_suffix(path: &str) -> &str {
+        path.split_once("::").map(|(_, suffix)| suffix).unwrap_or(path)
+    }
+
+    /// Return whether Rust type metadata proves the backing type implements the requested trait path.
+    fn rust_type_metadata_implements_trait(
+        type_metadata: &RustItemMetadata,
+        trait_path: &str,
+        trait_definition_path: Option<&str>,
+    ) -> bool {
+        let RustItemKind::Type(type_info) = &type_metadata.kind else {
+            return false;
+        };
+        let trait_suffix = Self::rust_trait_path_suffix(trait_path);
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.path == trait_path
+                || Some(implemented.path.as_str()) == trait_definition_path
+                || Self::rust_trait_path_suffix(&implemented.path) == trait_suffix
+        })
+    }
+
+    /// Validate imported Rust trait adoption on newtype/rusttype declarations.
+    ///
+    /// A `rusttype` lowers to a Rust type alias. That means custom `impl ForeignTrait for Alias` output would still be
+    /// an impl for the foreign backing type and can violate Rust coherence. Body-less adoption is therefore accepted
+    /// only when rust-inspect proves the backing type already implements the trait; lowering then skips the impl.
+    fn validate_imported_rust_trait_newtype_adoption(
+        &mut self,
+        nt: &NewtypeDecl,
+        trait_bound: &TraitBound,
+        trait_span: Span,
+        trait_path: &str,
+        trait_metadata: Option<&RustItemMetadata>,
+        rusttype_path: Option<&str>,
+    ) {
+        let has_explicit_members = Self::newtype_has_explicit_rust_trait_members(nt, trait_bound, trait_metadata);
+        if nt.is_rusttype {
+            if has_explicit_members {
+                self.errors.push(errors::rusttype_foreign_trait_impl_orphan(
+                    &nt.name, trait_path, trait_span,
+                ));
+                return;
+            }
+            if !trait_bound.type_args.is_empty() {
+                self.errors.push(errors::rusttype_forwarding_generic_trait_blocked(
+                    &nt.name, trait_path, trait_span,
+                ));
+                return;
+            }
+            let Some(backing_path) = rusttype_path else {
+                return;
+            };
+            let Some(backing_metadata) = self.rust_item_metadata_for_path(backing_path) else {
+                self.errors.push(errors::rusttype_forwarding_requires_metadata(
+                    &nt.name, trait_path, trait_span,
+                ));
+                return;
+            };
+            let trait_definition_path = trait_metadata.and_then(|metadata| metadata.definition_path.as_deref());
+            if Self::rust_type_metadata_implements_trait(&backing_metadata, trait_path, trait_definition_path) {
+                self.type_info
+                    .rusttype_forwarded_trait_adoptions
+                    .insert((nt.name.clone(), trait_bound.name.clone()));
+            } else {
+                self.errors.push(errors::rusttype_forwarding_trait_not_implemented(
+                    &nt.name,
+                    backing_path,
+                    trait_path,
+                    trait_span,
+                ));
+            }
+            return;
+        }
+
+        let Some(metadata) = trait_metadata else {
+            return;
+        };
+        let RustItemKind::Trait(info) = &metadata.kind else {
+            return;
+        };
+        let declared_associated_types: HashSet<&str> = nt
+            .associated_types
+            .iter()
+            .filter(|associated_type| {
+                Self::trait_target_matches_bound(&associated_type.node.trait_target.node, trait_bound)
+            })
+            .map(|associated_type| associated_type.node.name.as_str())
+            .collect();
+        for item in &info.items {
+            let RustTraitAssoc::TypeAlias { name } = item else {
+                continue;
+            };
+            if !declared_associated_types.contains(name.as_str()) {
+                self.errors
+                    .push(errors::missing_rust_associated_type(trait_path, name, trait_span));
+            }
+        }
+    }
+
     /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
+        self.symbols.enter_scope(ScopeKind::Block);
+
+        for param in &nt.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
         self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
+        self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -2778,17 +2976,77 @@ impl TypeChecker {
                 .push(errors::rusttype_requires_rust_backing(&nt.name, nt.underlying.span));
         }
         if nt.is_rusttype
-            && let Some(path) = rusttype_path
+            && let Some(path) = &rusttype_path
         {
             self.type_info
                 .rusttype_canonical_rust_paths
-                .insert(nt.name.clone(), path);
+                .insert(nt.name.clone(), path.clone());
         }
         if !nt.is_rusttype && !nt.interop_edges.is_empty() {
             self.errors
                 .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));
         }
         self.validate_newtype_from_underlying_hook(nt, &underlying);
+
+        let mut resolved_trait_adoptions = Vec::new();
+        for trait_ref in &nt.traits {
+            let trait_name = trait_ref.node.name.as_str();
+            if nt.is_rusttype && Self::is_awaitable_trait_name(trait_name) {
+                self.errors
+                    .push(errors::awaitable_future_bridge_blocked(&nt.name, trait_ref.span));
+                continue;
+            }
+            if let Some((trait_path, trait_metadata)) = self.imported_rust_trait_candidate(trait_name) {
+                self.validate_imported_rust_trait_newtype_adoption(
+                    nt,
+                    &trait_ref.node,
+                    trait_ref.span,
+                    trait_path.as_str(),
+                    trait_metadata.as_ref(),
+                    rusttype_path.as_deref(),
+                );
+            } else if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    span: trait_ref.span,
+                });
+                self.check_trait_conformance_newtype(
+                    nt,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
+            }
+        }
+
+        for associated_type in &nt.associated_types {
+            let trait_name = associated_type.node.trait_target.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let _ = self.resolve_adopted_trait_info(
+                    &associated_type.node.trait_target.node,
+                    associated_type.node.trait_target.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(
+                    trait_name,
+                    associated_type.node.trait_target.span,
+                ));
+            }
+            let _ = self.resolve_type_checked(&associated_type.node.ty);
+        }
 
         for rebinding in &nt.rebindings {
             // Short-form rebinding targets (`alias = method`) should be interpreted as method names,
@@ -2842,6 +3100,71 @@ impl TypeChecker {
             }
         }
         self.check_method_partials(&nt.name, &nt.method_partials);
+
+        if let Some(TypeInfo::Newtype(info)) = self.lookup_type_info(&nt.name).cloned() {
+            let method_spans = Self::method_decl_spans_by_name(&nt.methods);
+            self.validate_multi_instantiation_trait_surface(
+                &nt.name,
+                &resolved_trait_adoptions,
+                &info.method_overloads,
+                &method_spans,
+            );
+        }
+
+        self.symbols.exit_scope();
+    }
+
+    /// Validate explicit newtype/rusttype trait adoption using the same method contract as other nominal types.
+    ///
+    /// Newtypes do not expose storage fields or properties in the trait surface, so field/property obligations are
+    /// rejected at the adoption site. Method obligations are checked against the collected newtype method overload map.
+    fn check_trait_conformance_newtype(
+        &mut self,
+        nt: &NewtypeDecl,
+        trait_info: TraitInfo,
+        trait_name: &str,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+    ) {
+        for (field_name, _) in &trait_info.requires {
+            self.errors
+                .push(errors::missing_field(&nt.name, field_name, adoption_span));
+        }
+
+        let newtype_info = self
+            .symbols
+            .lookup(&nt.name)
+            .and_then(|id| self.symbols.get(id))
+            .and_then(|sym| match &sym.kind {
+                SymbolKind::Type(TypeInfo::Newtype(info)) => Some(info.clone()),
+                _ => None,
+            });
+
+        if let Some(info) = newtype_info {
+            self.enforce_trait_abstract_methods(
+                &nt.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &info.method_overloads,
+            );
+            self.enforce_trait_abstract_properties(
+                &nt.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &HashMap::new(),
+            );
+        } else {
+            for (method_name, method_info) in &trait_info.methods {
+                if !method_info.has_body {
+                    self.errors
+                        .push(errors::missing_trait_method(trait_name, method_name, adoption_span));
+                }
+            }
+        }
     }
 
     /// Validate the canonical RFC 017 `from_underlying` hook when a newtype declares one.
@@ -2934,6 +3257,7 @@ impl TypeChecker {
 
         self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
+        self.validate_rust_derives(&en.decorators, "enum", false, &en.traits);
         let derives = self.extract_derive_names(&en.decorators);
 
         for param in &en.type_params {
@@ -3729,6 +4053,14 @@ impl TypeChecker {
                 span: Span::default(),
                 scope: 0,
             });
+        }
+        if let Some(target) = &method.trait_target {
+            let trait_name = target.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let _ = self.resolve_adopted_trait_info(&target.node, target.span);
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, target.span));
+            }
         }
         let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));

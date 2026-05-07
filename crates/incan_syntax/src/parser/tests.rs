@@ -1681,6 +1681,66 @@ type Sender[T] = rusttype RustSender[T]:
     }
 
     #[test]
+    fn test_parse_rusttype_with_trait_adoption_method_target_and_associated_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type UserId = rusttype i64 with Display, Debug:
+    type Output for Add[int] = UserId
+
+    def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:
+        pass
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert_eq!(nt.traits.len(), 2);
+        assert_eq!(nt.traits[0].node.name, "Display");
+        assert_eq!(nt.traits[1].node.name, "Debug");
+
+        assert_eq!(nt.associated_types.len(), 1);
+        let associated_type = &nt.associated_types[0].node;
+        assert_eq!(associated_type.name, "Output");
+        assert_eq!(associated_type.trait_target.node.name, "Add");
+        assert_eq!(associated_type.trait_target.node.type_args.len(), 1);
+        assert_eq!(require_simple_type(&associated_type.trait_target.node.type_args[0])?, "int");
+        assert!(matches!(associated_type.ty.node, Type::Simple(ref name) if name == "UserId"));
+
+        assert_eq!(nt.methods.len(), 1);
+        let method = &nt.methods[0].node;
+        assert_eq!(method.name, "fmt");
+        let Some(target) = &method.trait_target else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected method trait target".to_string(),
+                nt.methods[0].span,
+            )]);
+        };
+        assert_eq!(target.node.name, "Display");
+        assert!(target.node.type_args.is_empty());
+        assert!(matches!(
+            method.return_type.node,
+            Type::Generic(ref name, _) if name == collections::as_str(CollectionTypeId::Result)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_trait_target_after_return_type_is_rejected() {
+        let source = r#"
+type UserId = rusttype i64 with Display:
+    def fmt(self, f: Formatter) -> Result[None, FmtError] for Display:
+        pass
+"#;
+        let Err(errors) = parse_str(source) else {
+            panic!("method trait target after return type should be rejected");
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Method trait target must appear before the return type")),
+            "expected focused method trait target placement diagnostic, got {errors:?}"
+        );
+    }
+
+    #[test]
     fn test_parse_rusttype_minimal() -> Result<(), Vec<CompileError>> {
         let source = r#"
 type Email = rusttype RustEmailAddress
@@ -1688,6 +1748,8 @@ type Email = rusttype RustEmailAddress
         let program = parse_str(source)?;
         let nt = require_newtype_decl(&program.declarations[0])?;
         assert!(nt.is_rusttype);
+        assert!(nt.traits.is_empty());
+        assert!(nt.associated_types.is_empty());
         assert!(nt.methods.is_empty());
         assert!(nt.rebindings.is_empty());
         assert!(nt.interop_edges.is_empty());

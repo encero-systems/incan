@@ -1,0 +1,25 @@
+"""RFC 043: method-level trait targets disambiguate same-name newtype methods."""
+
+trait ToInt:
+    def convert(self) -> int
+
+trait ToStr:
+    def convert(self) -> str
+
+type Value = newtype int with ToInt, ToStr:
+    type Output for ToInt = Value
+
+    def convert(self) for ToInt -> int:
+        return 1
+
+    def convert(self) for ToStr -> str:
+        return "value"
+
+pub def as_int[T with ToInt](value: T) -> int:
+    return value.convert()
+
+pub def as_str[T with ToStr](value: T) -> str:
+    return value.convert()
+
+pub def keep_value(value: Value) -> Value:
+    return value

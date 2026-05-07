@@ -448,6 +448,12 @@ pub enum EnumValueExport {
 pub struct NewtypeExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Direct trait names adopted by this newtype/rusttype.
+    #[serde(default)]
+    pub traits: Vec<String>,
+    /// Direct trait adoptions, preserving type arguments for generic traits.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     /// Whether this newtype is a zero-cost Rust type alias (`type X = rusttype RustX`).
     #[serde(default)]
     pub is_rusttype: bool,
@@ -855,6 +861,8 @@ fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
     NewtypeExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         methods: export.methods.iter().map(method_from_checked).collect(),

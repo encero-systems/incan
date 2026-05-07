@@ -169,14 +169,26 @@ pub struct NewtypeDecl {
     /// `true` when declared as `type X = rusttype Y`, RFC 041.
     pub is_rusttype: bool,
     pub underlying: Spanned<Type>,
+    /// Traits adopted by this newtype/rusttype via `with TraitA, TraitB[T]`.
+    pub traits: Vec<Spanned<TraitBound>>,
     pub docstring: Option<String>,
     /// Alias-style member rebinding entries inside a newtype/rusttype body.
     pub rebindings: Vec<Spanned<RebindingDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
     pub method_partials: Vec<Spanned<MethodPartialDecl>>,
+    /// Associated type declarations scoped to adopted trait implementations.
+    pub associated_types: Vec<Spanned<AssociatedTypeDecl>>,
     /// Optional `interop:` conversion edges (RFC 041).
     pub interop_edges: Vec<Spanned<InteropEdgeDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+/// A source-level associated type declaration in a type/rusttype body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssociatedTypeDecl {
+    pub name: Ident,
+    pub trait_target: Spanned<TraitBound>,
+    pub ty: Spanned<Type>,
 }
 
 /// A short or qualified member rebinding declaration in a newtype/rusttype body.
@@ -293,6 +305,8 @@ pub struct MethodDecl {
     pub type_params: Vec<TypeParam>,
     pub receiver: Option<Receiver>,
     pub params: Vec<Spanned<Param>>,
+    /// Optional trait implementation target, written before the return arrow: `for Display`.
+    pub trait_target: Option<Spanned<TraitBound>>,
     pub return_type: Spanned<Type>,
     pub body: Option<Vec<Spanned<Statement>>>, // None for abstract methods (...)
 }
