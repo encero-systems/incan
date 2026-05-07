@@ -112,12 +112,14 @@ nav:
               - 11. Traits and derives: language/tutorials/book/11_traits_and_derives.md
               - 12. Newtypes (stronger types): language/tutorials/book/12_newtypes.md
               - 13. Unit tests: language/tutorials/book/13_unit_tests.md
+          - Dates and times: language/tutorials/dates_and_times.md
           - Build your first API: language/tutorials/build_your_first_api.md
           - Fallible and infallible paths: language/tutorials/fallible_and_infallible_paths.md
           - Web framework: language/tutorials/web_framework.md
       - How-to:
           - Async programming: language/how-to/async_programming.md
           - Customize derived behavior: language/how-to/customize_derived_behavior.md
+          - Dates and times: language/how-to/dates_and_times.md
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
@@ -188,6 +190,7 @@ nav:
           - Generators: language/explanation/generators.md
           - Module static storage: language/explanation/static_storage.md
           - Numeric types: language/explanation/numeric_types.md
+          - Date and time model: language/explanation/datetime_model.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md
