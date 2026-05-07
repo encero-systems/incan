@@ -264,6 +264,12 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         }
         Expr::Surface(boxed) => match &boxed.payload {
             crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
+            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+                call_site_type_in_expr(&arm.awaitable, offset).or_else(|| match &arm.body {
+                    crate::frontend::ast::RaceForBody::Expr(expr) => call_site_type_in_expr(expr, offset),
+                    crate::frontend::ast::RaceForBody::Block(stmts) => call_site_types_in_stmts(stmts, offset),
+                })
+            }),
             crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))

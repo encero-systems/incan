@@ -837,6 +837,21 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #i.await })
             }
 
+            IrExprKind::Race { binding, arms } => {
+                let binding_ident = format_ident!("{}", binding);
+                let mut branch_tokens = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let awaitable = self.emit_expr(&arm.awaitable)?;
+                    let body = self.emit_expr(&arm.body)?;
+                    branch_tokens.push(quote! {
+                        incan_stdlib::r#async::race::scoped_arm(#awaitable, |#binding_ident| #body)
+                    });
+                }
+                Ok(quote! {
+                    incan_stdlib::r#async::race::scoped_race(vec![#(#branch_tokens),*]).await
+                })
+            }
+
             IrExprKind::Try(inner) => {
                 let i = self.emit_expr(inner)?;
                 Ok(quote! { #i? })

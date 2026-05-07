@@ -2557,15 +2557,56 @@ fn test_std_async_sync_compiled_codegen() {
     insta::assert_snapshot!("std_async_sync_compiled", rust_code);
 }
 
-/// Compile `std.async.select` from `.incn` source.
+/// Compile `std.async.race` from `.incn` source.
 #[test]
-fn test_std_async_select_compiled_codegen() {
-    let path = "crates/incan_stdlib/stdlib/async/select.incn";
+fn test_std_async_race_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/async/race.incn";
     let Ok(source) = fs::read_to_string(path) else {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("std_async_select_compiled", rust_code);
+    insta::assert_snapshot!("std_async_race_compiled", rust_code);
+}
+
+/// Compile `race for value:` through the shared `std.async.race` runtime helper surface.
+#[test]
+fn test_race_for_expression_codegen() {
+    let source = r#"
+import std.async
+
+pub async def fast() -> int:
+  return 1
+
+pub async def slow() -> int:
+  return 2
+
+pub async def fastest() -> int:
+  return race for value:
+    await fast() => value
+    await slow() => value
+"#;
+    let rust_code = generate_rust(source);
+    insta::assert_snapshot!("race_for_expression_codegen", rust_code);
+}
+
+/// Awaiting a declared wrapper must delegate to the proven awaitable field.
+#[test]
+fn test_awaitable_wrapper_delegation_codegen() {
+    let source = r#"
+import std.async
+from std.async.task import JoinHandle, TaskJoinError
+
+pub model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
+  handle: JoinHandle[T]
+
+pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
+  return await box
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("r#box.handle.await"),
+        "awaitable wrapper should lower through its awaitable field, got:\n{rust_code}"
+    );
 }
 
 // ============================================================================

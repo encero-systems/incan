@@ -1,7 +1,17 @@
 //! Rust-lowered capability bound registry (RFC 041).
 
 /// Compiler-recognized Rust capability bounds writable in Incan `with` clauses.
-pub const RUST_CAPABILITY_BOUNDS: &[&str] = &["Send", "Sync", "Static", "Fn", "FnMut", "FnOnce"];
+pub const RUST_CAPABILITY_BOUNDS: &[&str] = &[
+    "Send",
+    "Sync",
+    "Static",
+    "Fn",
+    "FnMut",
+    "FnOnce",
+    "RuntimeFuture",
+    "RuntimeFnOnce",
+    "RuntimeRaceCallback",
+];
 
 /// Return `true` when `name` is a Rust-lowered capability marker.
 #[must_use]

@@ -14,5 +14,6 @@ Pages:
 - [Collection protocols](collection_protocols.md)
 - [Indexing and slicing](indexing_and_slicing.md)
 - [Callable objects](callable.md)
+- [Awaitable values](awaitable.md)
 - [Operator traits](operators.md)
 - [Conversion traits](conversions.md)

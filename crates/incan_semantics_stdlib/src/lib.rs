@@ -129,10 +129,15 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         None
     }
 
+    /// Route stdlib-owned surface expressions to their typechecker actions.
     fn typecheck_surface_expr_action(&self, key: &SurfaceFeatureKey) -> Option<SurfaceExprTypeCheck> {
         #[cfg(feature = "std_async")]
         if matches!(key, SurfaceFeatureKey::SoftKeyword(KeywordId::Await)) {
             return Some(SurfaceExprTypeCheck::AwaitCheck);
+        }
+        #[cfg(feature = "std_async")]
+        if is_std_async_race_for_surface(key) {
+            return Some(SurfaceExprTypeCheck::RaceForCheck);
         }
         let _ = key;
         None
@@ -159,10 +164,15 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         None
     }
 
+    /// Route stdlib-owned surface expressions to their lowering actions.
     fn lower_surface_expr_action(&self, key: &SurfaceFeatureKey) -> Option<SurfaceExprLoweringAction> {
         #[cfg(feature = "std_async")]
         if matches!(key, SurfaceFeatureKey::SoftKeyword(KeywordId::Await)) {
             return Some(SurfaceExprLoweringAction::Await);
+        }
+        #[cfg(feature = "std_async")]
+        if is_std_async_race_for_surface(key) {
+            return Some(SurfaceExprLoweringAction::RaceFor);
         }
         let _ = key;
         None
@@ -190,4 +200,15 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         let _ = module;
         RuntimeRequirement::None
     }
+}
+
+/// Return whether a surface key names the `std.async` race expression.
+fn is_std_async_race_for_surface(key: &SurfaceFeatureKey) -> bool {
+    matches!(
+        key,
+        SurfaceFeatureKey::ScopedDslSurface {
+            dependency_key,
+            descriptor_key,
+        } if dependency_key == "std.async" && descriptor_key == "race_for"
+    )
 }

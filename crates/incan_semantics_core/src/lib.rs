@@ -105,6 +105,8 @@ pub enum SurfaceStmtLoweringAction {
 pub enum SurfaceExprLoweringAction {
     /// Lower prefix-unary payload as an await expression.
     Await,
+    /// Lower an import-activated `race for value:` expression.
+    RaceFor,
 }
 
 /// Describes how to typecheck a surface statement.
@@ -119,6 +121,8 @@ pub enum SurfaceStmtTypeCheck {
 pub enum SurfaceExprTypeCheck {
     /// Must be in async context; inner expression type is returned.
     AwaitCheck,
+    /// Must be in async context; arms await values and produce a common result.
+    RaceForCheck,
 }
 
 /// Describes how to typecheck a declaration-level surface modifier.

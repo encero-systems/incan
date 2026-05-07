@@ -3881,6 +3881,189 @@ async def wait_for(handle: JoinHandle[int]) -> Result[int, TaskJoinError]:
 }
 
 #[test]
+fn test_await_rejects_non_awaitable_operand() {
+    let source = r#"
+import std.async
+
+async def main() -> None:
+  _ = await 1
+"#;
+    let errors = check_str_err(source, "awaiting int should fail");
+    assert!(
+        errors.iter().any(|error| error.message.contains("Awaitable")),
+        "expected Awaitable diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_await_generic_awaitable_bound_returns_output_type() {
+    let source = r#"
+import std.async
+
+async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+  return await task
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_await_declared_wrapper_delegates_to_awaitable_field() {
+    let source = r#"
+import std.async
+from std.async.task import JoinHandle, TaskJoinError
+
+model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
+  handle: JoinHandle[T]
+
+async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
+  return await box
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_awaitable_adoption_rejects_wrapper_without_awaitable_field() {
+    let source = r#"
+import std.async
+
+model Bad with Awaitable[int]:
+  value: int
+"#;
+    let errors = check_str_err(source, "Awaitable wrapper without awaitable field should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("adopts Awaitable[int]") && error.message.contains("no valid await")),
+        "expected invalid Awaitable adoption diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_awaitable_adoption_rejects_wrong_wrapper_output_type() {
+    let source = r#"
+import std.async
+from std.async.task import JoinHandle
+
+model Bad with Awaitable[int]:
+  handle: JoinHandle[int]
+"#;
+    let errors = check_str_err(source, "Awaitable wrapper with wrong output type should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("adopts Awaitable[int]") && error.message.contains("no valid await")),
+        "expected invalid Awaitable adoption diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_race_for_homogeneous_result_typechecks() {
+    let source = r#"
+import std.async
+
+async def fast() -> int:
+  return 1
+
+async def slow() -> int:
+  return 2
+
+async def main() -> int:
+  return race for value:
+    await fast() => value
+    await slow() => value
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_race_for_union_result_typechecks() {
+    let source = r#"
+import std.async
+
+async def fetch_text() -> str:
+  return "ready"
+
+async def fetch_count() -> int:
+  return 1
+
+async def main() -> str | int:
+  return race for value:
+    await fetch_text() => value
+    await fetch_count() => value
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_race_for_rejects_non_awaitable_arm() {
+    let source = r#"
+import std.async
+
+async def main() -> int:
+  return race for value:
+    await 1 => value
+"#;
+    let errors = check_str_err(source, "race arm awaiting int should fail");
+    assert!(
+        errors.iter().any(|error| error.message.contains("Awaitable")),
+        "expected Awaitable diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_race_for_rejects_non_async_context() {
+    let source = r#"
+import std.async
+
+async def fast() -> int:
+  return 1
+
+def main() -> int:
+  return race for value:
+    await fast() => value
+"#;
+    let errors = check_str_err(source, "race outside async should fail");
+    assert!(
+        errors.iter().any(|error| error.message.contains("outside of an async")),
+        "expected async-context diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_join_handle_satisfies_awaitable_result_bound() {
+    let source = r#"
+from std.async.task import JoinHandle, TaskJoinError
+
+def accept[T, F with Awaitable[T]](task: F) -> F:
+  return task
+
+def main(handle: JoinHandle[int]) -> None:
+  _ = accept[Result[int, TaskJoinError], JoinHandle[int]](handle)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_join_handle_rejects_wrong_awaitable_output_bound() {
+    let source = r#"
+from std.async.task import JoinHandle
+
+def accept[T, F with Awaitable[T]](task: F) -> F:
+  return task
+
+def main(handle: JoinHandle[int]) -> None:
+  _ = accept[int, JoinHandle[int]](handle)
+"#;
+    let errors = check_str_err(source, "JoinHandle[int] should not satisfy Awaitable[int]");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound") && error.message.contains("Awaitable[int]")),
+        "expected Awaitable[int] generic bound diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_semaphore_acquire_returns_result_semaphore_acquire_error() {
     let source = r#"
 from std.async.sync import Semaphore, SemaphoreAcquireError

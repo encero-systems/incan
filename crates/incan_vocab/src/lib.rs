@@ -42,10 +42,11 @@ pub mod version;
 pub mod wasm_abi;
 
 pub use ast::{
-    Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanScopedSurfaceExpr,
-    IncanScopedSurfaceOwner, IncanScopedSurfacePayload, IncanScopedSymbolCall, IncanStatement, IncanUnaryOp, Span,
-    VocabBodyItem, VocabClause, VocabClauseBody, VocabDeclaration, VocabDeclarationHead, VocabFieldSpec,
-    VocabKeywordMetadata, VocabParameter, VocabSyntaxNode, VocabTypeExpr,
+    Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanRaceForArm, IncanRaceForBody,
+    IncanRaceForExpr, IncanScopedSurfaceExpr, IncanScopedSurfaceOwner, IncanScopedSurfacePayload,
+    IncanScopedSymbolCall, IncanStatement, IncanUnaryOp, Span, VocabBodyItem, VocabClause, VocabClauseBody,
+    VocabDeclaration, VocabDeclarationHead, VocabFieldSpec, VocabKeywordMetadata, VocabParameter, VocabSyntaxNode,
+    VocabTypeExpr,
 };
 #[cfg(feature = "serde")]
 pub use desugar::execute_desugar_request;

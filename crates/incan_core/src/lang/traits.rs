@@ -30,6 +30,7 @@ pub enum TraitId {
     Error,
     Iterable,
     Sum,
+    Awaitable,
 }
 
 /// Metadata for a builtin trait.
@@ -151,6 +152,13 @@ pub const TRAITS: &[TraitInfo] = &[
         RFC::_088,
         Since(0, 3),
     ),
+    info(
+        TraitId::Awaitable,
+        "Awaitable",
+        "Trait for values that can be awaited to produce a value.",
+        "RFC 039",
+        Since(0, 3),
+    ),
 ];
 
 /// Resolve a spelling to a builtin trait identifier.
@@ -189,6 +197,7 @@ pub fn info_for(id: TraitId) -> TraitInfo {
         TraitId::Error => TRAITS[15],
         TraitId::Iterable => TRAITS[16],
         TraitId::Sum => TRAITS[17],
+        TraitId::Awaitable => TRAITS[18],
     }
 }
 

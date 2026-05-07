@@ -71,6 +71,33 @@ async def process() -> str:
 !!! info "Coming from Python?"
     Incan's `await` follows the same rules as in Python: it is disallowed outside an `async` scope.
 
+### Awaitable
+
+`Awaitable[T]` is the protocol for values that can be awaited to produce `T`.
+
+```incan
+import std.async
+
+async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+    return await task
+```
+
+The compiler recognizes direct async calls, Rust-backed futures, `JoinHandle[T]`, and checked wrapper types. Awaiting a
+`JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
+
+Wrapper types can adopt `Awaitable[T]` only when they contain a compatible awaitable field:
+
+```incan
+import std.async
+from std.async.task import JoinHandle, TaskJoinError
+
+model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
+    handle: JoinHandle[T]
+
+async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
+    return await box
+```
+
 ## Time Primitives
 
 ### sleep
@@ -119,6 +146,32 @@ match await timeout_join(1.0, handle):
 ```
 
 Use `timeout_join()` for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and `TimeoutJoinOutcome.TimedOut(handle)` carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. If an outer cancellation boundary cancels the `timeout_join()` call itself before it returns, the helper-owned handle is dropped and the task is detached unless you arranged another completion path. For `spawn_blocking()` handles, `abort()` can only prevent queued work from starting; blocking work that has already started must finish on its own.
+
+## Racing Awaitables
+
+Use `std.async.race` when several awaitables are valid ways to produce one result and the first completion should win:
+
+```incan
+from std.async.race import arm, race
+from std.async.time import sleep
+
+def label(value: int) -> str:
+    return f"winner:{value}"
+
+async def fast() -> int:
+    return 1
+
+async def slow() -> int:
+    await sleep(0.5)
+    return 2
+
+async def main() -> None:
+    result = await race(arm(slow(), label), arm(fast(), label))
+    println(result)
+```
+
+`arm(awaitable, on_win)` packages one branch and its callback. `race(*arms)` polls all arms concurrently, returns the
+winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.
 
 ## Task Spawning
 
@@ -551,21 +604,21 @@ async def worker(id: int) -> None:
 See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn)
 for a runnable demo of all four primitives.
 
-## Select and Future Race
+## Race and Timeout Helpers
 
-### select_timeout
+### race_timeout
 
 Simplified timeout returning Option:
 
 ```incan
-from std.async.select import select_timeout
+from std.async.race import race_timeout
 
-match await select_timeout(2.0, slow_operation):
+match await race_timeout(2.0, slow_operation):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
 ```
 
-`select_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use `timeout_join()` instead.
+`race_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use `timeout_join()` instead.
 
 Future `race` syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and use a handle-preserving wait such as `timeout_join()` when you still need the result.
 

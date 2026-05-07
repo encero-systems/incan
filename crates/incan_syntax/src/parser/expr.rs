@@ -666,6 +666,10 @@ impl<'a> Parser<'a> {
             return self.loop_expr(start);
         }
 
+        if self.is_active_race_for_expr() {
+            return self.race_for_expr(start);
+        }
+
         // self
         if self.match_token(&TokenKind::Keyword(KeywordId::SelfKw)) {
             let end = self.tokens[self.pos - 1].span.end;
@@ -1455,6 +1459,14 @@ impl<'a> Parser<'a> {
             }
             Expr::Surface(surface_expr) => match &mut surface_expr.payload {
                 SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
+                SurfaceExprPayload::RaceFor(race) => {
+                    for arm in &mut race.arms {
+                        self.shift_spanned_expr(&mut arm.awaitable, offset);
+                        if let RaceForBody::Expr(value) = &mut arm.body {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
                 SurfaceExprPayload::LeadingDotPath { .. } => {}
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.shift_spanned_expr(left, offset);
@@ -1848,6 +1860,103 @@ impl<'a> Parser<'a> {
             Expr::Loop(Box::new(LoopExpr { body })),
             Span::new(start, end),
         ))
+    }
+
+    /// Parse an active `race for value:` expression block.
+    fn race_for_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
+        self.expect(&TokenKind::Ident("race".to_string()), "Expected 'race'")?;
+        self.expect_keyword(KeywordId::For, "Expected 'for' after 'race'")?;
+        if self.check_punct(PunctuationId::LParen) {
+            return Err(errors::expected_token_message(
+                "Pattern-binding race headers are not supported; use a single binding name and match inside the arm body",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let binding = self.identifier_spanned()?.node;
+        if self.check_punct(PunctuationId::LParen) || self.check_punct(PunctuationId::Comma) {
+            return Err(errors::expected_token_message(
+                "Pattern-binding race headers are not supported; use a single binding name and match inside the arm body",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after race binding")?;
+        self.expect(&TokenKind::Newline, "Expected newline after race header")?;
+        self.expect_suite_indent("Expected indented block after race header")?;
+
+        self.skip_newlines();
+        if self.check(&TokenKind::Dedent) {
+            return Err(errors::expected_token_message(
+                "Expected at least one race arm",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+
+        let mut arms = Vec::new();
+        while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
+            arms.push(self.race_for_arm()?);
+            self.skip_newlines();
+        }
+        self.expect(&TokenKind::Dedent, "Expected dedent after race body")?;
+
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            Expr::Surface(Box::new(SurfaceExpr {
+                key: SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key: "std.async".to_string(),
+                    descriptor_key: "race_for".to_string(),
+                },
+                payload: SurfaceExprPayload::RaceFor(Box::new(RaceForExpr { binding, arms })),
+            })),
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse one `await expr => body` race arm.
+    fn race_for_arm(&mut self) -> Result<RaceForArm, CompileError> {
+        if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "default") {
+            return Err(errors::expected_token_message(
+                "Default race arms are not supported; race an explicit timeout awaitable instead",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        if matches!(&self.peek().kind, TokenKind::Ident(name) if matches!(name.as_str(), "fair" | "biased")) {
+            return Err(errors::expected_token_message(
+                "Race fairness controls are not supported",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        self.expect_keyword(KeywordId::Await, "Expected 'await' to start race arm")?;
+        let awaitable = self.expression()?;
+        if self.check_keyword(KeywordId::If) {
+            return Err(errors::expected_token_message(
+                "Race arm guards are not supported; put the conditional logic in the arm body",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::FatArrow, "Expected '=>' after race arm awaitable")?;
+        let body = if self.match_token(&TokenKind::Newline) {
+            self.expect_suite_indent("Expected indented block after race arm '=>'")?;
+            let body = self.block()?;
+            if body.is_empty() {
+                return Err(errors::expected_token_message(
+                    "Expected race arm body",
+                    &format!("{:?}", self.peek().kind),
+                    self.current_span(),
+                ));
+            }
+            self.expect(&TokenKind::Dedent, "Expected dedent after race arm body")?;
+            RaceForBody::Block(body)
+        } else {
+            RaceForBody::Expr(self.expression()?)
+        };
+
+        Ok(RaceForArm { awaitable, body })
     }
 
     /// Parse a bracketed expression as either a list literal, list comprehension, or list spread form.

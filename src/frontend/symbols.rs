@@ -11,6 +11,7 @@ use incan_core::lang::conventions;
 use incan_core::lang::surface::constructors;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::traits;
+use incan_core::lang::traits::TraitId;
 use incan_core::lang::types::collections;
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics;
@@ -90,10 +91,14 @@ impl SymbolTable {
 
         // Builtin traits
         for info in traits::TRAITS {
+            let type_params = match info.id {
+                TraitId::Awaitable => vec!["T".to_string()],
+                _ => Vec::new(),
+            };
             self.define(Symbol {
                 name: info.canonical.to_string(),
                 kind: SymbolKind::Trait(TraitInfo {
-                    type_params: vec![],
+                    type_params,
                     methods: HashMap::new(),
                     method_aliases: HashMap::new(),
                     properties: HashMap::new(),

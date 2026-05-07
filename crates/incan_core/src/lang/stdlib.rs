@@ -216,7 +216,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         name: "async",
         feature: Some("async"),
         extra_crate_deps: &[],
-        submodules: &["time", "task", "channel", "select", "sync", "prelude"],
+        submodules: &["time", "task", "channel", "race", "sync", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {

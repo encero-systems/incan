@@ -23,6 +23,9 @@ pub enum SurfaceTypeId {
     JoinHandle,
     TaskJoinError,
 
+    // Race helpers
+    RaceArm,
+
     // Channels
     Sender,
     Receiver,
@@ -69,6 +72,7 @@ pub enum SurfaceTypeOwner {
 pub enum SurfaceTypeCategory {
     AsyncSync,
     AsyncTask,
+    AsyncRace,
     AsyncChannel,
     RustInterop,
     Web,
@@ -102,6 +106,11 @@ const RUNTIME_ASYNC_TASK: SurfaceTypeOwnership = runtime(
     "std.async.task",
     SurfaceTypeCategory::AsyncTask,
     "Runtime task vocabulary surfaced through `std.async.task`; name lookup requires the stdlib module import.",
+);
+const RUNTIME_ASYNC_RACE: SurfaceTypeOwnership = runtime(
+    "std.async.race",
+    SurfaceTypeCategory::AsyncRace,
+    "Runtime race helper vocabulary surfaced through `std.async.race`; name lookup requires the stdlib module import.",
 );
 const RUNTIME_ASYNC_CHANNEL: SurfaceTypeOwnership = runtime(
     "std.async.channel",
@@ -185,6 +194,16 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         "Error returned when a spawned task fails to join.",
         RFC::_000,
         Since(0, 1),
+    ),
+    // Race helpers
+    info(
+        SurfaceTypeId::RaceArm,
+        "RaceArm",
+        SurfaceTypeKind::Generic,
+        RUNTIME_ASYNC_RACE,
+        "Packaged async race branch.",
+        RFC::_039,
+        Since(0, 3),
     ),
     // Channels
     info(
@@ -412,22 +431,23 @@ pub fn info_for(id: SurfaceTypeId) -> SurfaceTypeInfo {
         SurfaceTypeId::Barrier => SURFACE_TYPES[3],
         SurfaceTypeId::JoinHandle => SURFACE_TYPES[4],
         SurfaceTypeId::TaskJoinError => SURFACE_TYPES[5],
-        SurfaceTypeId::Sender => SURFACE_TYPES[6],
-        SurfaceTypeId::Receiver => SURFACE_TYPES[7],
-        SurfaceTypeId::OneshotSender => SURFACE_TYPES[8],
-        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[9],
-        SurfaceTypeId::Vec => SURFACE_TYPES[10],
-        SurfaceTypeId::HashMap => SURFACE_TYPES[11],
-        SurfaceTypeId::App => SURFACE_TYPES[12],
-        SurfaceTypeId::Response => SURFACE_TYPES[13],
-        SurfaceTypeId::Html => SURFACE_TYPES[14],
-        SurfaceTypeId::Json => SURFACE_TYPES[15],
-        SurfaceTypeId::Query => SURFACE_TYPES[16],
-        SurfaceTypeId::Path => SURFACE_TYPES[17],
-        SurfaceTypeId::Body => SURFACE_TYPES[18],
-        SurfaceTypeId::Request => SURFACE_TYPES[19],
-        SurfaceTypeId::FieldInfo => SURFACE_TYPES[20],
-        SurfaceTypeId::ValidationError => SURFACE_TYPES[21],
+        SurfaceTypeId::RaceArm => SURFACE_TYPES[6],
+        SurfaceTypeId::Sender => SURFACE_TYPES[7],
+        SurfaceTypeId::Receiver => SURFACE_TYPES[8],
+        SurfaceTypeId::OneshotSender => SURFACE_TYPES[9],
+        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[10],
+        SurfaceTypeId::Vec => SURFACE_TYPES[11],
+        SurfaceTypeId::HashMap => SURFACE_TYPES[12],
+        SurfaceTypeId::App => SURFACE_TYPES[13],
+        SurfaceTypeId::Response => SURFACE_TYPES[14],
+        SurfaceTypeId::Html => SURFACE_TYPES[15],
+        SurfaceTypeId::Json => SURFACE_TYPES[16],
+        SurfaceTypeId::Query => SURFACE_TYPES[17],
+        SurfaceTypeId::Path => SURFACE_TYPES[18],
+        SurfaceTypeId::Body => SURFACE_TYPES[19],
+        SurfaceTypeId::Request => SURFACE_TYPES[20],
+        SurfaceTypeId::FieldInfo => SURFACE_TYPES[21],
+        SurfaceTypeId::ValidationError => SURFACE_TYPES[22],
     }
 }
 

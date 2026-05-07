@@ -826,7 +826,7 @@ Re-baselining note: this closure definition intentionally avoids smuggling unrel
 - [x] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
 - [x] All stdlib `.incn` files with `@rust.extern` carry `rust.module()` directives.
 - [x] `std.async.*` behavior is runtime-backed via narrow `@rust.extern` leaves (no broad `fail_t` placeholder surface).
-    > Note: remaining closeout is concentrated in the wrapper-style async modules (`std.async.task`, `std.async.sync`, `std.async.channel`, and `std.async.prelude`); `std.async.time` and `std.async.select` are already direct-interoperability modules.
+    > Note: remaining closeout is concentrated in the wrapper-style async modules (`std.async.task`, `std.async.sync`, `std.async.channel`, and `std.async.prelude`); `std.async.time` and the then-current first-completion async helper are already direct-interoperability modules. RFC 039 later replaces that helper surface with `std.async.race`.
 - [x] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
 
 ### Diagnostics checklist

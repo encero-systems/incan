@@ -100,7 +100,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | - |
-| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
 | `std.result` | - | - | - |
@@ -364,6 +364,7 @@ and `@requires` keep their existing special behavior.
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |
 | Iterable | `Iterable` |  | Trait for values that produce iterators. | RFC 006 | 0.3 | Stable |
 | Sum | `Sum` |  | Trait for values that can be produced by summing iterator items. | RFC 088 | 0.3 | Stable |
+| Awaitable | `Awaitable` |  | Trait for values that can be awaited to produce a value. | RFC 039 | 0.3 | Stable |
 
 ## Operators
 
@@ -505,7 +506,7 @@ and `@requires` keep their existing special behavior.
 | SleepMs | `sleep_ms` |  | Sleep for N milliseconds. | RFC 000 | 0.1 | Stable |
 | Timeout | `timeout` |  | Run an async operation with a timeout. | RFC 000 | 0.1 | Stable |
 | TimeoutMs | `timeout_ms` |  | Run an async operation with a timeout in milliseconds. | RFC 000 | 0.1 | Stable |
-| SelectTimeout | `select_timeout` |  | Select between futures with a timeout. | RFC 000 | 0.1 | Stable |
+| RaceTimeout | `race_timeout` |  | Race async work against a timeout. | RFC 000 | 0.1 | Stable |
 | YieldNow | `yield_now` |  | Yield execution back to the async scheduler. | RFC 000 | 0.1 | Stable |
 | Spawn | `spawn` |  | Spawn an async task. | RFC 000 | 0.1 | Stable |
 | SpawnBlocking | `spawn_blocking` |  | Spawn a blocking task on a dedicated thread pool. | RFC 004 | 0.1 | Stable |
@@ -547,6 +548,7 @@ and `@requires` keep their existing special behavior.
 | Barrier | `Barrier` |  | Named | Async/runtime barrier. | RFC 000 | 0.1 | Stable |
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
 | TaskJoinError | `TaskJoinError` |  | Named | Error returned when a spawned task fails to join. | RFC 000 | 0.1 | Stable |
+| RaceArm | `RaceArm` |  | Generic | Packaged async race branch. | RFC 039 | 0.3 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |

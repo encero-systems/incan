@@ -362,7 +362,7 @@ from std.async.prelude import *
 | ----------------------------------------- | ---------------------------- |
 | `spawn`, `spawn_blocking`                 | Start async or blocking work |
 | `channel`, `unbounded_channel`, `oneshot` | Message passing primitives   |
-| `select_timeout`                          | Timeout-based select utility |
+| `race_timeout`                            | Timeout-based race utility   |
 | `yield_now`                               | Yield to scheduler           |
 
 ## Rust standard library access

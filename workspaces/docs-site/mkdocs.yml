@@ -171,6 +171,7 @@ nav:
               - Collection protocols: language/reference/stdlib_traits/collection_protocols.md
               - Indexing and slicing: language/reference/stdlib_traits/indexing_and_slicing.md
               - Callable objects: language/reference/stdlib_traits/callable.md
+              - Awaitable values: language/reference/stdlib_traits/awaitable.md
               - Error trait: language/reference/stdlib_traits/error.md
               - Operators: language/reference/stdlib_traits/operators.md
               - Conversions: language/reference/stdlib_traits/conversions.md

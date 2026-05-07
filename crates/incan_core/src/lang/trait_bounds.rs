@@ -134,6 +134,9 @@ pub mod rust {
     pub const MUL: &str = "std::ops::Mul";
     pub const DIV: &str = "std::ops::Div";
     pub const REM: &str = "std::ops::Rem";
+
+    // Async
+    pub const FUTURE: &str = "std::future::Future";
 }
 
 /// Look up the Rust trait path for an Incan trait bound name.

@@ -13,7 +13,7 @@ pub enum SurfaceFnId {
     SleepMs,
     Timeout,
     TimeoutMs,
-    SelectTimeout,
+    RaceTimeout,
     YieldNow,
 
     // Task helpers
@@ -56,10 +56,10 @@ pub const SURFACE_FUNCTIONS: &[SurfaceFnInfo] = &[
         Since(0, 1),
     ),
     info(
-        SurfaceFnId::SelectTimeout,
-        "select_timeout",
+        SurfaceFnId::RaceTimeout,
+        "race_timeout",
         &[],
-        "Select between futures with a timeout.",
+        "Race async work against a timeout.",
         RFC::_000,
         Since(0, 1),
     ),
@@ -138,7 +138,7 @@ pub fn info_for(id: SurfaceFnId) -> SurfaceFnInfo {
         SurfaceFnId::SleepMs => SURFACE_FUNCTIONS[0],
         SurfaceFnId::Timeout => SURFACE_FUNCTIONS[1],
         SurfaceFnId::TimeoutMs => SURFACE_FUNCTIONS[2],
-        SurfaceFnId::SelectTimeout => SURFACE_FUNCTIONS[3],
+        SurfaceFnId::RaceTimeout => SURFACE_FUNCTIONS[3],
         SurfaceFnId::YieldNow => SURFACE_FUNCTIONS[4],
         SurfaceFnId::Spawn => SURFACE_FUNCTIONS[5],
         SurfaceFnId::SpawnBlocking => SURFACE_FUNCTIONS[6],

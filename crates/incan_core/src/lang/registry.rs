@@ -79,6 +79,9 @@ pub const RFC_029: RfcId = "RFC 029";
 /// RFC 030 — std.collections and field-overlay reflection.
 pub const RFC_030: RfcId = "RFC 030";
 
+/// RFC 039 — async race expressions and awaitability.
+pub const RFC_039: RfcId = "RFC 039";
+
 /// RFC 040 — scoped DSL surface forms.
 pub const RFC_040: RfcId = "RFC 040";
 
@@ -145,6 +148,9 @@ impl RFC {
     pub const _029: RfcId = RFC_029;
     /// RFC 030 — std.collections and field-overlay reflection.
     pub const _030: RfcId = RFC_030;
+
+    /// RFC 039 — async race expressions and awaitability.
+    pub const _039: RfcId = RFC_039;
     /// RFC 040 — scoped DSL surface forms.
     pub const _040: RfcId = RFC_040;
     /// RFC 052 — module static storage.
