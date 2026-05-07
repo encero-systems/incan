@@ -2,6 +2,10 @@
 //!
 //! This crate provides traits and utilities that generated Incan code depends on, including reflection capabilities,
 //! JSON serialization helpers, and numeric operations.
+//!
+//! The stable boundary for Incan users is the `std.*` API declared by the Incan stdlib stubs. Rust modules in this
+//! crate are runtime support for compiler-generated Rust and may contain transitional host implementations while the
+//! corresponding Incan-language stdlib surface is still being built.
 
 #![deny(clippy::unwrap_used)]
 

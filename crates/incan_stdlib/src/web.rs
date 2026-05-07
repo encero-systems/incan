@@ -2,6 +2,11 @@
 //!
 //! Web route registration is inventory-driven. The compiler/proc-macro layer emits `inventory::submit!` calls
 //! containing `RouteEntry` records, and `App::run` builds the router from those records at runtime.
+//!
+//! This module is a transitional host-runtime boundary, not a stable general-purpose web framework API. It exists so
+//! generated Incan web programs have a concrete Rust target while the `std.web` surface and runtime ownership model
+//! are still settling. Public items here should be treated as generated-code support unless the Incan stdlib stubs and
+//! language docs explicitly expose them.
 
 // FIXME: this module need to be rewritten in incan once the appropriate RFCs are implemented
 
@@ -13,7 +18,7 @@ use axum::response::{Html as AxumHtmlInner, IntoResponse, Response as AxumRawRes
 use tokio::runtime::Runtime;
 
 // Re-export axum types so stdlib Incan modules can import them via `incan_stdlib::web::Json`,
-// `incan_stdlib::web::Html`, etc. These are the canonical "web response" types for Incan programs.
+// `incan_stdlib::web::Html`, etc. These are transitional generated-code targets for the current host runtime.
 pub use axum::Json;
 pub use axum::response::Html;
 
@@ -54,6 +59,9 @@ impl RouteEntry {
 inventory::collect!(RouteEntry);
 
 /// Minimal application handle for generated web programs.
+///
+/// This handle is part of the transitional web runtime. It is intentionally small and should not be extended as a
+/// general stable application framework without first moving that contract into the Incan stdlib surface.
 #[derive(Default)]
 pub struct App {}
 

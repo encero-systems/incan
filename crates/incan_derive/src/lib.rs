@@ -5,6 +5,10 @@
 //! - `FieldInfo`: Generates `HasFieldInfo` trait implementation for reflection
 //! - `IncanReflect`: Alias for IncanClass (for clarity in generated code)
 //! - `IncanJson`: Generates JSON serialization helpers
+//!
+//! This crate is a toolchain-locked implementation companion to `incan_stdlib` and compiler-generated Rust. Its macros
+//! are public only because Rust requires proc macros to be exported from a proc-macro crate; downstream code should not
+//! treat them as an independent stable macro toolkit.
 
 use proc_macro::TokenStream;
 use quote::quote;
