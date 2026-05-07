@@ -19,6 +19,7 @@ use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
+use incan_semantics_core::SurfaceModifierTypeCheck;
 use std::collections::{HashMap, HashSet};
 
 /// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
@@ -300,6 +301,33 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// Run declaration-level typecheck actions selected by the surface semantics registry.
+    fn validate_surface_modifier_typecheck_actions(
+        &mut self,
+        modifiers: &[SurfaceModifier],
+        return_type: &Spanned<Type>,
+    ) {
+        use crate::semantics_registry::semantics_registry;
+
+        for modifier in modifiers {
+            let Some(action) = semantics_registry().typecheck_surface_modifier_action(&modifier.key) else {
+                continue;
+            };
+            match action {
+                SurfaceModifierTypeCheck::AsyncCallable => self.validate_async_callable_return_type(return_type),
+            }
+        }
+    }
+
+    /// Validate return annotations for an async callable.
+    ///
+    /// Incan async declarations spell the callable's logical output type, not an explicit `Future[T]` wrapper, so no
+    /// additional return-type rejection is currently applicable. Keeping this routed through the semantics registry
+    /// prevents `async` from becoming another hardcoded declaration special case.
+    fn validate_async_callable_return_type(&mut self, return_type: &Spanned<Type>) {
+        let _ = return_type;
     }
 
     /// Return whether a method carries a resolved builtin decorator.
@@ -2780,8 +2808,7 @@ impl TypeChecker {
                 },
             );
         }
-        // TODO(#146): add async return-type and related validation here via the surface semantics registry — not
-        // hardcoded KeywordId checks.
+        self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.
         for param in &func.type_params {
@@ -2997,7 +3024,7 @@ impl TypeChecker {
             receiver: method.receiver,
         });
         self.validate_callable_rest_params(&method.params);
-        // TODO(#146): add async return-type and related validation for methods via the surface semantics registry.
+        self.validate_surface_modifier_typecheck_actions(&method.surface_modifiers, &method.return_type);
 
         // Define owner type parameters so generic wrappers can use them in bodies and annotations.
         for type_param in owner_type_params {

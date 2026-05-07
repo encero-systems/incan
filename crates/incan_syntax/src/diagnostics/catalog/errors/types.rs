@@ -455,6 +455,15 @@ pub fn await_outside_async(span: Span) -> CompileError {
     .with_hint("Declare the enclosing function or method with the `async` keyword (after importing `std.async`)")
 }
 
+/// An async callable was invoked in a context where the returned future is not awaited directly.
+pub fn async_call_without_await(callable: &str, span: Span) -> CompileError {
+    CompileError::warning(format!("Async call `{callable}` is not awaited"), span)
+        .with_note("Calling an async function or method produces work that should usually be awaited")
+        .with_hint(format!(
+            "Use `await {callable}(...)` when the result should be observed here"
+        ))
+}
+
 /// `break` appeared outside any enclosing loop body.
 pub fn break_outside_loop(span: Span) -> CompileError {
     CompileError::type_error("`break` is only valid inside loops".to_string(), span)

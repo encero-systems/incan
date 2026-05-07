@@ -141,6 +141,10 @@ pub struct TypeChecker {
     pub(crate) current_yield_context: YieldContext,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
+    /// Expression span currently being typechecked as an `await` operand.
+    pub(crate) await_operand_span: Option<(usize, usize)>,
+    /// Nesting depth for expressions being checked as call arguments.
+    pub(crate) call_argument_depth: usize,
     /// Stack of active loop contexts, innermost last.
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
@@ -253,6 +257,8 @@ impl TypeChecker {
             current_return_error_type: None,
             current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
+            await_operand_span: None,
+            call_argument_depth: 0,
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
@@ -312,6 +318,19 @@ impl TypeChecker {
     /// Borrow the innermost active loop so `break` checking can append inferred break types.
     pub(crate) fn current_loop_context_mut(&mut self) -> Option<&mut LoopContext> {
         self.loop_stack.last_mut()
+    }
+
+    /// Return whether this call expression is inside the active `await` operand.
+    pub(crate) fn is_in_await_operand(&self, span: Span) -> bool {
+        self.await_operand_span
+            .is_some_and(|(start, end)| start <= span.start && span.end <= end)
+    }
+
+    /// Emit the missing-await warning for a direct async call when the current expression context should report it.
+    pub(crate) fn warn_if_unawaited_async_call(&mut self, callable: &str, span: Span) {
+        if !self.is_in_await_operand(span) && self.call_argument_depth == 0 {
+            self.errors.push(errors::async_call_without_await(callable, span));
+        }
     }
 
     /// Resolve the final type of a `loop:` expression from the `break` types observed in its body.

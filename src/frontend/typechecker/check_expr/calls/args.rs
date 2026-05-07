@@ -80,7 +80,9 @@ impl TypeChecker {
     /// Type-check all call arguments, including unpack arguments.
     pub(in crate::frontend::typechecker::check_expr) fn check_call_args(&mut self, args: &[CallArg]) {
         for arg in args {
+            self.call_argument_depth += 1;
             self.check_expr(Self::call_arg_expr(arg));
+            self.call_argument_depth -= 1;
         }
     }
 
@@ -90,7 +92,12 @@ impl TypeChecker {
         args: &[CallArg],
     ) -> Vec<ResolvedType> {
         args.iter()
-            .map(|arg| self.check_expr(Self::call_arg_expr(arg)))
+            .map(|arg| {
+                self.call_argument_depth += 1;
+                let ty = self.check_expr(Self::call_arg_expr(arg));
+                self.call_argument_depth -= 1;
+                ty
+            })
             .collect()
     }
 
@@ -115,7 +122,9 @@ impl TypeChecker {
                         .map(|param| param.ty.clone())
                         .or_else(|| rest_positional.map(|param| param.ty.clone()));
                     positional_index += 1;
+                    self.call_argument_depth += 1;
                     arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                    self.call_argument_depth -= 1;
                 }
                 CallArg::Named(name, expr) => {
                     let expected = normal_params
@@ -123,7 +132,9 @@ impl TypeChecker {
                         .find(|param| param.name() == Some(name.as_str()))
                         .map(|param| param.ty.clone())
                         .or_else(|| rest_keyword.map(|param| param.ty.clone()));
+                    self.call_argument_depth += 1;
                     arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                    self.call_argument_depth -= 1;
                 }
                 CallArg::PositionalUnpack(expr) => {
                     if let Some(items) = Self::shaped_positional_unpack_items(expr) {
@@ -136,7 +147,9 @@ impl TypeChecker {
                             if positional_index < normal_params.len() {
                                 positional_index += 1;
                             }
+                            self.call_argument_depth += 1;
                             item_types.push(self.check_expr_with_expected(item, expected.as_ref()));
+                            self.call_argument_depth -= 1;
                         }
                         let plan_item_types = item_types.clone();
                         let ty = ResolvedType::Tuple(item_types);
@@ -145,7 +158,9 @@ impl TypeChecker {
                         arg_types.push(ty);
                     } else {
                         let expected = rest_positional.map(|param| list_ty(param.ty.clone()));
+                        self.call_argument_depth += 1;
                         let ty = self.check_expr_with_expected(expr, expected.as_ref());
+                        self.call_argument_depth -= 1;
                         if let Some(item_types) = Self::shaped_positional_unpack_types(&ty) {
                             self.record_fixed_unpack_plan(expr.span, FixedUnpackPlan::Positional(item_types.to_vec()));
                         }
@@ -156,7 +171,9 @@ impl TypeChecker {
                     if let Some(entries) = Self::shaped_keyword_unpack_entries(expr) {
                         let mut value_types = Vec::with_capacity(entries.len());
                         for (key, value) in &entries {
+                            self.call_argument_depth += 1;
                             self.check_expr(key);
+                            self.call_argument_depth -= 1;
                             let expected = Self::static_string_key(key)
                                 .and_then(|name| {
                                     normal_params
@@ -165,7 +182,9 @@ impl TypeChecker {
                                         .map(|param| param.ty.clone())
                                 })
                                 .or_else(|| rest_keyword.map(|param| param.ty.clone()));
+                            self.call_argument_depth += 1;
                             value_types.push(self.check_expr_with_expected(value, expected.as_ref()));
+                            self.call_argument_depth -= 1;
                         }
                         let value_ty = value_types.first().cloned().unwrap_or(ResolvedType::Unknown);
                         self.record_expr_type(expr.span, dict_ty(ResolvedType::Str, value_ty));
@@ -181,7 +200,9 @@ impl TypeChecker {
                         arg_types.push(ResolvedType::Tuple(value_types));
                     } else {
                         let expected = rest_keyword.map(|param| dict_ty(ResolvedType::Str, param.ty.clone()));
+                        self.call_argument_depth += 1;
                         arg_types.push(self.check_expr_with_expected(expr, expected.as_ref()));
+                        self.call_argument_depth -= 1;
                     }
                 }
             }

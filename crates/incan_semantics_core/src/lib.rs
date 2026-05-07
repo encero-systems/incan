@@ -120,6 +120,13 @@ pub enum SurfaceExprTypeCheck {
     AwaitCheck,
 }
 
+/// Describes how to typecheck a declaration-level surface modifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurfaceModifierTypeCheck {
+    /// The modifier marks the callable as async and applies async callable validation rules.
+    AsyncCallable,
+}
+
 /// Runtime requirement implied by a surface feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeRequirement {
@@ -176,6 +183,11 @@ pub trait SurfaceSemanticsPack {
 
     /// Return the typecheck action for a surface expression, or `None` if not handled.
     fn typecheck_surface_expr_action(&self, _key: &SurfaceFeatureKey) -> Option<SurfaceExprTypeCheck> {
+        None
+    }
+
+    /// Return the typecheck action for a declaration-level surface modifier, or `None` if not handled.
+    fn typecheck_surface_modifier_action(&self, _key: &SurfaceFeatureKey) -> Option<SurfaceModifierTypeCheck> {
         None
     }
 
@@ -271,6 +283,13 @@ impl<'a> SurfaceSemanticsRegistry<'a> {
         self.packs
             .iter()
             .find_map(|pack| pack.typecheck_surface_expr_action(key))
+    }
+
+    /// Return the declaration-modifier typecheck action selected by the first pack that recognizes `key`.
+    pub fn typecheck_surface_modifier_action(&self, key: &SurfaceFeatureKey) -> Option<SurfaceModifierTypeCheck> {
+        self.packs
+            .iter()
+            .find_map(|pack| pack.typecheck_surface_modifier_action(key))
     }
 
     // ---- Lowering dispatch ----

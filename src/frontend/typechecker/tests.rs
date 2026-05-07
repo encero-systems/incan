@@ -46,6 +46,22 @@ fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     }
 }
 
+fn check_str_warnings(source: &str, context: &str) -> Vec<CompileError> {
+    let tokens = match lexer::lex(source) {
+        Ok(tokens) => tokens,
+        Err(errs) => panic!("{context} lex failed: {errs:?}"),
+    };
+    let ast = match parser::parse(&tokens) {
+        Ok(ast) => ast,
+        Err(errs) => panic!("{context} parse failed: {errs:?}"),
+    };
+    let mut checker = TypeChecker::new();
+    if let Err(errs) = checker.check_program(&ast) {
+        panic!("{context} typecheck failed: {errs:?}");
+    }
+    checker.warnings
+}
+
 fn has_unknown_symbol_error(errors: &[CompileError], symbol: &str) -> bool {
     let needle = format!("Unknown symbol '{symbol}'");
     errors.iter().any(|err| err.message.contains(&needle))
@@ -3019,6 +3035,107 @@ model Widget:
         errs.iter()
             .any(|e| e.message.contains("await") && e.message.contains("async")),
         "expected await-outside-async diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_async_function_call_warns() {
+    let source = r#"
+import std.async
+
+async def fetch() -> int:
+  return 1
+
+async def main() -> None:
+  fetch()
+"#;
+    let warnings = check_str_warnings(source, "unawaited async function call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `fetch` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_awaited_async_function_call_does_not_warn() {
+    let source = r#"
+import std.async
+
+async def fetch() -> int:
+  return 1
+
+async def main() -> None:
+  value = await fetch()
+"#;
+    let warnings = check_str_warnings(source, "awaited async function call should not warn");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| !warning.message.contains("Async call `fetch` is not awaited")),
+        "did not expect missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_awaited_async_try_call_does_not_warn() {
+    let source = r#"
+import std.async
+
+async def fetch() -> Result[int, str]:
+  return Ok(1)
+
+async def main() -> Result[None, str]:
+  value = await fetch()?
+  return Ok(None)
+"#;
+    let warnings = check_str_warnings(source, "awaited async try call should not warn");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| !warning.message.contains("Async call `fetch` is not awaited")),
+        "did not expect missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_imported_async_function_call_warns() {
+    let source = r#"
+from std.async.time import sleep
+
+async def main() -> None:
+  sleep(1.0)
+"#;
+    let warnings = check_str_warnings(source, "unawaited imported async function call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `sleep` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_async_method_call_warns() {
+    let source = r#"
+import std.async
+
+model Worker:
+  id: int
+
+  async def run(self) -> int:
+    return self.id
+
+async def main(worker: Worker) -> None:
+  worker.run()
+"#;
+    let warnings = check_str_warnings(source, "unawaited async method call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `run` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
     );
 }
 
