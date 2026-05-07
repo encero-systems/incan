@@ -359,7 +359,7 @@ impl TypeChecker {
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
-                    self.type_info.rust_arg_coercions.insert(
+                    self.type_info.rust.arg_coercions.insert(
                         (arg_expr.span.start, arg_expr.span.end),
                         RustArgCoercionInfo {
                             rust_target_type: normalized,
@@ -404,7 +404,7 @@ impl TypeChecker {
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
-                    self.type_info.rust_arg_coercions.insert(
+                    self.type_info.rust.arg_coercions.insert(
                         (arg_expr.span.start, arg_expr.span.end),
                         RustArgCoercionInfo {
                             rust_target_type: normalized,
@@ -662,9 +662,9 @@ mod validate_rust_function_call_tests {
             checker.errors
         );
         assert!(
-            checker.type_info.rust_arg_coercions.is_empty(),
+            checker.type_info.rust.arg_coercions.is_empty(),
             "expected lookup-preserving rust method call to preserve arg shape without coercion, got {:?}",
-            checker.type_info.rust_arg_coercions
+            checker.type_info.rust.arg_coercions
         );
     }
 
@@ -706,9 +706,9 @@ mod validate_rust_function_call_tests {
             checker.errors
         );
         assert!(
-            checker.type_info.rust_arg_coercions.is_empty(),
+            checker.type_info.rust.arg_coercions.is_empty(),
             "expected lookup-preserving generic probe to preserve arg shape without coercion, got {:?}",
-            checker.type_info.rust_arg_coercions
+            checker.type_info.rust.arg_coercions
         );
     }
 
@@ -768,7 +768,8 @@ mod validate_rust_function_call_tests {
         assert!(
             checker
                 .type_info
-                .rust_arg_coercions
+                .rust
+                .arg_coercions
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for borrowed String boundary"
         );
@@ -922,7 +923,8 @@ mod validate_rust_function_call_tests {
         assert!(
             checker
                 .type_info
-                .rust_arg_coercions
+                .rust
+                .arg_coercions
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for rusttype target boundary"
         );
@@ -996,7 +998,8 @@ mod validate_rust_function_call_tests {
         assert!(
             checker
                 .type_info
-                .rust_arg_coercions
+                .rust
+                .arg_coercions
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for rust method boundary"
         );

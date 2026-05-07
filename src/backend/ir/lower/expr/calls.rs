@@ -1145,6 +1145,7 @@ impl AstLowering {
     ) -> Vec<IrType> {
         if let Some(info) = self.type_info.as_ref()
             && let Some(resolved) = info
+                .calls
                 .call_site_monomorph_type_args
                 .get(&(call_span.start, call_span.end))
         {
@@ -1920,7 +1921,7 @@ mod tests {
     fn lower_method_call_wraps_args_with_rust_arg_coercion() -> Result<(), String> {
         let arg_span = Span::new(10, 20);
         let mut type_info = TypeCheckInfo::default();
-        type_info.rust_arg_coercions.insert(
+        type_info.rust.arg_coercions.insert(
             (arg_span.start, arg_span.end),
             RustArgCoercionInfo {
                 rust_target_type: "&str".to_string(),
@@ -1965,7 +1966,7 @@ mod tests {
         let arg_span = Span::new(10, 17);
         let mut type_info = TypeCheckInfo::default();
         type_info.record_regular_method_arg_shape(receiver_span, "get");
-        type_info.rust_arg_coercions.insert(
+        type_info.rust.arg_coercions.insert(
             (arg_span.start, arg_span.end),
             RustArgCoercionInfo {
                 rust_target_type: "&Q".to_string(),

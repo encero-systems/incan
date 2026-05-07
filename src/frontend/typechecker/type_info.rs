@@ -14,8 +14,9 @@ use super::{ConstValue, const_eval};
 
 /// Capture reusable typechecking output for later compiler stages.
 ///
-/// This struct is the bridge that lets backend lowering/codegen **consume the typechecker’s view** of the program,
-/// rather than re-deriving types and semantics from the AST.
+/// This struct is the bridge that lets backend lowering/codegen consume the typechecker’s view of the program rather
+/// than re-deriving types and semantics from the AST. The bridge is intentionally grouped by consumer contract: each
+/// field names a semantic artifact family instead of exposing one flat collection of unrelated side channels.
 ///
 /// ## Notes
 /// - Expression types are keyed by `(span.start, span.end)` so downstream code can look them up without holding AST
@@ -35,17 +36,45 @@ use super::{ConstValue, const_eval};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckInfo {
+    /// Trait hierarchy metadata consumed by trait impl and default-method lowering.
+    pub traits: TraitArtifacts,
+    /// Derive expansion metadata imported from dependency modules and manifests.
+    pub derivations: DerivationArtifacts,
+    /// Expression-local resolution facts keyed by source spans.
+    pub expressions: ExpressionArtifacts,
+    /// Const evaluation facts needed by runtime and emission boundaries.
+    pub consts: ConstArtifacts,
+    /// Rust interop decisions that must be preserved exactly across lowering.
+    pub rust: RustInteropArtifacts,
+    /// Declaration-level binding rewrites and visibility facts consumed by lowering.
+    pub declarations: DeclarationArtifacts,
+    /// Call-site semantic decisions selected by the typechecker.
+    pub calls: CallArtifacts,
+    /// Test-runner and fixture metadata extracted during typechecking.
+    pub testing: TestingArtifacts,
+    /// Custom protocol decisions that lower into explicit runtime calls.
+    pub protocols: ProtocolArtifacts,
+}
+
+/// Trait hierarchy metadata consumed by trait impl and default-method lowering.
+#[derive(Debug, Default, Clone)]
+pub struct TraitArtifacts {
     /// RFC 042: Direct supertraits per trait name, copied from
     /// [`TraitInfo::supertraits`](crate::frontend::symbols::TraitInfo::supertraits) for IR lowering.
     ///
     /// Lowering does not retain the typechecker symbol table; this snapshot supplies resolved supertrait type
     /// arguments after a successful check.
-    pub trait_direct_supertraits: HashMap<String, Vec<(String, Vec<ResolvedType>)>>,
+    pub direct_supertraits: HashMap<String, Vec<(String, Vec<ResolvedType>)>>,
     /// RFC 042: Trait type parameter names keyed by trait name for lowering-time generic substitution.
     ///
     /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
     /// without relying on local AST declarations.
-    pub trait_type_params: HashMap<String, Vec<String>>,
+    pub type_params: HashMap<String, Vec<String>>,
+}
+
+/// Derive expansion metadata imported from dependency modules and manifests.
+#[derive(Debug, Default, Clone)]
+pub struct DerivationArtifacts {
     /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
     ///
     /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
@@ -56,10 +85,11 @@ pub struct TypeCheckInfo {
     /// The typechecker owns this because dependency modules are already imported and validated there. Lowering should
     /// not re-run module resolution or assume RFC 024 metadata only exists in stdlib source.
     pub trait_rust_derive_paths: HashMap<String, Vec<String>>,
-    /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
-    /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
-    /// paths without re-running import resolution.
-    pub rusttype_canonical_rust_paths: HashMap<String, String>,
+}
+
+/// Expression-local resolution facts keyed by source spans.
+#[derive(Debug, Default, Clone)]
+pub struct ExpressionArtifacts {
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
     /// Type names that implement `Awaitable[T]` by delegating to one concrete awaitable field.
@@ -72,11 +102,6 @@ pub struct TypeCheckInfo {
     /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while
     /// still consuming the same resolved expression type map for the property return type.
     pub computed_property_accesses: HashMap<(usize, usize), ComputedPropertyAccessInfo>,
-    /// RFC 038: unpack operands whose static shape has been proven by call binding.
-    ///
-    /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
-    /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
-    pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
     /// Map from identifier expression span (start,end) -> how it resolved (value vs type vs module).
     ///
     /// This exists so downstream stages (IR lowering/codegen) can reliably distinguish:
@@ -84,29 +109,43 @@ pub struct TypeCheckInfo {
     /// - `Type.method(...)` where `Type` is a type name (emits `Type::method(...)` in Rust), and
     /// - imported placeholders (e.g. `from rust::... import Foo`) which are not value bindings.
     pub ident_kinds: HashMap<(usize, usize), IdentKind>,
-    /// Const category classification (RFC 008): const name -> kind.
-    pub const_kinds: HashMap<String, const_eval::ConstKind>,
-    /// Computed const values (when available), keyed by const name.
-    pub const_values: HashMap<String, ConstValue>,
-    /// Rust-boundary coercion decisions keyed by argument expression span.
-    pub rust_arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
     /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
     ///
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
     /// function argument, typed initializer, or model/class field initializer.
     pub validated_newtype_coercions: HashMap<(usize, usize), ValidatedNewtypeCoercionInfo>,
+}
+
+/// Const evaluation facts needed by runtime and emission boundaries.
+#[derive(Debug, Default, Clone)]
+pub struct ConstArtifacts {
+    /// Const category classification (RFC 008): const name -> kind.
+    pub const_kinds: HashMap<String, const_eval::ConstKind>,
+    /// Computed const values (when available), keyed by const name.
+    pub const_values: HashMap<String, ConstValue>,
+}
+
+/// Rust interop decisions that must be preserved exactly across lowering.
+#[derive(Debug, Default, Clone)]
+pub struct RustInteropArtifacts {
+    /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
+    /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
+    /// paths without re-running import resolution.
+    pub rusttype_canonical_paths: HashMap<String, String>,
+    /// Rust-boundary coercion decisions keyed by argument expression span.
+    pub arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
     /// Rust trait imports keyed by the source binding name with the trait path and method names they can place in
     /// scope.
     ///
     /// Lowering carries this into IR import items so codegen can retain extension-trait imports when Rust method
     /// lookup needs the trait in scope even though emitted call tokens do not otherwise mention the trait name.
-    pub rust_trait_imports: HashMap<String, RustTraitImportInfo>,
+    pub trait_imports: HashMap<String, RustTraitImportInfo>,
     /// Rust extension-trait import selected for one Rust method call.
     ///
     /// Keyed by the full method-call expression span. Lowering attaches the binding to the corresponding IR method
     /// call so generated-use analysis can retain the exact import instead of retaining every trait with the same
     /// method name.
-    pub rust_method_trait_import_uses: HashMap<(usize, usize), RustMethodTraitImportUse>,
+    pub method_trait_import_uses: HashMap<(usize, usize), RustMethodTraitImportUse>,
     /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias.
     ///
     /// Lowering must not emit an `impl Trait for Alias` for these entries because Rust coherence treats the alias as
@@ -116,18 +155,33 @@ pub struct TypeCheckInfo {
     ///
     /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the
     /// Incan-declared type (e.g. `&str` → `String` for a method declared `-> str`).
-    pub rust_return_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    pub return_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
     /// Regular method calls whose arguments must keep Rust method-call lookup shape.
     ///
     /// Keyed by `(receiver_span.start, receiver_span.end, method_name)` so lowering can preserve borrow-sensitive
     /// lookup calls like `HashMap.get(key)` without re-querying rust-inspect metadata in the backend.
     pub regular_method_arg_shape_preserving_calls: HashSet<(usize, usize, String)>,
+}
+
+/// Declaration-level binding rewrites and visibility facts consumed by lowering.
+#[derive(Debug, Default, Clone)]
+pub struct DeclarationArtifacts {
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
     /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// Call-site semantic decisions selected by the typechecker.
+#[derive(Debug, Default, Clone)]
+pub struct CallArtifacts {
+    /// RFC 038: unpack operands whose static shape has been proven by call binding.
+    ///
+    /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
+    /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
+    pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
     /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
     /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
     ///
@@ -155,15 +209,25 @@ pub struct TypeCheckInfo {
     /// Lowering consumes this for calls whose selected method lives in a trait impl rather than an inherent Rust impl.
     /// This keeps codegen from re-deriving dispatch from method names or argument shapes.
     pub resolved_method_calls: HashMap<(usize, usize), ResolvedMethodCall>,
+}
+
+/// Test-runner and fixture metadata extracted during typechecking.
+#[derive(Debug, Default, Clone)]
+pub struct TestingArtifacts {
     /// `std.testing.fixture` declarations resolved during typechecking.
     ///
     /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
-    pub testing_fixtures: HashMap<String, TestingFixtureInfo>,
+    pub fixtures: HashMap<String, TestingFixtureInfo>,
+}
+
+/// Custom protocol decisions that lower into explicit runtime calls.
+#[derive(Debug, Default, Clone)]
+pub struct ProtocolArtifacts {
     /// RFC 068: Custom `for` iteration protocol choices keyed by iterable expression span.
     ///
     /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
     /// resolved hooks without relying on Rust's `IntoIterator`.
-    pub protocol_iterations: HashMap<(usize, usize), ProtocolIterationInfo>,
+    pub iterations: HashMap<(usize, usize), ProtocolIterationInfo>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -383,17 +447,17 @@ pub struct TestingFixtureInfo {
 impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
-        self.expr_types.get(&(span.start, span.end))
+        self.expressions.expr_types.get(&(span.start, span.end))
     }
 
     /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
     pub fn computed_property_access(&self, span: Span) -> Option<&ComputedPropertyAccessInfo> {
-        self.computed_property_accesses.get(&(span.start, span.end))
+        self.expressions.computed_property_accesses.get(&(span.start, span.end))
     }
 
     /// Record that a field-access expression resolved to a computed property read.
     pub(crate) fn record_computed_property_access(&mut self, span: Span, owner_type: &str, property: &str) {
-        self.computed_property_accesses.insert(
+        self.expressions.computed_property_accesses.insert(
             (span.start, span.end),
             ComputedPropertyAccessInfo {
                 owner_type: owner_type.to_string(),
@@ -404,52 +468,56 @@ impl TypeCheckInfo {
 
     /// Return the RFC 038 fixed/static unpack plan recorded for an unpack operand, if any.
     pub fn fixed_unpack_plan(&self, span: Span) -> Option<&FixedUnpackPlan> {
-        self.fixed_unpack_plans.get(&(span.start, span.end))
+        self.calls.fixed_unpack_plans.get(&(span.start, span.end))
     }
 
     /// Return how the identifier expression at `span` resolved in the symbol table.
     pub fn ident_kind(&self, span: Span) -> Option<IdentKind> {
-        self.ident_kinds.get(&(span.start, span.end)).copied()
+        self.expressions.ident_kinds.get(&(span.start, span.end)).copied()
     }
 
     /// Return static-binding metadata for `name`, if the checker recorded one.
     pub fn static_binding(&self, name: &str) -> Option<&StaticBindingInfo> {
-        self.static_bindings.get(name)
+        self.declarations.static_bindings.get(name)
     }
 
     /// Return frontend fixture metadata for `name`, if the declaration was marked with `@fixture`.
     pub fn testing_fixture(&self, name: &str) -> Option<&TestingFixtureInfo> {
-        self.testing_fixtures.get(name)
+        self.testing.fixtures.get(name)
     }
 
     /// Return the computed const value for `name`, when const evaluation succeeded.
     pub fn const_value(&self, name: &str) -> Option<&ConstValue> {
-        self.const_values.get(name)
+        self.consts.const_values.get(name)
     }
 
     /// Return the recorded Rust-boundary argument coercion for the expression at `span`, if any.
     pub fn rust_arg_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
-        self.rust_arg_coercions.get(&(span.start, span.end))
+        self.rust.arg_coercions.get(&(span.start, span.end))
     }
 
     /// Return the validated-newtype coercion recorded for the expression at `span`, if any.
     pub fn validated_newtype_coercion(&self, span: Span) -> Option<&ValidatedNewtypeCoercionInfo> {
-        self.validated_newtype_coercions.get(&(span.start, span.end))
+        self.expressions
+            .validated_newtype_coercions
+            .get(&(span.start, span.end))
     }
 
     /// Record a typechecker-approved validated-newtype coercion for a source expression span.
     pub(crate) fn record_validated_newtype_coercion(&mut self, span: Span, info: ValidatedNewtypeCoercionInfo) {
-        self.validated_newtype_coercions.insert((span.start, span.end), info);
+        self.expressions
+            .validated_newtype_coercions
+            .insert((span.start, span.end), info);
     }
 
     /// Return the recorded return coercion for the call expression at `span`, if any.
     pub fn rust_return_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
-        self.rust_return_coercions.get(&(span.start, span.end))
+        self.rust.return_coercions.get(&(span.start, span.end))
     }
 
     /// Whether lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
     pub fn preserves_regular_method_arg_shape(&self, receiver_span: Span, method: &str) -> bool {
-        self.regular_method_arg_shape_preserving_calls.contains(&(
+        self.rust.regular_method_arg_shape_preserving_calls.contains(&(
             receiver_span.start,
             receiver_span.end,
             method.to_string(),
@@ -458,7 +526,7 @@ impl TypeCheckInfo {
 
     /// Record that lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
     pub(crate) fn record_regular_method_arg_shape(&mut self, receiver_span: Span, method: &str) {
-        self.regular_method_arg_shape_preserving_calls.insert((
+        self.rust.regular_method_arg_shape_preserving_calls.insert((
             receiver_span.start,
             receiver_span.end,
             method.to_string(),
@@ -467,7 +535,8 @@ impl TypeCheckInfo {
 
     /// Return rest-aware callable metadata recorded for the full call expression span, if any.
     pub fn call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
-        self.call_site_callable_params
+        self.calls
+            .call_site_callable_params
             .get(&(span.start, span.end))
             .map(Vec::as_slice)
     }
@@ -478,29 +547,30 @@ impl TypeCheckInfo {
             .iter()
             .any(|param| param.kind != ParamKind::Normal || callable_param_needs_boundary_snapshot(&param.ty))
         {
-            self.call_site_callable_params
+            self.calls
+                .call_site_callable_params
                 .insert((span.start, span.end), params.to_vec());
         }
     }
 
     /// Return a typechecker-resolved user-defined operator call for `span`, if any.
     pub fn resolved_operator_call(&self, span: Span) -> Option<&ResolvedOperatorCall> {
-        self.resolved_operator_calls.get(&(span.start, span.end))
+        self.calls.resolved_operator_calls.get(&(span.start, span.end))
     }
 
     /// Return a typechecker-resolved method call for `span`, if any.
     pub fn resolved_method_call(&self, span: Span) -> Option<&ResolvedMethodCall> {
-        self.resolved_method_calls.get(&(span.start, span.end))
+        self.calls.resolved_method_calls.get(&(span.start, span.end))
     }
 
     /// Return the Rust extension-trait import selected for the method call at `span`, if any.
     pub fn rust_method_trait_import_use(&self, span: Span) -> Option<&RustMethodTraitImportUse> {
-        self.rust_method_trait_import_uses.get(&(span.start, span.end))
+        self.rust.method_trait_import_uses.get(&(span.start, span.end))
     }
 
     /// Return custom iteration protocol metadata for `span`, if any.
     pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
-        self.protocol_iterations.get(&(span.start, span.end))
+        self.protocols.iterations.get(&(span.start, span.end))
     }
 
     /// Record a user-defined operator call that lowering should emit as a direct dunder method call.
@@ -510,7 +580,7 @@ impl TypeCheckInfo {
         method: impl Into<String>,
         kind: ResolvedOperatorKind,
     ) {
-        self.resolved_operator_calls.insert(
+        self.calls.resolved_operator_calls.insert(
             (span.start, span.end),
             ResolvedOperatorCall {
                 method: method.into(),
@@ -526,7 +596,7 @@ impl TypeCheckInfo {
         method: impl Into<String>,
         dispatch: ResolvedMethodDispatch,
     ) {
-        self.resolved_method_calls.insert(
+        self.calls.resolved_method_calls.insert(
             (span.start, span.end),
             ResolvedMethodCall {
                 method: method.into(),
@@ -537,13 +607,14 @@ impl TypeCheckInfo {
 
     /// Record that a Rust method call requires a specific imported extension trait in generated Rust scope.
     pub(crate) fn record_rust_method_trait_import_use(&mut self, span: Span, import_use: RustMethodTraitImportUse) {
-        self.rust_method_trait_import_uses
+        self.rust
+            .method_trait_import_uses
             .insert((span.start, span.end), import_use);
     }
 
     /// Record a custom `for` iteration protocol route.
     pub(crate) fn record_protocol_iteration(&mut self, span: Span, info: ProtocolIterationInfo) {
-        self.protocol_iterations.insert((span.start, span.end), info);
+        self.protocols.iterations.insert((span.start, span.end), info);
     }
 }
 

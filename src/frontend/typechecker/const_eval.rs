@@ -104,9 +104,12 @@ impl TypeChecker {
         };
 
         // Publish classification for downstream stages.
-        self.type_info.const_kinds.insert(konst.name.clone(), result.kind);
+        self.type_info
+            .consts
+            .const_kinds
+            .insert(konst.name.clone(), result.kind);
         if let Some(val) = result.value.clone() {
-            self.type_info.const_values.insert(konst.name.clone(), val);
+            self.type_info.consts.const_values.insert(konst.name.clone(), val);
         }
 
         // If an annotation exists, require compatibility.

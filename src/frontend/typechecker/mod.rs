@@ -950,13 +950,17 @@ impl TypeChecker {
         &self.type_info
     }
 
+    /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
-        self.type_info.expr_types.insert((span.start, span.end), ty);
+        self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
     /// Record a typechecker-proven unpack binding plan for backend lowering.
     pub(crate) fn record_fixed_unpack_plan(&mut self, span: Span, plan: FixedUnpackPlan) {
-        self.type_info.fixed_unpack_plans.insert((span.start, span.end), plan);
+        self.type_info
+            .calls
+            .fixed_unpack_plans
+            .insert((span.start, span.end), plan);
     }
 
     /// Look up a type by name and return its [`TypeInfo`], if known.
@@ -1307,17 +1311,19 @@ impl TypeChecker {
     /// This records all visible trait symbols (local and imported), not just traits declared in the current module,
     /// so lowering can resolve supertrait graphs and generic trait arity across module boundaries.
     fn record_trait_metadata_for_lowering(&mut self) {
-        self.type_info.trait_direct_supertraits.clear();
-        self.type_info.trait_type_params.clear();
-        self.type_info.derivable_modules = self.dependency_derivable_modules.clone();
-        self.type_info.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
+        self.type_info.traits.direct_supertraits.clear();
+        self.type_info.traits.type_params.clear();
+        self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
+        self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         for sym in self.symbols.all_symbols() {
             if let SymbolKind::Trait(info) = &sym.kind {
                 self.type_info
-                    .trait_direct_supertraits
+                    .traits
+                    .direct_supertraits
                     .insert(sym.name.clone(), info.supertraits.clone());
                 self.type_info
-                    .trait_type_params
+                    .traits
+                    .type_params
                     .insert(sym.name.clone(), info.type_params.clone());
             }
         }

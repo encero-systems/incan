@@ -2115,14 +2115,14 @@ def f() -> None:
         .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
     let info = checker.type_info();
     assert!(
-        info.expr_types.values().any(|t| {
+        info.expressions.expr_types.values().any(|t| {
             matches!(
                 t,
                 ResolvedType::RustPath(p) if p == "std::time::Instant"
             )
         }),
         "expected RustPath(std::time::Instant) in expr types, got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     Ok(())
 }
@@ -3046,11 +3046,12 @@ def f() -> None:
     })?;
     let info = checker.type_info();
     assert!(
-        info.expr_types
+        info.expressions
+            .expr_types
             .values()
             .any(|t| matches!(t, ResolvedType::Function(params, _) if params.is_empty())),
         "expected associated function field access to resolve to a callable type, got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     Ok(())
 }
@@ -3072,11 +3073,12 @@ def f(words: HashSet[str]) -> None:
         .map_err(|errs| std::io::Error::other(format!("expected imported HashMap lookup to typecheck: {errs:?}")))?;
     let info = checker.type_info();
     assert!(
-        info.regular_method_arg_shape_preserving_calls
+        info.rust
+            .regular_method_arg_shape_preserving_calls
             .iter()
             .any(|(_, _, method)| method == "contains"),
         "expected HashSet.contains lookup to record preserved method arg shape, got {:?}",
-        info.regular_method_arg_shape_preserving_calls
+        info.rust.regular_method_arg_shape_preserving_calls
     );
     Ok(())
 }
@@ -3322,11 +3324,12 @@ def render[T](value: Label[T]) -> str:
     })?;
     let info = checker.type_info();
     assert!(
-        info.rust_return_coercions
+        info.rust
+            .return_coercions
             .values()
             .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
         "expected rust return coercion (&str -> String) for generic rusttype method call, got {:?}",
-        info.rust_return_coercions
+        info.rust.return_coercions
     );
     Ok(())
 }
@@ -4161,12 +4164,15 @@ def describe(u: User) -> None:
         .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
     let info = checker.type_info();
     assert!(
-        info.expr_types.values().any(|t| matches!(t, ResolvedType::Str)),
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Str)),
         "expected __class_name__() to resolve to str, got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     assert!(
-        info.expr_types.values().any(|t| {
+        info.expressions.expr_types.values().any(|t| {
             matches!(
                 t,
                 ResolvedType::FrozenList(inner)
@@ -4174,7 +4180,7 @@ def describe(u: User) -> None:
             )
         }),
         "expected __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     Ok(())
 }
@@ -4200,12 +4206,15 @@ def describe(u: User) -> None:
         .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
     let info = checker.type_info();
     assert!(
-        info.expr_types.values().any(|t| matches!(t, ResolvedType::FrozenStr)),
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::FrozenStr)),
         "expected FieldInfo.name/type_name access to resolve to FrozenStr, got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     assert!(
-        info.expr_types.values().any(|t| {
+        info.expressions.expr_types.values().any(|t| {
             matches!(
                 t,
                 ResolvedType::Generic(name, args)
@@ -4216,10 +4225,10 @@ def describe(u: User) -> None:
             )
         }),
         "expected FieldInfo.alias access to resolve to Option[FrozenStr], got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     assert!(
-        info.expr_types.values().any(|t| {
+        info.expressions.expr_types.values().any(|t| {
             matches!(
                 t,
                 ResolvedType::FrozenDict(key, value)
@@ -4228,12 +4237,15 @@ def describe(u: User) -> None:
             )
         }),
         "expected FieldInfo.extra access to resolve to FrozenDict[FrozenStr, FrozenStr], got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     assert!(
-        info.expr_types.values().any(|t| matches!(t, ResolvedType::Bool)),
+        info.expressions
+            .expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Bool)),
         "expected FieldInfo.has_default access to resolve to bool, got {:?}",
-        info.expr_types
+        info.expressions.expr_types
     );
     Ok(())
 }
@@ -5074,9 +5086,10 @@ def f(account: Account) -> int:
     let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
     let mut checker = TypeChecker::new();
     checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
-    assert_eq!(checker.type_info.computed_property_accesses.len(), 1);
+    assert_eq!(checker.type_info.expressions.computed_property_accesses.len(), 1);
     let access = checker
         .type_info
+        .expressions
         .computed_property_accesses
         .values()
         .next()
@@ -7524,7 +7537,7 @@ def f(w: Widget) -> None:
     checker
         .check_program(&ast)
         .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
-    let uses = &checker.type_info().rust_method_trait_import_uses;
+    let uses = &checker.type_info().rust.method_trait_import_uses;
     assert!(
         uses.values()
             .any(|import_use| import_use.binding == "AlphaRender" && import_use.method == "render"),
@@ -7590,6 +7603,7 @@ type Thing = rusttype RustThing with Labelled
     assert!(
         checker
             .type_info()
+            .rust
             .rusttype_forwarded_trait_adoptions
             .contains(&("Thing".to_string(), "Labelled".to_string())),
         "expected metadata-proven rusttype forwarding to be recorded"
@@ -9567,7 +9581,7 @@ def main() -> None:
     checker
         .check_program(&ast)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let coercions = &checker.type_info().validated_newtype_coercions;
+    let coercions = &checker.type_info().expressions.validated_newtype_coercions;
 
     assert!(
         coercions.values().any(|info| {
@@ -9712,7 +9726,7 @@ def main() -> None:
     checker
         .check_program(&ast)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let coercions = &checker.type_info().validated_newtype_coercions;
+    let coercions = &checker.type_info().expressions.validated_newtype_coercions;
     assert!(
         coercions.values().any(|info| {
             info.target_type == ResolvedType::Named("PositiveInt".to_string())
@@ -10177,12 +10191,12 @@ model Cell[T] with ExternBox:
 
     let type_info = checker.type_info();
     assert_eq!(
-        type_info.trait_type_params.get("ExternBox"),
+        type_info.traits.type_params.get("ExternBox"),
         Some(&vec!["T".to_string()]),
         "Imported trait type params should be available to lowering metadata"
     );
     assert_eq!(
-        type_info.trait_direct_supertraits.get("ExternBox"),
+        type_info.traits.direct_supertraits.get("ExternBox"),
         Some(&Vec::new()),
         "Imported trait supertraits should be recorded even when empty"
     );
@@ -10334,11 +10348,12 @@ def main() -> None:
     assert!(
         checker
             .type_info()
+            .calls
             .resolved_operator_calls
             .values()
             .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
         "expected + to resolve to __add__, got {:?}",
-        checker.type_info().resolved_operator_calls
+        checker.type_info().calls.resolved_operator_calls
     );
     Ok(())
 }
@@ -10495,11 +10510,12 @@ def main() -> None:
     assert!(
         checker
             .type_info()
+            .calls
             .resolved_operator_calls
             .values()
             .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
         "expected compound assignment to resolve to __add__, got {:?}",
-        checker.type_info().resolved_operator_calls
+        checker.type_info().calls.resolved_operator_calls
     );
     Ok(())
 }
@@ -10550,11 +10566,12 @@ def main() -> int:
     assert!(
         checker
             .type_info()
+            .calls
             .resolved_operator_calls
             .values()
             .any(|call| call.method == "__getitem__" && call.kind == ResolvedOperatorKind::Index),
         "expected indexing to resolve to __getitem__, got {:?}",
-        checker.type_info().resolved_operator_calls
+        checker.type_info().calls.resolved_operator_calls
     );
     Ok(())
 }
@@ -10581,11 +10598,12 @@ def main() -> None:
     assert!(
         checker
             .type_info()
+            .calls
             .resolved_operator_calls
             .values()
             .any(|call| call.method == "__setitem__" && call.kind == ResolvedOperatorKind::IndexAssign),
         "expected index assignment to resolve to __setitem__, got {:?}",
-        checker.type_info().resolved_operator_calls
+        checker.type_info().calls.resolved_operator_calls
     );
     Ok(())
 }
@@ -10652,6 +10670,7 @@ def main() -> None:
 
     let calls: Vec<_> = checker
         .type_info()
+        .calls
         .resolved_operator_calls
         .values()
         .map(|call| (call.method.as_str(), call.kind))
@@ -10666,19 +10685,20 @@ def main() -> None:
             calls.contains(&expected),
             "expected RFC 068 hook {:?}, got {:?}",
             expected,
-            checker.type_info().resolved_operator_calls
+            checker.type_info().calls.resolved_operator_calls
         );
     }
     assert!(
         checker
             .type_info()
-            .protocol_iterations
+            .protocols
+            .iterations
             .values()
             .any(|info| info.iter_method == "__iter__"
                 && info.next_method == "__next__"
                 && info.item_type == ResolvedType::Int),
         "expected custom iteration metadata, got {:?}",
-        checker.type_info().protocol_iterations
+        checker.type_info().protocols.iterations
     );
     Ok(())
 }
@@ -11118,6 +11138,7 @@ def main() -> None:
 
     let resolved: Vec<_> = checker
         .type_info()
+        .calls
         .resolved_operator_calls
         .values()
         .map(|call| call.method.as_str())
@@ -11136,7 +11157,7 @@ def main() -> None:
         assert!(
             resolved.contains(&expected),
             "expected {expected} to resolve in {:?}",
-            checker.type_info().resolved_operator_calls
+            checker.type_info().calls.resolved_operator_calls
         );
     }
 

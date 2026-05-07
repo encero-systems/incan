@@ -420,7 +420,7 @@ impl TypeChecker {
         self.static_decls.push((static_decl.clone(), span));
 
         let ty = self.resolve_type_checked(&static_decl.ty);
-        self.type_info.static_bindings.insert(
+        self.type_info.declarations.static_bindings.insert(
             static_decl.name.clone(),
             crate::frontend::typechecker::StaticBindingInfo { is_imported: false },
         );

@@ -1997,6 +1997,7 @@ impl TypeChecker {
             });
             if let Some(field_name) = realization_field {
                 self.type_info
+                    .expressions
                     .awaitable_delegation_fields
                     .insert(type_name.to_string(), field_name);
             } else {
@@ -2283,10 +2284,10 @@ impl TypeChecker {
             info.ty = expected_ty.clone();
         }
 
-        if let Some(binding) = self.type_info.static_bindings.get_mut(&static_decl.name) {
+        if let Some(binding) = self.type_info.declarations.static_bindings.get_mut(&static_decl.name) {
             binding.is_imported = false;
         } else {
-            self.type_info.static_bindings.insert(
+            self.type_info.declarations.static_bindings.insert(
                 static_decl.name.clone(),
                 super::StaticBindingInfo { is_imported: false },
             );
@@ -2972,6 +2973,7 @@ impl TypeChecker {
             let trait_definition_path = trait_metadata.and_then(|metadata| metadata.definition_path.as_deref());
             if Self::rust_type_metadata_implements_trait(&backing_metadata, trait_path, trait_definition_path) {
                 self.type_info
+                    .rust
                     .rusttype_forwarded_trait_adoptions
                     .insert((nt.name.clone(), trait_bound.name.clone()));
             } else {
@@ -3048,7 +3050,8 @@ impl TypeChecker {
             && let Some(path) = &rusttype_path
         {
             self.type_info
-                .rusttype_canonical_rust_paths
+                .rust
+                .rusttype_canonical_paths
                 .insert(nt.name.clone(), path.clone());
         }
         if !nt.is_rusttype && !nt.interop_edges.is_empty() {
@@ -3587,7 +3590,7 @@ impl TypeChecker {
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
         {
-            self.type_info.decorated_function_bindings.insert(
+            self.type_info.declarations.decorated_function_bindings.insert(
                 func.name.clone(),
                 DecoratedFunctionBindingInfo { ty: binding_ty.clone() },
             );
@@ -3629,7 +3632,7 @@ impl TypeChecker {
         let Some((_receiver, surface_params)) = params.split_first() else {
             return;
         };
-        self.type_info.decorated_method_bindings.insert(
+        self.type_info.declarations.decorated_method_bindings.insert(
             (owner.to_string(), method.name.clone()),
             DecoratedMethodBindingInfo {
                 unbound_ty: binding_ty,
@@ -3867,7 +3870,7 @@ impl TypeChecker {
                 .filter(|param| self.testing_fixture_names.contains(&param.node.name))
                 .map(|param| param.node.name.clone())
                 .collect();
-            self.type_info.testing_fixtures.insert(
+            self.type_info.testing.fixtures.insert(
                 func.name.clone(),
                 TestingFixtureInfo {
                     scope: args.scope,

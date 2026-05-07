@@ -76,6 +76,7 @@ impl TypeChecker {
                     self.errors
                         .push(errors::rust_item_not_public(name, meta.canonical_path.as_str(), span));
                     self.type_info
+                        .expressions
                         .ident_kinds
                         .insert((span.start, span.end), IdentKind::RustImport);
                     return ResolvedType::Unknown;
@@ -122,7 +123,10 @@ impl TypeChecker {
             }
         };
 
-        self.type_info.ident_kinds.insert((span.start, span.end), kind);
+        self.type_info
+            .expressions
+            .ident_kinds
+            .insert((span.start, span.end), kind);
         ty
     }
 

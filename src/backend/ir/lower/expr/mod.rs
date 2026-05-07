@@ -108,7 +108,11 @@ impl AstLowering {
             },
             _ => return None,
         };
-        type_info.awaitable_delegation_fields.get(type_name).cloned()
+        type_info
+            .expressions
+            .awaitable_delegation_fields
+            .get(type_name)
+            .cloned()
     }
 
     /// Lower a block race arm, treating a trailing expression statement as the arm value.

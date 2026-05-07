@@ -71,7 +71,7 @@ impl AstLowering {
                 let rust_trait_import = self
                     .type_info
                     .as_ref()
-                    .and_then(|info| info.rust_trait_imports.get(binding_name))
+                    .and_then(|info| info.rust.trait_imports.get(binding_name))
                     .map(|import| {
                         let mut methods: Vec<_> = import.methods.iter().cloned().collect();
                         methods.sort();
