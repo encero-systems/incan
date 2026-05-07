@@ -18,6 +18,8 @@ pub enum Type {
     Qualified(Vec<Ident>),
     /// Generic type: `List[T]`, `Result[T, E]`
     Generic(Ident, Vec<Spanned<Type>>),
+    /// Primitive type with RFC 017 constraint predicates, such as `int[ge=0]`.
+    ConstrainedPrimitive(Ident, Vec<Spanned<TypeConstraint>>),
     /// Integer literal in type-argument position, used by parameterized numeric types such as `decimal[10, 2]`.
     IntLiteral(IntLiteral),
     /// Function type: `(int, str) -> bool`
@@ -34,6 +36,58 @@ pub enum Type {
     SelfType,
     /// Call-site type inference placeholder (`_` in `f[int, _](...)`), RFC 054.
     Infer,
+}
+
+/// Ordered comparison key accepted inside an RFC 017 constrained primitive type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeConstraintKey {
+    /// Greater than or equal: `ge=...`.
+    Ge,
+    /// Strictly greater than: `gt=...`.
+    Gt,
+    /// Less than or equal: `le=...`.
+    Le,
+    /// Strictly less than: `lt=...`.
+    Lt,
+}
+
+impl TypeConstraintKey {
+    /// Parse the source spelling for a constrained primitive comparison key.
+    pub fn parse_spelling(value: &str) -> Option<Self> {
+        match value {
+            "ge" => Some(Self::Ge),
+            "gt" => Some(Self::Gt),
+            "le" => Some(Self::Le),
+            "lt" => Some(Self::Lt),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical source spelling for the constraint key.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ge => "ge",
+            Self::Gt => "gt",
+            Self::Le => "le",
+            Self::Lt => "lt",
+        }
+    }
+}
+
+impl fmt::Display for TypeConstraintKey {
+    /// Format the constraint key using its canonical RFC 017 spelling.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// One parsed RFC 017 primitive type constraint, preserving the literal spelling for formatting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeConstraint {
+    /// Constraint comparison operator.
+    pub key: TypeConstraintKey,
+    /// Integer literal constraint value accepted by this parser slice.
+    pub value: IntLiteral,
 }
 
 impl fmt::Display for Type {
@@ -57,6 +111,16 @@ impl fmt::Display for Type {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}", arg.node)?;
+                }
+                write!(f, "]")
+            }
+            Type::ConstrainedPrimitive(name, constraints) => {
+                write!(f, "{}[", name)?;
+                for (i, constraint) in constraints.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}={}", constraint.node.key, constraint.node.value.repr)?;
                 }
                 write!(f, "]")
             }

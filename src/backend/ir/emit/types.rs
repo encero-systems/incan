@@ -119,6 +119,9 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
                     return quote! { incan_stdlib::reflection::FieldInfo };
                 }
+                if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
+                    return quote! { incan_stdlib::validation::ValidationError };
+                }
                 Self::emit_path_ident(name)
             }
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {

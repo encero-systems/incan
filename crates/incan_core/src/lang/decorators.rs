@@ -22,6 +22,7 @@ pub enum DecoratorId {
     RustDerive,
     RustExtern,
     RustAllow,
+    NoImplicitCoercion,
     StaticMethod,
     ClassMethod,
     Requires,
@@ -97,6 +98,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         &[],
         "Emit targeted Rust #[allow(...)] lint suppressions on a generated item.",
         RFC::_057,
+        Since(0, 3),
+    ),
+    info(
+        DecoratorId::NoImplicitCoercion,
+        "no_implicit_coercion",
+        &[],
+        "Disable RFC 017 implicit newtype coercion for this type.",
+        RFC::_017,
         Since(0, 3),
     ),
     info(

@@ -1,6 +1,7 @@
 //! Typechecker unit tests.
 
 use super::*;
+use crate::frontend::ast::TypeConstraintKey;
 use crate::frontend::library_exports::collect_checked_public_exports;
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -8159,6 +8160,233 @@ async def service(config: int) -> int:
     assert_eq!(info.dependencies, vec!["config".to_string()]);
     assert!(info.is_async);
     Ok(())
+}
+
+#[test]
+fn test_validated_newtype_implicit_coercions_are_recorded() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+type RetryAttempts = newtype Attempts
+
+model Job:
+  attempts: Attempts
+
+def take_attempts(a: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(3)
+  attempts: Attempts = 4
+  retry: RetryAttempts = 5
+  job = Job(attempts=6)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let coercions = &checker.type_info().validated_newtype_coercions;
+
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("Attempts".to_string())
+                && info.steps.len() == 1
+                && info.steps[0].newtype_name == "Attempts"
+                && info.steps[0].ctor.as_deref() == Some("from_underlying")
+        }),
+        "expected direct Attempts coercion, got {coercions:?}"
+    );
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("RetryAttempts".to_string())
+                && info
+                    .steps
+                    .iter()
+                    .map(|step| step.newtype_name.as_str())
+                    .collect::<Vec<_>>()
+                    == vec!["Attempts", "RetryAttempts"]
+        }),
+        "expected transitive RetryAttempts coercion, got {coercions:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_validated_newtype_implicit_coercion_does_not_parse_primitives() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+def take_attempts(a: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts("3")
+"#;
+    let errors = check_str_err(source, "expected str-to-newtype coercion to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'Attempts'") && error.message.contains("found 'str'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_hook_requires_validation_error() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, str]:
+    return Ok(Attempts(n))
+"#;
+    let errors = check_str_err(source, "expected malformed from_underlying hook to fail");
+    assert!(
+        errors.iter().any(|error| {
+            error
+                .message
+                .contains("Invalid 'Attempts.from_underlying' validation hook")
+                && error.message.contains("ValidationError")
+        }),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_hook_allows_self_return() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    return Ok(Attempts(n))
+
+def take_attempts(value: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(1)
+"#;
+    check_str(source)
+}
+
+#[test]
+fn test_explicit_validated_newtype_constructor_checks_underlying_type() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+def main() -> None:
+  attempts = Attempts("3")
+"#;
+    let errors = check_str_err(
+        source,
+        "expected explicit newtype constructor to reject wrong underlying type",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'int'") && error.message.contains("found 'str'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_reassignment_is_not_implicit_coercion_site() {
+    let source = r#"
+type Attempts = newtype int
+
+def main() -> None:
+  mut attempts: Attempts = Attempts(1)
+  attempts = 2
+"#;
+    let errors = check_str_err(source, "expected reassignment to reject implicit newtype coercion");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'Attempts'") && error.message.contains("found 'int'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_constrained_underlying_records_generated_validation() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+type PositiveInt = newtype int[gt=0]
+
+def take_positive(value: PositiveInt) -> None:
+  return
+
+def main() -> None:
+  take_positive(1)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let coercions = &checker.type_info().validated_newtype_coercions;
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("PositiveInt".to_string())
+                && info.steps.len() == 1
+                && info.steps[0].newtype_name == "PositiveInt"
+                && info.steps[0].ctor.is_none()
+                && info.steps[0]
+                    .constraints
+                    .iter()
+                    .any(|constraint| matches!(constraint.key, TypeConstraintKey::Gt) && constraint.value == 0)
+        }),
+        "expected generated constrained newtype validation metadata, got {coercions:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_validated_newtype_no_implicit_coercion_rejects_site() {
+    let source = r#"
+@no_implicit_coercion
+type Attempts = newtype int
+
+def take_attempts(value: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(1)
+"#;
+    let errors = check_str_err(source, "expected @no_implicit_coercion to reject implicit site");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Implicit coercion into newtype 'Attempts' is disabled")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_underlying_cycle_is_rejected() {
+    let source = r#"
+type A = newtype B
+type B = newtype A
+"#;
+    let errors = check_str_err(source, "expected newtype cycle to be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Validated-newtype coercion cycle detected")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

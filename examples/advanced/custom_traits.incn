@@ -48,7 +48,7 @@ def demo_callable() -> None:
     println(f"double.call(add_ten.call(3)) = {result}")
 
 
-model ValidationError:
+model FieldValidationError:
     field: str
     message: str
 
@@ -56,19 +56,19 @@ model ValidationError:
         return f"Validation failed for '{self.field}': {self.message}"
 
 
-def validate_age(age: int) -> Result[int, ValidationError]:
+def validate_age(age: int) -> Result[int, FieldValidationError]:
     if age < 0:
-        return Err(ValidationError(field="age", message="cannot be negative"))
+        return Err(FieldValidationError(field="age", message="cannot be negative"))
     if age > 150:
-        return Err(ValidationError(field="age", message="seems unrealistic"))
+        return Err(FieldValidationError(field="age", message="seems unrealistic"))
     return Ok(age)
 
 
-def validate_score(score: int) -> Result[int, ValidationError]:
+def validate_score(score: int) -> Result[int, FieldValidationError]:
     if score < 0:
-        return Err(ValidationError(field="score", message="cannot be negative"))
+        return Err(FieldValidationError(field="score", message="cannot be negative"))
     if score > 100:
-        return Err(ValidationError(field="score", message="max is 100"))
+        return Err(FieldValidationError(field="score", message="max is 100"))
     return Ok(score)
 
 
@@ -104,4 +104,3 @@ def main() -> None:
     demo_callable()
     demo_custom_errors()
     println("\n=== All demos complete! ===")
-

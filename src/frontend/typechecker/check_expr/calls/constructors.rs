@@ -8,6 +8,7 @@ use crate::frontend::typechecker::helpers::option_ty;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl TypeChecker {
+    /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
     pub(in crate::frontend::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
         &mut self,
         type_name: &str,
@@ -53,7 +54,14 @@ impl TypeChecker {
             provided.insert(canonical_name.clone(), expr.span);
             self.infer_type_param_bindings(&field_info.ty, &value_ty, &mut type_bindings);
 
-            if !self.types_compatible(&value_ty, &field_info.ty) {
+            if !self.types_compatible(&value_ty, &field_info.ty)
+                && !self.record_validated_newtype_field_coercion_if_possible(
+                    &value_ty,
+                    &field_info.ty,
+                    &canonical_name,
+                    expr.span,
+                )
+            {
                 self.errors.push(errors::field_type_mismatch(
                     field_name,
                     &field_info.ty.to_string(),
@@ -257,6 +265,7 @@ impl TypeChecker {
             _ => ResolvedType::Named(name.to_string()),
         }
     }
+    /// Typecheck a constructor-style call and return its constructed value type.
     pub(in crate::frontend::typechecker::check_expr) fn check_constructor(
         &mut self,
         name: &str,
@@ -276,6 +285,49 @@ impl TypeChecker {
         if self.symbols.lookup(name).is_some()
             && let Some(tid) = surface_types::from_str(name)
         {
+            if matches!(tid, SurfaceTypeId::ValidationError) {
+                let mut message_count = 0usize;
+                let mut invalid_named = false;
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(expr) => {
+                            message_count += 1;
+                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                            if !self.types_compatible(&actual, &ResolvedType::Str) {
+                                self.errors
+                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                            }
+                        }
+                        CallArg::Named(field, expr) if field == "message" => {
+                            message_count += 1;
+                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                            if !self.types_compatible(&actual, &ResolvedType::Str) {
+                                self.errors
+                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                            }
+                        }
+                        CallArg::Named(field, expr) if field == "code" => {
+                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                            if !self.types_compatible(&actual, &ResolvedType::Str) {
+                                self.errors
+                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                            }
+                        }
+                        CallArg::Named(_, expr) => {
+                            invalid_named = true;
+                            self.check_expr(expr);
+                        }
+                        CallArg::PositionalUnpack(expr) | CallArg::KeywordUnpack(expr) => {
+                            invalid_named = true;
+                            self.check_expr(expr);
+                        }
+                    }
+                }
+                if message_count != 1 || invalid_named {
+                    self.errors.push(errors::validation_error_constructor_shape(span));
+                }
+                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+            }
             if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                 return self.check_json_query_constructor_call(tid, args, span);
             }
@@ -286,6 +338,21 @@ impl TypeChecker {
 
         match self.lookup_symbol(name).map(|s| &s.kind) {
             Some(SymbolKind::Type(_)) => {
+                if let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name).cloned() {
+                    let [CallArg::Positional(value)] = args else {
+                        self.errors.push(errors::newtype_constructor_shape(name, span));
+                        return self.constructor_result_type(name);
+                    };
+                    let value_ty = self.check_expr_with_expected(value, Some(&newtype.underlying));
+                    if !self.types_compatible(&value_ty, &newtype.underlying) {
+                        self.errors.push(errors::type_mismatch(
+                            &newtype.underlying.to_string(),
+                            &value_ty.to_string(),
+                            value.span,
+                        ));
+                    }
+                    return self.constructor_result_type(name);
+                }
                 let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
                     self.lookup_type_info(name).and_then(|info| match info {
                         TypeInfo::Model(m) => Some(m.fields.clone()),

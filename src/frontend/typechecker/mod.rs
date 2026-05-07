@@ -57,6 +57,7 @@ pub use type_info::{
     ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind,
     ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
     RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
 mod tests;
@@ -76,6 +77,7 @@ use crate::frontend::symbols::*;
 use crate::rust_inspect::RustMetadataCache;
 use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
+use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
@@ -2266,6 +2268,7 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&arg.node, arg.span);
                 }
             }
+            Type::ConstrainedPrimitive(name, _) => self.validate_stdlib_type_name(name, span),
             Type::Function(params, ret) => {
                 for param in params {
                     self.validate_stdlib_type_usage_inner(&param.node, param.span);
@@ -2382,10 +2385,15 @@ impl TypeChecker {
     fn validate_alias_declarations(&mut self, program: &Program) {
         let mut public_decls = HashMap::new();
         let mut alias_targets = HashMap::new();
+        let mut newtype_names = HashSet::new();
+        let mut newtype_underlyings = HashMap::new();
 
         for decl in &program.declarations {
             if let Some(name) = declaration_name(decl) {
                 public_decls.insert(name.to_string(), is_public_decl(decl));
+            }
+            if let Declaration::Newtype(nt) = &decl.node {
+                newtype_names.insert(nt.name.clone());
             }
         }
 
@@ -2450,12 +2458,16 @@ impl TypeChecker {
                 }
                 Declaration::Newtype(nt) => {
                     self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
+                    if let Type::Simple(target) = &nt.underlying.node {
+                        newtype_underlyings.insert(nt.name.clone(), (target.clone(), nt.underlying.span));
+                    }
                 }
                 _ => {}
             }
         }
 
         self.validate_top_level_alias_cycles(&alias_targets);
+        self.validate_newtype_underlying_cycles(&newtype_underlyings, &newtype_names);
     }
 
     /// Reject direct and indirect cycles between top-level aliases.
@@ -2472,6 +2484,35 @@ impl TypeChecker {
                     if reported.insert(key.clone()) {
                         self.errors
                             .push(CompileError::type_error(format!("Alias cycle detected: {key}"), *span));
+                    }
+                    break;
+                }
+                path.push(current);
+                current = target.clone();
+            }
+        }
+    }
+
+    /// Reject direct and indirect cycles in newtype underlying declarations before coercion planning.
+    fn validate_newtype_underlying_cycles(
+        &mut self,
+        newtype_underlyings: &HashMap<String, (String, Span)>,
+        newtype_names: &HashSet<String>,
+    ) {
+        let mut reported = HashSet::new();
+        for (name, (_, span)) in newtype_underlyings {
+            let mut path = Vec::new();
+            let mut current = name.clone();
+            while let Some((target, _)) = newtype_underlyings.get(&current) {
+                if !newtype_names.contains(target) {
+                    break;
+                }
+                if let Some(cycle_start) = path.iter().position(|seen| seen == &current) {
+                    let mut cycle = path[cycle_start..].to_vec();
+                    cycle.push(current.clone());
+                    let key = cycle.join(" -> ");
+                    if reported.insert(key.clone()) {
+                        self.errors.push(errors::newtype_coercion_cycle(&key, *span));
                     }
                     break;
                 }
@@ -2912,6 +2953,8 @@ impl TypeChecker {
                         is_rusttype: nt.is_rusttype,
                         has_interop: !nt.interop_edges.is_empty(),
                         underlying: ResolvedType::Unknown,
+                        constraints: Vec::new(),
+                        implicit_coercion_enabled: true,
                         method_rebindings: HashMap::new(),
                         method_aliases: HashMap::new(),
                         methods: HashMap::new(),
@@ -3003,6 +3046,145 @@ impl TypeChecker {
     // ========================================================================
     // Type compatibility (shared helper)
     // ========================================================================
+
+    /// Record an RFC 017 validated-newtype coercion when `actual` may flow into `expected` at an approved site.
+    ///
+    /// This deliberately stays outside [`Self::types_compatible`]: ordinary compatibility queries have no source span
+    /// and are used in contexts where implicit coercion must not be inserted.
+    pub(crate) fn record_validated_newtype_coercion_if_possible(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> bool {
+        let Some(coercion) = self.validated_newtype_coercion(actual, expected, span) else {
+            return false;
+        };
+        self.type_info.record_validated_newtype_coercion(span, coercion);
+        true
+    }
+
+    /// Record an RFC 017 model/class field coercion that should aggregate validation errors.
+    pub(crate) fn record_validated_newtype_field_coercion_if_possible(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        field_name: &str,
+        span: Span,
+    ) -> bool {
+        let Some(mut coercion) = self.validated_newtype_coercion(actual, expected, span) else {
+            return false;
+        };
+        coercion.mode = ValidatedNewtypeCoercionMode::AggregateField {
+            field_name: field_name.to_string(),
+        };
+        self.type_info.record_validated_newtype_coercion(span, coercion);
+        true
+    }
+
+    /// Return the coercion metadata needed to convert `actual` into expected newtype `expected`.
+    fn validated_newtype_coercion(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> Option<ValidatedNewtypeCoercionInfo> {
+        if actual == expected {
+            return None;
+        }
+        let steps = self.validated_newtype_coercion_steps(actual, expected, &mut HashSet::new(), span)?;
+        Some(ValidatedNewtypeCoercionInfo {
+            steps,
+            target_type: expected.clone(),
+            mode: ValidatedNewtypeCoercionMode::FailFast,
+        })
+    }
+
+    /// Build the ordered underlying-to-target chain for one validated-newtype coercion.
+    fn validated_newtype_coercion_steps(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        visiting: &mut HashSet<String>,
+        span: Span,
+    ) -> Option<Vec<ValidatedNewtypeCoercionStep>> {
+        let target_name = match expected {
+            ResolvedType::Named(name) => name,
+            // Generic newtypes need type-parameter substitution for their underlying type. Keep that out of the
+            // initial implicit path instead of silently guessing.
+            ResolvedType::Generic(_, _) => return None,
+            _ => return None,
+        };
+        if !visiting.insert(target_name.clone()) {
+            self.errors.push(errors::newtype_coercion_cycle(target_name, span));
+            return None;
+        }
+
+        let Some(TypeInfo::Newtype(newtype)) = self.lookup_semantic_type_info(target_name).cloned() else {
+            visiting.remove(target_name);
+            return None;
+        };
+        if newtype.is_rusttype {
+            visiting.remove(target_name);
+            return None;
+        }
+
+        let mut steps = if Self::validated_newtype_source_matches_underlying(actual, &newtype.underlying) {
+            Vec::new()
+        } else {
+            self.validated_newtype_coercion_steps(actual, &newtype.underlying, visiting, span)?
+        };
+        if !newtype.implicit_coercion_enabled {
+            self.errors
+                .push(errors::implicit_newtype_coercion_disabled(target_name, span));
+            visiting.remove(target_name);
+            return Some(Vec::new());
+        }
+        steps.push(ValidatedNewtypeCoercionStep {
+            newtype_name: target_name.clone(),
+            ctor: self.validated_newtype_ctor_name(target_name, &newtype),
+            constraints: if self.validated_newtype_ctor_name(target_name, &newtype).is_some() {
+                Vec::new()
+            } else {
+                newtype.constraints.clone()
+            },
+        });
+        visiting.remove(target_name);
+        Some(steps)
+    }
+
+    /// Return whether a source value can be passed to a newtype's underlying constructor without primitive parsing.
+    fn validated_newtype_source_matches_underlying(actual: &ResolvedType, underlying: &ResolvedType) -> bool {
+        matches!(actual, ResolvedType::Unknown | ResolvedType::TypeVar(_)) || actual == underlying
+    }
+
+    /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
+    fn validated_newtype_ctor_name(&self, newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
+        let method = newtype.methods.get(conventions::NEWTYPE_FROM_UNDERLYING_METHOD)?;
+        if method.receiver.is_some() || method.params.len() != 1 {
+            return None;
+        }
+        if !Self::validated_newtype_source_matches_underlying(&method.params[0].ty, &newtype.underlying) {
+            return None;
+        }
+        let ResolvedType::Generic(result_name, result_args) = &method.return_type else {
+            return None;
+        };
+        if collection_type_id(result_name.as_str()) != Some(CollectionTypeId::Result) {
+            return None;
+        }
+        let ok_ty = result_args.first()?;
+        if !(matches!(ok_ty, ResolvedType::Named(name) if name == newtype_name)
+            || matches!(ok_ty, ResolvedType::SelfType))
+        {
+            return None;
+        }
+        let err_ty = result_args.get(1)?;
+        if !matches!(err_ty, ResolvedType::Named(name) if name == "ValidationError") {
+            return None;
+        }
+        Some(conventions::NEWTYPE_FROM_UNDERLYING_METHOD.to_string())
+    }
 
     /// Check if two types are compatible for assignment or comparison.
     ///

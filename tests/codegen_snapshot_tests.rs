@@ -2327,10 +2327,49 @@ fn test_newtype_checked_construction_codegen() {
         "checked newtype construction should not emit .expect():\n{rust_code}"
     );
     assert!(
-        rust_code.contains("panic!(\"validated newtype construction failed"),
-        "checked newtype construction panic remains the explicit out-of-scope exemption for #351:\n{rust_code}"
+        rust_code.contains("incan_stdlib::validation::raise_validation_error"),
+        "checked newtype construction should route validation failures through the runtime helper:\n{rust_code}"
     );
     insta::assert_snapshot!("newtype_checked_construction", rust_code);
+}
+
+#[test]
+fn test_newtype_implicit_coercion_codegen() {
+    let source = load_test_file("newtype_implicit_coercion");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.matches("Attempts::from_underlying").count() >= 4,
+        "implicit coercion should route int inputs through Attempts::from_underlying:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let retry: RetryAttempts = RetryAttempts("),
+        "transitive coercion should wrap the checked Attempts value in RetryAttempts:\n{rust_code}"
+    );
+    insta::assert_snapshot!("newtype_implicit_coercion", rust_code);
+}
+
+#[test]
+fn test_constrained_newtype_generated_validation_codegen() {
+    let source = r#"
+type PositiveInt = newtype int[gt=0]
+
+def take_positive(value: PositiveInt) -> None:
+    println(f"{value.0}")
+
+def main() -> None:
+    take_positive(1)
+    explicit = PositiveInt(2)
+    println(f"{explicit.0}")
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("incan_stdlib::validation::raise_constraint_error"),
+        "generated constrained newtype validation should use the runtime helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("if __incan_newtype_input > 0"),
+        "generated validation should enforce the gt constraint before wrapping:\n{rust_code}"
+    );
 }
 
 #[test]

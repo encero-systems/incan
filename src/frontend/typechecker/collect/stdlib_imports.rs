@@ -1278,6 +1278,8 @@ impl TypeChecker {
             is_rusttype: export.is_rusttype,
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
+            constraints: Vec::new(),
+            implicit_coercion_enabled: true,
             method_rebindings: std::collections::HashMap::new(),
             method_aliases: std::collections::HashMap::new(),
             methods: self.methods_from_manifest(&export.methods),

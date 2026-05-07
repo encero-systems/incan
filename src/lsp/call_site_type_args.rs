@@ -106,9 +106,13 @@ pub(crate) fn innermost_type_node_at_offset(ty: &Spanned<Type>, offset: usize) -
             Some(ty)
         }
         Type::Ref(inner) | Type::RefMut(inner) => innermost_call_site_type_in_type(inner, offset).or(Some(ty)),
-        Type::Qualified(_) | Type::Simple(_) | Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {
-            Some(ty)
-        }
+        Type::Qualified(_)
+        | Type::Simple(_)
+        | Type::ConstrainedPrimitive(_, _)
+        | Type::IntLiteral(_)
+        | Type::Unit
+        | Type::SelfType
+        | Type::Infer => Some(ty),
     }
 }
 

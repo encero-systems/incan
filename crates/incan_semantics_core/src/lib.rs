@@ -44,6 +44,7 @@ pub enum DecoratorFeature {
     Derive,
     StaticMethod,
     ClassMethod,
+    NoImplicitCoercion,
     Requires,
     StdlibDecoratorFunction,
 }
@@ -340,6 +341,7 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
         DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,
+        DecoratorId::NoImplicitCoercion => DecoratorFeature::NoImplicitCoercion,
         DecoratorId::Requires => DecoratorFeature::Requires,
     }
 }

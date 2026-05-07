@@ -316,6 +316,7 @@ and `@requires` keep their existing special behavior.
 | RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
 | RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
 | RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
+| NoImplicitCoercion | `@no_implicit_coercion` |  | Disable RFC 017 implicit newtype coercion for this type. | RFC 017 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
 | ClassMethod | `@classmethod` |  | Mark a method as a class method (no implicit self receiver). | RFC 000 | 0.2 | Stable |
 | Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |
@@ -558,6 +559,7 @@ and `@requires` keep their existing special behavior.
 | Body | `Body` |  | Generic | Request body extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | Request | `Request` |  | Named | Full HTTP request access for web handlers. | RFC 000 | 0.1 | Stable |
 | FieldInfo | `FieldInfo` |  | Named | Field metadata record returned by __fields__(). | RFC 021 | 0.1 | Stable |
+| ValidationError | `ValidationError` |  | Named | Structured validation error used by validated newtypes. | RFC 017 | 0.3 | Stable |
 
 ## Surface methods
 

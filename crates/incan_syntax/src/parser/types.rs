@@ -3,6 +3,7 @@
 /// This chunk parses syntactic type expressions (annotations), including:
 /// - Simple names (`int`, `Foo`)
 /// - Generic applications (`List[int]`, `Callable[int, int]`)
+/// - Constrained primitive types (`int[ge=0]`, `int[gt=0, lt=10]`)
 /// - Tuple types (`(int, str)`)
 /// - Function types (`(int, str) -> bool`)
 /// - Type parameters with trait bounds (`[T with (Eq, Debug)]`)
@@ -266,6 +267,24 @@ impl<'a> Parser<'a> {
                 ));
             }
             let type_name = path[0].clone();
+            if is_constrainable_primitive_type(&type_name) {
+                let constraints = self.constrained_primitive_type_constraints()?;
+                self.expect(
+                    &TokenKind::Punctuation(PunctuationId::RBracket),
+                    "Expected ']' after constrained primitive type constraints",
+                )?;
+                let end = self.tokens[self.pos - 1].span.end;
+                if self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+                    return Err(CompileError::syntax(
+                        "Only one constraint block is allowed on a primitive type".to_string(),
+                        self.current_span(),
+                    ));
+                }
+                return Ok(Spanned::new(
+                    Type::ConstrainedPrimitive(type_name, constraints),
+                    Span::new(start, end),
+                ));
+            }
             let args = self.type_list()?;
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::RBracket),
@@ -323,6 +342,85 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse the comma-separated contents of an RFC 017 constrained primitive bracket block.
+    ///
+    /// This syntax slice accepts only literal integer values so the AST carries a structured constraint shape without
+    /// pulling const-name resolution or arbitrary expression parsing into the syntax layer.
+    fn constrained_primitive_type_constraints(&mut self) -> Result<Vec<Spanned<TypeConstraint>>, CompileError> {
+        let mut constraints = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+            return Err(CompileError::syntax(
+                "Constrained primitive type requires at least one constraint".to_string(),
+                self.current_span(),
+            ));
+        }
+
+        loop {
+            let constraint = self.constrained_primitive_type_constraint()?;
+            if !seen.insert(constraint.node.key) {
+                return Err(CompileError::syntax(
+                    format!("Duplicate constrained primitive key `{}`", constraint.node.key),
+                    constraint.span,
+                ));
+            }
+            constraints.push(constraint);
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                break;
+            }
+            if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+                break;
+            }
+        }
+        Ok(constraints)
+    }
+
+    /// Parse one `key=value` entry inside a constrained primitive type bracket block.
+    fn constrained_primitive_type_constraint(&mut self) -> Result<Spanned<TypeConstraint>, CompileError> {
+        let start = self.current_span().start;
+        let key_name = self.identifier()?;
+        let Some(key) = TypeConstraintKey::parse_spelling(&key_name) else {
+            return Err(CompileError::syntax(
+                format!("Unsupported constrained primitive key `{key_name}`; expected one of ge, gt, le, lt"),
+                Span::new(start, self.tokens[self.pos - 1].span.end),
+            ));
+        };
+        self.expect_op(
+            OperatorId::Eq,
+            "Expected '=' after constrained primitive key",
+        )?;
+        let value = self.constrained_primitive_integer_literal()?;
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            TypeConstraint { key, value },
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a signed integer literal for this slice's constrained primitive syntax.
+    fn constrained_primitive_integer_literal(&mut self) -> Result<IntLiteral, CompileError> {
+        let negative = self.match_token(&TokenKind::Operator(OperatorId::Minus));
+        let TokenKind::Int(value) = &self.peek().kind else {
+            return Err(CompileError::syntax(
+                "Expected integer literal constraint value".to_string(),
+                self.current_span(),
+            ));
+        };
+        let mut value = value.clone();
+        self.advance();
+        if negative {
+            let Some(negated) = value.value.checked_neg() else {
+                return Err(CompileError::syntax(
+                    format!("Invalid integer literal constraint value `-{}`", value.repr),
+                    self.tokens[self.pos - 1].span,
+                ));
+            };
+            value.value = negated;
+            value.repr = format!("-{}", value.repr);
+        }
+        Ok(value)
+    }
+
     fn type_list(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
         let mut types = Vec::new();
         if !self.check(&TokenKind::Punctuation(PunctuationId::RBracket))
@@ -338,4 +436,9 @@ impl<'a> Parser<'a> {
         Ok(types)
     }
 
+}
+
+/// Return whether a primitive type name owns RFC 017 constraint bracket syntax in this parser slice.
+fn is_constrainable_primitive_type(name: &str) -> bool {
+    matches!(name, "int" | "float")
 }

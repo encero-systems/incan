@@ -304,7 +304,7 @@ fn surface_functions_spellings_unique_and_resolvable() {
 fn surface_types_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "surface type",
-        expected_len: 21,
+        expected_len: 22,
         items: surface_types::SURFACE_TYPES,
         id_of: |info| info.item.id,
         canonical_of: |info| info.item.canonical,

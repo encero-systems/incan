@@ -13,18 +13,18 @@ trait Error:
     Example:
 
     ```incan
-    model ValidationError with Error:
+    model AgeValidationError with Error:
         field: str
         message: str
         
         def message(self) -> str:
             return f"Validation failed for '{self.field}': {self.message}"
 
-    def validate_age(age: int) -> Result[int, ValidationError]:
+    def validate_age(age: int) -> Result[int, AgeValidationError]:
         if age < 0:
-            return Err(ValidationError(field="age", message="cannot be negative"))
+            return Err(AgeValidationError(field="age", message="cannot be negative"))
         if age > 150:
-            return Err(ValidationError(field="age", message="seems unrealistic"))
+            return Err(AgeValidationError(field="age", message="seems unrealistic"))
         return Ok(age)
 
     def main() -> None:

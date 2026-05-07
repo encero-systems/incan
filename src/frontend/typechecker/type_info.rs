@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{ParamKind, Span};
-use crate::frontend::symbols::{CallableParam, ResolvedType};
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::CoercionPolicy;
 
@@ -85,6 +85,11 @@ pub struct TypeCheckInfo {
     pub const_values: HashMap<String, ConstValue>,
     /// Rust-boundary coercion decisions keyed by argument expression span.
     pub rust_arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
+    ///
+    /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
+    /// function argument, typed initializer, or model/class field initializer.
+    pub validated_newtype_coercions: HashMap<(usize, usize), ValidatedNewtypeCoercionInfo>,
     /// Rust trait imports keyed by the source binding name with the trait method names they can place in scope.
     ///
     /// Lowering carries this into IR import items so codegen can retain extension-trait imports that Rust method
@@ -258,6 +263,37 @@ pub struct RustArgCoercionInfo {
     pub kind: RustArgCoercionKind,
 }
 
+/// One typechecker-approved validated-newtype coercion chain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidatedNewtypeCoercionInfo {
+    /// Ordered underlying-to-target conversion steps.
+    pub steps: Vec<ValidatedNewtypeCoercionStep>,
+    /// Final target type after all steps.
+    pub target_type: ResolvedType,
+    /// Runtime failure strategy selected for the coercion site.
+    pub mode: ValidatedNewtypeCoercionMode,
+}
+
+/// Runtime failure behavior for one validated-newtype coercion site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidatedNewtypeCoercionMode {
+    /// Ordinary sites panic on the first validation error.
+    FailFast,
+    /// Model/class constructor fields collect this field's validation error before the constructor fails.
+    AggregateField { field_name: String },
+}
+
+/// One conversion step in a validated-newtype coercion chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedNewtypeCoercionStep {
+    /// Newtype being constructed by this step.
+    pub newtype_name: String,
+    /// Canonical validation hook to call. `None` means direct newtype wrapping is sufficient.
+    pub ctor: Option<String>,
+    /// Generated constrained-primitive predicates to enforce before direct wrapping.
+    pub constraints: Vec<NewtypePrimitiveConstraint>,
+}
+
 /// Lowering metadata for a visible static binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticBindingInfo {
@@ -349,6 +385,16 @@ impl TypeCheckInfo {
     /// Return the recorded Rust-boundary argument coercion for the expression at `span`, if any.
     pub fn rust_arg_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
         self.rust_arg_coercions.get(&(span.start, span.end))
+    }
+
+    /// Return the validated-newtype coercion recorded for the expression at `span`, if any.
+    pub fn validated_newtype_coercion(&self, span: Span) -> Option<&ValidatedNewtypeCoercionInfo> {
+        self.validated_newtype_coercions.get(&(span.start, span.end))
+    }
+
+    /// Record a typechecker-approved validated-newtype coercion for a source expression span.
+    pub(crate) fn record_validated_newtype_coercion(&mut self, span: Span, info: ValidatedNewtypeCoercionInfo) {
+        self.validated_newtype_coercions.insert((span.start, span.end), info);
     }
 
     /// Return the recorded return coercion for the call expression at `span`, if any.

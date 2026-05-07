@@ -1146,6 +1146,24 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     }
 
     #[test]
+    fn test_format_source_constrained_primitive_newtype_round_trip() -> Result<(), FormatError> {
+        let source = "type Digit = newtype int[gt=-1, lt=10]\n";
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_constrained_primitive_spacing() -> Result<(), FormatError> {
+        let source = "type Ratio = newtype float[ge = 0,le=1]\n";
+        let formatted = format_source(source)?;
+        let expected = "type Ratio = newtype float[ge=0, le=1]\n";
+        assert_eq!(formatted, expected);
+        assert_eq!(assert_format_round_trip_lex_parse(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_preserves_mut_function_params() -> Result<(), FormatError> {
         let source = r#"def bump(mut session: Session, mut count: int) -> int:
     return count

@@ -1202,7 +1202,14 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
-        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
+            let mut segments = vec![quote! { incan_stdlib }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
             if canonical_path.len() < 3 || !stdlib::is_known_stdlib_module(&module_path) {
                 return Ok(None);
             }

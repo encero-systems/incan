@@ -2760,6 +2760,115 @@ const PRICE: decimal[10, 2] = 19.99d
     }
 
     #[test]
+    fn test_parse_constrained_primitive_int_single_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type NonNegativeInt = newtype int[ge=0]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[0].node.value.value, 0);
+        assert_eq!(constraints[0].node.value.repr, "0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_multiple_constraints() -> Result<(), Vec<CompileError>> {
+        let source = "type Digit = newtype int[gt=-1, lt=10]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Gt);
+        assert_eq!(constraints[0].node.value.value, -1);
+        assert_eq!(constraints[0].node.value.repr, "-1");
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Lt);
+        assert_eq!(constraints[1].node.value.value, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_float_accepts_integer_literal_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type UnitRatio = newtype float[ge=0, le=1]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "float");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Le);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_duplicate_key() {
+        let source = "type Bad = newtype int[ge=0, ge=1]\n";
+        let errs = parse_str_err(source, "duplicate constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Duplicate constrained primitive key `ge`")),
+            "Expected duplicate constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_unsupported_key() {
+        let source = "type Bad = newtype int[min=0]\n";
+        let errs = parse_str_err(source, "unsupported constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Unsupported constrained primitive key `min`")),
+            "Expected unsupported constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_empty_constraint_block() {
+        let source = "type Bad = newtype int[]\n";
+        let errs = parse_str_err(source, "empty constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("requires at least one constraint")),
+            "Expected empty constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_second_constraint_block() {
+        let source = "type Bad = newtype int[ge=0][lt=10]\n";
+        let errs = parse_str_err(source, "second constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Only one constraint block is allowed")),
+            "Expected second constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_non_integer_literal_value() {
+        let source = "type Bad = newtype int[ge=MIN_VALUE]\n";
+        let errs = parse_str_err(source, "non-literal constrained primitive value should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected integer literal constraint value")),
+            "Expected integer literal constraint value error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_parse_static_decl() -> Result<(), Vec<CompileError>> {
         let source = r#"
 pub static counter: int = 0
