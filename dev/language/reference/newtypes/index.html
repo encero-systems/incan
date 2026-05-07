@@ -4923,6 +4923,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#trait-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trait Adoption
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#validated-construction" class="md-nav__link">
     <span class="md-ellipsis">
       Validated Construction
@@ -4993,6 +5002,30 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">user_id</span> <span class="o">=</span> <span class="nc">UserId</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
 </code></pre></div>
 <p>The wrapped value is available as <code>.0</code>.</p>
+<h2 id="trait-adoption">Trait Adoption<a class="headerlink" href="#trait-adoption" title="Permanent link">&para;</a></h2>
+<p>Newtypes can adopt traits with the same <code>with TraitName</code> clause used by models, classes, and enums:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ToInt</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span> <span class="k">with</span> <span class="nc">ToInt</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="mf">.0</span>
+</code></pre></div>
+<p>When two adopted traits require the same method name, target each method implementation with <code>for TraitName</code> before the return arrow:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ToInt</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">trait</span> <span class="nc">ToStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span> <span class="k">with</span> <span class="nc">ToInt</span><span class="p">,</span> <span class="nc">ToStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="k">for</span> <span class="nc">ToInt</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="mf">.0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="k">for</span> <span class="nc">ToStr</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="mf">.0</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>for ToInt</code> qualifier belongs to the method declaration. It says which adopted trait the method satisfies; it does not modify the return type.</p>
 <h2 id="validated-construction">Validated Construction<a class="headerlink" href="#validated-construction" title="Permanent link">&para;</a></h2>
 <p>A newtype may define the canonical validation hook <code>from_underlying</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>

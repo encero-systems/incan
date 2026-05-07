@@ -5150,6 +5150,9 @@ See the module source files for authoritative behavior:</p>
 operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged.
 <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.sync</code>, and <code>std.async.prelude</code> still retain wrapper-style surfaces where behavior
 depends on native Rust adapter contracts.</p>
+<p><code>Awaitable[T]</code> is the Incan-facing async protocol, but user-authored <code>rusttype ... with Awaitable[T]</code> bridges are
+currently gated. Rust <code>Future</code> bridge generation needs compiler metadata for safe <code>Pin</code> projection and output mapping;
+until that exists, write the adapter in Rust and expose it through the stdlib/runtime boundary.</p>
 <h2 id="cancellation-vocabulary">Cancellation vocabulary<a class="headerlink" href="#cancellation-vocabulary" title="Permanent link">&para;</a></h2>
 <p>Async APIs on this page use these contract terms:</p>
 <table>

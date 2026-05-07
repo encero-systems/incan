@@ -2056,6 +2056,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#method-level-trait-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method-level trait targets
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rejected-cases" class="md-nav__link">
     <span class="md-ellipsis">
       Rejected cases
@@ -5531,6 +5540,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#method-level-trait-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method-level trait targets
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rejected-cases" class="md-nav__link">
     <span class="md-ellipsis">
       Rejected cases
@@ -6081,7 +6099,7 @@ So we can change the destination in one place if we move/rename sections.
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
 <p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older <code>: ...</code> spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.</p>
-<p>Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
+<p>Models, classes, enums, newtypes, rusttypes, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;An object&quot;</span>
@@ -6121,6 +6139,7 @@ So we can change the destination in one place if we move/rename sections.
 <li>Enum trait adoption uses the same <code>with TraitName</code> clause as model and class adoption.</li>
 <li>For enum adopters, required trait methods must be declared in the enum body.</li>
 <li>Enum adopters should satisfy behavior through methods; <code>@requires(...)</code> field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.</li>
+<li>Newtype and rusttype adopters declare the same <code>with TraitName</code> clause. When multiple adopted traits require the same method name, target each concrete method with <code>for TraitName</code> before the return arrow.</li>
 <li>Supertrait relationships are transitive: if <code>OrderedCollection[T]</code> adopts <code>Collection[T]</code>, adopters of <code>OrderedCollection[T]</code> also satisfy <code>Collection[T]</code>.</li>
 </ul>
 <p>When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:</p>
@@ -6129,7 +6148,7 @@ So we can change the destination in one place if we move/rename sections.
 </code></pre></div>
 <p>The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.</p>
 <h3 id="multiple-instantiations-of-one-generic-trait">Multiple instantiations of one generic trait<a class="headerlink" href="#multiple-instantiations-of-one-generic-trait" title="Permanent link">&para;</a></h3>
-<p>Models, classes, and enums may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by <code>str</code> and by <code>int</code>, converting into multiple result types, or serializing through a generic format trait.</p>
+<p>Models, classes, enums, newtypes, and rusttypes may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by <code>str</code> and by <code>int</code>, converting into multiple result types, or serializing through a generic format trait.</p>
 <p>The repeated adoptions must be distinct:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Convert</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
@@ -6224,6 +6243,22 @@ So we can change the destination in one place if we move/rename sections.
 <span class="n">text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
 <span class="n">code</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">label</span><span class="p">()</span>
 </code></pre></div>
+<h4 id="method-level-trait-targets">Method-level trait targets<a class="headerlink" href="#method-level-trait-targets" title="Permanent link">&para;</a></h4>
+<p>When two adopted traits require the same method name, put the target trait after the parameter list and before the return arrow:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ToInt</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="k">trait</span> <span class="nc">ToStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+<span class="nb">type</span> <span class="nc">Value</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span> <span class="k">with</span> <span class="nc">ToInt</span><span class="p">,</span> <span class="nc">ToStr</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="k">for</span> <span class="nc">ToInt</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="mf">.0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">convert</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="k">for</span> <span class="nc">ToStr</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="mf">.0</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>for ToInt</code> qualifier belongs to the method declaration. It means this method body satisfies the adopted <code>ToInt</code> trait. It does not modify the return type.</p>
 <h4 id="rejected-cases">Rejected cases<a class="headerlink" href="#rejected-cases" title="Permanent link">&para;</a></h4>
 <p>The compiler rejects repeated identical trait instantiations:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">BadReading</span> <span class="k">with</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="nc">Convert</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>  <span class="c1"># error</span>
@@ -6234,7 +6269,7 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error</span>
 </code></pre></div>
-<p>Same-name methods from unrelated trait families are rejected even if their value parameter types differ. Return-type and argument-type disambiguation only applies within one generic trait family:</p>
+<p>Same-name methods from unrelated trait families are rejected unless the concrete method declarations explicitly target adopted traits with <code>for TraitName</code>. Return-type and argument-type disambiguation only applies within one generic trait family:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">ReadsInt</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
 
@@ -6245,7 +6280,7 @@ So we can change the destination in one place if we move/rename sections.
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span> <span class="o">...</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># error: unrelated trait families use the same method name</span>
 </code></pre></div>
-<p>Use distinct method names or distinct trait families with non-conflicting method names when you need two unrelated capabilities today. Explicit qualification and aliasing are future language design work.</p>
+<p>Add method-level targets when both declarations are trait implementations, or use distinct method names when they are ordinary inherent methods. General call-site explicit qualification and aliasing are future language design work.</p>
 <h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
 <p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types
 they must have).</p>

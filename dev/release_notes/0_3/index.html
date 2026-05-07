@@ -4936,6 +4936,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-043-rust-trait-adoption-from-incan" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 043 Rust trait adoption from Incan
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-028-trait-based-operator-overloading" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 028 trait-based operator overloading
@@ -5369,6 +5378,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfc-043-rust-trait-adoption-from-incan" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 043 Rust trait adoption from Incan
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-028-trait-based-operator-overloading" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 028 trait-based operator overloading
@@ -5606,7 +5624,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, graph, collections, and datetime stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; and RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, and datetime stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; and RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -5619,6 +5637,7 @@
 <li>common <code>Option</code> / <code>Result</code> destructuring should have a concise control-flow form when the non-match case is intentionally a no-op</li>
 <li>enums that cross string or integer boundaries should keep enum type safety while exposing one canonical raw representation</li>
 <li>enum-owned behavior should live on the enum itself, and enums should be able to adopt the same trait protocols as models and classes</li>
+<li>Rust ecosystem trait contracts should be authored through Incan's <code>with</code> adoption model where possible, with Rust <code>impl</code> blocks treated as generated backend output</li>
 <li>operator overloading should present traits as nominal capability contracts while keeping dunder methods as the explicit implementation hooks</li>
 <li>in-memory graph-shaped data should have one small stdlib vocabulary for node ids, edge ids, directed graphs, DAGs, multigraphs, adjacency, traversal, and cycle-aware ordering</li>
 <li>time-shaped data should have one stdlib vocabulary for Rust-backed runtime timing, civil dates and times, fixed UTC offsets, and calendar-aware intervals</li>
@@ -5713,6 +5732,22 @@
 <h3 id="rfc-050-enum-methods-and-trait-adoption">RFC 050 enum methods and trait adoption<a class="headerlink" href="#rfc-050-enum-methods-and-trait-adoption" title="Permanent link">&para;</a></h3>
 <p>Enums can now declare methods and associated functions inside the enum body, after their variants. Use this when behavior belongs to the closed set itself, such as <code>Direction.opposite()</code> or <code>BuildState.describe()</code>, instead of pushing enum-owned logic into detached helper functions.</p>
 <p>Enums can also adopt traits with <code>with TraitName</code>, using the same trait adoption surface as models and classes. This makes enum-backed protocols reusable without special-case compiler support while keeping existing enum semantics additive and variant sets closed.</p>
+<h3 id="rfc-043-rust-trait-adoption-from-incan">RFC 043 Rust trait adoption from Incan<a class="headerlink" href="#rfc-043-rust-trait-adoption-from-incan" title="Permanent link">&para;</a></h3>
+<p>Incan can now start expressing Rust trait implementations from Incan source on newtype and rusttype declarations. Authors use the existing <code>with TraitName</code> adoption clause instead of writing Rust-shaped <code>impl Trait for Type</code> source syntax.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fmt</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Debug</span><span class="o">,</span><span class="w"> </span><span class="nn">Display</span><span class="o">,</span><span class="w"> </span><span class="nn">Formatter</span><span class="o">,</span><span class="w"> </span><span class="nn">FmtError</span>
+
+<span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="n">rusttype</span> <span class="kt">i64</span> <span class="k">with</span> <span class="kt">Display</span><span class="p">,</span> <span class="kt">Debug</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Formatter</span><span class="p">)</span> <span class="k">for</span> <span class="kt">Display</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">FmtError</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">f</span><span class="o">.</span><span class="n">write_str</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;user_</span><span class="si">{</span><span class="bp">self</span><span class="mf">.0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">fmt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">:</span> <span class="nc">Formatter</span><span class="p">)</span> <span class="k">for</span> <span class="kt">Debug</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">FmtError</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">f</span><span class="o">.</span><span class="n">write_str</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;UserId(</span><span class="si">{</span><span class="bp">self</span><span class="mf">.0</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The method-level <code>for TraitName</code> target is only needed when more than one adopted trait could claim the same method name. Associated type declarations also use Incan syntax, for example <code>type Output for Add[int] = UserId</code>.</p>
+<p>The compiler also validates imported Rust trait metadata for associated type requirements, rejects statically knowable
+Rust coherence violations, forwards supported <code>@rust.derive(...)</code> attributes to generated Rust items, accepts
+metadata-proven body-less <code>rusttype</code> forwarding without emitting invalid alias impls, and explicitly gates RFC 039
+<code>Awaitable[T]</code> to Rust <code>Future</code> bridging until safe pin-projection and output-mapping metadata exist.</p>
 <h3 id="rfc-028-trait-based-operator-overloading">RFC 028 trait-based operator overloading<a class="headerlink" href="#rfc-028-trait-based-operator-overloading" title="Permanent link">&para;</a></h3>
 <p><code>std.traits.ops</code> now exposes the RFC 028 operator protocol vocabulary for custom types. The basic arithmetic traits are joined by floor division, power, shifts, bitwise operators, matrix multiplication, pipe operators, unary inversion, indexing hooks, and explicit in-place compound-assignment traits for the supported <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code> syntax.</p>
 <p>Operator traits are nominal capability contracts for generic code. Dunder methods such as <code>__add__</code>, <code>__floordiv__</code>, <code>__rshift__</code>, <code>__matmul__</code>, and <code>__getitem__</code> are the implementation hooks that satisfy those contracts. Compound assignment first checks for the explicit in-place hook such as <code>__iadd__</code>; if none exists, it falls back to ordinary binary operator assignment.</p>
@@ -5799,6 +5834,7 @@
 <li><strong>Language/Compiler/Runtime</strong>: RFC 009 implements the numeric type registry with exact-width signed and unsigned integers, pointer-sized integers, <code>f32</code>/<code>f64</code>, analytics/database aliases including <code>bigint</code> and <code>hugeint</code>, parameterized <code>decimal[p, s]</code> / <code>numeric[p, s]</code> literals, lossless numeric widening, explicit integer resize helpers, and exact/lossless Rust interop numeric adaptation (#325, RFC 009).</li>
 <li><strong>Compiler/Codegen</strong>: RFC 032 value enums now lower their raw-value metadata into IR and generate <code>value()</code>, <code>from_value(...)</code>, display, string parsing, and serde implementations that use the canonical raw representation while keeping <code>message()</code> variant-name based (#317, RFC 032).</li>
 <li><strong>Compiler/Codegen</strong>: RFC 025 now preserves distinct same-generic-trait instantiations on model, class, and enum declarations, allows trait-backed same-name methods, resolves same-family calls by argument types or explicit expected return type, enforces <code>T with Trait[F]</code> generic bound arguments, and emits separate Rust trait impls (#150, RFC 025).</li>
+<li><strong>Language/Compiler/Codegen</strong>: RFC 043 starts Rust trait implementation authoring from Incan source on newtype and rusttype declarations, using <code>with TraitName</code> for adoption, method-level <code>for TraitName</code> for same-name method collisions, associated type declarations such as <code>type Output for Add[int] = UserId</code>, checked metadata preservation, and generated Rust trait impl emission (#200, RFC 043).</li>
 <li><strong>Language/Stdlib/Codegen</strong>: RFC 024 adds module-level derive protocols. <code>std.serde.json</code> now declares <code>__derives__ = [Serialize, Deserialize]</code>, <code>@derive(json)</code> adopts both JSON traits, module-qualified bounds such as <code>T with json.Serialize</code> typecheck and lower, generated Rust forwards the corresponding serde derives and trait impls, and user-authored derivable modules are covered for both additional Serde-backed formats and pure Incan derivable traits (#148, RFC 024).</li>
 <li><strong>Language/Compiler</strong>: RFC 017 implements validated newtypes with constrained primitive type syntax such as <code>int[ge=0]</code>, canonical <code>from_underlying</code> hooks returning <code>Result[..., ValidationError]</code>, implicit checked coercion at function arguments, typed initializers, and model/class field construction, fail-fast validation for ordinary coercion sites, aggregated model/class field errors, and <code>@no_implicit_coercion</code> opt-outs without adding ambient primitive parsing (#75, RFC 017).</li>
 <li><strong>Compiler/Codegen</strong>: <code>@rust.allow(...)</code> now emits targeted Rust <code>#[allow(...)]</code> metadata for specific generated Rust items when an Incan declaration intentionally accepts a narrow rustc or Clippy lint. The decorator supports functions, methods, models, classes, enums, and newtypes, rejects module-level directives, and blocks broad lint groups such as <code>warnings</code>, <code>unused</code>, and the common Clippy group lints (#337, RFC 057).</li>
