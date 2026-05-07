@@ -5071,7 +5071,7 @@ general language feature for authoring reusable behavior.</p>
 <p>Read more about <a href="../../tutorials/book/11_traits_and_derives/">traits: domain capabilities</a>.</p>
 <p>Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
 
 <span class="k">enum</span> <span class="nc">Outcome</span> <span class="k">with</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="nc">Success</span>

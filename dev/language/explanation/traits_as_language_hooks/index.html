@@ -5007,7 +5007,7 @@ requirements as defined in the stdlib trait docs):</p>
 <p>For model, class, and enum types, the same generic trait may be adopted more than once with different type arguments. That lets one type support multiple statically checked capability shapes without runtime overloading.</p>
 <p>For example, a type can expose one conversion hook for more than one target type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Snapshot</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
 
 <span class="k">model</span> <span class="nc">Reading</span> <span class="k">with</span> <span class="nc">Snapshot</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nc">Snapshot</span><span class="p">[</span><span class="nb">bytes</span><span class="p">]:</span>
     <span class="n">value</span><span class="p">:</span> <span class="nb">int</span>

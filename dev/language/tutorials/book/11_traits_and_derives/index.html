@@ -5096,10 +5096,10 @@ these methods can be treated as this capability”.</p>
 <h3 id="trait-hierarchies-with-with">Trait hierarchies with <code>with</code><a class="headerlink" href="#trait-hierarchies-with-with" title="Permanent link">&para;</a></h3>
 <p>Traits can also refine other traits:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
 
 <span class="k">trait</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sorted</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sorted</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">first_item</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nc">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">values</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>

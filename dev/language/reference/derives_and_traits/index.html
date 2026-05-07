@@ -5948,7 +5948,7 @@ So we can change the destination in one place if we move/rename sections.
 </ul>
 <hr />
 <h2 id="traits-authoring">Traits (authoring)<a class="headerlink" href="#traits-authoring" title="Permanent link">&para;</a></h2>
-<p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Methods can be required (<code>...</code>) or have defaults.</p>
+<p>Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with <code>with TraitName</code>, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older <code>: ...</code> spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.</p>
 <p>Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same <code>with</code> syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Describable</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -5962,7 +5962,7 @@ So we can change the destination in one place if we move/rename sections.
     <span class="nb">println</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">describe</span><span class="p">())</span>
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Renderable</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
 
 <span class="k">enum</span> <span class="nc">Token</span> <span class="k">with</span> <span class="nc">Renderable</span><span class="p">:</span>
     <span class="nc">Text</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
@@ -5974,10 +5974,10 @@ So we can change the destination in one place if we move/rename sections.
             <span class="nc">Token</span><span class="o">.</span><span class="nc">Break</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span>
 
 <span class="k">trait</span> <span class="nc">OrderedCollection</span><span class="p">[</span><span class="nc">T</span><span class="p">]</span> <span class="k">with</span> <span class="nc">Collection</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">sorted</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sorted</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Self</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">first_item</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nc">Collection</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">values</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
