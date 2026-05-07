@@ -1,0 +1,183 @@
+"""
+Fixed-offset datetime pairing for `std.datetime.civil`.
+
+This module keeps concrete `+HH:MM` / `-HH:MM` offset datetime values separate from named timezone support, which belongs in packages layered above `std.datetime`.
+"""
+
+from std.datetime.error import DateTimeError
+from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval
+from std.datetime.civil.naive import DateTime, FixedOffset, utc, _ParsedOffset, _ParsedTemporal, _parse_offset, _strptime_temporal, _strftime_datetime_inner
+
+pub model DateTimeOffset:
+    """
+    Naive datetime paired with a fixed UTC offset.
+
+    `DateTimeOffset` is not a named timezone type. It stores only the concrete offset that appears in ISO text or `%z`
+    formatted data. Named timezone lookup, daylight-saving transitions, and historical rule tables belong in
+    separately versioned packages.
+    """
+
+    pub datetime: DateTime
+    pub offset: FixedOffset
+
+    @staticmethod
+    def fromisoformat(value: str) -> Result[DateTimeOffset, DateTimeError]:
+        """
+        Parse an ISO fixed-offset datetime string.
+
+        Args:
+            value: Datetime with `Z` or `+HH:MM` / `-HH:MM` offset.
+
+        Returns:
+            Parsed `DateTimeOffset`, or `Err(DateTimeError)`.
+        """
+        if value[len(value) - 1:] == "Z":
+            datetime = DateTime.fromisoformat(value[0:len(value) - 1])?
+            return Ok(DateTimeOffset(datetime=datetime, offset=utc()))
+        if len(value) < 25:
+            return Err(DateTimeError(detail="expected fixed-offset datetime with offset"))
+        offset_start = len(value) - 6
+        datetime = DateTime.fromisoformat(value[0:offset_start])?
+        parsed = _parse_offset(value, offset_start)?
+        if parsed.next != len(value):
+            return Err(DateTimeError(detail="expected fixed offset at end of datetime"))
+        return Ok(DateTimeOffset(datetime=datetime, offset=parsed.offset))
+
+    @staticmethod
+    def strptime(value: str, format: str) -> Result[DateTimeOffset, DateTimeError]:
+        """
+        Parse a fixed-offset datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. `%z` / `%:z` parse concrete offsets; named timezone directives remain outside
+        `std.datetime`.
+
+        Args:
+            value: Datetime text to parse.
+            format: Format string such as `%Y-%m-%dT%H:%M:%S.%f%z`.
+
+        Returns:
+            Parsed `DateTimeOffset`, or `Err(DateTimeError)`.
+        """
+        parsed = _strptime_temporal(value, format, true, true, true)?
+        if not parsed.has_offset:
+            return Err(DateTimeError(detail="DateTimeOffset.strptime requires %z or %:z"))
+        return Ok(DateTimeOffset(datetime=parsed.datetime, offset=parsed.offset))
+
+    def isoformat(self) -> str:
+        """
+        Format this fixed-offset datetime as ISO text.
+
+        Returns:
+            Local datetime followed by `Z`, `+HH:MM`, or `-HH:MM`.
+        """
+        return self.datetime.isoformat() + self.offset.isoformat()
+
+    def strftime(self, format: str) -> Result[str, DateTimeError]:
+        """
+        Format this fixed-offset datetime with an Incan-native Python-shaped format string.
+
+        The directive compiler is inspired by `chrono` and `time`, but the supported surface is owned by Incan and keeps
+        `%f` at nanosecond precision. `%z` / `%:z` format concrete offsets; named timezone directives remain outside
+        `std.datetime`.
+
+        Args:
+            format: Format string such as `%Y-%m-%dT%H:%M:%S.%f%z`.
+
+        Returns:
+            Formatted datetime text, or `Err(DateTimeError)`.
+        """
+        return _strftime_datetime_offset(self, format)
+
+    def __eq__(self, other: DateTimeOffset) -> bool:
+        """
+        Compare two fixed-offset datetimes for instant equality.
+
+        Args:
+            other: Fixed-offset datetime to compare against.
+
+        Returns:
+            True when both values represent the same UTC instant.
+        """
+        return self._utc_seconds() == other._utc_seconds() and self.datetime.time.nanosecond == other.datetime.time.nanosecond
+
+    def __lt__(self, other: DateTimeOffset) -> bool:
+        """
+        Compare two fixed-offset datetimes by UTC instant.
+
+        Args:
+            other: Fixed-offset datetime to compare against.
+
+        Returns:
+            True when this value represents an earlier UTC instant.
+        """
+        if self._utc_seconds() == other._utc_seconds():
+            return self.datetime.time.nanosecond < other.datetime.time.nanosecond
+        return self._utc_seconds() < other._utc_seconds()
+
+    def add_interval(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
+        """
+        Apply a civil interval while preserving this fixed offset.
+
+        Args:
+            interval: `TimeDelta`, `YearMonthInterval`, or `DateTimeInterval`.
+
+        Returns:
+            Shifted `DateTimeOffset` with the same offset.
+        """
+        return DateTimeOffset(datetime=self.datetime.add_interval(interval), offset=self.offset)
+
+    def __add__(self, interval: Union[TimeDelta, YearMonthInterval, DateTimeInterval]) -> DateTimeOffset:
+        """
+        Add a civil interval to this fixed-offset datetime.
+
+        Args:
+            interval: Interval to apply.
+
+        Returns:
+            Shifted `DateTimeOffset` with the same offset.
+        """
+        return self.add_interval(interval)
+
+    def __sub__(
+        self,
+        other: Union[TimeDelta, YearMonthInterval, DateTimeInterval, DateTimeOffset],
+    ) -> Union[DateTimeOffset, TimeDelta]:
+        """
+        Subtract an interval or another fixed-offset datetime.
+
+        Args:
+            other: Interval to subtract, or `DateTimeOffset` to measure from.
+
+        Returns:
+            `DateTimeOffset` when subtracting an interval; `TimeDelta` when subtracting another fixed-offset datetime.
+        """
+        if isinstance(other, DateTimeOffset):
+            seconds = self._utc_seconds() - other._utc_seconds()
+            nanos = self.datetime.time.nanosecond - other.datetime.time.nanosecond
+            return TimeDelta.nanoseconds(seconds * 1_000_000_000 + nanos)
+        elif isinstance(other, TimeDelta):
+            return DateTimeOffset(
+                datetime=self.datetime.add_timedelta(TimeDelta.nanoseconds(0 - other.total_nanoseconds())),
+                offset=self.offset,
+            )
+        elif isinstance(other, YearMonthInterval):
+            return DateTimeOffset(
+                datetime=DateTime(date=self.datetime.date.add_months(0 - other.total_months()), time=self.datetime.time),
+                offset=self.offset,
+            )
+        elif isinstance(other, DateTimeInterval):
+            return DateTimeOffset(
+                datetime=DateTime(
+                    date=self.datetime.date.add_months(0 - other.year_month().total_months()),
+                    time=self.datetime.time,
+                ).add_timedelta(TimeDelta.nanoseconds(0 - other.day_time().total_nanoseconds())),
+                offset=self.offset,
+            )
+
+    def _utc_seconds(self) -> int:
+        return self.datetime._epoch_seconds() - self.offset.seconds
+
+
+def _strftime_datetime_offset(datetime: DateTimeOffset, format: str) -> Result[str, DateTimeError]:
+    return _strftime_datetime_inner(datetime.datetime, datetime.offset, true, format)

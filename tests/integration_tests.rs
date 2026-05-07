@@ -5328,7 +5328,17 @@ def main() -> None:
     #[test]
     fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
         let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
-        let civil_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/civil.incn")?;
+        let mut civil_sources = Vec::new();
+        civil_sources.push(std::fs::read_to_string(
+            "crates/incan_stdlib/stdlib/datetime/civil.incn",
+        )?);
+        for entry in std::fs::read_dir("crates/incan_stdlib/stdlib/datetime/civil")? {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|extension| extension == "incn") {
+                civil_sources.push(std::fs::read_to_string(entry.path())?);
+            }
+        }
+        let civil_source = civil_sources.join("\n");
         assert!(
             runtime_source.contains("from rust::std::time import") && !runtime_source.contains("@rust"),
             "std.datetime runtime must use the Rust std::time boundary without raw @rust bodies"
