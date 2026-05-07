@@ -959,6 +959,7 @@ impl AstLowering {
             ast::Statement::Assignment(a) => {
                 let rhs_direct_static = self.is_direct_static_ident(&a.value);
                 let lowered_value = self.lower_expr_spanned(&a.value)?;
+                let local_callable_signature = self.partial_expr_signature_for_span(a.value.span);
                 let type_annotation = a.ty.as_ref().map(|t| self.lower_type(&t.node));
                 let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
 
@@ -971,6 +972,7 @@ impl AstLowering {
                             }
                             _ => lowered_value.clone(),
                         };
+                        self.update_local_callable_signature(&a.name, local_callable_signature);
                         return Ok(IrStmt::new(IrStmtKind::Assign { target, value }));
                     }
                     ast::BindingKind::Inferred => {
@@ -981,6 +983,7 @@ impl AstLowering {
                         if var_exists_in_scope {
                             let target = self.resolve_named_assign_target(&a.name);
                             if matches!(target, AssignTarget::Static(_)) {
+                                self.update_local_callable_signature(&a.name, local_callable_signature);
                                 return Ok(IrStmt::new(IrStmtKind::Assign {
                                     target,
                                     value: lowered_value.clone(),
@@ -994,6 +997,7 @@ impl AstLowering {
                                     }
                                     _ => lowered_value.clone(),
                                 };
+                                self.update_local_callable_signature(&a.name, local_callable_signature);
                                 return Ok(IrStmt::new(IrStmtKind::Assign { target, value }));
                             } else {
                                 return Err(LoweringError {
@@ -1007,6 +1011,7 @@ impl AstLowering {
                         } else {
                             self.define_local_binding(a.name.clone(), ty.clone(), false);
                         }
+                        self.define_local_callable_signature(a.name.clone(), local_callable_signature);
                         let value = if let Some(static_name) = rhs_direct_static.clone() {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
@@ -1025,6 +1030,7 @@ impl AstLowering {
                         // New mutable binding
                         self.mutable_vars.insert(a.name.clone(), true);
                         self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_callable_signature(a.name.clone(), local_callable_signature);
                         let value = if let Some(static_name) = rhs_direct_static.clone() {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
@@ -1041,6 +1047,7 @@ impl AstLowering {
                     ast::BindingKind::Let => {
                         // New immutable binding
                         self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_callable_signature(a.name.clone(), local_callable_signature);
                         let value = if let Some(static_name) = rhs_direct_static.clone() {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
@@ -2058,6 +2065,12 @@ impl AstLowering {
             ast::Expr::MethodCall(receiver, _, _type_args, args) => {
                 self.count_expr_ident_reads(&receiver.node, counts);
                 self.count_call_args_ident_reads(args, counts);
+            }
+            ast::Expr::Partial(partial) => {
+                self.count_expr_ident_reads(&partial.target.node, counts);
+                for arg in &partial.args {
+                    self.count_expr_ident_reads(&arg.value.node, counts);
+                }
             }
             ast::Expr::Try(inner) | ast::Expr::Paren(inner) => {
                 self.count_expr_ident_reads(&inner.node, counts);

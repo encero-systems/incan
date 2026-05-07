@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::frontend::ast::TypeConstraintKey;
-use crate::frontend::library_exports::collect_checked_public_exports;
+use crate::frontend::library_exports::{
+    CheckedExportKind, CheckedPartialTargetKind, CheckedPresetValue, collect_checked_public_exports,
+};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
     LibraryManifestLoadFailure,
@@ -12,7 +14,8 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
     LibraryContractMetadata, LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport,
-    ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport,
+    TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -105,6 +108,201 @@ fn clone_trait_name() -> String {
 
 fn none_constructor_name() -> String {
     surface_constructors::as_str(ConstructorId::None).to_string()
+}
+
+#[test]
+fn test_partial_function_presets_project_as_defaults() {
+    let source = r#"
+def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+get = partial route(method="GET")
+
+def use() -> str:
+  a = get(path="/health")
+  b = get(method="POST", path="/submit")
+  return b
+"#;
+    let ast = parse_program(source, "partial function defaults");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+    let sym = checker
+        .lookup_symbol("get")
+        .unwrap_or_else(|| panic!("missing projected partial symbol"));
+    let SymbolKind::Function(info) = &sym.kind else {
+        panic!("expected function symbol for partial, got {:?}", sym.kind);
+    };
+    let method = info.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = info.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{info:?}");
+    assert!(!path.has_default, "{info:?}");
+    assert!(content_type.has_default, "{info:?}");
+}
+
+#[test]
+fn test_public_partial_exports_projected_defaults() {
+    let source = r#"
+pub def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+pub get = partial route(method="GET")
+"#;
+    let ast = parse_program(source, "partial public export");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let get = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "get" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing public partial export: {exports:?}"));
+    assert_eq!(get.target_path, vec!["route"]);
+    assert_eq!(get.target_kind, CheckedPartialTargetKind::Function);
+    assert_eq!(get.presets[0].name, "method");
+    assert_eq!(get.presets[0].value, CheckedPresetValue::String("GET".to_string()));
+    let method = get.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = get.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{get:?}");
+    assert!(!path.has_default, "{get:?}");
+    assert!(content_type.has_default, "{get:?}");
+
+    let manifest = LibraryManifest::from_checked_exports("routes".to_string(), "0.1.0".to_string(), &exports);
+    assert_eq!(manifest.exports.partials.len(), 1);
+    assert_eq!(
+        manifest.exports.partials[0].target_kind,
+        PartialTargetKindExport::Function
+    );
+    assert_eq!(
+        manifest.exports.partials[0].presets[0].value,
+        PresetValueExport::String("GET".to_string())
+    );
+}
+
+#[test]
+fn test_public_partial_exports_declaration_safe_preset_values() {
+    let source = r#"
+pub model Profile:
+  name: str
+
+pub def configure(headers: dict[str, str], codes: list[int], profile: Profile) -> str:
+  return profile.name
+
+pub default_config = partial configure(headers={"accept": "json"}, codes=[200], profile=Profile(name="ops"))
+"#;
+    let ast = parse_program(source, "partial public preset metadata");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let default_config = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "default_config" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing partial export: {exports:?}"));
+
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::Dict(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::List(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::ModelLiteral { .. })),
+        "{default_config:?}"
+    );
+}
+
+#[test]
+fn test_top_level_partial_rejects_runtime_preset_values() {
+    let source = r#"
+def default_method() -> str:
+  return "GET"
+
+def route(method: str, path: str) -> str:
+  return method
+
+get = partial route(method=default_method())
+"#;
+    let errors = check_str_err(source, "top-level partial runtime preset should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Top-level partial preset 'method' must be declaration-safe")),
+        "expected declaration-safe preset diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_method_partial_presets_project_as_defaults_for_trait_and_model() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  loud = partial label(prefix="user")
+
+def use(user: User) -> str:
+  a = user.loud()
+  b = user.loud(prefix="admin")
+  c = user.short()
+  return b
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+}
+
+#[test]
+fn test_method_partial_preset_values_are_typechecked() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix=1)
+"#;
+    let errors = check_str_err(source, "method partial preset should be typechecked");
+    let messages: Vec<_> = errors.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type mismatch") || message.contains("expected str")),
+        "expected type mismatch, got {messages:?}"
+    );
 }
 
 #[test]
@@ -670,6 +868,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: vec![ModelExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
@@ -786,6 +985,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: Vec::new(),
             classes: Vec::new(),
             functions: Vec::new(),
@@ -843,6 +1043,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: vec![ModelExport {
                 name: "ImportedReading".to_string(),
                 type_params: Vec::new(),
@@ -972,6 +1173,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: vec![ModelExport {
                 name: "SessionError".to_string(),
                 type_params: Vec::new(),

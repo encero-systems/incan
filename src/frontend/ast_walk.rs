@@ -61,7 +61,11 @@ where
     F: FnMut(&Expr) -> bool,
 {
     match &decl.node {
-        Declaration::Import(_) | Declaration::Alias(_) | Declaration::TypeAlias(_) | Declaration::Docstring(_) => false,
+        Declaration::Import(_)
+        | Declaration::Alias(_)
+        | Declaration::Partial(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::Docstring(_) => false,
         Declaration::Const(c) => expr_has(&c.value.node, pred),
         Declaration::Static(s) => expr_has(&s.value.node, pred),
         Declaration::Model(m) => {
@@ -368,7 +372,7 @@ where
             crate::frontend::ast::FStringPart::Expr(expr) => expr_has(&expr.node, pred),
         }),
         Expr::Yield(Some(expr)) => expr_has(&expr.node, pred),
-        Expr::Yield(None) => false,
+        Expr::Yield(None) | Expr::Partial(_) => false,
     }
 }
 

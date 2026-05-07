@@ -135,6 +135,15 @@ pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> Compil
     )
 }
 
+/// Report a top-level partial preset expression that would require runtime evaluation.
+pub fn unsafe_top_level_partial_preset(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Top-level partial preset '{name}' must be declaration-safe"),
+        span,
+    )
+    .with_hint("Use literals, const paths, or declaration-safe collection/model literals as top-level partial presets")
+}
+
 pub fn duplicate_rest_parameter(kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Only one `{kind}` rest parameter is allowed in a callable signature"),

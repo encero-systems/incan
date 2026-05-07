@@ -722,6 +722,7 @@ impl TypeChecker {
             // Disallowed constructs for RFC 008 phase 1.
             Expr::Call(_, _, _)
             | Expr::MethodCall(_, _, _, _)
+            | Expr::Partial(_)
             | Expr::Generator(_)
             | Expr::ListComp(_)
             | Expr::DictComp(_)

@@ -36,6 +36,23 @@ impl Formatter {
         }
     }
 
+    /// Format one keyword preset in a partial callable template.
+    fn write_partial_arg(&mut self, arg: &PartialArg) {
+        self.writer.write(&arg.name);
+        self.writer.write("=");
+        self.format_expr(&arg.value.node);
+    }
+
+    /// Format the comma-separated keyword preset list in a partial callable template.
+    pub(super) fn format_partial_args(&mut self, args: &[PartialArg]) {
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.write_partial_arg(arg);
+        }
+    }
+
     fn format_call_args_with_wrapping(&mut self, args: &[CallArg]) {
         if args.is_empty() {
             return;
@@ -179,6 +196,23 @@ impl Formatter {
                 }
                 self.writer.write("(");
                 self.format_call_args_with_wrapping(args);
+                self.writer.write(")");
+            }
+            Expr::Partial(partial) => {
+                self.writer.write("partial ");
+                self.format_expr(&partial.target.node);
+                if !partial.type_args.is_empty() {
+                    self.writer.write("[");
+                    for (i, arg) in partial.type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
+                self.writer.write("(");
+                self.format_partial_args(&partial.args);
                 self.writer.write(")");
             }
             Expr::Surface(surface_expr) => match (&surface_expr.key, &surface_expr.payload) {

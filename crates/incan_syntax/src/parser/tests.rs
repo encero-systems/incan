@@ -5315,4 +5315,112 @@ trait Named:
         assert!(!tr.method_aliases[0].node.explicit_marker);
         Ok(())
     }
+
+    #[test]
+    fn test_parse_top_level_partial_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+BronzeReader = partial readers.TableReader(layer="bronze", format="delta")
+pub JsonRoute = partial web::route(method="GET", content_type="json")
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Partial(bronze) = &program.declarations[0].node else {
+            panic!("expected partial declaration, got {:?}", program.declarations[0].node);
+        };
+        assert_eq!(bronze.name, "BronzeReader");
+        assert_eq!(bronze.target.segments, vec!["readers", "TableReader"]);
+        assert_eq!(bronze.args.len(), 2);
+        assert_eq!(bronze.args[0].name, "layer");
+        assert!(matches!(bronze.args[0].value.node, Expr::Literal(Literal::String(ref value)) if value == "bronze"));
+
+        let Declaration::Partial(route) = &program.declarations[1].node else {
+            panic!("expected public partial declaration, got {:?}", program.declarations[1].node);
+        };
+        assert_eq!(route.visibility, Visibility::Public);
+        assert_eq!(route.name, "JsonRoute");
+        assert_eq!(route.target.segments, vec!["web", "route"]);
+        assert_eq!(route.args[1].name, "content_type");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_partial_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model Cell:
+  alive: bool
+  set_alive = partial set_state(state=true)
+
+  def set_state(mut self, state: bool) -> None:
+    self.alive = state
+
+class Reader:
+  json = partial open(format="json")
+  def open(self, format: str) -> None:
+    pass
+
+type UserId = newtype int:
+  one = partial from_underlying(value=1)
+
+  def from_underlying(value: int) -> UserId:
+    return UserId(value)
+
+trait Named:
+  display = partial name(prefix="name")
+  def name(self, prefix: str) -> str
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.method_partials.len(), 1);
+        assert_eq!(model.method_partials[0].node.name, "set_alive");
+        assert_eq!(model.method_partials[0].node.target, "set_state");
+        assert_eq!(model.method_partials[0].node.args[0].name, "state");
+
+        let class = require_class_decl(&program.declarations[1])?;
+        assert_eq!(class.method_partials.len(), 1);
+        assert_eq!(class.method_partials[0].node.name, "json");
+
+        let newtype = require_newtype_decl(&program.declarations[2])?;
+        assert_eq!(newtype.method_partials.len(), 1);
+        assert_eq!(newtype.method_partials[0].node.target, "from_underlying");
+
+        let tr = require_trait_decl(&program.declarations[3])?;
+        assert_eq!(tr.method_partials.len(), 1);
+        assert_eq!(tr.method_partials[0].node.name, "display");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_local_partial_expression_preserves_callable_target() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def reader_for(layer: str) -> Reader:
+  return partial make_factory().reader(layer=layer, options={"format": "delta"})
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &func.body[0].node else {
+            panic!("expected return partial expression");
+        };
+        let Expr::Partial(partial) = &expr.node else {
+            panic!("expected partial expression, got {:?}", expr.node);
+        };
+        assert_eq!(partial.args.len(), 2);
+        assert_eq!(partial.args[0].name, "layer");
+        assert!(matches!(partial.args[1].value.node, Expr::Dict(_)));
+        assert!(matches!(partial.target.node, Expr::Field(_, ref name) if name == "reader"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_partial_rejects_positional_presets() {
+        let err = parse_str_err(
+            r#"
+Bad = partial Target(1)
+"#,
+            "partial positional preset",
+        );
+        assert!(
+            err.iter()
+                .any(|err| err.message.contains("Partial presets only support keyword arguments")),
+            "expected keyword-only partial preset diagnostic, got {err:?}"
+        );
+    }
 }

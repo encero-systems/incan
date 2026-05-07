@@ -13,7 +13,7 @@ use semver::Version;
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
     EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, VocabProviderManifest,
+    ParamKindExport, PartialExport, VocabProviderManifest,
 };
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
@@ -47,6 +47,10 @@ fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryMan
 fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), LibraryManifestError> {
     for function in &exports.functions {
         validate_callable_params(&format!("function `{}`", function.name), &function.params)?;
+    }
+    for partial in &exports.partials {
+        validate_partial_export(partial)?;
+        validate_callable_params(&format!("partial `{}`", partial.name), &partial.params)?;
     }
     for model in &exports.models {
         for method in &model.methods {
@@ -86,6 +90,32 @@ fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), Li
                 &format!("newtype `{}` method `{}`", newtype.name, method.name),
                 &method.params,
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate one exported partial's provenance payload.
+fn validate_partial_export(partial: &PartialExport) -> Result<(), LibraryManifestError> {
+    if partial.target_path.is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "partial `{}` must declare a non-empty target path",
+            partial.name
+        )));
+    }
+    if partial.presets.is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "partial `{}` must declare at least one preset",
+            partial.name
+        )));
+    }
+    let mut seen = HashSet::new();
+    for preset in &partial.presets {
+        if !seen.insert(preset.name.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "partial `{}` repeats preset `{}`",
+                partial.name, preset.name
+            )));
         }
     }
     Ok(())

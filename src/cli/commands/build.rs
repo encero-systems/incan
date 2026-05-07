@@ -265,6 +265,7 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
 
     match &mut renamed.kind {
         CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
+        CheckedExportKind::Partial(partial_export) => partial_export.name = exported_name.to_string(),
         CheckedExportKind::Alias(alias_export) => alias_export.name = exported_name.to_string(),
         CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
         CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),

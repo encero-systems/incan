@@ -26,6 +26,48 @@ mod match_;
 mod ops;
 
 impl TypeChecker {
+    /// Type-check a local partial expression and return its projected callable type.
+    fn check_partial_expr(&mut self, partial: &PartialExpr, span: Span) -> ResolvedType {
+        if !partial.type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+        let target_ty = self.check_expr(&partial.target);
+        let ResolvedType::Function(params, ret) = target_ty else {
+            self.errors.push(CompileError::type_error(
+                "Partial expression target must be a callable value".to_string(),
+                partial.target.span,
+            ));
+            for arg in &partial.args {
+                self.check_expr(&arg.value);
+            }
+            return ResolvedType::Unknown;
+        };
+
+        let Some(projected) = self.project_partial_params("<local partial>", "<callable>", params, &partial.args, span)
+        else {
+            for arg in &partial.args {
+                self.check_expr(&arg.value);
+            }
+            return ResolvedType::Unknown;
+        };
+
+        for arg in &partial.args {
+            let actual = self.check_expr(&arg.value);
+            if let Some(param) = projected.iter().find(|param| param.name() == Some(arg.name.as_str()))
+                && !self.types_compatible(&actual, &param.ty)
+            {
+                self.errors.push(errors::type_mismatch(
+                    &param.ty.to_string(),
+                    &actual.to_string(),
+                    arg.value.span,
+                ));
+            }
+        }
+
+        ResolvedType::Function(projected, ret)
+    }
+
     /// Resolve a field by canonical name or alias, returning the canonical name and FieldInfo.
     ///
     /// - `allow_alias`: whether alias lookup is allowed (models only).
@@ -125,6 +167,7 @@ impl TypeChecker {
             Expr::MethodCall(base, method, type_args, args) => {
                 self.check_method_call(base, method, type_args, args, expr.span)
             }
+            Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
             Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
             Expr::Try(inner) => self.check_try(inner, expr.span),
             Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),

@@ -41,6 +41,8 @@ pub enum Expr {
     Field(Box<Spanned<Expr>>, Ident),
     /// Method call: `x.method(args)` or `x.method[T](args)`
     MethodCall(Box<Spanned<Expr>>, Ident, Vec<Spanned<Type>>, Vec<CallArg>),
+    /// Partial callable preset expression: `partial Target(name=value)`.
+    Partial(Box<PartialExpr>),
     /// `expr?` (try/propagate)
     Try(Box<Spanned<Expr>>),
     /// Match expression
@@ -99,6 +101,21 @@ pub enum DictEntry {
     Pair(Spanned<Expr>, Spanned<Expr>),
     /// Spread another dict into the literal at this position.
     Spread(Spanned<Expr>),
+}
+
+/// A keyword preset supplied to a partial callable template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialArg {
+    pub name: Ident,
+    pub value: Spanned<Expr>,
+}
+
+/// Local partial callable preset expression payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialExpr {
+    pub target: Box<Spanned<Expr>>,
+    pub type_args: Vec<Spanned<Type>>,
+    pub args: Vec<PartialArg>,
 }
 
 /// Generic surface expression node emitted by parser handoff.

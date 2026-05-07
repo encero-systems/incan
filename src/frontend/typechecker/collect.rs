@@ -28,6 +28,15 @@ type InheritedMembers = (
     HashMap<String, Vec<MethodInfo>>,
 );
 
+type PartialCallableSignature = (
+    Vec<CallableParam>,
+    ResolvedType,
+    bool,
+    Vec<String>,
+    HashMap<String, Vec<String>>,
+    HashMap<String, Vec<TypeBoundInfo>>,
+);
+
 /// Extract constrained-primitive predicates from a newtype underlying annotation.
 fn newtype_constraints(ty: &Type) -> Vec<NewtypePrimitiveConstraint> {
     let Type::ConstrainedPrimitive(_, constraints) = ty else {
@@ -105,6 +114,10 @@ impl TypeChecker {
             Declaration::Alias(alias) => {
                 self.validate_root_namespace(&alias.name, decl.span);
                 self.collect_alias(alias, decl.span);
+            }
+            Declaration::Partial(partial) => {
+                self.validate_root_namespace(&partial.name, decl.span);
+                self.collect_partial(partial, decl.span);
             }
             Declaration::TypeAlias(a) => {
                 self.validate_root_namespace(&a.name, decl.span);
@@ -205,6 +218,150 @@ impl TypeChecker {
         }
     }
 
+    /// Register a module-level partial as a projected callable symbol.
+    fn collect_partial(&mut self, partial: &PartialDecl, span: Span) {
+        let target_name = partial.target.segments.join(".");
+        let Some((params, return_type, is_async, type_params, type_param_bounds, type_param_bound_details)) =
+            self.partial_target_callable_signature(&partial.target.segments)
+        else {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Partial '{}' targets unknown or unsupported callable '{}'",
+                    partial.name, target_name
+                ),
+                span,
+            ));
+            return;
+        };
+
+        let Some(params) = self.project_partial_params(&partial.name, &target_name, params, &partial.args, span) else {
+            return;
+        };
+
+        self.symbols.define(Symbol {
+            name: partial.name.clone(),
+            kind: SymbolKind::Function(FunctionInfo {
+                params,
+                return_type,
+                is_async,
+                type_params,
+                type_param_bounds,
+                type_param_bound_details,
+            }),
+            span,
+            scope: 0,
+        });
+    }
+
+    /// Resolve the callable surface that a top-level partial declaration projects.
+    fn partial_target_callable_signature(&mut self, segments: &[String]) -> Option<PartialCallableSignature> {
+        match self.alias_target_symbol_kind(segments)? {
+            SymbolKind::Function(info) => Some((
+                info.params,
+                info.return_type,
+                info.is_async,
+                info.type_params,
+                info.type_param_bounds,
+                info.type_param_bound_details,
+            )),
+            SymbolKind::Type(TypeInfo::Model(info)) => Some((
+                Self::constructor_params_from_fields(&info.fields),
+                ResolvedType::Named(segments.last()?.clone()),
+                false,
+                info.type_params,
+                HashMap::new(),
+                HashMap::new(),
+            )),
+            SymbolKind::Type(TypeInfo::Class(info)) => Some((
+                Self::constructor_params_from_fields(&info.fields),
+                ResolvedType::Named(segments.last()?.clone()),
+                false,
+                info.type_params,
+                HashMap::new(),
+                HashMap::new(),
+            )),
+            SymbolKind::Type(TypeInfo::Newtype(info)) => Some((
+                vec![CallableParam::named("value", info.underlying, ParamKind::Normal)],
+                ResolvedType::Named(segments.last()?.clone()),
+                false,
+                info.type_params,
+                HashMap::new(),
+                HashMap::new(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Convert collected field metadata into constructor callable parameters.
+    fn constructor_params_from_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CallableParam> {
+        let mut params: Vec<_> = fields
+            .iter()
+            .map(|(name, info)| {
+                CallableParam::named_with_default(name.clone(), info.ty.clone(), ParamKind::Normal, info.has_default)
+            })
+            .collect();
+        params.sort_by(|a, b| a.name().cmp(&b.name()));
+        params
+    }
+
+    /// Apply partial preset keywords to callable parameters by marking matching parameters defaulted.
+    pub(crate) fn project_partial_params(
+        &mut self,
+        partial_name: &str,
+        target_name: &str,
+        mut params: Vec<CallableParam>,
+        args: &[PartialArg],
+        span: Span,
+    ) -> Option<Vec<CallableParam>> {
+        if args.is_empty() {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Partial '{partial_name}' for '{target_name}' must preset at least one keyword; use an alias for a no-op projection"
+                ),
+                span,
+            ));
+            return None;
+        }
+
+        let mut seen = HashSet::new();
+        let mut ok = true;
+        for arg in args {
+            if !seen.insert(arg.name.as_str()) {
+                self.errors.push(CompileError::type_error(
+                    format!("Partial '{partial_name}' repeats preset keyword '{}'", arg.name),
+                    arg.value.span,
+                ));
+                ok = false;
+                continue;
+            }
+            let Some(param) = params.iter_mut().find(|param| param.name() == Some(arg.name.as_str())) else {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Partial '{partial_name}' presets unknown parameter '{}' on target '{target_name}'",
+                        arg.name
+                    ),
+                    arg.value.span,
+                ));
+                ok = false;
+                continue;
+            };
+            if param.kind != ParamKind::Normal {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Partial '{partial_name}' cannot preset rest parameter '{}' on target '{target_name}'",
+                        arg.name
+                    ),
+                    arg.value.span,
+                ));
+                ok = false;
+                continue;
+            }
+            param.has_default = true;
+        }
+
+        ok.then_some(params)
+    }
+
     /// Register a module-level const binding (first pass).
     ///
     /// Note: the initializer is validated in the second pass.
@@ -282,6 +439,7 @@ impl TypeChecker {
             &derives,
         );
         let method_aliases = collect_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
+        self.collect_method_partials(&model.name, &model.method_partials, &mut methods, &mut method_overloads);
         let mut trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
@@ -326,6 +484,7 @@ impl TypeChecker {
         let derives = self.extract_derive_names(&class.decorators);
         inject_json_methods(&mut methods, &mut method_overloads, &class.name, &derives);
         let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
+        self.collect_method_partials(&class.name, &class.method_partials, &mut methods, &mut method_overloads);
         let mut trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
@@ -529,6 +688,7 @@ impl TypeChecker {
         let mut methods = collect_methods_from_overloads(&method_overloads);
         let properties = collect_properties(&tr.properties, self, None, &tr.type_params);
         let method_aliases = collect_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
+        self.collect_method_partials(&tr.name, &tr.method_partials, &mut methods, &mut method_overloads);
         let requires = self.extract_requires(&tr.decorators);
         if !tr.traits.is_empty() {
             self.pending_trait_supertraits
@@ -788,6 +948,7 @@ impl TypeChecker {
         let mut method_overloads = collect_method_overloads(&nt.methods, self, Some(&nt.name), &nt.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
         let method_aliases = collect_method_aliases(&nt.method_aliases, &mut methods, &mut method_overloads);
+        self.collect_method_partials(&nt.name, &nt.method_partials, &mut methods, &mut method_overloads);
 
         // Update the symbol with the collected methods
         if let Some(sym_id) = self.symbols.lookup(&nt.name)
@@ -796,6 +957,44 @@ impl TypeChecker {
         {
             info.methods = methods;
             info.method_aliases = method_aliases;
+        }
+    }
+
+    /// Register same-type method partials as projected method metadata on the owning type surface.
+    fn collect_method_partials(
+        &mut self,
+        owner_name: &str,
+        partials: &[Spanned<MethodPartialDecl>],
+        methods: &mut HashMap<String, MethodInfo>,
+        overloads: &mut HashMap<String, Vec<MethodInfo>>,
+    ) {
+        for partial in partials {
+            let target = partial.node.target.as_str();
+            let Some(target_info) = methods.get(target).cloned() else {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Method partial '{}.{}' targets unknown method '{}'",
+                        owner_name, partial.node.name, partial.node.target
+                    ),
+                    partial.span,
+                ));
+                continue;
+            };
+            let Some(params) = self.project_partial_params(
+                &format!("{owner_name}.{}", partial.node.name),
+                &format!("{owner_name}.{target}"),
+                target_info.params.clone(),
+                &partial.node.args,
+                partial.span,
+            ) else {
+                continue;
+            };
+            let mut projected = target_info;
+            projected.params = params;
+            projected.has_body = true;
+            projected.alias_of = Some(target.to_string());
+            methods.insert(partial.node.name.clone(), projected.clone());
+            overloads.insert(partial.node.name.clone(), vec![projected]);
         }
     }
 

@@ -1382,6 +1382,108 @@ mod tests {
     }
 
     #[test]
+    fn partial_function_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub def route(method: str, path: str) -> str:
+  return method
+
+pub get = partial route(method="GET")
+
+pub def use() -> str:
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("pub fn get("), "{code}");
+        assert!(code.contains("\"GET\""), "{code}");
+        assert!(code.contains("route("), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn local_partial_codegen_fills_omitted_preset_argument() {
+        let code = generate(
+            r#"
+def route(method: str, path: str) -> str:
+  return method + path
+
+pub def use() -> str:
+  get = partial route(method="GET")
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("|method, path|"), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn partial_model_constructor_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub model Reader:
+  layer: str
+  format: str
+
+pub BronzeReader = partial Reader(layer="bronze", format="delta")
+
+pub def use() -> Reader:
+  return BronzeReader()
+"#,
+        );
+        assert!(code.contains("pub fn BronzeReader("), "{code}");
+        assert!(code.contains("\"bronze\""), "{code}");
+        assert!(code.contains("\"delta\""), "{code}");
+        assert!(code.contains("Reader {"), "{code}");
+    }
+
+    #[test]
+    fn trait_method_partial_codegen_emits_default_method_wrapper() {
+        let code = generate(
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
+    }
+
+    #[test]
+    fn method_partial_codegen_resolves_alias_target() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+  def label(self, prefix: str) -> str:
+    return prefix
+  display = label
+  short = partial display(prefix="name")
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(&prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
+    }
+
+    #[test]
     fn normal_codegen_does_not_emit_blanket_generated_lint_allows() {
         let code = generate(
             r#"

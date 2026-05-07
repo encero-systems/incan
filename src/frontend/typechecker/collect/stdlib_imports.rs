@@ -15,7 +15,8 @@ use crate::frontend::typechecker::TypeChecker;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
-    ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+    PartialExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport,
+    resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -27,6 +28,7 @@ enum ManifestExportRef<'a> {
     Model(&'a ModelExport),
     Class(&'a ClassExport),
     Function(&'a FunctionExport),
+    Partial(&'a PartialExport),
     Trait(&'a TraitExport),
     Enum(&'a EnumExport),
     EnumVariant {
@@ -640,8 +642,11 @@ impl TypeChecker {
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
-        let export = manifest.exports.functions.iter().find(|item| item.name == member)?;
-        Some(self.function_info_from_manifest(export))
+        if let Some(export) = manifest.exports.functions.iter().find(|item| item.name == member) {
+            return Some(self.function_info_from_manifest(export));
+        }
+        let export = manifest.exports.partials.iter().find(|item| item.name == member)?;
+        Some(self.partial_info_from_manifest(export))
     }
 
     /// Resolve one exported const/static value type from a loaded `pub::` library manifest.
@@ -694,6 +699,7 @@ impl TypeChecker {
                 SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
             }
             ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+            ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
             ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
@@ -827,6 +833,7 @@ impl TypeChecker {
         let mut names = Vec::new();
         names.extend(manifest.exports.models.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.aliases.iter().map(|item| item.name.clone()));
+        names.extend(manifest.exports.partials.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.classes.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.functions.iter().map(|item| item.name.clone()));
         names.extend(manifest.exports.traits.iter().map(|item| item.name.clone()));
@@ -860,6 +867,9 @@ impl TypeChecker {
         }
         if let Some(item) = manifest.exports.functions.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Function(item));
+        }
+        if let Some(item) = manifest.exports.partials.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Partial(item));
         }
         if let Some(item) = manifest.exports.traits.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Trait(item));
@@ -938,6 +948,7 @@ impl TypeChecker {
                 SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
             }
             ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+            ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
             ManifestExportRef::EnumVariant { enum_name, fields } => SymbolKind::Variant(VariantInfo {
@@ -1132,6 +1143,18 @@ impl TypeChecker {
 
     /// Convert one manifest function export into semantic function metadata.
     fn function_info_from_manifest(&self, export: &FunctionExport) -> FunctionInfo {
+        FunctionInfo {
+            params: self.params_from_manifest(&export.params),
+            return_type: resolved_type_from_manifest_type_ref(&export.return_type),
+            is_async: export.is_async,
+            type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+            type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
+            type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
+        }
+    }
+
+    /// Convert one manifest partial export into callable metadata for consumers.
+    fn partial_info_from_manifest(&self, export: &PartialExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
             return_type: resolved_type_from_manifest_type_ref(&export.return_type),

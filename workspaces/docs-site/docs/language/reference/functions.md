@@ -380,6 +380,8 @@ A plain fixed-arity function type does not become rest-aware just because one of
 
 For module-level alternate names such as `mean = avg`, use a symbol alias instead of a function-local value binding. Symbol aliases are declarations, participate in imports/exports, and preserve alias identity in metadata. See [Symbol aliases](symbol_aliases.md).
 
+For callable specializations such as `get = partial route(method="GET")`, use a callable preset. Presets create a derived callable surface where supplied keywords behave like ordinary defaults. See [Callable presets](callable_presets.md).
+
 ## Lowering Model
 
 Rest parameters are compile-time sugar over explicit container parameters:

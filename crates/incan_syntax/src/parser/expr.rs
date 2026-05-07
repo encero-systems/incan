@@ -672,6 +672,11 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Expr::SelfExpr, Span::new(start, end)));
         }
 
+        // Local partial callable preset expression.
+        if self.match_ident_text("partial") {
+            return self.partial_expr(start);
+        }
+
         // Literals
         if let Some(lit) = self.try_literal() {
             let end = self.tokens[self.pos - 1].span.end;
@@ -717,6 +722,37 @@ impl<'a> Parser<'a> {
             &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
+    }
+
+    /// Parse `partial Target(name=value)` after the `partial` marker has already been consumed.
+    fn partial_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
+        let template = self.postfix()?;
+        let end = template.span.end;
+        let partial = self.partial_expr_from_call_template(template)?;
+        Ok(Spanned::new(Expr::Partial(Box::new(partial)), Span::new(start, end)))
+    }
+
+    /// Split the final call in a local partial template into a callable target plus keyword presets.
+    fn partial_expr_from_call_template(&mut self, template: Spanned<Expr>) -> Result<PartialExpr, CompileError> {
+        match template.node {
+            Expr::Call(target, type_args, args) => Ok(PartialExpr {
+                target,
+                type_args,
+                args: self.partial_args_from_call_args(args, template.span)?,
+            }),
+            Expr::MethodCall(receiver, method, type_args, args) => {
+                let target_span = Span::new(receiver.span.start, template.span.end);
+                Ok(PartialExpr {
+                    target: Box::new(Spanned::new(Expr::Field(receiver, method), target_span)),
+                    type_args,
+                    args: self.partial_args_from_call_args(args, template.span)?,
+                })
+            }
+            _ => Err(CompileError::syntax(
+                "Expected partial target call template `Target(name=value)`".to_string(),
+                template.span,
+            )),
+        }
     }
 
     /// Parse a descriptor-enabled leading-dot path if the current DSL block accepts one.
@@ -1304,6 +1340,15 @@ impl<'a> Parser<'a> {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
+                }
+            }
+            Expr::Partial(partial) => {
+                self.shift_spanned_expr(&mut partial.target, offset);
+                for arg in &mut partial.type_args {
+                    arg.span = Span::new(arg.span.start + offset, arg.span.end + offset);
+                }
+                for arg in &mut partial.args {
+                    self.shift_spanned_expr(&mut arg.value, offset);
                 }
             }
             Expr::Match(subject, arms) => {
@@ -2261,6 +2306,63 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(args)
+    }
+
+    /// Parse the keyword-only argument list inside a partial call template.
+    fn partial_args(&mut self) -> Result<Vec<PartialArg>, CompileError> {
+        self.skip_newlines();
+
+        let mut args = Vec::new();
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            loop {
+                self.skip_newlines();
+                if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                    break;
+                }
+
+                if !matches!(self.peek().kind, TokenKind::Ident(_) | TokenKind::Keyword(_))
+                    || !self.peek_next().kind.is_operator(OperatorId::Eq)
+                {
+                    return Err(CompileError::syntax(
+                        "Partial presets only support keyword arguments".to_string(),
+                        self.current_span(),
+                    ));
+                }
+
+                let name = self.identifier_or_any_keyword()?;
+                self.expect_op(OperatorId::Eq, "Expected '=' after partial preset name")?;
+                self.skip_newlines();
+                let value = self.expression()?;
+                self.skip_newlines();
+                args.push(PartialArg { name, value });
+
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+            }
+        }
+        Ok(args)
+    }
+
+    /// Convert an ordinary parsed call argument list into RFC 084 keyword-only partial presets.
+    fn partial_args_from_call_args(
+        &self,
+        args: Vec<CallArg>,
+        _template_span: Span,
+    ) -> Result<Vec<PartialArg>, CompileError> {
+        let mut partial_args = Vec::new();
+        for arg in args {
+            match arg {
+                CallArg::Named(name, value) => partial_args.push(PartialArg { name, value }),
+                CallArg::Positional(value) | CallArg::PositionalUnpack(value) | CallArg::KeywordUnpack(value) => {
+                    return Err(CompileError::syntax(
+                        "Partial presets only support keyword arguments".to_string(),
+                        value.span,
+                    ));
+                }
+            }
+        }
+        Ok(partial_args)
     }
 
 }

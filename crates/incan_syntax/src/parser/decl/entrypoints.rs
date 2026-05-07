@@ -72,6 +72,14 @@ impl<'a> Parser<'a> {
                 ));
             }
             Declaration::Const(self.implicit_derives_decl()?)
+        } else if self.starts_partial_decl() {
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "Partial declarations cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Partial(self.partial_decl(visibility)?)
         } else if self.starts_alias_decl() {
             if !decorators.is_empty() {
                 return Err(CompileError::syntax(
@@ -150,6 +158,16 @@ impl<'a> Parser<'a> {
         matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
     }
 
+    /// Return whether the current tokens start a module-level partial callable preset declaration.
+    fn starts_partial_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_))
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "partial"
+            )
+    }
+
     /// Parse a module-level alias declaration.
     fn alias_decl(&mut self, visibility: Visibility) -> Result<AliasDecl, CompileError> {
         let name = self.identifier()?;
@@ -168,6 +186,36 @@ impl<'a> Parser<'a> {
             name,
             target,
             explicit_marker,
+        })
+    }
+
+    /// Parse a module-level partial callable preset declaration.
+    fn partial_decl(&mut self, visibility: Visibility) -> Result<PartialDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in partial declaration")?;
+        if !self.match_ident_text("partial") {
+            return Err(errors::expected_token_message(
+                "Expected 'partial' in partial declaration",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let target = self.import_path()?;
+        if target.segments.is_empty() || target.parent_levels > 0 || target.is_absolute {
+            return Err(errors::expected_token_message(
+                "Expected partial target to be a qualified name",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after partial target")?;
+        let args = self.partial_args()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after partial preset arguments")?;
+        Ok(PartialDecl {
+            visibility,
+            name,
+            target,
+            args,
         })
     }
 

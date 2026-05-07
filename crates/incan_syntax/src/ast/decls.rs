@@ -4,7 +4,7 @@
 use incan_core::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Expr, Ident, ImportPath, IntLiteral, Spanned, Statement, Type, Visibility};
+use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Spanned, Statement, Type, Visibility};
 
 // ============================================================================
 // Models (data containers with validation)
@@ -23,6 +23,7 @@ pub struct ModelDecl {
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
     pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
@@ -61,6 +62,7 @@ pub struct ClassDecl {
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
     pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
@@ -81,6 +83,7 @@ pub struct TraitDecl {
     /// Docstring at the start of the trait body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
     pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
@@ -98,12 +101,29 @@ pub struct AliasDecl {
     pub explicit_marker: bool,
 }
 
+/// A module-level partial callable preset declaration: `pub BronzeReader = partial TableReader(layer="bronze")`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub target: ImportPath,
+    pub args: Vec<PartialArg>,
+}
+
 /// A same-type method alias declaration inside a method-bearing type body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodAliasDecl {
     pub name: Ident,
     pub target: Ident,
     pub explicit_marker: bool,
+}
+
+/// A same-type method partial declaration inside a method-bearing type body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodPartialDecl {
+    pub name: Ident,
+    pub target: Ident,
+    pub args: Vec<PartialArg>,
 }
 
 // ============================================================================
@@ -153,6 +173,7 @@ pub struct NewtypeDecl {
     /// Alias-style member rebinding entries inside a newtype/rusttype body.
     pub rebindings: Vec<Spanned<RebindingDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
     /// Optional `interop:` conversion edges (RFC 041).
     pub interop_edges: Vec<Spanned<InteropEdgeDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,

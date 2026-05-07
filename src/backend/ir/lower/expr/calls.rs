@@ -1561,6 +1561,11 @@ impl AstLowering {
         let callable_signature = imported_callee_path
             .as_deref()
             .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .or_else(|| match &f.node {
+                ast::Expr::Ident(name) => self.lookup_local_callable_signature(name),
+                ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
+                _ => None,
+            })
             .or_else(|| self.callable_signature_for_call_span(call_span))
             .or_else(|| self.callable_signature_for_callee_span(f.span));
         let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);

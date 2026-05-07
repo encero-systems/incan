@@ -30,12 +30,13 @@ use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
 use crate::frontend::api_metadata::{
-    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiStatic, ApiTrait,
-    ApiTypeAlias, CheckedApiMetadata, SourceAnchor, collect_checked_api_metadata, validate_checked_api_docstrings,
+    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
+    ApiTrait, ApiTypeAlias, CheckedApiMetadata, SourceAnchor, collect_checked_api_metadata,
+    validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{
-    CallArg, Condition, Declaration, Expr, ListEntry, MatchBody, MethodDecl, Program, Span, Spanned, Statement,
-    SurfaceExprPayload, Type, TypeParam,
+    CallArg, Condition, Declaration, DictEntry, Expr, ListEntry, MatchBody, MethodDecl, Param, ParamKind, Program,
+    Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
@@ -101,6 +102,13 @@ struct ClassmethodContext {
 struct ApiMetadataPreview {
     span: Span,
     markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalCallSignature {
+    label: String,
+    parameters: Vec<String>,
+    active_parameter: Option<u32>,
 }
 
 /// Incan Language Server
@@ -450,7 +458,7 @@ impl IncanLanguageServer {
         let offset = position_to_offset(source, position)?;
 
         for decl in &ast.declarations {
-            if let Some(info) = self.find_in_declaration(&decl.node, decl.span, offset) {
+            if let Some(info) = self.find_in_declaration(&decl.node, decl.span, offset, source) {
                 return Some(info);
             }
         }
@@ -459,7 +467,7 @@ impl IncanLanguageServer {
     }
 
     /// Return hover-oriented symbol information when the cursor falls inside one top-level declaration span.
-    fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize) -> Option<SymbolInfo> {
+    fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize, source: &str) -> Option<SymbolInfo> {
         match decl {
             Declaration::Const(konst) if span.start <= offset && offset < span.end => {
                 return Some(SymbolInfo {
@@ -485,7 +493,7 @@ impl IncanLanguageServer {
                 return Some(SymbolInfo {
                     name: func.name.clone(),
                     kind: "function".to_string(),
-                    detail: format_function_signature(func),
+                    detail: format_function_signature(func, source),
                     span,
                 });
             }
@@ -1270,6 +1278,84 @@ model Account:
 }
 
 #[cfg(test)]
+mod lsp_default_signature_tests {
+    use super::{format_function_signature, local_signature_help_at_offset};
+    use crate::frontend::ast::Declaration;
+    use crate::frontend::{lexer, parser};
+    use tower_lsp::lsp_types::ParameterLabel;
+
+    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))
+    }
+
+    #[test]
+    fn local_function_signature_displays_source_defaults() -> Result<(), String> {
+        let source = r#"
+def greet(name: str = "Ada", count: int = 2 + 3) -> str:
+    return name
+"#;
+        let ast = parse_source(source)?;
+        let function = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected function declaration".to_string())?;
+
+        assert_eq!(
+            format_function_signature(function, source),
+            r#"def greet(name: str = "Ada", count: int = 2 + 3) -> str"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_signature_help_reuses_default_parameter_display() -> Result<(), String> {
+        let source = r#"
+def greet(name: str = "Ada", count: int = 2 + 3) -> str:
+    return name
+
+def main() -> str:
+    return greet("Grace", 4)
+"#;
+        let ast = parse_source(source)?;
+        let call_prefix = r#"greet("Grace", "#;
+        let call_offset = source
+            .rfind(call_prefix)
+            .map(|start| start + call_prefix.len())
+            .ok_or_else(|| "expected call expression in fixture".to_string())?;
+        let help = local_signature_help_at_offset(&ast, source, call_offset)
+            .ok_or_else(|| "expected local function signature help".to_string())?;
+        let signature = help
+            .signatures
+            .first()
+            .ok_or_else(|| "expected one signature".to_string())?;
+        let parameters = signature
+            .parameters
+            .as_ref()
+            .ok_or_else(|| "expected parameter labels".to_string())?;
+
+        assert_eq!(
+            signature.label,
+            r#"def greet(name: str = "Ada", count: int = 2 + 3) -> str"#
+        );
+        assert_eq!(help.active_parameter, Some(1));
+        assert_eq!(
+            parameters.first().map(|param| &param.label),
+            Some(&ParameterLabel::Simple(r#"name: str = "Ada""#.to_string()))
+        );
+        assert_eq!(
+            parameters.get(1).map(|param| &param.label),
+            Some(&ParameterLabel::Simple("count: int = 2 + 3".to_string()))
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod lsp_contract_model_command_tests {
     use super::{
         ContractModelCommandFormat, emit_contract_model_command_payload, parse_emit_contract_model_command_args,
@@ -1362,8 +1448,8 @@ pub struct SymbolInfo {
     pub span: Span,
 }
 
-/// Format a function signature for display
-fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> String {
+/// Format a function signature for display using source-backed default expressions.
+fn format_function_signature(func: &crate::frontend::ast::FunctionDecl, source: &str) -> String {
     let mut sig = String::new();
 
     if func.is_async() {
@@ -1377,7 +1463,7 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     let params: Vec<String> = func
         .params
         .iter()
-        .map(|p| format!("{}: {}", p.node.name, format_type(&p.node.ty.node)))
+        .map(|param| format_local_param(param, source))
         .collect();
 
     sig.push_str(&params.join(", "));
@@ -1387,6 +1473,437 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     sig.push_str(&format_type(&func.return_type.node));
 
     sig
+}
+
+/// Format one AST parameter with the same local default-expression display used by hover, completion, and signature
+/// help.
+fn format_local_param(param: &Spanned<Param>, source: &str) -> String {
+    let prefix = match param.node.kind {
+        ParamKind::Normal => "",
+        ParamKind::RestPositional => "*",
+        ParamKind::RestKeyword => "**",
+    };
+    let mutability = if param.node.is_mut { "mut " } else { "" };
+    let default = param
+        .node
+        .default
+        .as_ref()
+        .map(|default| format!(" = {}", source_snippet(source, default.span).unwrap_or("...")))
+        .unwrap_or_default();
+    format!(
+        "{prefix}{mutability}{}: {}{default}",
+        param.node.name,
+        format_type(&param.node.ty.node)
+    )
+}
+
+/// Return a trimmed source slice for a known parser span.
+fn source_snippet(source: &str, span: Span) -> Option<&str> {
+    source
+        .get(span.start..span.end)
+        .map(str::trim)
+        .filter(|snippet| !snippet.is_empty())
+}
+
+/// Build LSP signature help for a parsed local function call at the cursor offset.
+fn local_signature_help_at_offset(ast: &Program, source: &str, offset: usize) -> Option<SignatureHelp> {
+    let signature = local_call_signature_at_offset(ast, source, offset)?;
+    let parameters = signature
+        .parameters
+        .into_iter()
+        .map(|label| ParameterInformation {
+            label: ParameterLabel::Simple(label),
+            documentation: None,
+        })
+        .collect();
+    Some(SignatureHelp {
+        signatures: vec![SignatureInformation {
+            label: signature.label,
+            documentation: None,
+            parameters: Some(parameters),
+            active_parameter: signature.active_parameter,
+        }],
+        active_signature: Some(0),
+        active_parameter: signature.active_parameter,
+    })
+}
+
+/// Return the local function signature associated with the innermost call containing an offset.
+fn local_call_signature_at_offset(ast: &Program, source: &str, offset: usize) -> Option<LocalCallSignature> {
+    for declaration in &ast.declarations {
+        let hit = match &declaration.node {
+            Declaration::Function(function) => local_signature_in_statements(&function.body, ast, source, offset),
+            Declaration::Model(model) => local_signature_in_methods(&model.methods, ast, source, offset),
+            Declaration::Class(class) => local_signature_in_methods(&class.methods, ast, source, offset),
+            Declaration::Trait(trait_decl) => local_signature_in_methods(&trait_decl.methods, ast, source, offset),
+            _ => None,
+        };
+        if hit.is_some() {
+            return hit;
+        }
+    }
+    None
+}
+
+/// Search method bodies for local function calls that can provide signature help.
+fn local_signature_in_methods(
+    methods: &[Spanned<MethodDecl>],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    methods
+        .iter()
+        .filter(|method| method.span.start <= offset && offset <= method.span.end)
+        .filter_map(|method| method.node.body.as_ref())
+        .find_map(|body| local_signature_in_statements(body, ast, source, offset))
+}
+
+/// Search a statement list for the innermost local function call containing an offset.
+fn local_signature_in_statements(
+    statements: &[Spanned<Statement>],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    statements
+        .iter()
+        .filter(|statement| statement.span.start <= offset && offset <= statement.span.end)
+        .find_map(|statement| local_signature_in_statement(&statement.node, ast, source, offset))
+}
+
+/// Search one statement for local function calls that can provide signature help.
+fn local_signature_in_statement(
+    statement: &Statement,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    match statement {
+        Statement::Assignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::FieldAssignment(assignment) => local_signature_in_expr(&assignment.object, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&assignment.value, ast, source, offset)),
+        Statement::IndexAssignment(assignment) => local_signature_in_expr(&assignment.object, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&assignment.index, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&assignment.value, ast, source, offset)),
+        Statement::Return(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => None,
+        Statement::If(if_stmt) => local_signature_in_condition(&if_stmt.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&if_stmt.then_body, ast, source, offset))
+            .or_else(|| {
+                if_stmt.elif_branches.iter().find_map(|(condition, body)| {
+                    local_signature_in_expr(condition, ast, source, offset)
+                        .or_else(|| local_signature_in_statements(body, ast, source, offset))
+                })
+            })
+            .or_else(|| {
+                if_stmt
+                    .else_body
+                    .as_ref()
+                    .and_then(|body| local_signature_in_statements(body, ast, source, offset))
+            }),
+        Statement::Loop(loop_stmt) => local_signature_in_statements(&loop_stmt.body, ast, source, offset),
+        Statement::While(while_stmt) => local_signature_in_condition(&while_stmt.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&while_stmt.body, ast, source, offset)),
+        Statement::For(for_stmt) => local_signature_in_expr(&for_stmt.iter, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&for_stmt.body, ast, source, offset)),
+        Statement::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+        Statement::Assert(assert_stmt) => local_signature_in_assert(assert_stmt, ast, source, offset),
+        Statement::Break(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Statement::CompoundAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::TupleUnpack(unpack) => local_signature_in_expr(&unpack.value, ast, source, offset),
+        Statement::TupleAssign(assign) => assign
+            .targets
+            .iter()
+            .find_map(|target| local_signature_in_expr(target, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&assign.value, ast, source, offset)),
+        Statement::ChainedAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::Surface(surface) => match &surface.payload {
+            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
+                .iter()
+                .find_map(|arg| local_signature_in_expr(arg, ast, source, offset)),
+        },
+        Statement::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| local_signature_in_expr(arg, ast, source, offset))
+            .or_else(|| local_signature_in_statements(&block.body, ast, source, offset)),
+    }
+}
+
+/// Search a condition expression for local function calls that can provide signature help.
+fn local_signature_in_condition(
+    condition: &Condition,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    match condition {
+        Condition::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+        Condition::Let { value, .. } => local_signature_in_expr(value, ast, source, offset),
+    }
+}
+
+/// Search an assertion payload for local function calls that can provide signature help.
+fn local_signature_in_assert(
+    assert_stmt: &crate::frontend::ast::AssertStmt,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    let payload = match &assert_stmt.kind {
+        crate::frontend::ast::AssertKind::Condition(condition) => {
+            local_signature_in_expr(condition, ast, source, offset)
+        }
+        crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+            local_signature_in_expr(value, ast, source, offset)
+        }
+        crate::frontend::ast::AssertKind::Raises { call, .. } => local_signature_in_expr(call, ast, source, offset),
+    };
+    payload.or_else(|| {
+        assert_stmt
+            .message
+            .as_ref()
+            .and_then(|message| local_signature_in_expr(message, ast, source, offset))
+    })
+}
+
+/// Search one expression for the innermost local function call containing an offset.
+fn local_signature_in_expr(
+    expr: &Spanned<Expr>,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    if offset < expr.span.start || expr.span.end < offset {
+        return None;
+    }
+    match &expr.node {
+        Expr::Call(callee, _type_args, args) => local_signature_in_expr(callee, ast, source, offset)
+            .or_else(|| local_signature_in_call_args(args, ast, source, offset))
+            .or_else(|| local_function_call_signature(expr, callee, ast, source, offset)),
+        Expr::MethodCall(receiver, _method, _type_args, args) => local_signature_in_expr(receiver, ast, source, offset)
+            .or_else(|| local_signature_in_call_args(args, ast, source, offset)),
+        Expr::Binary(left, _, right) => local_signature_in_expr(left, ast, source, offset)
+            .or_else(|| local_signature_in_expr(right, ast, source, offset)),
+        Expr::Unary(_, inner) | Expr::Try(inner) | Expr::Paren(inner) => {
+            local_signature_in_expr(inner, ast, source, offset)
+        }
+        Expr::Index(base, index) => local_signature_in_expr(base, ast, source, offset)
+            .or_else(|| local_signature_in_expr(index, ast, source, offset)),
+        Expr::Slice(base, slice) => local_signature_in_expr(base, ast, source, offset)
+            .or_else(|| {
+                slice
+                    .start
+                    .as_ref()
+                    .and_then(|start| local_signature_in_expr(start, ast, source, offset))
+            })
+            .or_else(|| {
+                slice
+                    .end
+                    .as_ref()
+                    .and_then(|end| local_signature_in_expr(end, ast, source, offset))
+            })
+            .or_else(|| {
+                slice
+                    .step
+                    .as_ref()
+                    .and_then(|step| local_signature_in_expr(step, ast, source, offset))
+            }),
+        Expr::Field(base, _) => local_signature_in_expr(base, ast, source, offset),
+        Expr::Match(scrutinee, arms) => local_signature_in_expr(scrutinee, ast, source, offset).or_else(|| {
+            arms.iter().find_map(|arm| {
+                arm.node
+                    .guard
+                    .as_ref()
+                    .and_then(|guard| local_signature_in_expr(guard, ast, source, offset))
+                    .or_else(|| match &arm.node.body {
+                        crate::frontend::ast::MatchBody::Expr(expr) => {
+                            local_signature_in_expr(expr, ast, source, offset)
+                        }
+                        crate::frontend::ast::MatchBody::Block(statements) => {
+                            local_signature_in_statements(statements, ast, source, offset)
+                        }
+                    })
+            })
+        }),
+        Expr::If(if_expr) => local_signature_in_expr(&if_expr.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&if_expr.then_body, ast, source, offset))
+            .or_else(|| {
+                if_expr
+                    .else_body
+                    .as_ref()
+                    .and_then(|body| local_signature_in_statements(body, ast, source, offset))
+            }),
+        Expr::Loop(loop_expr) => local_signature_in_statements(&loop_expr.body, ast, source, offset),
+        Expr::ListComp(list_comp) => local_signature_in_expr(&list_comp.expr, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&list_comp.iter, ast, source, offset))
+            .or_else(|| {
+                list_comp
+                    .filter
+                    .as_ref()
+                    .and_then(|filter| local_signature_in_expr(filter, ast, source, offset))
+            }),
+        Expr::DictComp(dict_comp) => local_signature_in_expr(&dict_comp.key, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&dict_comp.value, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&dict_comp.iter, ast, source, offset))
+            .or_else(|| {
+                dict_comp
+                    .filter
+                    .as_ref()
+                    .and_then(|filter| local_signature_in_expr(filter, ast, source, offset))
+            }),
+        Expr::Generator(generator) => local_signature_in_expr(&generator.expr, ast, source, offset).or_else(|| {
+            generator.clauses.iter().find_map(|clause| match clause {
+                crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                    local_signature_in_expr(iter, ast, source, offset)
+                }
+                crate::frontend::ast::ComprehensionClause::If(condition) => {
+                    local_signature_in_expr(condition, ast, source, offset)
+                }
+            })
+        }),
+        Expr::Closure(params, body) => params
+            .iter()
+            .filter_map(|param| param.node.default.as_ref())
+            .find_map(|default| local_signature_in_expr(default, ast, source, offset))
+            .or_else(|| local_signature_in_expr(body, ast, source, offset)),
+        Expr::Tuple(items) | Expr::Set(items) => items
+            .iter()
+            .find_map(|item| local_signature_in_expr(item, ast, source, offset)),
+        Expr::List(items) => items.iter().find_map(|item| match item {
+            crate::frontend::ast::ListEntry::Element(value) | crate::frontend::ast::ListEntry::Spread(value) => {
+                local_signature_in_expr(value, ast, source, offset)
+            }
+        }),
+        Expr::Dict(items) => items.iter().find_map(|item| match item {
+            DictEntry::Pair(key, value) => local_signature_in_expr(key, ast, source, offset)
+                .or_else(|| local_signature_in_expr(value, ast, source, offset)),
+            DictEntry::Spread(value) => local_signature_in_expr(value, ast, source, offset),
+        }),
+        Expr::Partial(partial) => local_signature_in_expr(&partial.target, ast, source, offset).or_else(|| {
+            partial
+                .args
+                .iter()
+                .find_map(|arg| local_signature_in_expr(&arg.value, ast, source, offset))
+        }),
+        Expr::Constructor(_, args) => local_signature_in_call_args(args, ast, source, offset),
+        Expr::FString(parts) => parts.iter().find_map(|part| match part {
+            crate::frontend::ast::FStringPart::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+            crate::frontend::ast::FStringPart::Literal(_) => None,
+        }),
+        Expr::Yield(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Expr::Yield(None) => None,
+        Expr::Range { start, end, .. } => local_signature_in_expr(start, ast, source, offset)
+            .or_else(|| local_signature_in_expr(end, ast, source, offset)),
+        Expr::Surface(surface) => match &surface.payload {
+            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
+                local_signature_in_expr(inner, ast, source, offset)
+            }
+            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                local_signature_in_expr(left, ast, source, offset)
+                    .or_else(|| local_signature_in_expr(right, ast, source, offset))
+            }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                local_signature_in_call_args(args, ast, source, offset)
+            }
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
+    }
+}
+
+/// Search call arguments for nested local function calls.
+fn local_signature_in_call_args(
+    args: &[CallArg],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    args.iter().find_map(|arg| match arg {
+        CallArg::Positional(expr)
+        | CallArg::Named(_, expr)
+        | CallArg::PositionalUnpack(expr)
+        | CallArg::KeywordUnpack(expr) => local_signature_in_expr(expr, ast, source, offset),
+    })
+}
+
+/// Build a local function signature for a direct `name(...)` call when the cursor is inside its argument list.
+fn local_function_call_signature(
+    call_expr: &Spanned<Expr>,
+    callee: &Spanned<Expr>,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    let Expr::Ident(name) = &callee.node else {
+        return None;
+    };
+    let (open_paren, close_paren) = call_argument_list_bounds(source, call_expr.span)?;
+    if offset <= open_paren || close_paren < offset {
+        return None;
+    }
+    let function = local_function_decl(ast, name)?;
+    let parameters = function
+        .params
+        .iter()
+        .map(|param| format_local_param(param, source))
+        .collect::<Vec<_>>();
+    let active_parameter = active_parameter_index(source, open_paren, offset, parameters.len());
+    Some(LocalCallSignature {
+        label: format_function_signature(function, source),
+        parameters,
+        active_parameter,
+    })
+}
+
+/// Return one top-level function declaration by source name.
+fn local_function_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a crate::frontend::ast::FunctionDecl> {
+    ast.declarations.iter().find_map(|declaration| match &declaration.node {
+        Declaration::Function(function) if function.name == name => Some(function),
+        _ => None,
+    })
+}
+
+/// Return the byte offsets of a parsed call expression's argument-list parentheses.
+fn call_argument_list_bounds(source: &str, span: Span) -> Option<(usize, usize)> {
+    let text = source.get(span.start..span.end)?;
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    (open < close).then_some((span.start + open, span.start + close))
+}
+
+/// Compute the active parameter index from top-level commas before the cursor.
+fn active_parameter_index(source: &str, open_paren: usize, offset: usize, parameter_count: usize) -> Option<u32> {
+    if parameter_count == 0 {
+        return None;
+    }
+    let start = open_paren.checked_add(1)?;
+    let text = source.get(start..offset.min(source.len()))?;
+    let mut nested = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut commas = 0usize;
+    for ch in text.chars() {
+        if let Some(quote_ch) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => nested = nested.saturating_add(1),
+            ')' | ']' | '}' => nested = nested.saturating_sub(1),
+            ',' if nested == 0 => commas = commas.saturating_add(1),
+            _ => {}
+        }
+    }
+    Some(commas.min(parameter_count.saturating_sub(1)) as u32)
 }
 
 /// Format a computed property declaration for hover and completion details.
@@ -1529,6 +2046,9 @@ fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<Ap
                     Vec::new(),
                 ),
             }),
+            ApiDeclaration::Partial(partial) => {
+                previews.push(preview_for_anchor(&partial.anchor, api_partial_markdown(partial)))
+            }
         }
     }
     previews
@@ -1567,6 +2087,7 @@ fn find_top_level_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a Declarati
         Declaration::Newtype(newtype) if newtype.name == name => Some(&decl.node),
         Declaration::Const(konst) if konst.name == name => Some(&decl.node),
         Declaration::Static(static_decl) if static_decl.name == name => Some(&decl.node),
+        Declaration::Partial(partial) if partial.name == name => Some(&decl.node),
         _ => None,
     })
 }
@@ -1628,6 +2149,35 @@ fn api_function_markdown(function: &ApiFunction) -> String {
     checked_api_markdown(
         format!("pub {}", format_api_function_signature(function)),
         "public function",
+        facts,
+    )
+}
+
+/// Format a checked public partial callable preset preview as hover markdown.
+fn api_partial_markdown(partial: &ApiPartial) -> String {
+    let mut facts = Vec::new();
+    facts.push(format!("target: `{}`", partial.target_path.join("::")));
+    facts.push(format!("target kind: `{:?}`", partial.target_kind));
+    if !partial.presets.is_empty() {
+        facts.push(format!(
+            "presets: {}",
+            partial
+                .presets
+                .iter()
+                .map(|preset| inline_code(&preset.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    checked_api_markdown(
+        format!(
+            "pub {} = partial {}{}({})",
+            partial.name,
+            partial.target_path.join("::"),
+            format_type_params(&partial.type_params),
+            format_params(&partial.params)
+        ),
+        "public partial",
         facts,
     )
 }
@@ -2637,6 +3187,12 @@ fn scoped_symbol_in_expr<'a>(
                 }
             }
         }
+        Expr::Partial(partial) => {
+            scoped_symbol_in_expr(&partial.target, ident, symbol_span, surfaces, found);
+            for arg in &partial.args {
+                scoped_symbol_in_expr(&arg.value, ident, symbol_span, surfaces, found);
+            }
+        }
         Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
         Expr::FString(parts) => {
             for part in parts {
@@ -3137,6 +3693,12 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
                 }
             }
         }
+        Expr::Partial(partial) => {
+            scoped_symbol_context_in_expr(&partial.target, offset, context);
+            for arg in &partial.args {
+                scoped_symbol_context_in_expr(&arg.value, offset, context);
+            }
+        }
         Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
         Expr::FString(parts) => {
             for part in parts {
@@ -3538,7 +4100,7 @@ fn lsp_symbol_kind_for_decl(decl: &Declaration) -> Option<SymbolKind> {
 }
 
 /// Build the display name and detail string used for one LSP document symbol entry.
-fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, String)> {
+fn lsp_document_symbol_name_and_detail(decl: &Declaration, source: &str) -> Option<(String, String)> {
     match decl {
         Declaration::Const(konst) => Some((
             konst.name.clone(),
@@ -3552,7 +4114,7 @@ fn lsp_document_symbol_name_and_detail(decl: &Declaration) -> Option<(String, St
             static_decl.name.clone(),
             format!("static {}: {}", static_decl.name, format_type(&static_decl.ty.node)),
         )),
-        Declaration::Function(func) => Some((func.name.clone(), format_function_signature(func))),
+        Declaration::Function(func) => Some((func.name.clone(), format_function_signature(func, source))),
         Declaration::Model(model) => Some((model.name.clone(), format!("model {}", model.name))),
         Declaration::Class(class) => Some((class.name.clone(), format!("class {}", class.name))),
         Declaration::Trait(tr) => Some((tr.name.clone(), format!("trait {}", tr.name))),
@@ -3753,6 +4315,12 @@ impl LanguageServer for IncanLanguageServer {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
                 // Hover support
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Signature help for parsed local function calls
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    ..Default::default()
+                }),
                 // Go-to-definition
                 definition_provider: Some(OneOf::Left(true)),
                 // Document symbols (outline)
@@ -4046,6 +4614,27 @@ impl LanguageServer for IncanLanguageServer {
         Ok(None)
     }
 
+    /// Provide signature help for parsed local function calls.
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+        let ast = match &doc.ast {
+            Some(ast) => ast,
+            None => return Ok(None),
+        };
+        let Some(offset) = position_to_offset(&doc.source, position) else {
+            return Ok(None);
+        };
+        Ok(local_signature_help_at_offset(ast, &doc.source, offset))
+    }
+
+    /// Return document symbols for the current parsed document, if available.
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
         let uri = &params.text_document.uri;
         let docs = self.documents.read().await;
@@ -4063,7 +4652,7 @@ impl LanguageServer for IncanLanguageServer {
             let Some(kind) = lsp_symbol_kind_for_decl(&decl.node) else {
                 continue;
             };
-            let Some((name, detail)) = lsp_document_symbol_name_and_detail(&decl.node) else {
+            let Some((name, detail)) = lsp_document_symbol_name_and_detail(&decl.node, &doc.source) else {
                 continue;
             };
             let range = span_to_range(&doc.source, decl.span.start, decl.span.end);
@@ -4314,7 +4903,7 @@ impl LanguageServer for IncanLanguageServer {
                             &mut seen,
                             &func.name,
                             CompletionItemKind::FUNCTION,
-                            Some(format_function_signature(func)),
+                            Some(format_function_signature(func, &doc.source)),
                             None,
                         );
                     }

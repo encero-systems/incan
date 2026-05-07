@@ -1048,6 +1048,60 @@ impl AstLowering {
 
             // ---- Yield (placeholder) ----
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
+            ast::Expr::Partial(partial) => {
+                let Some(crate::frontend::symbols::ResolvedType::Function(params, ret)) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span).cloned())
+                else {
+                    return Err(LoweringError {
+                        message: "Partial callable preset expression is missing typechecker projection metadata"
+                            .to_string(),
+                        span: expr_span.into(),
+                    });
+                };
+                let closure_params: Vec<(String, IrType)> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, param)| {
+                        (
+                            param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                            Self::lower_param_container_type(param.kind, self.lower_resolved_type(&param.ty)),
+                        )
+                    })
+                    .collect();
+                let _signature = self.partial_expr_callable_signature(partial, expr_span)?;
+                self.push_scope();
+                for (name, ty) in &closure_params {
+                    self.define_local_binding(name.clone(), ty.clone(), false);
+                }
+                let mut forward_args = Vec::new();
+                for (name, _) in &closure_params {
+                    forward_args.push(ast::CallArg::Named(
+                        name.clone(),
+                        ast::Spanned::new(ast::Expr::Ident(name.clone()), expr_span),
+                    ));
+                }
+                let call = ast::Spanned::new(
+                    ast::Expr::Call(partial.target.clone(), partial.type_args.clone(), forward_args),
+                    expr_span,
+                );
+                let body_result = self.lower_expr_spanned(&call);
+                self.pop_scope();
+                let body = body_result?;
+                let ret_ty = self.lower_resolved_type(ret.as_ref());
+                (
+                    IrExprKind::Closure {
+                        params: closure_params.clone(),
+                        body: Box::new(body),
+                        captures: vec![],
+                    },
+                    IrType::Function {
+                        params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
+                        ret: Box::new(ret_ty),
+                    },
+                )
+            }
         };
         Ok(TypedExpr::new(kind, ty))
     }

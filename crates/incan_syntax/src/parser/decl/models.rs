@@ -20,7 +20,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (mut fields, method_aliases, properties, methods) = self.fields_and_methods()?;
+        let (mut fields, method_aliases, method_partials, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after model body")?;
 
@@ -40,6 +40,7 @@ impl<'a> Parser<'a> {
             docstring,
             fields,
             method_aliases,
+            method_partials,
             properties,
             methods,
         })
@@ -73,7 +74,7 @@ impl<'a> Parser<'a> {
 
         let docstring = self.optional_leading_block_docstring();
 
-        let (fields, method_aliases, properties, methods) = self.fields_and_methods()?;
+        let (fields, method_aliases, method_partials, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after class body")?;
 
@@ -87,6 +88,7 @@ impl<'a> Parser<'a> {
             docstring,
             fields,
             method_aliases,
+            method_partials,
             properties,
             methods,
         })
@@ -113,6 +115,7 @@ impl<'a> Parser<'a> {
         let docstring = self.optional_leading_block_docstring();
 
         let mut method_aliases = Vec::new();
+        let mut method_partials = Vec::new();
         let mut properties = Vec::new();
         let mut methods = Vec::new();
         // Allow empty trait body with just 'pass'
@@ -124,7 +127,15 @@ impl<'a> Parser<'a> {
                 if let Some(err) = self.inactive_soft_keyword_error() {
                     return Err(err);
                 }
-                if self.starts_method_alias_decl() {
+                if self.starts_method_partial_decl() {
+                    if !method_decorators.is_empty() {
+                        return Err(CompileError::syntax(
+                            "Method partial declarations cannot have decorators".to_string(),
+                            method_decorators[0].span,
+                        ));
+                    }
+                    method_partials.push(self.method_partial_decl()?);
+                } else if self.starts_method_alias_decl() {
                     if !method_decorators.is_empty() {
                         return Err(CompileError::syntax(
                             "Method alias declarations cannot have decorators".to_string(),
@@ -151,6 +162,7 @@ impl<'a> Parser<'a> {
             traits,
             docstring,
             method_aliases,
+            method_partials,
             properties,
             methods,
         })
@@ -160,6 +172,7 @@ impl<'a> Parser<'a> {
     fn fields_and_methods(&mut self) -> Result<FieldsAndMethods, CompileError> {
         let mut fields = Vec::new();
         let mut method_aliases = Vec::new();
+        let mut method_partials = Vec::new();
         let mut properties = Vec::new();
         let mut methods = Vec::new();
 
@@ -182,6 +195,14 @@ impl<'a> Parser<'a> {
                 methods.push(self.method_decl(decorators, false)?);
             } else if self.starts_surface_property_decl() {
                 properties.push(self.property_decl(decorators, false)?);
+            } else if self.starts_method_partial_decl() {
+                if !decorators.is_empty() {
+                    return Err(CompileError::syntax(
+                        "Method partial declarations cannot have decorators".to_string(),
+                        decorators[0].span,
+                    ));
+                }
+                method_partials.push(self.method_partial_decl()?);
             } else if self.starts_method_alias_decl() {
                 if !decorators.is_empty() {
                     return Err(CompileError::syntax(
@@ -200,7 +221,7 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
 
-        Ok((fields, method_aliases, properties, methods))
+        Ok((fields, method_aliases, method_partials, properties, methods))
     }
 
     /// Return whether the current tokens start a contextual RFC 046 property declaration.
@@ -249,6 +270,16 @@ impl<'a> Parser<'a> {
         matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
     }
 
+    /// Return whether the current tokens start a same-type method partial declaration.
+    fn starts_method_partial_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_))
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "partial"
+            )
+    }
+
     /// Parse a same-type method alias declaration inside a type body.
     fn method_alias_decl(&mut self) -> Result<Spanned<MethodAliasDecl>, CompileError> {
         let start = self.current_span().start;
@@ -263,6 +294,29 @@ impl<'a> Parser<'a> {
                 target,
                 explicit_marker,
             },
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a same-type method partial declaration inside a method-bearing type body.
+    fn method_partial_decl(&mut self) -> Result<Spanned<MethodPartialDecl>, CompileError> {
+        let start = self.current_span().start;
+        let name = self.identifier_or_from_keyword()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in method partial declaration")?;
+        if !self.match_ident_text("partial") {
+            return Err(errors::expected_token_message(
+                "Expected 'partial' in method partial declaration",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let target = self.identifier_or_from_keyword()?;
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after method partial target")?;
+        let args = self.partial_args()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after method partial arguments")?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            MethodPartialDecl { name, target, args },
             Span::new(start, end),
         ))
     }

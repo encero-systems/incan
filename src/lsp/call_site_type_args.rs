@@ -236,6 +236,18 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             }
             crate::frontend::ast::DictEntry::Spread(value) => call_site_type_in_expr(value, offset),
         }),
+        Expr::Partial(partial) => {
+            if let Some(hit) = call_site_type_in_expr(&partial.target, offset) {
+                return Some(hit);
+            }
+            if let Some(hit) = scan_types_in_call(&partial.type_args, offset) {
+                return Some(hit);
+            }
+            partial
+                .args
+                .iter()
+                .find_map(|arg| call_site_type_in_expr(&arg.value, offset))
+        }
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {

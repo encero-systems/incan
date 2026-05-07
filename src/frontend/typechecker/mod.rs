@@ -1451,6 +1451,12 @@ impl TypeChecker {
                 self.collect_static_dependencies_from_expr(&object.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
             }
+            Expr::Partial(partial) => {
+                self.collect_static_dependencies_from_expr(&partial.target.node, deps, visiting_functions);
+                for arg in &partial.args {
+                    self.collect_static_dependencies_from_expr(&arg.value.node, deps, visiting_functions);
+                }
+            }
             Expr::Match(scrutinee, arms) => {
                 self.collect_static_dependencies_from_expr(&scrutinee.node, deps, visiting_functions);
                 for arm in arms {
@@ -1629,6 +1635,20 @@ impl TypeChecker {
             Expr::MethodCall(object, _, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
                 self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions);
+            }
+            Expr::Partial(partial) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &partial.target,
+                    current_static,
+                    visiting_functions,
+                );
+                for arg in &partial.args {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        &arg.value,
+                        current_static,
+                        visiting_functions,
+                    );
+                }
             }
             Expr::Index(object, index) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
@@ -2697,14 +2717,20 @@ impl TypeChecker {
             self.resolve_pending_trait_supertraits();
         }
 
-        // First pass: collect concrete declarations, then aliases after their possible targets are available.
+        // First pass: collect concrete declarations, then aliases and partials after their possible targets are
+        // available.
         for decl in &program.declarations {
-            if !matches!(decl.node, Declaration::Alias(_)) {
+            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &program.declarations {
+            if matches!(decl.node, Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
@@ -3550,7 +3576,9 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
         Declaration::Newtype(n) => matches!(n.visibility, Visibility::Public),
         Declaration::Trait(t) => matches!(t.visibility, Visibility::Public),
         Declaration::Function(f) => matches!(f.visibility, Visibility::Public),
-        Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => false,
+        Declaration::Partial(_) | Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => {
+            false
+        }
     }
 }
 
@@ -3567,7 +3595,9 @@ fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
         Declaration::Newtype(n) => Some(n.name.as_str()),
         Declaration::Trait(t) => Some(t.name.as_str()),
         Declaration::Function(f) => Some(f.name.as_str()),
-        Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+        Declaration::Partial(_) | Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => {
+            None
+        }
     }
 }
 

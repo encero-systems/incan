@@ -1843,13 +1843,150 @@ impl TypeChecker {
             Declaration::Model(model) => self.check_model(model),
             Declaration::Class(class) => self.check_class(class),
             Declaration::Trait(tr) => self.check_trait(tr),
-            Declaration::Alias(_) => {}     // Alias targets are validated during collection.
+            Declaration::Alias(_) => {} // Alias targets are validated during collection.
+            Declaration::Partial(partial) => self.check_partial_decl(partial),
             Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
             Declaration::Function(func) => self.check_function(func),
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
+        }
+    }
+
+    /// Validate preset expressions for a collected top-level partial declaration.
+    fn check_partial_decl(&mut self, partial: &PartialDecl) {
+        let Some(sym) = self.lookup_symbol(&partial.name).cloned() else {
+            for arg in &partial.args {
+                self.validate_top_level_partial_preset(arg);
+                self.check_expr(&arg.value);
+            }
+            return;
+        };
+        let SymbolKind::Function(info) = sym.kind else {
+            for arg in &partial.args {
+                self.validate_top_level_partial_preset(arg);
+                self.check_expr(&arg.value);
+            }
+            return;
+        };
+        for arg in &partial.args {
+            self.validate_top_level_partial_preset(arg);
+            let actual = self.check_expr(&arg.value);
+            if let Some(param) = info.params.iter().find(|param| param.name() == Some(arg.name.as_str()))
+                && !self.types_compatible(&actual, &param.ty)
+            {
+                self.errors.push(errors::type_mismatch(
+                    &param.ty.to_string(),
+                    &actual.to_string(),
+                    arg.value.span,
+                ));
+            }
+        }
+    }
+
+    /// Emit the RFC 084 declaration-safety diagnostic for one module-level partial preset.
+    fn validate_top_level_partial_preset(&mut self, arg: &PartialArg) {
+        if !self.is_declaration_safe_partial_preset(&arg.value) {
+            self.errors
+                .push(errors::unsafe_top_level_partial_preset(&arg.name, arg.value.span));
+        }
+    }
+
+    /// Return whether a module-level partial preset can be represented without executing user code.
+    fn is_declaration_safe_partial_preset(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Literal(_) => true,
+            Expr::Ident(_) => true,
+            Expr::Field(base, _) => is_const_path_expr(base),
+            Expr::Paren(inner) => self.is_declaration_safe_partial_preset(inner),
+            Expr::List(entries) => entries.iter().all(|entry| match entry {
+                ListEntry::Element(value) => self.is_declaration_safe_partial_preset(value),
+                ListEntry::Spread(_) => false,
+            }),
+            Expr::Dict(entries) => entries.iter().all(|entry| match entry {
+                DictEntry::Pair(key, value) => {
+                    self.is_declaration_safe_partial_preset(key) && self.is_declaration_safe_partial_preset(value)
+                }
+                DictEntry::Spread(_) => false,
+            }),
+            Expr::Call(callee, type_args, args) => {
+                type_args.is_empty()
+                    && self.is_model_literal_callee(callee)
+                    && args.iter().all(|arg| match arg {
+                        CallArg::Named(_, value) => self.is_declaration_safe_partial_preset(value),
+                        CallArg::Positional(_) | CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+                    })
+            }
+            Expr::Constructor(name, args) => {
+                self.is_model_literal_name(name)
+                    && args.iter().all(|arg| match arg {
+                        CallArg::Named(_, value) => self.is_declaration_safe_partial_preset(value),
+                        CallArg::Positional(_) | CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether a call-like preset target names a model literal constructor.
+    fn is_model_literal_callee(&self, callee: &Spanned<Expr>) -> bool {
+        match &callee.node {
+            Expr::Ident(name) => self.is_model_literal_name(name),
+            _ => false,
+        }
+    }
+
+    /// Return whether a name resolves to a model type that can be serialized as preset metadata.
+    fn is_model_literal_name(&self, name: &str) -> bool {
+        self.lookup_symbol(name)
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Model(_))))
+    }
+
+    /// Validate preset expressions for same-type method partial declarations.
+    fn check_method_partials(&mut self, owner: &str, partials: &[Spanned<MethodPartialDecl>]) {
+        for partial in partials {
+            let Some(target) = self.method_info_for_owner(owner, &partial.node.target).cloned() else {
+                for arg in &partial.node.args {
+                    self.check_expr(&arg.value);
+                }
+                continue;
+            };
+
+            for arg in &partial.node.args {
+                let expected = target
+                    .params
+                    .iter()
+                    .find(|param| param.name() == Some(arg.name.as_str()))
+                    .map(|param| param.ty.clone());
+                let actual = match expected.as_ref() {
+                    Some(expected_ty) => self.check_expr_with_expected(&arg.value, Some(expected_ty)),
+                    None => self.check_expr(&arg.value),
+                };
+                if let Some(expected_ty) = expected
+                    && !self.types_compatible(&actual, &expected_ty)
+                {
+                    self.errors.push(errors::type_mismatch(
+                        &expected_ty.to_string(),
+                        &actual.to_string(),
+                        arg.value.span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Return collected method metadata for an owner type or trait surface.
+    fn method_info_for_owner(&self, owner: &str, method: &str) -> Option<&MethodInfo> {
+        if let Some(info) = self.lookup_trait_info(owner) {
+            return info.methods.get(method);
+        }
+        match self.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => info.methods.get(method),
+            TypeInfo::Class(info) => info.methods.get(method),
+            TypeInfo::Newtype(info) => info.methods.get(method),
+            TypeInfo::Enum(info) => info.methods.get(method),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => None,
         }
     }
 
@@ -2068,6 +2205,7 @@ impl TypeChecker {
         for method in &model.methods {
             self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
         }
+        self.check_method_partials(&model.name, &model.method_partials);
         for property in &model.properties {
             self.check_property(&property.node, &model.name);
         }
@@ -2316,6 +2454,7 @@ impl TypeChecker {
         for method in &class.methods {
             self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
         }
+        self.check_method_partials(&class.name, &class.method_partials);
         for property in &class.properties {
             self.check_property(&property.node, &class.name);
         }
@@ -2448,6 +2587,7 @@ impl TypeChecker {
             }
             self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
+        self.check_method_partials(&tr.name, &tr.method_partials);
         for property in &tr.properties {
             if property.node.body.is_some() {
                 self.errors.push(errors::trait_property_body_not_supported(
@@ -2551,6 +2691,7 @@ impl TypeChecker {
                 self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
         }
+        self.check_method_partials(&nt.name, &nt.method_partials);
     }
 
     /// Validate the canonical RFC 017 `from_underlying` hook when a newtype declares one.
@@ -3520,5 +3661,14 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
+    }
+}
+
+/// Return whether an expression is a simple dotted const path.
+fn is_const_path_expr(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Ident(_) => true,
+        Expr::Field(base, _) => is_const_path_expr(base),
+        _ => false,
     }
 }

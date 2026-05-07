@@ -48,6 +48,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 ## Explanation (understand)
 
 - [Control flow](explanation/control_flow.md)
+- [Callable presets](explanation/callable_presets.md)
 - [Closures](explanation/closures.md)
 - [Compile time and runtime](explanation/compile_time_and_runtime.md)
 - [Rust-shaped confidence](explanation/rust_shaped_confidence.md)

@@ -139,6 +139,7 @@ nav:
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
+          - Callable presets: language/reference/callable_presets.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
@@ -184,6 +185,7 @@ nav:
           - Compile time and runtime: language/explanation/compile_time_and_runtime.md
           - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
+          - Callable presets: language/explanation/callable_presets.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
           - Generators: language/explanation/generators.md

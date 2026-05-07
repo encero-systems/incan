@@ -267,7 +267,7 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
                     collect_from_decl(&nested.node, names);
                 }
             }
-            Declaration::Import(_) | Declaration::Docstring(_) => {}
+            Declaration::Import(_) | Declaration::Partial(_) | Declaration::Docstring(_) => {}
         }
     }
 
@@ -648,7 +648,7 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
         Expr::Range { start, end, .. } => {
             expr_references_name(&start.node, name) || expr_references_name(&end.node, name)
         }
-        Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Surface(_) => false,
+        Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Partial(_) | Expr::Surface(_) => false,
     }
 }
 
