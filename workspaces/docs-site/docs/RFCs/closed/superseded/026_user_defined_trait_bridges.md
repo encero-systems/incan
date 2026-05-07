@@ -109,7 +109,7 @@ The `@rust.delegate` decorator tells the compiler to generate a Rust `impl sqlx:
 
 ## Strategic note (historical)
 
-This section was written while RFC 026 and RFC 043 were framed as **complementary**. **RFC 043 subsumed this RFC** — see [RFC 043: Rust trait implementation from Incan](../../043_rust_trait_impl_from_incan.md) (§ “Supersedes RFC 026”). The **problem statement** in the Motivation sections remains valid: `rusttype` and `newtype` wrappers do not automatically implement traits implemented by the inner Rust type. The **`@rust.delegate`** design in the rest of this document is **withdrawn**; the adopted direction is **body-less `impl` on `rusttype`**, **`@rust.derive`**, and compiler-managed **`impl Future`**, as specified in RFC 043.
+This section was written while RFC 026 and RFC 043 were framed as **complementary**. **RFC 043 subsumed this RFC** — see [RFC 043: Rust trait implementation from Incan](../implemented/043_rust_trait_impl_from_incan.md) (§ “Supersedes RFC 026”). The **problem statement** in the Motivation sections remains valid: `rusttype` and `newtype` wrappers do not automatically implement traits implemented by the inner Rust type. The **`@rust.delegate`** design in the rest of this document is **withdrawn**; the adopted direction is **body-less `impl` on `rusttype`**, **`@rust.derive`**, and compiler-managed **`impl Future`**, as specified in RFC 043.
 
 **Alternatives that were weighed against “full” RFC 026** (before consolidation):
 

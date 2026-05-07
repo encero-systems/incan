@@ -1966,6 +1966,50 @@ fn test_enum_methods_traits_codegen() {
 }
 
 #[test]
+fn test_rfc043_newtype_trait_targets_codegen() {
+    let source = load_test_file("rfc043_newtype_trait_targets");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implToIntforValue{fnconvert(&self)->i64{return1;}}"),
+        "expected ToInt impl to select the int-targeted convert body; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implToStrforValue{fnconvert(&self)->String{return\"value\".to_string();}}"),
+        "expected ToStr impl to select the str-targeted convert body; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("typeOutput="),
+        "local Incan traits do not declare associated type items; generated impls must not emit one:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc043_newtype_trait_targets", rust_code);
+}
+
+#[test]
+fn test_rfc043_imported_trait_associated_type_codegen() {
+    let source = load_test_file("rfc043_imported_trait_associated_type");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implAssocforBoxed{typeItem=i64;}"),
+        "expected imported Rust trait impl to include associated type item; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc043_imported_trait_associated_type", rust_code);
+}
+
+#[test]
+fn test_rfc043_rust_derive_passthrough_codegen() {
+    let source = load_test_file("rfc043_rust_derive_passthrough");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("#[derive(serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
+        "expected @rust.derive to emit imported and built-in Rust derives; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc043_rust_derive_passthrough", rust_code);
+}
+
+#[test]
 fn test_value_enums_codegen() {
     let source = load_test_file("value_enums");
     let rust_code = generate_rust(&source);

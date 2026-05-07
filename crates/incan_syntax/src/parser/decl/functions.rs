@@ -69,8 +69,16 @@ impl<'a> Parser<'a> {
         let (receiver, params) = self.receiver_and_params(is_classmethod)?;
 
         self.expect_punct(PunctuationId::RParen, "Expected ')' after parameters")?;
+        let trait_target = if self.match_keyword(KeywordId::For) {
+            Some(self.trait_bound_spanned()?)
+        } else {
+            None
+        };
         self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
         let return_type = self.type_expr()?;
+        if self.check_keyword(KeywordId::For) {
+            return Err(errors::method_trait_target_after_return_type(self.current_span()));
+        }
 
         // Check for abstract method (no body), ellipsis, or block.
         let body = if self.check(&TokenKind::Newline) {
@@ -102,6 +110,7 @@ impl<'a> Parser<'a> {
                 type_params,
                 receiver,
                 params,
+                trait_target,
                 return_type,
                 body,
             },

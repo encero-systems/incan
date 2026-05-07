@@ -25,13 +25,13 @@ impl<'a> Parser<'a> {
         // ---- `type X = rusttype Y`                   → rusttype (RFC 041 surface form) ----
         // ---- `type X = Y`                            → type alias ----
         if is_newtype_keyword || self.match_keyword(KeywordId::Newtype) {
-            Ok(TypeOrNewtype::Newtype(
+            Ok(TypeOrNewtype::Newtype(Box::new(
                 self.finish_newtype(decorators, visibility, name, type_params, false)?,
-            ))
+            )))
         } else if self.match_ident_text("rusttype") {
-            Ok(TypeOrNewtype::Newtype(
+            Ok(TypeOrNewtype::Newtype(Box::new(
                 self.finish_newtype(decorators, visibility, name, type_params, true)?,
-            ))
+            )))
         } else {
             // Type alias: `type X[T] = Y[T]`  — no body block allowed.
             let target = self.type_expr()?;
@@ -49,10 +49,16 @@ impl<'a> Parser<'a> {
         is_rusttype: bool,
     ) -> Result<NewtypeDecl, CompileError> {
         let underlying = self.type_expr()?;
+        let traits = if self.match_keyword(KeywordId::With) {
+            self.trait_supertrait_list_spanned()?
+        } else {
+            Vec::new()
+        };
         let mut docstring = None;
         let mut rebindings = Vec::new();
         let mut method_aliases = Vec::new();
         let mut method_partials = Vec::new();
+        let mut associated_types = Vec::new();
         let mut interop_edges = Vec::new();
         let mut seen_interop_block = false;
 
@@ -102,6 +108,12 @@ impl<'a> Parser<'a> {
                     continue;
                 }
 
+                if self.check_keyword(KeywordId::Type) {
+                    associated_types.push(self.associated_type_decl()?);
+                    self.skip_newlines();
+                    continue;
+                }
+
                 if self.check(&TokenKind::Ident(String::new()))
                     && self.peek_next().kind.is_operator(OperatorId::Eq)
                 {
@@ -139,13 +151,36 @@ impl<'a> Parser<'a> {
             type_params,
             is_rusttype,
             underlying,
+            traits,
             docstring,
             rebindings,
             method_aliases,
             method_partials,
+            associated_types,
             interop_edges,
             methods,
         })
+    }
+
+    /// Parse a `type Assoc for Trait = Type` declaration inside a newtype/rusttype body.
+    fn associated_type_decl(&mut self) -> Result<Spanned<AssociatedTypeDecl>, CompileError> {
+        let start = self.current_span().start;
+        self.expect_keyword(KeywordId::Type, "Expected 'type' in associated type declaration")?;
+        let name = self.identifier()?;
+        self.expect_keyword(KeywordId::For, "Expected 'for' after associated type name")?;
+        let trait_target = self.trait_bound_spanned()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in associated type declaration")?;
+        let ty = self.type_expr()?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+
+        Ok(Spanned::new(
+            AssociatedTypeDecl {
+                name,
+                trait_target,
+                ty,
+            },
+            Span::new(start, end),
+        ))
     }
 
     fn interop_edge_decl(&mut self) -> Result<Spanned<InteropEdgeDecl>, CompileError> {
@@ -193,5 +228,5 @@ impl<'a> Parser<'a> {
 /// Result of parsing a `type` / `newtype` declaration.
 pub(super) enum TypeOrNewtype {
     Alias(TypeAliasDecl),
-    Newtype(NewtypeDecl),
+    Newtype(Box<NewtypeDecl>),
 }

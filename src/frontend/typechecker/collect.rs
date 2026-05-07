@@ -941,6 +941,7 @@ impl TypeChecker {
                     .map(|target| (rebinding.node.name.clone(), target))
             })
             .collect();
+        let trait_adoptions = self.collect_trait_adoption_infos(&nt.traits);
 
         // Define a placeholder symbol FIRST so methods can reference the newtype name
         self.symbols.define(Symbol {
@@ -953,8 +954,11 @@ impl TypeChecker {
                 constraints: newtype_constraints(&nt.underlying.node),
                 implicit_coercion_enabled: newtype_allows_implicit_coercion(&nt.decorators),
                 method_rebindings,
+                traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
+                trait_adoptions,
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(), // Empty for now
+                method_overloads: HashMap::new(),
             })),
             span,
             scope: 0,
@@ -973,6 +977,7 @@ impl TypeChecker {
         {
             info.methods = methods;
             info.method_aliases = method_aliases;
+            info.method_overloads = method_overloads;
         }
     }
 

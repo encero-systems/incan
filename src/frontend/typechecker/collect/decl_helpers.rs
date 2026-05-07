@@ -173,10 +173,22 @@ fn method_info_from_decl(
         owner_name,
         owner_self_ty,
     );
+    let trait_target = method.node.trait_target.as_ref().map(|target| TypeBoundInfo {
+        name: checker.resolve_trait_bound_name(&target.node.name, target.span),
+        type_args: target
+            .node
+            .type_args
+            .iter()
+            .map(|type_arg| {
+                resolve_owner_self_reference(checker.resolve_type_checked(type_arg), owner_name, owner_self_ty)
+            })
+            .collect(),
+    });
     MethodInfo {
         type_params,
         type_param_bounds,
         type_param_bound_details,
+        trait_target,
         receiver: method.node.receiver,
         params,
         return_type,
@@ -376,6 +388,7 @@ pub(super) fn inject_validate_methods(
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),
+            trait_target: None,
             receiver: None, // associated function via `TypeName.new(...)`
             params,
             return_type,

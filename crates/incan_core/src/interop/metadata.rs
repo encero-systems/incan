@@ -139,6 +139,13 @@ pub struct RustMethodSig {
     pub signature: RustFunctionSig,
 }
 
+/// One trait implementation rust-inspect can associate with a concrete Rust type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustImplementedTrait {
+    /// Canonical Rust trait path, for example `std::fmt::Display`.
+    pub path: String,
+}
+
 /// Structured Rust type information used by Incan interop consumers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RustTypeShape {
@@ -198,6 +205,9 @@ pub struct RustVariantInfo {
 pub struct RustTypeInfo {
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
+    /// Trait implementations rust-inspect can prove for this Rust type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implemented_traits: Vec<RustImplementedTrait>,
     /// Public fields for struct/union-like types.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
@@ -251,6 +261,7 @@ mod tests {
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 methods: Vec::new(),
+                implemented_traits: Vec::new(),
                 fields: Vec::new(),
                 variants: Vec::new(),
             }),

@@ -1172,6 +1172,17 @@ async def run() -> int:
     }
 
     #[test]
+    fn test_format_source_method_trait_target_round_trip() -> Result<(), FormatError> {
+        let source = r#"type UserId = rusttype i64 with Display:
+    def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:
+        pass
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_constrained_primitive_newtype_round_trip() -> Result<(), FormatError> {
         let source = "type Digit = newtype int[gt=-1, lt=10]\n";
         let formatted = assert_format_round_trip_lex_parse(source)?;
@@ -1717,6 +1728,19 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
         return None
 "#;
         let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_associated_type_in_rusttype_body() -> Result<(), FormatError> {
+        let source = r#"type UserId = rusttype i64 with Add[int, UserId]:
+    type Output for Add[int] = UserId
+
+    def add(self, rhs: int) for Add[int] -> UserId:
+        pass
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
         assert_eq!(formatted, source);
         Ok(())
     }

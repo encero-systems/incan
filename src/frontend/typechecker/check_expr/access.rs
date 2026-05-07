@@ -1546,7 +1546,10 @@ impl TypeChecker {
                     let dispatch = trait_entries
                         .iter()
                         .find(|entry| {
-                            self.method_sigs_compatible(&info, &entry.info)
+                            info.trait_target
+                                .as_ref()
+                                .is_none_or(|target| target.name == entry.origin_trait)
+                                && self.method_sigs_compatible(&info, &entry.info)
                                 && self.method_sigs_compatible(&entry.info, &info)
                         })
                         .and_then(|entry| {
@@ -2832,8 +2835,8 @@ impl TypeChecker {
                     let resolved_method = self.resolve_newtype_method_name(&newtype, method);
                     if let Some(ret) = self.resolve_named_method(
                         &newtype.methods,
-                        None,
-                        None,
+                        Some(&newtype.method_overloads),
+                        Some(&newtype.trait_adoptions),
                         resolved_method,
                         type_args,
                         args,
@@ -2929,8 +2932,8 @@ impl TypeChecker {
                         let resolved_method = self.resolve_newtype_method_name(&nt, method);
                         if let Some(ret) = self.resolve_named_method(
                             &nt.methods,
-                            None,
-                            None,
+                            Some(&nt.method_overloads),
+                            Some(&nt.trait_adoptions),
                             resolved_method,
                             type_args,
                             args,

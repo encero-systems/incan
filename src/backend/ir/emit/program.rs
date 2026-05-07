@@ -1544,6 +1544,9 @@ impl<'a> IrEmitter<'a> {
                 for ty in &impl_block.trait_type_args {
                     Self::collect_union_types_from_type(ty, out);
                 }
+                for associated_type in &impl_block.associated_types {
+                    Self::collect_union_types_from_type(&associated_type.ty, out);
+                }
                 for method in &impl_block.methods {
                     for param in &method.params {
                         Self::collect_union_types_from_type(&param.ty, out);

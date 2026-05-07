@@ -902,8 +902,8 @@ impl TypeChecker {
                 let resolved_method = self.resolve_newtype_method_name(newtype, method);
                 self.resolve_named_method(
                     &newtype.methods,
-                    None,
-                    None,
+                    Some(&newtype.method_overloads),
+                    Some(&newtype.trait_adoptions),
                     resolved_method,
                     &[],
                     args,
@@ -964,7 +964,7 @@ impl TypeChecker {
                     TypeInfo::Enum(en) => en.methods.contains_key(method) || en.method_overloads.contains_key(method),
                     TypeInfo::Newtype(newtype) => {
                         let resolved = self.resolve_newtype_method_name(newtype, method);
-                        newtype.methods.contains_key(resolved)
+                        newtype.methods.contains_key(resolved) || newtype.method_overloads.contains_key(resolved)
                     }
                     TypeInfo::Builtin | TypeInfo::TypeAlias => false,
                 }
@@ -1022,7 +1022,13 @@ impl TypeChecker {
                     }
                     TypeInfo::Newtype(newtype) => {
                         let resolved = self.resolve_newtype_method_name(&newtype, method);
-                        newtype.methods.contains_key(resolved)
+                        if newtype.methods.contains_key(resolved) || newtype.method_overloads.contains_key(resolved) {
+                            return true;
+                        }
+                        newtype.trait_adoptions.iter().any(|adoption| {
+                            self.trait_method_info_resolved_for_adoption(adoption, resolved, span)
+                                .is_some()
+                        })
                     }
                     TypeInfo::Builtin | TypeInfo::TypeAlias => false,
                 }

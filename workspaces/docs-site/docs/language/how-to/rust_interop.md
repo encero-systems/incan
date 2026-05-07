@@ -173,6 +173,57 @@ type Name = rusttype RustString:
 
 This keeps Rust provenance explicit (`rust::...` import) while giving you an Incan-facing type name (`Name`) for docs, APIs, and rebinding.
 
+### Trait adoption on `rusttype`
+
+Use `with TraitName` when an Incan-owned wrapper should satisfy a Rust trait contract:
+
+```incan
+from rust::std::convert import From
+from rust::tokio::task import JoinError
+
+type TaskJoinError = rusttype str with From[JoinError]:
+    @classmethod
+    def from(cls, error: JoinError) -> Self:
+        return TaskJoinError(error.to_string())
+```
+
+If two adopted traits require the same method name, target the method implementation with `for TraitName` before the return arrow:
+
+```incan
+from rust::std::fmt import Debug, Display, Formatter, FmtError
+
+type UserId = rusttype i64 with Display, Debug:
+    def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:
+        return f.write_str(f"user_{self.0}")
+
+    def fmt(self, f: Formatter) for Debug -> Result[None, FmtError]:
+        return f.write_str(f"UserId({self.0})")
+```
+
+The `for Display` qualifier belongs to the method declaration. It tells the compiler which adopted trait owns that method body; it is not part of the return type.
+
+Rust traits with associated types use type declarations in the wrapper body. Associated type values are written as Incan type expressions:
+
+```incan
+from rust::std::ops import Add
+
+type UserId = rusttype i64 with Add[int]:
+    type Output for Add[int] = UserId
+
+    def add(self, rhs: int) for Add[int] -> UserId:
+        return UserId(self.0 + rhs)
+```
+
+Rust coherence rules still apply to generated implementations. Incan can implement a foreign Rust trait for an Incan-owned wrapper, but it cannot make arbitrary foreign-trait-for-foreign-type combinations legal.
+
+Body-less `rusttype` adoption is only accepted when Rust metadata proves that the backing type already implements the
+adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid
+`impl ForeignTrait for Alias` block.
+
+`rusttype ... with Awaitable[T]` is currently rejected with a focused diagnostic. The compiler keeps `Awaitable[T]` as
+the Incan-facing async contract, but Rust `Future` bridge emission still needs safe pin-projection and output-mapping
+metadata before it can replace handwritten Rust adapters.
+
 ### Qualified backing paths
 
 When a `rust::` import binds a Rust module (or other namespace), you can name a concrete type inside it with `::` after that binding:

@@ -1,0 +1,9 @@
+"""RFC 043: associated type declarations lower into imported Rust trait impls."""
+
+from rust::demo import Assoc
+
+type Boxed = newtype int with Assoc:
+    type Item for Assoc = int
+
+pub def keep_boxed(value: Boxed) -> Boxed:
+    return value

@@ -89,6 +89,7 @@ pub(crate) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, Re
         type_params: info.type_params.clone(),
         type_param_bounds: info.type_param_bounds.clone(),
         type_param_bound_details: info.type_param_bound_details.clone(),
+        trait_target: info.trait_target.clone(),
         receiver: info.receiver,
         params: info
             .params

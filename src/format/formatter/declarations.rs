@@ -686,8 +686,18 @@ impl Formatter {
             self.writer.write(" = newtype ");
         }
         self.format_type(&nt.underlying.node);
+        if !nt.traits.is_empty() {
+            self.writer.write(" with ");
+            for (i, bound) in nt.traits.iter().enumerate() {
+                if i > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_trait_bound(&bound.node);
+            }
+        }
 
         let has_body = nt.docstring.is_some()
+            || !nt.associated_types.is_empty()
             || !nt.rebindings.is_empty()
             || !nt.method_aliases.is_empty()
             || !nt.method_partials.is_empty()
@@ -703,7 +713,8 @@ impl Formatter {
 
         if let Some(docstring) = &nt.docstring {
             self.format_docstring(docstring);
-            if !nt.rebindings.is_empty()
+            if !nt.associated_types.is_empty()
+                || !nt.rebindings.is_empty()
                 || !nt.method_aliases.is_empty()
                 || !nt.method_partials.is_empty()
                 || !nt.interop_edges.is_empty()
@@ -711,6 +722,18 @@ impl Formatter {
             {
                 self.writer.newline();
             }
+        }
+
+        for associated_type in &nt.associated_types {
+            self.format_associated_type(&associated_type.node);
+        }
+        if !nt.associated_types.is_empty()
+            && (!nt.rebindings.is_empty()
+                || !nt.method_aliases.is_empty()
+                || !nt.interop_edges.is_empty()
+                || !nt.methods.is_empty())
+        {
+            self.writer.newline();
         }
 
         for rebinding in &nt.rebindings {
@@ -755,10 +778,22 @@ impl Formatter {
             !nt.rebindings.is_empty()
                 || !nt.method_aliases.is_empty()
                 || !nt.method_partials.is_empty()
+                || !nt.associated_types.is_empty()
                 || !nt.interop_edges.is_empty(),
         );
 
         self.writer.dedent();
+    }
+
+    /// Format a targeted associated type declaration in a newtype/rusttype body.
+    fn format_associated_type(&mut self, associated_type: &AssociatedTypeDecl) {
+        self.writer.write("type ");
+        self.writer.write(&associated_type.name);
+        self.writer.write(" for ");
+        self.format_trait_bound(&associated_type.trait_target.node);
+        self.writer.write(" = ");
+        self.format_type(&associated_type.ty.node);
+        self.writer.newline();
     }
 
     // ---- Functions and methods ----
@@ -836,7 +871,9 @@ impl Formatter {
         self.write_method_prefix(method);
         self.writer.write("(");
         self.format_receiver_and_params(method.receiver.as_ref(), &method.params);
-        self.writer.write(") -> ");
+        self.writer.write(")");
+        self.format_method_trait_target(method);
+        self.writer.write(" -> ");
         self.format_type(&method.return_type.node);
 
         if method.body.is_none() {
@@ -845,7 +882,9 @@ impl Formatter {
                 self.write_method_prefix(method);
                 self.writer.write("(");
                 self.format_params_multiline(method.receiver.as_ref(), &method.params);
-                self.writer.write(") -> ");
+                self.writer.write(")");
+                self.format_method_trait_target(method);
+                self.writer.write(" -> ");
                 self.format_type(&method.return_type.node);
             }
             self.writer.newline();
@@ -858,7 +897,9 @@ impl Formatter {
             self.write_method_prefix(method);
             self.writer.write("(");
             self.format_params_multiline(method.receiver.as_ref(), &method.params);
-            self.writer.write(") -> ");
+            self.writer.write(")");
+            self.format_method_trait_target(method);
+            self.writer.write(" -> ");
             self.format_type(&method.return_type.node);
             self.writer.write(":");
         }
@@ -937,6 +978,14 @@ impl Formatter {
         self.writer.write(&method.name);
         if !method.type_params.is_empty() {
             self.format_type_params(&method.type_params);
+        }
+    }
+
+    /// Format the optional `for Trait` target before a method return annotation.
+    fn format_method_trait_target(&mut self, method: &MethodDecl) {
+        if let Some(target) = &method.trait_target {
+            self.writer.write(" for ");
+            self.format_trait_bound(&target.node);
         }
     }
 

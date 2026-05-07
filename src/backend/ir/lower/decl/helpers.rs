@@ -244,62 +244,78 @@ impl AstLowering {
         let mut derive_rust_modules = HashMap::new();
 
         for decorator in decorators {
-            if decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive) {
-                // Extract derive arguments: @derive(Debug), @derive(json), @derive(Custom)
-                for arg in &decorator.node.args {
-                    if let ast::DecoratorArg::Positional(expr) = arg {
-                        // Handle simple identifier expressions
-                        if let ast::Expr::Ident(name) = &expr.node {
-                            if derives::from_str(name).is_some() {
-                                Self::push_unique(&mut derives, name.clone());
-                                continue;
-                            }
-
-                            if let Some(rust_path) = self.rust_import_aliases.get(name) {
-                                Self::push_rust_derive_path(&mut derives, rust_path.join("::"));
-                                continue;
-                            }
-
-                            if let Some(module_path) = self.module_path_for_derive_name(name)
-                                && let Some(traits) = self.derivable_traits_for_module(&module_path)
-                            {
-                                for trait_name in traits {
-                                    for path in self.rust_derive_paths_for_trait(&module_path, &trait_name) {
-                                        Self::push_rust_derive_path(&mut derives, path);
-                                    }
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &self.import_aliases);
+            match decorators::from_segments(&resolved) {
+                Some(DecoratorId::Derive) => {
+                    // Extract derive arguments: @derive(Serialize, Deserialize)
+                    for arg in &decorator.node.args {
+                        if let ast::DecoratorArg::Positional(expr) = arg {
+                            // Handle simple identifier expressions
+                            if let ast::Expr::Ident(name) = &expr.node {
+                                if derives::from_str(name).is_some() {
+                                    Self::push_unique(&mut derives, name.clone());
+                                    continue;
                                 }
-                                continue;
-                            }
 
-                            let resolved = self.resolve_derive_path(name);
-                            if resolved.len() >= 2 {
-                                let module_segments = &resolved[..resolved.len() - 1];
-                                let trait_name = &resolved[resolved.len() - 1];
-                                let rust_derive_paths = self.rust_derive_paths_for_trait(module_segments, trait_name);
-                                if rust_derive_paths.is_empty() {
-                                    if let Some(meta) = self.stdlib_cache.lookup_trait_meta(module_segments, trait_name)
-                                    {
-                                        if let Some(module_path) = meta.rust_module_path {
-                                            Self::push_unique(&mut derives, name.clone());
-                                            derive_rust_modules.insert(name.clone(), module_path);
+                                if let Some(rust_path) = self.rust_import_aliases.get(name) {
+                                    Self::push_rust_derive_path(&mut derives, rust_path.join("::"));
+                                    continue;
+                                }
+
+                                if let Some(module_path) = self.module_path_for_derive_name(name)
+                                    && let Some(traits) = self.derivable_traits_for_module(&module_path)
+                                {
+                                    for trait_name in traits {
+                                        for path in self.rust_derive_paths_for_trait(&module_path, &trait_name) {
+                                            Self::push_rust_derive_path(&mut derives, path);
                                         }
-                                        continue;
-                                    }
-                                    if self.derivable_trait_exists(module_segments, trait_name) {
-                                        continue;
-                                    }
-                                } else {
-                                    for path in rust_derive_paths {
-                                        Self::push_rust_derive_path(&mut derives, path);
                                     }
                                     continue;
                                 }
-                            }
 
-                            Self::push_unique(&mut derives, name.clone());
+                                let resolved = self.resolve_derive_path(name);
+                                if resolved.len() >= 2 {
+                                    let module_segments = &resolved[..resolved.len() - 1];
+                                    let trait_name = &resolved[resolved.len() - 1];
+                                    let rust_derive_paths =
+                                        self.rust_derive_paths_for_trait(module_segments, trait_name);
+                                    if rust_derive_paths.is_empty() {
+                                        if let Some(meta) =
+                                            self.stdlib_cache.lookup_trait_meta(module_segments, trait_name)
+                                        {
+                                            if let Some(module_path) = meta.rust_module_path {
+                                                Self::push_unique(&mut derives, name.clone());
+                                                derive_rust_modules.insert(name.clone(), module_path);
+                                            }
+                                            continue;
+                                        }
+                                        if self.derivable_trait_exists(module_segments, trait_name) {
+                                            continue;
+                                        }
+                                    } else {
+                                        for path in rust_derive_paths {
+                                            Self::push_rust_derive_path(&mut derives, path);
+                                        }
+                                        continue;
+                                    }
+                                }
+
+                                Self::push_unique(&mut derives, name.clone());
+                            }
                         }
                     }
                 }
+                Some(DecoratorId::RustDerive) => {
+                    for arg in &decorator.node.args {
+                        let ast::DecoratorArg::Positional(expr) = arg else {
+                            continue;
+                        };
+                        if let Some(path) = self.rust_derive_path_from_expr(&expr.node) {
+                            Self::push_rust_derive_path(&mut derives, path);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -330,6 +346,24 @@ impl AstLowering {
         }
 
         (derives, derive_rust_modules)
+    }
+
+    /// Convert an `@rust.derive(...)` positional argument into the emitted Rust derive path.
+    fn rust_derive_path_from_expr(&self, expr: &ast::Expr) -> Option<String> {
+        match expr {
+            ast::Expr::Ident(name) => {
+                if let Some(rust_path) = self.rust_import_aliases.get(name) {
+                    return Some(rust_path.join("::"));
+                }
+                let resolved = self.resolve_derive_path(name);
+                if resolved.first().is_some_and(|segment| segment == "rust") && resolved.len() >= 2 {
+                    return Some(resolved[1..].join("::"));
+                }
+                Some(name.clone())
+            }
+            ast::Expr::Literal(ast::Literal::String(path)) => Some(path.clone()),
+            _ => None,
+        }
     }
 
     /// Return trait impl targets introduced by RFC 024 module-level derives such as `@derive(json)`.

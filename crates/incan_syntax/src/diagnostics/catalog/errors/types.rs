@@ -789,6 +789,62 @@ pub fn duplicate_trait_instantiation(trait_name: &str, type_args: &str, span: Sp
     .with_hint("Remove the duplicate `with` entry or use a different trait type argument")
 }
 
+/// Report `@rust.derive` attached to a declaration kind that cannot emit Rust derive attributes.
+pub fn rust_derive_unsupported_attachment(kind: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("@rust.derive is not supported on {kind} declarations"), span)
+        .with_hint("@rust.derive currently lowers only onto generated Rust structs and enums")
+}
+
+/// Report `@rust.derive` on a `rusttype`, which currently lowers to a Rust alias.
+pub fn rust_derive_unsupported_rusttype(span: Span) -> CompileError {
+    CompileError::type_error(
+        "@rust.derive is not supported on rusttype declarations yet".to_string(),
+        span,
+    )
+    .with_hint("rusttype currently lowers to a Rust type alias, and Rust derive attributes cannot attach to aliases")
+}
+
+/// Report an empty `@rust.derive(...)` invocation.
+pub fn rust_derive_requires_positional_arg(span: Span) -> CompileError {
+    CompileError::type_error(
+        "@rust.derive requires at least one positional derive name".to_string(),
+        span,
+    )
+    .with_hint("Use @rust.derive(Clone, Debug) or @rust.derive(\"serde::Serialize\")")
+}
+
+/// Report a named argument passed to `@rust.derive(...)`.
+pub fn rust_derive_rejects_named_args(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("@rust.derive does not accept named argument '{name}'"), span)
+        .with_hint("Pass Rust derive names positionally")
+}
+
+/// Report a derive argument that is not an identifier or Rust path string.
+pub fn rust_derive_invalid_arg(span: Span) -> CompileError {
+    CompileError::type_error(
+        "@rust.derive arguments must be identifiers or Rust path strings".to_string(),
+        span,
+    )
+    .with_hint(
+        "Use a built-in derive name, an imported Rust derive binding, or a string path like \"serde::Serialize\"",
+    )
+}
+
+/// Report a Rust derive name that cannot be resolved to a built-in or imported derive macro.
+pub fn rust_derive_unresolved(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Rust derive '{name}' is not resolved"), span)
+        .with_hint("Import third-party derives through rust:: imports or declare the crate in [rust-dependencies]")
+}
+
+/// Report a Rust derive that would generate the same impl as an explicit `with` adoption.
+pub fn rust_derive_conflicts_with_trait_adoption(derive_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("@rust.derive({derive_name}) conflicts with explicit `with {trait_name}` adoption"),
+        span,
+    )
+    .with_hint("Use either Rust derive passthrough or an explicit trait adoption, not both")
+}
+
 /// Report a same-name method requirement coming from unrelated adopted traits.
 pub fn cross_trait_method_collision(trait_a: &str, trait_b: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -853,6 +909,18 @@ pub fn invalid_awaitable_adoption(type_name: &str, expected_output: &str, span: 
     )
     .with_hint("Wrap a known awaitable field such as JoinHandle[T] or Awaitable[T], or use a Rust-backed future type")
     .with_note("Awaitable adoption must map to a compiler-known await output type")
+}
+
+/// Report a required Rust associated type that has no adopting-type declaration.
+pub fn missing_rust_associated_type(trait_name: &str, associated_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{trait_name}' requires associated type '{associated_type}' to be implemented"),
+        span,
+    )
+    .with_hint(format!(
+        "Add `type {associated_type} for {trait_name} = ...` in the adopting type body"
+    ))
+    .with_note("Rust trait associated types must be explicit when metadata exposes the requirement")
 }
 
 /// Report a concrete type that has not implemented a required trait property.
@@ -1202,6 +1270,62 @@ pub fn interop_block_requires_rusttype(type_name: &str, span: Span) -> CompileEr
         span,
     )
     .with_hint("Use `type X = rusttype Y` when declaring host interop edges")
+}
+
+/// A rusttype alias cannot author a new impl for a foreign Rust trait on the foreign backing type.
+pub fn rusttype_foreign_trait_impl_orphan(type_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "`{type_name}` cannot implement foreign Rust trait `{trait_name}` because its `rusttype` backing type is foreign"
+        ),
+        span,
+    )
+    .with_hint("Use body-less adoption only when the backing Rust type already implements the trait")
+    .with_note("Rust coherence treats a type alias as the backing type, not as a new local type")
+}
+
+/// Rusttype forwarding needs metadata proof before lowering can skip the illegal alias impl.
+pub fn rusttype_forwarding_requires_metadata(type_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot forward Rust trait `{trait_name}` for rusttype `{type_name}` without metadata proof"),
+        span,
+    )
+    .with_hint("Enable rust-inspect metadata for the backing type or provide a local newtype wrapper instead")
+}
+
+/// Metadata proves the backing type does not satisfy a body-less rusttype trait adoption.
+pub fn rusttype_forwarding_trait_not_implemented(
+    type_name: &str,
+    backing_type: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Backing type `{backing_type}` does not implement Rust trait `{trait_name}` for rusttype `{type_name}`"
+        ),
+        span,
+    )
+    .with_hint("Remove the adoption, choose a backing type that implements the trait, or use a local newtype wrapper")
+}
+
+/// Forwarding generic Rust trait instantiations needs metadata richer than the current trait path list.
+pub fn rusttype_forwarding_generic_trait_blocked(type_name: &str, trait_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot safely forward generic Rust trait `{trait_name}` for rusttype `{type_name}` yet"),
+        span,
+    )
+    .with_hint("Use a local newtype wrapper for a handwritten impl until rust-inspect records trait type arguments")
+}
+
+/// Awaitable-to-Future rusttype bridging is intentionally gated until pin/projection metadata exists.
+pub fn awaitable_future_bridge_blocked(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`Awaitable[T]` to Rust `Future` bridging is not implemented for rusttype `{type_name}` yet"),
+        span,
+    )
+    .with_hint("Keep the Rust Future adapter in handwritten Rust for now")
+    .with_note("Safe generation needs Pin projection and Future output metadata that this slice does not have")
 }
 
 /// `interop:` adapters must be simple callable references (`name` or `Type.name`).

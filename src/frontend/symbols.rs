@@ -537,8 +537,14 @@ pub struct NewtypeInfo {
     ///
     /// Example: `send_now = try_send` is stored as `"send_now" -> "try_send"`.
     pub method_rebindings: HashMap<String, String>,
+    /// Explicit traits adopted by this newtype/rusttype via `with`, using source-level trait names.
+    pub traits: Vec<String>,
+    /// Explicit traits adopted by this newtype/rusttype, preserving generic trait arguments when present.
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub method_aliases: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
+    /// All newtype/rusttype method declarations grouped by name for trait-backed overload resolution.
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
 }
 
 /// One resolved constrained primitive predicate on a newtype underlying type.
@@ -671,6 +677,7 @@ pub struct MethodInfo {
     pub type_params: Vec<String>,
     pub type_param_bounds: HashMap<String, Vec<String>>,
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
+    pub trait_target: Option<TypeBoundInfo>,
     pub receiver: Option<Receiver>,
     pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,

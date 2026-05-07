@@ -2,6 +2,7 @@ use crate::cache_resolve::dependency_manifest_dir_from_lock_with_search_roots;
 use super::*;
 use incan_core::interop::{RustItemKind, RustTypeInfo, RustVisibility};
 
+/// Build minimal public Rust type metadata for cache round-trip tests.
 fn dummy_type_metadata(path: &str) -> RustItemMetadata {
     RustItemMetadata {
         canonical_path: path.to_string(),
@@ -9,6 +10,7 @@ fn dummy_type_metadata(path: &str) -> RustItemMetadata {
         visibility: RustVisibility::Public,
         kind: RustItemKind::Type(RustTypeInfo {
             methods: Vec::new(),
+                    implemented_traits: Vec::new(),
             fields: Vec::new(),
             variants: Vec::new(),
         }),
@@ -119,6 +121,7 @@ fn disk_cache_invalidates_when_workspace_fingerprint_changes() -> Result<(), Box
 }
 
 #[test]
+/// Malformed on-disk cache payloads are ignored instead of poisoning later lookups.
 fn malformed_disk_cache_is_treated_as_miss() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     fs::write(
@@ -133,6 +136,7 @@ fn malformed_disk_cache_is_treated_as_miss() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+/// Raw identifier definition paths should still match cached canonical aliases.
 fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     fs::write(
@@ -149,6 +153,7 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 methods: Vec::new(),
+                    implemented_traits: Vec::new(),
                 fields: Vec::new(),
                 variants: Vec::new(),
             }),

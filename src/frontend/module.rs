@@ -972,10 +972,12 @@ source-root = "library"
             type_params: vec![],
             is_rusttype: false,
             underlying: make_spanned(Type::Simple("i64".to_string())),
+            traits: vec![],
             docstring: None,
             rebindings: vec![],
             method_aliases: vec![],
             method_partials: vec![],
+            associated_types: vec![],
             interop_edges: vec![],
             methods: vec![],
         };

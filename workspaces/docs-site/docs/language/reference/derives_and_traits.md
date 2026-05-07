@@ -322,7 +322,7 @@ Explicit brackets are supported only for direct calls resolved as Incan function
 
 Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older `: ...` spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.
 
-Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
+Models, classes, enums, newtypes, rusttypes, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
 ```incan
 trait Describable:
@@ -369,6 +369,7 @@ Rules to keep in mind:
 - Enum trait adoption uses the same `with TraitName` clause as model and class adoption.
 - For enum adopters, required trait methods must be declared in the enum body.
 - Enum adopters should satisfy behavior through methods; `@requires(...)` field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.
+- Newtype and rusttype adopters declare the same `with TraitName` clause. When multiple adopted traits require the same method name, target each concrete method with `for TraitName` before the return arrow.
 - Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
 
 When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:
@@ -382,7 +383,7 @@ The compiler enforces these bounds at call sites using nominal trait conformance
 
 ### Multiple instantiations of one generic trait
 
-Models, classes, and enums may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into multiple result types, or serializing through a generic format trait.
+Models, classes, enums, newtypes, and rusttypes may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into multiple result types, or serializing through a generic format trait.
 
 The repeated adoptions must be distinct:
 
@@ -503,6 +504,27 @@ text: str = token.label()
 code: int = token.label()
 ```
 
+#### Method-level trait targets
+
+When two adopted traits require the same method name, put the target trait after the parameter list and before the return arrow:
+
+```incan
+trait ToInt:
+    def convert(self) -> int: ...
+
+trait ToStr:
+    def convert(self) -> str: ...
+
+type Value = newtype int with ToInt, ToStr:
+    def convert(self) for ToInt -> int:
+        return self.0
+
+    def convert(self) for ToStr -> str:
+        return str(self.0)
+```
+
+The `for ToInt` qualifier belongs to the method declaration. It means this method body satisfies the adopted `ToInt` trait. It does not modify the return type.
+
 #### Rejected cases
 
 The compiler rejects repeated identical trait instantiations:
@@ -520,7 +542,7 @@ model Parser:
     def parse(self, value: int) -> str: ...  # error
 ```
 
-Same-name methods from unrelated trait families are rejected even if their value parameter types differ. Return-type and argument-type disambiguation only applies within one generic trait family:
+Same-name methods from unrelated trait families are rejected unless the concrete method declarations explicitly target adopted traits with `for TraitName`. Return-type and argument-type disambiguation only applies within one generic trait family:
 
 ```incan
 trait ReadsInt:
@@ -534,7 +556,7 @@ model Source with ReadsInt, ReadsStr:
     def read(self, value: str) -> str: ...  # error: unrelated trait families use the same method name
 ```
 
-Use distinct method names or distinct trait families with non-conflicting method names when you need two unrelated capabilities today. Explicit qualification and aliasing are future language design work.
+Add method-level targets when both declarations are trait implementations, or use distinct method names when they are ordinary inherent methods. General call-site explicit qualification and aliasing are future language design work.
 
 ### `@requires(...)` (adopter contract)
 

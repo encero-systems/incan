@@ -21,8 +21,8 @@ use crate::library_manifest::{
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
 #[cfg(feature = "rust_inspect")]
 use incan_core::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo,
-    RustTypeShape, RustVariantInfo, RustVisibility,
+    RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
+    RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
@@ -2815,6 +2815,7 @@ fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_ru
                 kind: RustItemKind::Type(RustTypeInfo {
                     fields: Vec::new(),
                     methods: Vec::new(),
+                    implemented_traits: Vec::new(),
                     variants: Vec::new(),
                 }),
             },
@@ -2906,6 +2907,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
                 kind: RustItemKind::Type(RustTypeInfo {
                     fields: Vec::new(),
                     methods: Vec::new(),
+                    implemented_traits: Vec::new(),
                     variants: Vec::new(),
                 }),
             }),
@@ -2942,6 +2944,7 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
                 kind: RustItemKind::Type(RustTypeInfo {
                     fields: Vec::new(),
                     methods: Vec::new(),
+                    implemented_traits: Vec::new(),
                     variants: Vec::new(),
                 }),
             }),
@@ -3261,6 +3264,7 @@ def render[T](value: Label[T]) -> str:
                             is_unsafe: false,
                         },
                     }],
+                    implemented_traits: Vec::new(),
                     fields: vec![],
                     variants: vec![],
                 }),
@@ -3322,6 +3326,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
                         name: "kind".to_string(),
                         type_display: "Option<demo::Kind>".to_string(),
@@ -3345,6 +3350,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![],
                     variants: vec![],
                 }),
@@ -3392,6 +3398,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
                         name: "kind".to_string(),
                         type_display: "Option<demo::Kind>".to_string(),
@@ -3415,6 +3422,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![],
                     variants: vec![],
                 }),
@@ -3465,6 +3473,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
                         name: "rel_type".to_string(),
                         type_display: "Option<demo::rel::RelType>".to_string(),
@@ -3488,6 +3497,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![],
                     variants: vec![RustVariantInfo {
                         name: "Read".to_string(),
@@ -3510,6 +3520,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
                         name: "read_type".to_string(),
                         type_display: "Option<demo::read_rel::ReadType>".to_string(),
@@ -3533,6 +3544,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     methods: vec![],
+                    implemented_traits: Vec::new(),
                     fields: vec![],
                     variants: vec![RustVariantInfo {
                         name: "NamedTable".to_string(),
@@ -7333,6 +7345,249 @@ enum Color with Labelled:
             .any(|e| e.message.contains("requires method") && e.message.contains("label")),
         "expected missing enum trait method diagnostic, got {errs:?}"
     );
+}
+
+#[test]
+fn test_newtype_explicit_trait_adoption_typechecks() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+type UserId = newtype int with Labelled:
+  def label(self) -> str:
+    return "user"
+
+def render(user_id: UserId) -> str:
+  return user_id.label()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rusttype_explicit_trait_adoption_typechecks() {
+    let source = r#"
+from rust::ids import UserId as RustUserId
+
+trait Labelled:
+  def label(self) -> str: ...
+
+type UserId = rusttype RustUserId with Labelled:
+  def label(self) -> str:
+    return "user"
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rusttype_bodyless_rust_trait_forwarding_requires_metadata() {
+    let source = r#"
+from rust::ids import UserId as RustUserId, Labelled
+
+type UserId = rusttype RustUserId with Labelled
+"#;
+    let errs = check_str_err(source, "rusttype Rust trait forwarding should require metadata proof");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Cannot forward Rust trait `ids::Labelled` for rusttype `UserId` without metadata proof")),
+        "expected rusttype forwarding metadata diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_rusttype_awaitable_future_bridge_is_explicitly_blocked() {
+    let source = r#"
+from rust::async_host import JoinHandle as RustJoinHandle
+
+trait Awaitable[T]:
+  def poll(self) -> T: ...
+
+type JoinHandle[T] = rusttype RustJoinHandle[T] with Awaitable[T]
+"#;
+    let errs = check_str_err(source, "rusttype Awaitable bridge should be gated");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("`Awaitable[T]` to Rust `Future` bridging is not implemented")),
+        "expected Awaitable/Future bridge blocker diagnostic, got {errs:?}"
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rusttype_bodyless_rust_trait_forwarding_uses_metadata_and_skips_impl() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+from rust::demo import RustThing, Labelled
+
+type Thing = rusttype RustThing with Labelled
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Labelled".to_string(),
+                definition_path: Some("demo::Labelled".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo { items: vec![] }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::RustThing".to_string(),
+                definition_path: Some("demo::RustThing".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    implemented_traits: vec![RustImplementedTrait {
+                        path: "demo::Labelled".to_string(),
+                    }],
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    assert!(
+        checker
+            .type_info()
+            .rusttype_forwarded_trait_adoptions
+            .contains(&("Thing".to_string(), "Labelled".to_string())),
+        "expected metadata-proven rusttype forwarding to be recorded"
+    );
+
+    let mut lowering = crate::backend::ir::AstLowering::new_with_type_info(checker.type_info().clone());
+    let ir = lowering
+        .lower_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("lowering failed: {errs:?}")))?;
+    assert!(
+        !ir.declarations.iter().any(|decl| matches!(
+            &decl.kind,
+            crate::backend::ir::IrDeclKind::Impl(impl_block)
+                if impl_block.target_type == "Thing" && impl_block.trait_name.as_deref() == Some("Labelled")
+        )),
+        "rusttype forwarding through a type alias must not emit an orphan impl"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_imported_rust_trait_associated_type_missing_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Iterable
+
+type Items = newtype int with Iterable
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Iterable".to_string(),
+                definition_path: Some("demo::Iterable".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![RustTraitAssoc::TypeAlias {
+                        name: "Item".to_string(),
+                    }],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected missing associated type diagnostic").into());
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'demo::Iterable' requires associated type 'Item'")),
+        "expected missing associated type diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_newtype_missing_trait_method_is_rejected() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+type UserId = newtype int with Labelled
+"#;
+    let errs = check_str_err(source, "newtype should satisfy abstract trait methods");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("requires method") && e.message.contains("label")),
+        "expected missing newtype trait method diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_newtype_unknown_trait_adoption_is_rejected() {
+    let source = r#"
+type UserId = newtype int with MissingTrait
+"#;
+    let errs = check_str_err(source, "newtype should reject unknown adopted traits");
+    assert!(
+        has_unknown_symbol_error(&errs, "MissingTrait"),
+        "expected unknown trait diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_newtype_method_trait_targets_disambiguate_same_name_obligations() {
+    let source = r#"
+trait ToInt:
+  def convert(self) -> int: ...
+
+trait ToStr:
+  def convert(self) -> str: ...
+
+type Value = newtype int with ToInt, ToStr:
+  def convert(self) for ToInt -> int:
+    return 1
+
+  def convert(self) for ToStr -> str:
+    return "value"
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_newtype_associated_type_resolves_trait_target_and_rhs() {
+    let source = r#"
+trait Add[T]:
+  def add(self, rhs: T) -> Self: ...
+
+type UserId = newtype int with Add[int]:
+  type Output for Add[int] = UserId
+
+  def add(self, rhs: int) -> Self:
+    return self
+"#;
+    assert_check_ok(source);
 }
 
 #[test]
@@ -11637,6 +11892,70 @@ model Item:
         errs.iter()
             .any(|err| err.message.contains("Ambiguous trait method 'label'")),
         "Expected derived trait method collision diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_derive_accepts_imported_rust_derive_binding() {
+    let source = r#"
+from rust::serde import Serialize
+
+@rust.derive(Serialize)
+model Payload:
+  value: int
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_derive_rejects_unresolved_third_party_derive() {
+    let source = r#"
+@rust.derive(Serialize)
+model Payload:
+  value: int
+"#;
+    let errs = check_str_err(source, "unresolved @rust.derive should fail");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Rust derive 'Serialize' is not resolved")),
+        "Expected unresolved Rust derive diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_derive_conflicts_with_explicit_trait_adoption() {
+    let source = r#"
+@rust.derive(Display)
+model Label with Display:
+  value: str
+
+  def __str__(self) -> str:
+    return self.value
+"#;
+    let errs = check_str_err(source, "@rust.derive should conflict with matching with adoption");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("@rust.derive(Display) conflicts with explicit `with Display`")),
+        "Expected Rust derive/adoption conflict diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_derive_on_rusttype_reports_alias_lowering_blocker() {
+    let source = r#"
+@rust.derive(Clone)
+type ExternalId = rusttype int
+"#;
+    let errs = check_str_err(
+        source,
+        "@rust.derive on rusttype should report the current lowering blocker",
+    );
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("@rust.derive is not supported on rusttype declarations yet")),
+        "Expected rusttype derive blocker diagnostic; got: {errs:?}"
     );
 }
 
