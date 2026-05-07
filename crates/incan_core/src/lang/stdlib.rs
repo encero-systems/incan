@@ -56,9 +56,9 @@ pub fn is_graph_constructor_type(name: &str) -> bool {
 
 /// A top-level stdlib namespace with optional metadata.
 ///
-/// Only top-level namespaces (`std.<name>`) are registered explicitly. Submodule stub paths are derived by convention
-/// (`stdlib/{ns}/{sub}.incn`) relative to the active stdlib source root (resolved by loader), so adding a new
-/// submodule requires zero changes here — just drop an `.incn` file in the right directory.
+/// Top-level namespaces (`std.<name>`) are registered explicitly, and their public child paths are listed as
+/// submodules. Nested child paths use dotted names such as `"civil.naive"`, while stub file paths still derive from
+/// segmented import paths under the active stdlib source root.
 #[derive(Debug, Clone, Copy)]
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
@@ -182,7 +182,7 @@ pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
 /// Registry of top-level stdlib namespaces.
 ///
 /// Submodule stub paths are derived by convention, so this list stays compact even as the stdlib grows. Adding a new
-/// submodule (e.g. `std.async.broadcast`) only requires adding the `.incn` file and appending the name to the parent
+/// submodule (e.g. `std.async.broadcast`) requires adding the `.incn` file and appending the name to the parent
 /// namespace's `submodules` array.
 pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
@@ -269,6 +269,21 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         feature: None,
         extra_crate_deps: &[],
         submodules: &["path", "file", "metadata", "glob", "prelude"],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "datetime",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[
+            "runtime",
+            "civil",
+            "civil.intervals",
+            "civil.naive",
+            "civil.offset",
+            "error",
+            "prelude",
+        ],
         typechecker_only: false,
     },
     StdlibNamespace {
@@ -360,7 +375,7 @@ pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
 /// Check if a module path matches a known Incan stdlib module.
 ///
 /// Unlike [`is_any_stdlib_path`] which accepts anything starting with `"std"`, this validates that the second segment
-/// is a registered namespace and (for depth-3 paths) the third segment is a known submodule.
+/// is a registered namespace and deeper paths match a known dotted submodule entry.
 ///
 /// Use this to reject unknown `std.*` paths with a helpful diagnostic.
 pub fn is_known_stdlib_module(path: &[String]) -> bool {
@@ -370,21 +385,20 @@ pub fn is_known_stdlib_module(path: &[String]) -> bool {
     let Some(ns) = find_namespace(&path[1]) else {
         return false;
     };
-    match path.len() {
-        2 => return true,
-        3 => {}
-        _ => return false,
+    if path.len() == 2 {
+        return true;
     }
     // Leaf modules (no submodules) don't have children.
     if ns.submodules.is_empty() {
         return false;
     }
-    ns.submodules.contains(&path[2].as_str())
+    let submodule = path[2..].join(".");
+    ns.submodules.contains(&submodule.as_str())
 }
 
 /// Human-friendly list of known stdlib modules for diagnostics.
 ///
-/// Includes top-level namespaces and registered direct submodules.
+/// Includes top-level namespaces and registered submodules.
 pub fn known_stdlib_modules_for_hint() -> Vec<String> {
     let mut known = Vec::new();
     for ns in STDLIB_NAMESPACES {
@@ -469,6 +483,12 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
         assert!(is_known_stdlib_module(&segs(&["std", "result"])));
         assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "runtime"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "intervals"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "naive"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
@@ -492,6 +512,7 @@ mod tests {
         assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "collections", "deque"])));
+        assert!(!is_known_stdlib_module(&segs(&["std", "datetime", "civil", "missing"])));
     }
 
     #[test]
@@ -523,6 +544,18 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "graph"])),
             Some("stdlib/graph.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "datetime"])),
+            Some("stdlib/datetime/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "datetime", "runtime"])),
+            Some("stdlib/datetime/runtime.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "datetime", "civil", "naive"])),
+            Some("stdlib/datetime/civil/naive.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "io"])),
@@ -561,6 +594,7 @@ mod tests {
         assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+        assert!(hint.contains(&"std.datetime.civil.naive".to_string()));
         assert!(hint.contains(&"std.builtins".to_string()));
         assert!(hint.contains(&"std.collections".to_string()));
     }
@@ -625,6 +659,7 @@ mod tests {
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
+        let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
@@ -651,6 +686,12 @@ mod tests {
                 .and_then(|ns| ns.extra_crate_deps.first())
                 .map(|dep| dep.crate_name),
             Some("byteorder")
+        );
+        assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(
+            datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")),
+            Some(true)
         );
     }
 }

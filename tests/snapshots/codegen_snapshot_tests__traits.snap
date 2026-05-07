@@ -30,7 +30,7 @@ impl Rectangle {
         return self.width * self.height;
     }
     pub fn perimeter(&self) -> f64 {
-        return 2f64 * self.width + self.height;
+        return 2f64 * (self.width + self.height);
     }
 }
 impl Shape for Rectangle {
@@ -38,7 +38,7 @@ impl Shape for Rectangle {
         return self.width * self.height;
     }
     fn perimeter(&self) -> f64 {
-        return 2f64 * self.width + self.height;
+        return 2f64 * (self.width + self.height);
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]

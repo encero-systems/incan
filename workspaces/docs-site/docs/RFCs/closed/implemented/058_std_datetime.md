@@ -1,6 +1,6 @@
 # RFC 058: `std.datetime` — temporal values, intervals, and runtime timing
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,11 +10,11 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/292
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
-This RFC proposes `std.datetime` as Incan's standard library home for temporal values. The module covers runtime timing (`Duration`, `Instant`, `SystemTime`), civil and analytics-facing temporal values (`Date`, `Time`, `DateTime`, `DateTimeTZ`), and first-class interval types (`TimeDelta`, `YearMonthInterval`, `DateTimeInterval`). The design intentionally combines a Rust-shaped runtime timing model with a more analytics- and Substrait-shaped civil time model so Incan has one coherent temporal vocabulary for scheduling, timestamps, temporal arithmetic, and data-facing date or time work without dropping into Rust or treating time as raw strings and integers.
+This RFC proposes `std.datetime` as Incan's standard library home for deterministic temporal values. The module covers runtime timing (`Duration`, `Instant`, `SystemTime`), civil and analytics-facing temporal values (`Date`, `Time`, `DateTime`), fixed UTC offsets (`FixedOffset`, `DateTimeOffset`), and first-class interval types (`TimeDelta`, `YearMonthInterval`, `DateTimeInterval`). The design intentionally combines a Rust `std::time`-backed runtime timing model with a more analytics- and Substrait-shaped civil time model so Incan has one coherent temporal vocabulary for scheduling, timestamps, temporal arithmetic, and data-facing date or time work without requiring application code to drop into Rust or treat time as raw strings and integers.
 
 ## Motivation
 
@@ -32,11 +32,13 @@ This matters across a broad slice of Incan code:
 ## Goals
 
 - Provide a standard runtime timing story with `Duration`, `Instant`, and `SystemTime`.
-- Provide a standard civil and analytics-facing temporal story with `Date`, `Time`, `DateTime`, and `DateTimeTZ`.
+- Provide a standard civil and analytics-facing temporal story with `Date`, `Time`, and `DateTime`.
+- Provide fixed UTC offset values and fixed-offset datetimes for ISO `%z` / `Z` data.
 - Provide first-class interval types for analytics and temporal arithmetic rather than flattening everything into one duration-shaped abstraction.
 - Support arithmetic, comparison, parsing, and formatting for the committed temporal types.
-- Keep the user-facing surface Incan-first even when the runtime maps onto Rust primitives underneath.
-- Keep core timezone support stable by standardizing `UTC` and fixed offsets in the stdlib while allowing richer named-zone support to live in separately versioned packages.
+- Provide UTC-only civil host-clock factories while leaving local and named-zone host-clock semantics to packages.
+- Keep the user-facing surface Incan-first while using Rust `std::time` for platform-owned runtime timing primitives.
+- Keep named timezone rule databases out of the core standard library so richer timezone support can live in separately versioned packages.
 
 ## Non-Goals
 
@@ -61,13 +63,22 @@ if elapsed > Duration.seconds(5):
 ```
 
 ```incan
-from std.datetime import DateTimeTZ, FixedOffset
+from std.datetime import DateTimeOffset, FixedOffset
 
-created_at = DateTimeTZ.now(tz=FixedOffset.hours(1))?
-parsed = DateTimeTZ.fromisoformat("2026-04-14T12:34:56+01:00")?
+offset = FixedOffset.hours(1)?
+created_at = DateTimeOffset.fromisoformat("2026-04-14T12:34:56+01:00")?
+parsed = DateTimeOffset.strptime("2026-04-14T12:34:56.123456789+01:00", "%FT%T.%f%:z")?
 
 if parsed < created_at:
     println(parsed.isoformat())
+```
+
+Named timezones remain a package-level concern. A later package could expose a surface shaped like:
+
+```incan
+from pub::timezones @ 0.1 import TimeZone
+
+zone = TimeZone.named("Europe/Amsterdam")?
 ```
 
 ```incan
@@ -81,8 +92,11 @@ quarter_end = anchor + YearMonthInterval.months(3)
 The mental model should be simple:
 
 - use `Duration`, `Instant`, and `SystemTime` for runtime timing and deadlines;
-- use `Date`, `Time`, `DateTime`, and `DateTimeTZ` for civil and external timestamp work;
+- use `Date`, `Time`, and `DateTime` for civil timestamp work;
+- use `FixedOffset` and `DateTimeOffset` for concrete `Z`, `+HHMM`, and `+HH:MM` offset data;
 - use interval types for analytics-facing temporal arithmetic.
+
+Named timezone rule lookup belongs in separately versioned packages layered on this deterministic core.
 
 ## Reference-level explanation
 
@@ -96,9 +110,8 @@ The mental model should be simple:
 - `Date`
 - `Time`
 - `DateTime`
-- `DateTimeTZ`
-- `UTC`
 - `FixedOffset`
+- `DateTimeOffset`
 - `TimeDelta`
 - `YearMonthInterval`
 - `DateTimeInterval`
@@ -110,7 +123,7 @@ There is no separate `std.time` module in this design. Runtime timing and calend
 The module distinguishes three semantic families:
 
 - runtime timing values for elapsed measurement and machine-clock work: `Duration`, `Instant`, `SystemTime`
-- civil and external-facing values for dates, times, and timestamps: `Date`, `Time`, `DateTime`, `DateTimeTZ`
+- civil values for dates, times, and naive timestamps: `Date`, `Time`, `DateTime`
 - analytics-facing interval values for temporal arithmetic: `TimeDelta`, `YearMonthInterval`, `DateTimeInterval`
 
 That split is normative. The public contract must not blur fixed elapsed time, civil timestamps, and calendar-relative intervals into one mushy abstraction.
@@ -120,19 +133,17 @@ That split is normative. The public contract must not blur fixed elapsed time, c
 The timestamp split is explicit:
 
 - `DateTime` is a naive datetime with no timezone or offset attached.
-- `DateTimeTZ` is a timezone-aware datetime.
-
-Core stdlib timezone support is intentionally narrow:
-
-- `UTC` is part of the core surface.
-- `FixedOffset` is part of the core surface.
+- `FixedOffset` is a deterministic UTC offset value, restricted to whole-minute offsets within one day.
+- `DateTimeOffset` is a naive datetime paired with a fixed offset. It represents concrete offset data from ISO text or `%z`; it is not a named timezone.
 - Named IANA timezone support is not part of `std.datetime`.
 
-That richer timezone story is expected to live in separately versioned packages, for example:
+That richer timezone story is expected to live in separately versioned packages. A future package could look like:
 
 ```incan
 from pub::timezones @ 0.1 import TimeZone
 ```
+
+A named timezone does not "belong to" one permanent offset. It resolves to an offset for a specific instant or local civil time because daylight-saving and historical rules change.
 
 ### Interval model
 
@@ -151,7 +162,7 @@ The arithmetic boundary is normative:
 
 - `Instant` composes with `Duration`.
 - `SystemTime` composes with `Duration`.
-- `Date`, `DateTime`, and `DateTimeTZ` compose with `TimeDelta`, `YearMonthInterval`, and `DateTimeInterval`.
+- `Date` and `DateTime` compose with `TimeDelta`, `YearMonthInterval`, and `DateTimeInterval`.
 - `Instant` must not compose with `TimeDelta`, `YearMonthInterval`, or `DateTimeInterval`.
 
 That keeps runtime timing and analytics-facing interval arithmetic distinct.
@@ -163,8 +174,9 @@ The parsing and formatting story is complete and Python-shaped:
 - canonical ISO helpers such as `isoformat()` and `fromisoformat(...)` belong in the contract;
 - general `strftime(...)` and `strptime(...)`-style formatting and parsing belong in the contract as well.
 - fractional-second parsing and formatting must support up to 9 digits of precision.
+- `%z` and `%:z` belong to `DateTimeOffset`; `%Z` and named timezone parsing are outside `std.datetime`.
 
-However, Incan should standardize the supported format directives itself. The surface should look like Python, but it must not inherit Python's host-libc variability as part of the public contract.
+However, Incan should standardize the supported format directives itself. The surface should look like Python, but it must not inherit Python's host-libc variability as part of the public contract. The native parser/formatter can be inspired by the directive tables in Rust's `chrono` and `time` crates, but the implementation should remain Incan source so stdlib behavior is inspectable and portable.
 
 ### Constructor and factory surface
 
@@ -172,16 +184,17 @@ The constructor and factory surface should be broad but consistent:
 
 - `Duration` uses unit-based factories such as `weeks(...)`, `days(...)`, `hours(...)`, `minutes(...)`, `seconds(...)`, `milliseconds(...)`, `microseconds(...)`, and `nanoseconds(...)`.
 - `Instant` exposes `now()` and `elapsed()` and composes with `Duration`.
-- `SystemTime` exposes `now()`.
-- `Date`, `Time`, `DateTime`, and `DateTimeTZ` support direct structural construction plus `fromisoformat(...)` and `strptime(...)`.
-- `Date` exposes `today()`.
-- `DateTime` exposes `now()`.
-- `DateTimeTZ` exposes `now(tz=...)`.
+- `SystemTime` exposes `now()`, fallible Unix timestamp factories, and fallible `checked_add(...)` / `checked_sub(...)` offset helpers.
+- `Date`, `Time`, and `DateTime` support direct structural construction plus `fromisoformat(...)` and `strptime(...)`.
+- `FixedOffset` exposes checked `seconds(...)`, `minutes(...)`, `hours(...)`, and `utc()` factories.
+- `DateTimeOffset` supports fixed-offset ISO parsing/formatting and `%z` / `%:z` parsing/formatting.
+- `Date` exposes `utc_today()`.
+- `DateTime` exposes `utc_now()`.
 - `TimeDelta` uses unit-based factories analogous to `Duration`, including nanosecond precision.
 - `YearMonthInterval` uses explicit `years(...)` and `months(...)` factories.
 - `DateTimeInterval` uses an explicit composite constructor with keyword-style fields such as `years`, `months`, `days`, `hours`, `minutes`, `seconds`, and fractional-second parts.
 
-Python's constructor and parse/format surface is the right DX reference here, but not its precision ceiling. The north-star precision for `Time`, `DateTime`, `DateTimeTZ`, `Duration`, and `TimeDelta` is nanoseconds rather than microseconds.
+Python's constructor and parse/format surface is the right DX reference here, but not its precision ceiling. The north-star precision for `Time`, `DateTime`, `Duration`, and `TimeDelta` is nanoseconds rather than microseconds.
 
 ### `TimeDelta` and interval naming
 
@@ -230,7 +243,7 @@ So examples such as the following should hold:
 - `DateTimeInterval(days=1, hours=24) == DateTimeInterval(days=2)`
 - `DateTimeInterval(months=1) != DateTimeInterval(days=30)`
 
-When a `DateTimeInterval` is applied to `Date`, `DateTime`, or `DateTimeTZ`, the order of application must be fixed and documented:
+When a `DateTimeInterval` is applied to `Date` or `DateTime`, the order of application must be fixed and documented:
 
 - year/month portion first
 - day/time/fractional portion second
@@ -261,7 +274,7 @@ Explicitly outside the module contract:
 
 ### Why `std.datetime` instead of `std.time`
 
-The module is broader than runtime timing. It covers dates, times, naive and aware datetimes, and multiple interval families in addition to `Duration` and `Instant`. Calling that whole surface `std.time` would undersell the civil and analytics half of the design. `std.datetime` is the more honest name.
+The module is broader than runtime timing. It covers dates, times, naive datetimes, and multiple interval families in addition to `Duration` and `Instant`. Calling that whole surface `std.time` would undersell the civil and analytics half of the design. `std.datetime` is the more honest name.
 
 ### Why runtime timing and calendar values live together
 
@@ -273,13 +286,15 @@ This RFC deliberately blends three influences:
 
 - Python for public parsing and formatting ergonomics and familiar names such as `TimeDelta`;
 - Rust for runtime timing concepts such as `Duration`, `Instant`, and `SystemTime`;
-- analytics and Substrait-style thinking for the interval taxonomy and the explicit split between naive and aware timestamp forms.
+- analytics and Substrait-style thinking for the interval taxonomy and the explicit split between runtime timing, civil values, and calendar-aware intervals.
 
 The goal is not to mirror any one of those ecosystems mechanically. The goal is to produce a better Incan temporal model than any single source provides by itself.
 
-### Why named IANA timezones stay out of core stdlib
+### Why named timezone rules stay out of core stdlib
 
-Named timezone databases are useful, but they also bring churn, distribution concerns, and data-update cadence questions that should not destabilize the core standard library. The core contract therefore keeps timezone awareness stable and minimal with `UTC` and `FixedOffset`, while richer named-zone support belongs in separately versioned packages. That plays well with Incan's package model and avoids tying timezone-data updates to core language releases.
+Named timezone-aware datetimes are useful, but they bring API, data-update, and distribution questions that do not need to be tied to core standard library releases. Named timezone databases are the obvious example: `Europe/Amsterdam` is a rule set, not a single offset, and those rules can vary by date because of daylight-saving and historical changes.
+
+The core contract therefore includes only deterministic fixed offsets. `FixedOffset` and `DateTimeOffset` cover `Z`, `+HHMM`, and `+HH:MM` data without shipping a timezone database. Named zones, rule lookup, ambiguous local-time handling, and timezone-data updates belong in separately versioned packages. That plays well with Incan's package model and avoids tying timezone-data updates to core language releases.
 
 ### Interaction with existing and future features
 
@@ -303,8 +318,8 @@ This feature is additive. Existing code using raw integers or strings for time-l
 3. **One generic `Interval` type**
    - Too vague. It would blur fixed elapsed time, day/time intervals, and year/month intervals that behave differently in real analytics and scheduling work.
 
-4. **Named timezone support in core stdlib**
-   - Viable, but less stable. It couples the core temporal API to timezone-database churn and distribution policy.
+4. **Timezone support in core stdlib**
+   - Viable for fixed offsets, but not for named timezone rules. Fixed offsets are deterministic values; named zones couple the core temporal API to timezone-database churn, distribution policy, and ambiguous local-time policy.
 
 5. **Rust interop only**
    - Too implementation-shaped for ordinary Incan code and examples.
@@ -313,7 +328,7 @@ This feature is additive. Existing code using raw integers or strings for time-l
 
 - Time and interval semantics are notoriously easy to get subtly wrong.
 - A broad temporal surface increases the design space substantially compared with narrower utility modules.
-- Keeping named timezone support out of core stdlib means some users will need an extra package for richer awareness semantics.
+- Keeping named timezone support out of core stdlib means users need an extra package for IANA-zone timestamp semantics.
 
 ## Layers affected
 
@@ -322,21 +337,77 @@ This feature is additive. Existing code using raw integers or strings for time-l
 - **Execution handoff**: implementations must preserve arithmetic, comparison, parsing, and formatting behavior without leaking backend quirks.
 - **Docs / examples**: should standardize how Incan code measures elapsed time, works with timestamps, and performs interval arithmetic.
 
+## Implementation Plan
+
+### Phase 1: Runtime and deterministic value layer
+
+- Register `std.datetime` as a standard library namespace.
+- Add Rust `std::time`-backed runtime timing values for durations, instants, and system timestamps.
+- Add source-defined Incan temporal values for dates, times, naive datetimes, fixed-offset datetimes, and intervals.
+- Implement deterministic normalization, comparison, arithmetic, ISO-style parsing/formatting, and Python-shaped `strftime` / `strptime` for the civil, fixed-offset, and interval surface.
+- Add focused tests that prove the module imports, typechecks, runs, uses Rust only in `std.datetime.runtime`, and keeps `std.datetime.civil` source-defined Incan.
+
+### Phase 2: Documentation and release integration
+
+- Add user-facing `std.datetime` reference docs.
+- Update stdlib navigation, release notes, and the active dev version.
+- Keep the runtime/civil boundary explicit in docs so Rust `std::time` interop is visible and civil calendar behavior remains source-defined Incan.
+
+### Phase 3: UTC civil clock boundary
+
+- Keep `Duration`, `Instant`, and `SystemTime` on the explicit Rust `std::time` interop boundary.
+- Define the civil-clock boundary as UTC-only factories in core stdlib: `Date.utc_today()` and `DateTime.utc_now()`.
+- Keep timezone-aware `today` / `now` helpers in named-zone packages.
+- Extend tests to cover UTC civil live-clock reads.
+
+## Implementation Log
+
+### Spec / design
+
+- [x] Preserve the RFC 058 semantic split between runtime timing values, civil values, and interval values.
+- [x] Keep runtime timing on the explicit Rust `std::time` interop boundary.
+- [x] Keep fixed-offset support in stdlib while leaving named timezone rule lookup to packages.
+- [x] Define the UTC-only civil-clock boundary for calendar-clock factories.
+
+### Stdlib / runtime
+
+- [x] Register `std.datetime` in the stdlib namespace registry.
+- [x] Add Rust `std::time`-backed `Duration`, `Instant`, and `SystemTime`.
+- [x] Add source-defined Incan `Date`, `Time`, `DateTime`, `FixedOffset`, `DateTimeOffset`, `TimeDelta`, `YearMonthInterval`, and `DateTimeInterval`.
+- [x] Implement pure Incan normalization and deterministic arithmetic for the civil and interval surface.
+- [x] Implement ISO-style parsing and formatting for the first stdlib surface.
+- [x] Implement Incan-native `strftime` / `strptime`, including nanosecond `%f` and fixed-offset `%z` / `%:z`.
+- [x] Implement live host-clock factories for runtime timing through Rust `std::time`.
+- [x] Implement UTC civil live-clock factories through `SystemTime`.
+
+### Tests
+
+- [x] Add a valid `std.datetime` fixture covering imports, arithmetic, interval normalization, parsing, formatting, nanoseconds, fixed offsets, and invalid named timezone directives.
+- [x] Add a regression guard that confines Rust imports to `std.datetime.runtime`.
+- [x] Add live-clock tests for runtime timing.
+- [x] Add live-clock tests for UTC civil factories.
+
+### Docs
+
+- [x] Add `std.datetime` reference docs.
+- [x] Update stdlib navigation.
+- [x] Add release notes.
+
 ## Design Decisions
 
 - The module is `std.datetime`; there is no separate `std.time` namespace.
 - `std.datetime` includes runtime timing types, civil timestamp types, and analytics-facing interval types in one module.
 - The runtime timing family is `Duration`, `Instant`, and `SystemTime`.
-- The civil timestamp family is `Date`, `Time`, `DateTime`, and `DateTimeTZ`.
-- `DateTime` is naive; `DateTimeTZ` is aware.
+- The civil timestamp family is `Date`, `Time`, and `DateTime`.
+- `DateTime` is naive; fixed-offset timestamp data uses `DateTimeOffset`.
+- The fixed-offset family is `FixedOffset` and `DateTimeOffset`.
 - The interval family is `TimeDelta`, `YearMonthInterval`, and `DateTimeInterval`.
 - `Duration` is the runtime elapsed-time type, not the main analytics interval abstraction.
 - `Instant` composes with `Duration` only; analytics interval types do not apply to `Instant`.
-- Core timezone support is limited to `UTC` and `FixedOffset`.
-- Named IANA timezone support is intentionally outside the core standard library and belongs in separately versioned packages.
-- Parsing and formatting follow Python's overall `isoformat` / `fromisoformat` and `strftime` / `strptime` model, but the supported directives are standardized by Incan rather than inherited from host libc behavior.
-- The constructor and factory surface is broad and explicit: direct constructors for structural values, `now()` / `today()` factories where appropriate, `fromisoformat(...)`, `strptime(...)`, and unit-based interval factories including nanoseconds.
-- Nanosecond precision is part of the north-star contract for `Duration`, `TimeDelta`, `Time`, `DateTime`, and `DateTimeTZ`.
+- Named timezone support, including IANA rule lookup and ambiguous local-time policy, is intentionally outside the core standard library and belongs in separately versioned packages.
+- Parsing and formatting follow Python's overall `isoformat` / `fromisoformat` and `strftime` / `strptime` model, but the supported directives are standardized by Incan rather than inherited from host libc behavior. The implementation is Incan-native and may cite inspiration from Rust `chrono` / `time` directive tables where relevant.
+- The constructor and factory surface is broad and explicit: direct constructors for structural values, UTC `utc_now()` / `utc_today()` factories where appropriate, `fromisoformat(...)`, `strptime(...)`, and unit-based interval factories including nanoseconds.
+- Nanosecond precision is part of the north-star contract for `Duration`, `TimeDelta`, `Time`, and `DateTime`.
 - `TimeDelta` remains the canonical public name, with `DayTimeInterval` allowed as an alias.
 - `DateTimeInterval` is a single compound public type with structured components, safe normalization within compatible buckets, structural equality after normalization, and no total ordering.
 - Applying a `DateTimeInterval` to civil temporal values uses a fixed order: year/month first, then day/time/fractional components.

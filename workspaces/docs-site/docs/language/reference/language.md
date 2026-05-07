@@ -108,6 +108,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
+| `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.civil.intervals`, `std.datetime.civil.naive`, `std.datetime.civil.offset`, `std.datetime.error`, `std.datetime.prelude` | - |
 | `std.graph` | - | - | - |
 | `std.collections` | - | - | - |
 | `std.io` | - | - | - |

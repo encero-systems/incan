@@ -29,7 +29,7 @@ impl<'a> IrEmitter<'a> {
     /// RFC 008 const representability check.
     ///
     /// Allowed (phase 1):
-    /// - Int, Float, Bool
+    /// - Int, exact-width numeric types, Float, Bool
     /// - StaticStr (e.g., "literal")
     /// - StaticBytes (e.g., b"...")
     /// - Tuples of allowed consts
@@ -37,9 +37,11 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Everything else is rejected with an actionable error.
     pub(super) fn validate_const_emittable(&self, name: &str, ty: &IrType, value: &TypedExpr) -> Result<(), EmitError> {
+        /// Return whether an IR type can appear in a Rust `const` initializer emitted by RFC 008.
         fn ok_ty(ty: &IrType) -> bool {
             match ty {
                 IrType::Int
+                | IrType::Numeric(_)
                 | IrType::Float
                 | IrType::Bool
                 | IrType::StaticStr
@@ -64,7 +66,7 @@ impl<'a> IrEmitter<'a> {
             let ty_name = ty.rust_name();
             return Err(EmitError::Unsupported(format!(
                 "const '{}' of type '{}' is not representable as a Rust const.\n\
-                 Allowed: int/float/bool/&'static str/&'static [u8]/tuples, FrozenList/Set/Dict with allowed element types.\n\
+                 Allowed: int/exact-width numeric/float/bool/&'static str/&'static [u8]/tuples, FrozenList/Set/Dict with allowed element types.\n\
                  Consider computing at runtime or simplifying the const.",
                 name, ty_name
             )));

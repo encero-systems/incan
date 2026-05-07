@@ -1,0 +1,18 @@
+"""
+Civil date and time values for `std.datetime`.
+
+`std.datetime.civil` is the public facade over interval, naive calendar/time, and fixed-offset datetime modules. The implementation is split into submodules to keep calendar arithmetic, interval math, and offset-aware values maintainable while preserving the original import surface.
+
+Example:
+
+```incan
+from std.datetime.civil import Date, TimeDelta
+
+renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
+println(renewal.isoformat())
+```
+"""
+
+from std.datetime.civil.intervals import TimeDelta, DayTimeInterval, YearMonthInterval, DateTimeInterval
+from std.datetime.civil.naive import Date, Time, DateTime, FixedOffset, utc, is_leap_year, days_in_month, iso_weeks_in_year
+from std.datetime.civil.offset import DateTimeOffset

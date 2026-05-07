@@ -6,13 +6,12 @@
 //!
 //! ```rust,no_run
 //! use incan_syntax::{lexer, parser};
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() {
 //!
 //! let source = "def foo() -> int:\n    return 42\n";
-//! let tokens = lexer::lex(source)?;
-//! let ast = parser::parse(&tokens)?;
+//! let tokens = lexer::lex(source).expect("source should lex");
+//! let ast = parser::parse(&tokens).expect("tokens should parse");
 //! assert_eq!(ast.declarations.len(), 1);
-//! # Ok(())
 //! # }
 //! ```
 

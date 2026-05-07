@@ -1,0 +1,396 @@
+"""
+Civil interval types for `std.datetime.civil`.
+
+This module contains the signed day/time, year/month, and compound interval types used by the Gregorian calendar and naive datetime modules.
+"""
+
+const _DAYS_PER_YEAR: int = 365
+const _DAYS_PER_LEAP_YEAR: int = 366
+const _DAYS_PER_WEEK: int = 7
+const _MONTHS_PER_YEAR: int = 12
+const _HOURS_PER_DAY: int = 24
+const _MINUTES_PER_HOUR: int = 60
+const _SECONDS_PER_MINUTE: int = 60
+const _SECONDS_PER_HOUR: int = _MINUTES_PER_HOUR * _SECONDS_PER_MINUTE
+const _SECONDS_PER_DAY: int = _HOURS_PER_DAY * _SECONDS_PER_HOUR
+const _NANOS_PER_MICROSECOND: int = 1_000
+const _NANOS_PER_MILLISECOND: int = 1_000_000
+const _NANOS_PER_SECOND: int = 1_000_000_000
+const _NANOS_PER_DAY: int = _SECONDS_PER_DAY * _NANOS_PER_SECOND
+const _UNIX_EPOCH_YEAR: int = 1970
+
+
+pub model TimeDelta:
+    """
+    Day/time interval for civil datetime arithmetic.
+
+    `TimeDelta` stores days separately from seconds and nanoseconds. It is suitable for date and datetime arithmetic,
+    while `Duration` remains the runtime elapsed-time type.
+    """
+
+    pub days: int
+    pub seconds: int
+    pub nanoseconds: int
+
+    @staticmethod
+    def nanoseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from nanoseconds.
+
+        Args:
+            value: Signed nanoseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value)
+
+    @staticmethod
+    def microseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from microseconds.
+
+        Args:
+            value: Signed microseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_MICROSECOND)
+
+    @staticmethod
+    def milliseconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from milliseconds.
+
+        Args:
+            value: Signed milliseconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_MILLISECOND)
+
+    @staticmethod
+    def seconds(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from seconds.
+
+        Args:
+            value: Signed seconds.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return _timedelta_from_nanos(value * _NANOS_PER_SECOND)
+
+    @staticmethod
+    def minutes(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from minutes.
+
+        Args:
+            value: Signed minutes.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return TimeDelta.seconds(value * _SECONDS_PER_MINUTE)
+
+    @staticmethod
+    def hours(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from hours.
+
+        Args:
+            value: Signed hours.
+
+        Returns:
+            A normalized `TimeDelta`.
+        """
+        return TimeDelta.seconds(value * _SECONDS_PER_HOUR)
+
+    @staticmethod
+    def days(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from days.
+
+        Args:
+            value: Signed civil day count.
+
+        Returns:
+            A `TimeDelta` with whole days and no time remainder.
+        """
+        return TimeDelta(days=value, seconds=0, nanoseconds=0)
+
+    @staticmethod
+    def weeks(value: int) -> TimeDelta:
+        """
+        Construct a day/time interval from weeks.
+
+        Args:
+            value: Signed seven-day week count.
+
+        Returns:
+            A `TimeDelta`.
+        """
+        return TimeDelta.days(value * _DAYS_PER_WEEK)
+
+    def total_nanoseconds(self) -> int:
+        """
+        Return this interval as total nanoseconds.
+
+        Returns:
+            Signed nanoseconds represented by the day, second, and nanosecond fields.
+        """
+        total_seconds = self.days * _SECONDS_PER_DAY + self.seconds
+        return total_seconds * _NANOS_PER_SECOND + self.nanoseconds
+
+    def __add__(self, other: TimeDelta) -> TimeDelta:
+        """
+        Add two day/time intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized interval sum.
+        """
+        return _timedelta_from_nanos(self.total_nanoseconds() + other.total_nanoseconds())
+
+    def __sub__(self, other: TimeDelta) -> TimeDelta:
+        """
+        Subtract one day/time interval from another.
+
+        Args:
+            other: Interval to subtract.
+
+        Returns:
+            Normalized interval difference.
+        """
+        return _timedelta_from_nanos(self.total_nanoseconds() - other.total_nanoseconds())
+
+    def __eq__(self, other: TimeDelta) -> bool:
+        """
+        Compare two day/time intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when both normalized intervals represent the same duration.
+        """
+        return self.days == other.days and self.seconds == other.seconds and self.nanoseconds == other.nanoseconds
+
+
+pub model YearMonthInterval:
+    """
+    Calendar interval measured in years and months.
+
+    Month-based arithmetic intentionally stays separate from fixed day/time intervals because months and years do not
+    have fixed day lengths.
+    """
+
+    pub years: int
+    pub months: int
+
+    @staticmethod
+    def years(value: int) -> YearMonthInterval:
+        """
+        Construct a year/month interval from years.
+
+        Args:
+            value: Signed year count.
+
+        Returns:
+            A normalized `YearMonthInterval`.
+        """
+        return _year_month_from_months(value * _MONTHS_PER_YEAR)
+
+    @staticmethod
+    def months(value: int) -> YearMonthInterval:
+        """
+        Construct a year/month interval from months.
+
+        Args:
+            value: Signed month count.
+
+        Returns:
+            A normalized `YearMonthInterval`.
+        """
+        return _year_month_from_months(value)
+
+    def total_months(self) -> int:
+        """
+        Return this interval as total months.
+
+        Returns:
+            Signed month count.
+        """
+        return self.years * _MONTHS_PER_YEAR + self.months
+
+    def __add__(self, other: YearMonthInterval) -> YearMonthInterval:
+        """
+        Add two year/month intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized year/month interval sum.
+        """
+        return _year_month_from_months(self.total_months() + other.total_months())
+
+    def __sub__(self, other: YearMonthInterval) -> YearMonthInterval:
+        """
+        Subtract one year/month interval from another.
+
+        Args:
+            other: Interval to subtract.
+
+        Returns:
+            Normalized year/month interval difference.
+        """
+        return _year_month_from_months(self.total_months() - other.total_months())
+
+    def __eq__(self, other: YearMonthInterval) -> bool:
+        """
+        Compare two year/month intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when both normalized year and month components match.
+        """
+        return self.years == other.years and self.months == other.months
+
+
+pub type DayTimeInterval = TimeDelta
+
+
+pub model DateTimeInterval:
+    """
+    Compound calendar and day/time interval.
+
+    `DateTimeInterval` preserves the semantic split between year/month and day/time components. When applied to civil
+    dates or datetimes, the year/month portion is applied first, then the day/time portion.
+    """
+
+    pub years: int
+    pub months: int
+    pub days: int
+    pub seconds: int
+    pub nanoseconds: int
+
+    @staticmethod
+    def new(
+        years: int = 0,
+        months: int = 0,
+        days: int = 0,
+        hours: int = 0,
+        minutes: int = 0,
+        seconds: int = 0,
+        milliseconds: int = 0,
+        microseconds: int = 0,
+        nanoseconds: int = 0,
+    ) -> DateTimeInterval:
+        """
+        Construct and normalize a compound datetime interval.
+
+        Args:
+            years: Signed year component.
+            months: Signed month component.
+            days: Signed day component.
+            hours: Signed hour component.
+            minutes: Signed minute component.
+            seconds: Signed second component.
+            milliseconds: Signed millisecond component.
+            microseconds: Signed microsecond component.
+            nanoseconds: Signed nanosecond component.
+
+        Returns:
+            A `DateTimeInterval` normalized within year/month and day/time buckets.
+        """
+        ym = _year_month_from_months(years * _MONTHS_PER_YEAR + months)
+        total_hours = days * _HOURS_PER_DAY + hours
+        total_minutes = total_hours * _MINUTES_PER_HOUR + minutes
+        total_seconds = total_minutes * _SECONDS_PER_MINUTE + seconds
+        mut total_nanos = total_seconds * _NANOS_PER_SECOND
+        total_nanos += milliseconds * _NANOS_PER_MILLISECOND
+        total_nanos += microseconds * _NANOS_PER_MICROSECOND
+        total_nanos += nanoseconds
+        dt = _timedelta_from_nanos(total_nanos)
+        return DateTimeInterval(
+            years=ym.years,
+            months=ym.months,
+            days=dt.days,
+            seconds=dt.seconds,
+            nanoseconds=dt.nanoseconds,
+        )
+
+    def year_month(self) -> YearMonthInterval:
+        """
+        Return the year/month portion.
+
+        Returns:
+            `YearMonthInterval` with the calendar portion of this interval.
+        """
+        return YearMonthInterval(years=self.years, months=self.months)
+
+    def day_time(self) -> TimeDelta:
+        """
+        Return the day/time portion.
+
+        Returns:
+            `TimeDelta` with the day, second, and nanosecond portion of this interval.
+        """
+        return TimeDelta(days=self.days, seconds=self.seconds, nanoseconds=self.nanoseconds)
+
+    def __add__(self, other: DateTimeInterval) -> DateTimeInterval:
+        """
+        Add two compound datetime intervals.
+
+        Args:
+            other: Interval to add.
+
+        Returns:
+            Normalized compound interval sum.
+        """
+        return DateTimeInterval.new(
+            years=self.years + other.years,
+            months=self.months + other.months,
+            days=self.days + other.days,
+            seconds=self.seconds + other.seconds,
+            nanoseconds=self.nanoseconds + other.nanoseconds,
+        )
+
+    def __eq__(self, other: DateTimeInterval) -> bool:
+        """
+        Compare two compound intervals for equality.
+
+        Args:
+            other: Interval to compare against.
+
+        Returns:
+            True when all normalized interval components match.
+        """
+        return (
+            self.years == other.years
+            and self.months == other.months
+            and self.days == other.days
+            and self.seconds == other.seconds
+            and self.nanoseconds == other.nanoseconds
+        )
+
+
+pub def _timedelta_from_nanos(nanos: int) -> TimeDelta:
+    days = nanos // _NANOS_PER_DAY
+    rem = nanos % _NANOS_PER_DAY
+    seconds = rem // _NANOS_PER_SECOND
+    nano = rem % _NANOS_PER_SECOND
+    return TimeDelta(days=days, seconds=seconds, nanoseconds=nano)
+
+
+def _year_month_from_months(months: int) -> YearMonthInterval:
+    return YearMonthInterval(years=months // _MONTHS_PER_YEAR, months=months % _MONTHS_PER_YEAR)

@@ -2138,6 +2138,62 @@ def f(uri: str) -> None:
     }
 
     #[test]
+    fn lower_rust_constant_method_receiver_as_value_not_type_like() -> Result<(), String> {
+        use crate::frontend::{lexer, parser, typechecker::TypeChecker};
+
+        let source = r#"
+from rust::std::time import Duration, UNIX_EPOCH
+
+def f() -> None:
+  duration = Duration.from_secs(1)
+  _ = UNIX_EPOCH.saturating_add(duration)
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let program = lowering
+            .lower_program(&ast)
+            .map_err(|err| format!("lowering failed: {err:?}"))?;
+
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Function(function) if function.name == "f" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected lowered function `f`".to_string())?;
+        let Some(stmt) = function.body.get(1) else {
+            return Err(format!("expected UNIX_EPOCH method statement, got {:?}", function.body));
+        };
+        let IrStmtKind::Let { value: expr, .. } = &stmt.kind else {
+            return Err(format!("expected let statement, got {:?}", function.body));
+        };
+
+        match &expr.kind {
+            IrExprKind::MethodCall { receiver, method, .. } => {
+                assert_eq!(method, "saturating_add");
+                match &receiver.kind {
+                    IrExprKind::Var { name, ref_kind, .. } => {
+                        assert_eq!(name, "UNIX_EPOCH");
+                        assert_eq!(*ref_kind, VarRefKind::Value);
+                    }
+                    other => return Err(format!("expected variable receiver, got {other:?}")),
+                }
+            }
+            other => return Err(format!("expected MethodCall lowering, got {other:?}")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn lower_generic_box_as_ref_preserves_nominal_generic_receiver_args() -> Result<(), String> {
         use crate::backend::ir::decl::IrDeclKind;
         use crate::backend::ir::stmt::IrStmtKind;
