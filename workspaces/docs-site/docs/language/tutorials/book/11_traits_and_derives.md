@@ -70,10 +70,10 @@ Traits can also refine other traits:
 
 ```incan
 trait Collection[T]:
-    def first(self) -> T: ...
+    def first(self) -> T
 
 trait OrderedCollection[T] with Collection[T]:
-    def sorted(self) -> Self: ...
+    def sorted(self) -> Self
 
 def first_item(values: Collection[int]) -> int:
     return values.first()

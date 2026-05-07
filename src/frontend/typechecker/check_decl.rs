@@ -3284,6 +3284,14 @@ impl TypeChecker {
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators_allowing_user_defined(&method.decorators);
+        if method.body.is_none() {
+            self.errors.push(errors::concrete_method_requires_body(
+                &method.name,
+                method.return_type.span,
+            ));
+            self.apply_user_defined_method_decorators(method, owner);
+            return;
+        }
         let owner_type_params = self
             .lookup_type_info(owner)
             .map(|info| match info {

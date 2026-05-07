@@ -320,7 +320,7 @@ Explicit brackets are supported only for direct calls resolved as Incan function
 
 ## Traits (authoring)
 
-Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Methods can be required (`...`) or have defaults.
+Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older `: ...` spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.
 
 Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
@@ -339,7 +339,7 @@ def main() -> None:
 
 ```incan
 trait Renderable:
-    def render(self) -> str: ...
+    def render(self) -> str
 
 enum Token with Renderable:
     Text(str)
@@ -353,10 +353,10 @@ enum Token with Renderable:
 
 ```incan
 trait Collection[T]:
-    def first(self) -> T: ...
+    def first(self) -> T
 
 trait OrderedCollection[T] with Collection[T]:
-    def sorted(self) -> Self: ...
+    def sorted(self) -> Self
 
 def first_item(values: Collection[int]) -> int:
     return values.first()

@@ -230,11 +230,9 @@ pub fn enum_variant_type_annotations(span: Span) -> CompileError {
 
 // -- Method & field declarations ---------------------------------------------
 
+/// Report a method declaration that omitted the colon required before a concrete method body.
 pub fn method_decl_expected_body(span: Span) -> CompileError {
-    CompileError::syntax(
-        "Expected ':' after return type or newline for abstract method".to_string(),
-        span,
-    )
+    CompileError::syntax("Expected ':' after method return type".to_string(), span)
 }
 
 pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {

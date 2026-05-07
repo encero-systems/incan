@@ -430,6 +430,50 @@ class Box:
     }
 
     #[test]
+    fn test_parse_trait_bodyless_method_is_abstract() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait Serializer:
+  def serialize(self, value: str) -> str
+  def deserialize(self, data: str) -> str: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.methods.len(), 2);
+        assert_eq!(trait_decl.methods[0].node.name, "serialize");
+        assert!(trait_decl.methods[0].node.body.is_none());
+        assert_eq!(trait_decl.methods[1].node.name, "deserialize");
+        assert!(trait_decl.methods[1].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bodyless_methods_outside_traits_are_rejected() {
+        for source in [
+            "model User:\n  def name(self) -> str\n",
+            "class User:\n  def name(self) -> str\n",
+            "type UserId = newtype str:\n  def display(self) -> str\n",
+            "enum Token:\n  Word\n  def text(self) -> str\n",
+        ] {
+            let errs = parse_str_err(source, "bodyless methods outside traits should fail");
+            assert!(
+                errs.iter()
+                    .any(|err| err.message.contains("Expected ':' after method return type")),
+                "expected method body diagnostic, got: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_bodyless_trait_method_followed_by_docstring_is_rejected() {
+        let source = r#"
+trait Named:
+  def name(self) -> str
+    "Return the display name."
+"#;
+        parse_str_err(source, "bodyless trait method docstring should require a colon body");
+    }
+
+    #[test]
     fn test_parse_pub_class_preserves_authored_field_visibility() -> Result<(), Vec<CompileError>> {
         let source = r#"
 pub class LazyFrame:
