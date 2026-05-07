@@ -373,6 +373,23 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    fn collect_string_literal_patterns<'p>(pattern: &'p Pattern, values: &mut Vec<&'p str>) -> bool {
+        match pattern {
+            Pattern::Literal(lit) => {
+                if let IrExprKind::String(value) = &lit.kind {
+                    values.push(value);
+                    true
+                } else {
+                    false
+                }
+            }
+            Pattern::Or(patterns) => patterns
+                .iter()
+                .all(|pattern| Self::collect_string_literal_patterns(pattern, values)),
+            _ => false,
+        }
+    }
+
     /// Emit a pattern plus an optional guard required by the scrutinee's Rust representation.
     ///
     /// Incan `str` lowers to Rust `String`. Rust cannot directly match `String` with a string-literal pattern, so
@@ -383,12 +400,25 @@ impl<'a> IrEmitter<'a> {
         pattern: &Pattern,
         scrutinee_ty: &IrType,
     ) -> (TokenStream, Option<TokenStream>) {
-        if matches!(scrutinee_ty, IrType::String)
-            && let Pattern::Literal(lit) = pattern
-            && let IrExprKind::String(value) = &lit.kind
-        {
-            let binding = Self::rust_ident("__incan_match_string_literal");
-            return (quote! { ref #binding }, Some(quote! { #binding.as_str() == #value }));
+        if matches!(scrutinee_ty, IrType::String) {
+            if let Pattern::Literal(lit) = pattern
+                && let IrExprKind::String(value) = &lit.kind
+            {
+                let binding = Self::rust_ident("__incan_match_string_literal");
+                return (quote! { ref #binding }, Some(quote! { #binding.as_str() == #value }));
+            }
+            let mut string_values = Vec::new();
+            if matches!(pattern, Pattern::Or(_))
+                && Self::collect_string_literal_patterns(pattern, &mut string_values)
+                && !string_values.is_empty()
+            {
+                let binding = Self::rust_ident("__incan_match_string_literal");
+                let patterns: Vec<_> = string_values.iter().map(|value| quote! { #value }).collect();
+                return (
+                    quote! { ref #binding },
+                    Some(quote! { matches!(#binding.as_str(), #(#patterns)|*) }),
+                );
+            }
         }
 
         (self.emit_pattern(pattern), None)

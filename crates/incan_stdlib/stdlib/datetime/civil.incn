@@ -1359,14 +1359,11 @@ def _strftime_date(date: Date, format: str) -> Result[str, DateTimeError]:
             mut padding = expanded[parsed.value - 1:parsed.value]
             if padding != "-" and padding != "_" and padding != "0":
                 padding = "".to_string()
-            if directive == "%":
-                out += "%"
-            elif directive == "n":
-                out += "\n"
-            elif directive == "t":
-                out += "\t"
-            else:
-                out += _format_date_directive(date, directive, padding)?
+            match directive:
+                "%" => out += "%"
+                "n" => out += "\n"
+                "t" => out += "\t"
+                _ => out += _format_date_directive(date, directive, padding)?
     return Ok(out)
 
 
@@ -1385,14 +1382,11 @@ def _strftime_time(time: Time, format: str) -> Result[str, DateTimeError]:
             mut padding = expanded[parsed.value - 1:parsed.value]
             if padding != "-" and padding != "_" and padding != "0":
                 padding = "".to_string()
-            if directive == "%":
-                out += "%"
-            elif directive == "n":
-                out += "\n"
-            elif directive == "t":
-                out += "\t"
-            else:
-                out += _format_time_directive(time, directive, padding)?
+            match directive:
+                "%" => out += "%"
+                "n" => out += "\n"
+                "t" => out += "\t"
+                _ => out += _format_time_directive(time, directive, padding)?
     return Ok(out)
 
 
@@ -1419,24 +1413,22 @@ def _strftime_datetime_inner(datetime: DateTime, offset: FixedOffset, has_offset
             mut padding = expanded[parsed.value - 1:parsed.value]
             if padding != "-" and padding != "_" and padding != "0" and padding != ":":
                 padding = "".to_string()
-            if directive == "%":
-                out += "%"
-            elif directive == "n":
-                out += "\n"
-            elif directive == "t":
-                out += "\t"
-            elif directive == "z":
-                if not has_offset:
-                    return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-                out += _format_offset(offset, padding == ":", false)
-            elif directive == "Z":
-                return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
-            elif _is_date_directive(directive):
-                out += _format_date_directive(datetime.date, directive, padding)?
-            elif _is_time_directive(directive):
-                out += _format_time_directive(datetime.time, directive, padding)?
-            else:
-                return Err(DateTimeError(detail="unsupported strftime directive"))
+            match directive:
+                "%" => out += "%"
+                "n" => out += "\n"
+                "t" => out += "\t"
+                "z" =>
+                    if not has_offset:
+                        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+                    out += _format_offset(offset, padding == ":", false)
+                "Z" => return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+                _ =>
+                    if _is_date_directive(directive):
+                        out += _format_date_directive(datetime.date, directive, padding)?
+                    elif _is_time_directive(directive):
+                        out += _format_time_directive(datetime.time, directive, padding)?
+                    else:
+                        return Err(DateTimeError(detail="unsupported strftime directive"))
     return Ok(out)
 
 
@@ -1465,93 +1457,69 @@ def _expand_format_aliases(format: str) -> Result[str, DateTimeError]:
             mut modifier = format[parsed.value - 1:parsed.value]
             if modifier != "-" and modifier != "_" and modifier != "0" and modifier != ":":
                 modifier = "".to_string()
-            if modifier != "" and (directive == "F" or directive == "D" or directive == "R" or directive == "T" or directive == "c" or directive == "x" or directive == "X" or directive == "r"):
+            if modifier != "" and _is_compound_format_alias(directive):
                 return Err(DateTimeError(detail="padding modifiers are not supported on compound strftime aliases"))
-            if directive == "F":
-                out += "%Y-%m-%d"
-            elif directive == "D" or directive == "x":
-                out += "%m/%d/%y"
-            elif directive == "R":
-                out += "%H:%M"
-            elif directive == "T" or directive == "X":
-                out += "%H:%M:%S"
-            elif directive == "r":
-                out += "%I:%M:%S %p"
-            elif directive == "c":
-                out += "%a %b %_d %H:%M:%S %Y"
-            else:
-                out += "%" + modifier + directive
+            match directive:
+                "F" => out += "%Y-%m-%d"
+                "D" | "x" => out += "%m/%d/%y"
+                "R" => out += "%H:%M"
+                "T" | "X" => out += "%H:%M:%S"
+                "r" => out += "%I:%M:%S %p"
+                "c" => out += "%a %b %_d %H:%M:%S %Y"
+                _ => out += "%" + modifier + directive
             index = parsed.next
     return Ok(out)
 
 
 def _format_date_directive(date: Date, directive: str, padding: str) -> Result[str, DateTimeError]:
     mut actual_padding = padding
-    if directive == "Y":
-        return Ok(_format_padded(date.year, 4, actual_padding))
-    if directive == "y":
-        return Ok(_format_padded(date.year % 100, 2, actual_padding))
-    if directive == "m":
-        return Ok(_format_padded(date.month, 2, actual_padding))
-    if directive == "d":
-        return Ok(_format_padded(date.day, 2, actual_padding))
-    if directive == "e":
-        if actual_padding == "":
-            actual_padding = "_".to_string()
-        return Ok(_format_padded(date.day, 2, actual_padding))
-    if directive == "j":
-        return Ok(_format_padded(date.day_of_year(), 3, actual_padding))
-    if directive == "a":
-        return Ok(_weekday_short(date.weekday()))
-    if directive == "A":
-        return Ok(_weekday_long(date.weekday()))
-    if directive == "b" or directive == "h":
-        return Ok(_month_short(date.month))
-    if directive == "B":
-        return Ok(_month_long(date.month))
-    if directive == "w":
-        if date.weekday() == 7:
-            return Ok("0")
-        return Ok(str(date.weekday()))
-    if directive == "u":
-        return Ok(str(date.weekday()))
-    if directive == "U":
-        return Ok(_format_padded(_week_number_sunday(date), 2, actual_padding))
-    if directive == "W":
-        return Ok(_format_padded(_week_number_monday(date), 2, actual_padding))
-    if directive == "V":
-        return Ok(_format_padded(date.iso_week(), 2, actual_padding))
-    if directive == "G":
-        return Ok(_format_padded(_iso_year(date), 4, actual_padding))
-    if directive == "g":
-        return Ok(_format_padded(_iso_year(date) % 100, 2, actual_padding))
-    if _is_time_directive(directive):
-        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-    if _is_timezone_directive(directive):
-        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-    return Err(DateTimeError(detail="unsupported strftime directive"))
+    match directive:
+        "Y" => return Ok(_format_padded(date.year, 4, actual_padding))
+        "y" => return Ok(_format_padded(date.year % 100, 2, actual_padding))
+        "m" => return Ok(_format_padded(date.month, 2, actual_padding))
+        "d" => return Ok(_format_padded(date.day, 2, actual_padding))
+        "e" =>
+            if actual_padding == "":
+                actual_padding = "_".to_string()
+            return Ok(_format_padded(date.day, 2, actual_padding))
+        "j" => return Ok(_format_padded(date.day_of_year(), 3, actual_padding))
+        "a" => return Ok(_weekday_short(date.weekday()))
+        "A" => return Ok(_weekday_long(date.weekday()))
+        "b" | "h" => return Ok(_month_short(date.month))
+        "B" => return Ok(_month_long(date.month))
+        "w" =>
+            if date.weekday() == 7:
+                return Ok("0")
+            return Ok(str(date.weekday()))
+        "u" => return Ok(str(date.weekday()))
+        "U" => return Ok(_format_padded(_week_number_sunday(date), 2, actual_padding))
+        "W" => return Ok(_format_padded(_week_number_monday(date), 2, actual_padding))
+        "V" => return Ok(_format_padded(date.iso_week(), 2, actual_padding))
+        "G" => return Ok(_format_padded(_iso_year(date), 4, actual_padding))
+        "g" => return Ok(_format_padded(_iso_year(date) % 100, 2, actual_padding))
+        _ =>
+            if _is_time_directive(directive):
+                return Err(DateTimeError(detail="time directive requires Time or DateTime"))
+            if _is_timezone_directive(directive):
+                return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+            return Err(DateTimeError(detail="unsupported strftime directive"))
 
 
 def _format_time_directive(time: Time, directive: str, padding: str) -> Result[str, DateTimeError]:
-    if directive == "H":
-        return Ok(_format_padded(time.hour, 2, padding))
-    if directive == "I":
-        return Ok(_format_padded(_hour_12(time.hour), 2, padding))
-    if directive == "M":
-        return Ok(_format_padded(time.minute, 2, padding))
-    if directive == "S":
-        return Ok(_format_padded(time.second, 2, padding))
-    if directive == "f":
-        return Ok(_pad9(time.nanosecond))
-    if directive == "p":
-        return Ok(_period_upper(time.hour))
-    if directive == "P":
-        return Ok(_period_lower(time.hour))
-    if _is_date_directive(directive):
-        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-    if _is_timezone_directive(directive):
-        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-    return Err(DateTimeError(detail="unsupported strftime directive"))
+    match directive:
+        "H" => return Ok(_format_padded(time.hour, 2, padding))
+        "I" => return Ok(_format_padded(_hour_12(time.hour), 2, padding))
+        "M" => return Ok(_format_padded(time.minute, 2, padding))
+        "S" => return Ok(_format_padded(time.second, 2, padding))
+        "f" => return Ok(_pad9(time.nanosecond))
+        "p" => return Ok(_period_upper(time.hour))
+        "P" => return Ok(_period_lower(time.hour))
+        _ =>
+            if _is_date_directive(directive):
+                return Err(DateTimeError(detail="date directive requires Date or DateTime"))
+            if _is_timezone_directive(directive):
+                return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+            return Err(DateTimeError(detail="unsupported strftime directive"))
 
 
 def _strptime_temporal(
@@ -1595,36 +1563,38 @@ def _strptime_temporal(
             parsed = _read_directive(expanded, format_index)?
             directive = expanded[parsed.value:parsed.value + 1]
             format_index = parsed.next
-            if directive == "%":
-                if value_index >= len(value) or value[value_index:value_index + 1] != "%":
-                    return Err(DateTimeError(detail="strptime literal mismatch"))
-                value_index += 1
-            elif directive == "n":
-                if value_index >= len(value) or value[value_index:value_index + 1] != "\n":
-                    return Err(DateTimeError(detail="strptime literal mismatch"))
-                value_index += 1
-            elif directive == "t":
-                if value_index >= len(value) or value[value_index:value_index + 1] != "\t":
-                    return Err(DateTimeError(detail="strptime literal mismatch"))
-                value_index += 1
-            elif _is_timezone_directive(directive):
-                if not allow_offset:
-                    return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
-                if directive == "Z":
-                    return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
-                parsed_offset = _parse_offset(value, value_index)?
-                offset = parsed_offset.offset
-                has_offset = true
-                value_index = parsed_offset.next
-            elif _is_date_directive(directive):
-                if not allow_date:
-                    return Err(DateTimeError(detail="date directive requires Date or DateTime"))
-                if directive == "Y":
+            match directive:
+                "%" =>
+                    if value_index >= len(value) or value[value_index:value_index + 1] != "%":
+                        return Err(DateTimeError(detail="strptime literal mismatch"))
+                    value_index += 1
+                "n" =>
+                    if value_index >= len(value) or value[value_index:value_index + 1] != "\n":
+                        return Err(DateTimeError(detail="strptime literal mismatch"))
+                    value_index += 1
+                "t" =>
+                    if value_index >= len(value) or value[value_index:value_index + 1] != "\t":
+                        return Err(DateTimeError(detail="strptime literal mismatch"))
+                    value_index += 1
+                "z" | "Z" =>
+                    if not allow_offset:
+                        return Err(DateTimeError(detail="timezone offset directive requires DateTimeOffset"))
+                    if directive == "Z":
+                        return Err(DateTimeError(detail="named timezone directives are not supported by std.datetime"))
+                    parsed_offset = _parse_offset(value, value_index)?
+                    offset = parsed_offset.offset
+                    has_offset = true
+                    value_index = parsed_offset.next
+                "Y" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 4, 4)?
                     year = number.value
                     iso_year = year
                     value_index = number.next
-                elif directive == "y":
+                "y" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 2, 2)?
                     if number.value >= 70:
                         year = 1900 + number.value
@@ -1632,37 +1602,53 @@ def _strptime_temporal(
                         year = 2000 + number.value
                     iso_year = year
                     value_index = number.next
-                elif directive == "m":
+                "m" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     month = number.value
                     value_index = number.next
-                elif directive == "d" or directive == "e":
+                "d" | "e" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_day_number(value, value_index)?
                     day = number.value
                     value_index = number.next
-                elif directive == "j":
+                "j" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 3)?
                     ordinal_day = number.value
                     value_index = number.next
-                elif directive == "b" or directive == "h":
+                "b" | "h" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_month_name(value, value_index, false)?
                     month = number.value
                     value_index = number.next
-                elif directive == "B":
+                "B" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_month_name(value, value_index, true)?
                     month = number.value
                     value_index = number.next
-                elif directive == "a":
+                "a" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_weekday_name(value, value_index, false)?
                     iso_weekday = number.value
                     saw_weekday = true
                     value_index = number.next
-                elif directive == "A":
+                "A" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_weekday_name(value, value_index, true)?
                     iso_weekday = number.value
                     saw_weekday = true
                     value_index = number.next
-                elif directive == "u":
+                "u" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 1)?
                     if number.value < 1 or number.value > _DAYS_PER_WEEK:
                         return Err(DateTimeError(detail="ISO weekday must be in 1..7"))
@@ -1670,7 +1656,9 @@ def _strptime_temporal(
                     saw_iso = true
                     saw_weekday = true
                     value_index = number.next
-                elif directive == "w":
+                "w" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 1)?
                     if number.value < 0 or number.value > 6:
                         return Err(DateTimeError(detail="weekday must be in 0..6"))
@@ -1680,12 +1668,16 @@ def _strptime_temporal(
                         iso_weekday = number.value
                     saw_weekday = true
                     value_index = number.next
-                elif directive == "G":
+                "G" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 4, 4)?
                     iso_year = number.value
                     saw_iso = true
                     value_index = number.next
-                elif directive == "g":
+                "g" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 2, 2)?
                     if number.value >= 70:
                         iso_year = 1900 + number.value
@@ -1693,12 +1685,16 @@ def _strptime_temporal(
                         iso_year = 2000 + number.value
                     saw_iso = true
                     value_index = number.next
-                elif directive == "V":
+                "V" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     iso_week = number.value
                     saw_iso = true
                     value_index = number.next
-                elif directive == "U" or directive == "W":
+                "U" | "W" =>
+                    if not allow_date:
+                        return Err(DateTimeError(detail="date directive requires Date or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     if number.value < 0 or number.value > 53:
                         return Err(DateTimeError(detail="calendar week must be in 0..53"))
@@ -1706,31 +1702,40 @@ def _strptime_temporal(
                     week_starts_monday = directive == "W"
                     saw_week_number = true
                     value_index = number.next
-            elif _is_time_directive(directive):
-                if not allow_time:
-                    return Err(DateTimeError(detail="time directive requires Time or DateTime"))
-                if directive == "H":
+                "H" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     hour = number.value
                     value_index = number.next
-                elif directive == "I":
+                "I" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     hour_12 = number.value
                     saw_hour_12 = true
                     value_index = number.next
-                elif directive == "M":
+                "M" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     minute = number.value
                     value_index = number.next
-                elif directive == "S":
+                "S" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     number = _parse_number(value, value_index, 1, 2)?
                     second = number.value
                     value_index = number.next
-                elif directive == "f":
+                "f" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     number = _parse_fractional_number(value, value_index)?
                     nanosecond = number.value
                     value_index = number.next
-                elif directive == "p" or directive == "P":
+                "p" | "P" =>
+                    if not allow_time:
+                        return Err(DateTimeError(detail="time directive requires Time or DateTime"))
                     if value[value_index:value_index + 2].upper() == "PM":
                         saw_pm = true
                         value_index += 2
@@ -1739,8 +1744,7 @@ def _strptime_temporal(
                         value_index += 2
                     else:
                         return Err(DateTimeError(detail="expected AM or PM"))
-            else:
-                return Err(DateTimeError(detail="unsupported strptime directive"))
+                _ => return Err(DateTimeError(detail="unsupported strptime directive"))
     if value_index != len(value):
         return Err(DateTimeError(detail="trailing text after strptime parse"))
     if saw_hour_12:
@@ -1893,19 +1897,33 @@ def _format_padded(value: int, width: int, padding: str) -> str:
 
 
 def _is_digit(value: str) -> bool:
-    return value == "0" or value == "1" or value == "2" or value == "3" or value == "4" or value == "5" or value == "6" or value == "7" or value == "8" or value == "9"
+    match value:
+        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => return true
+        _ => return false
 
 
 def _is_date_directive(directive: str) -> bool:
-    return directive == "Y" or directive == "y" or directive == "m" or directive == "d" or directive == "e" or directive == "j" or directive == "a" or directive == "A" or directive == "b" or directive == "h" or directive == "B" or directive == "w" or directive == "u" or directive == "U" or directive == "W" or directive == "V" or directive == "G" or directive == "g"
+    match directive:
+        "Y" | "y" | "m" | "d" | "e" | "j" | "a" | "A" | "b" | "h" | "B" | "w" | "u" | "U" | "W" | "V" | "G" | "g" => return true
+        _ => return false
 
 
 def _is_time_directive(directive: str) -> bool:
-    return directive == "H" or directive == "I" or directive == "M" or directive == "S" or directive == "f" or directive == "p" or directive == "P"
+    match directive:
+        "H" | "I" | "M" | "S" | "f" | "p" | "P" => return true
+        _ => return false
 
 
 def _is_timezone_directive(directive: str) -> bool:
-    return directive == "z" or directive == "Z"
+    match directive:
+        "z" | "Z" => return true
+        _ => return false
+
+
+def _is_compound_format_alias(directive: str) -> bool:
+    match directive:
+        "F" | "D" | "R" | "T" | "c" | "x" | "X" | "r" => return true
+        _ => return false
 
 
 def _hour_12(hour: int) -> int:
@@ -1928,87 +1946,57 @@ def _period_lower(hour: int) -> str:
 
 
 def _month_short(month: int) -> str:
-    if month == 1:
-        return "Jan"
-    if month == 2:
-        return "Feb"
-    if month == 3:
-        return "Mar"
-    if month == 4:
-        return "Apr"
-    if month == 5:
-        return "May"
-    if month == 6:
-        return "Jun"
-    if month == 7:
-        return "Jul"
-    if month == 8:
-        return "Aug"
-    if month == 9:
-        return "Sep"
-    if month == 10:
-        return "Oct"
-    if month == 11:
-        return "Nov"
-    return "Dec"
+    match month:
+        1 => return "Jan"
+        2 => return "Feb"
+        3 => return "Mar"
+        4 => return "Apr"
+        5 => return "May"
+        6 => return "Jun"
+        7 => return "Jul"
+        8 => return "Aug"
+        9 => return "Sep"
+        10 => return "Oct"
+        11 => return "Nov"
+        _ => return "Dec"
 
 
 def _month_long(month: int) -> str:
-    if month == 1:
-        return "January"
-    if month == 2:
-        return "February"
-    if month == 3:
-        return "March"
-    if month == 4:
-        return "April"
-    if month == 5:
-        return "May"
-    if month == 6:
-        return "June"
-    if month == 7:
-        return "July"
-    if month == 8:
-        return "August"
-    if month == 9:
-        return "September"
-    if month == 10:
-        return "October"
-    if month == 11:
-        return "November"
-    return "December"
+    match month:
+        1 => return "January"
+        2 => return "February"
+        3 => return "March"
+        4 => return "April"
+        5 => return "May"
+        6 => return "June"
+        7 => return "July"
+        8 => return "August"
+        9 => return "September"
+        10 => return "October"
+        11 => return "November"
+        _ => return "December"
 
 
 def _weekday_short(weekday: int) -> str:
-    if weekday == 1:
-        return "Mon"
-    if weekday == 2:
-        return "Tue"
-    if weekday == 3:
-        return "Wed"
-    if weekday == 4:
-        return "Thu"
-    if weekday == 5:
-        return "Fri"
-    if weekday == 6:
-        return "Sat"
-    return "Sun"
+    match weekday:
+        1 => return "Mon"
+        2 => return "Tue"
+        3 => return "Wed"
+        4 => return "Thu"
+        5 => return "Fri"
+        6 => return "Sat"
+        _ => return "Sun"
 
 
 def _weekday_long(weekday: int) -> str:
-    if weekday == 1:
-        return "Monday"
-    if weekday == 2:
-        return "Tuesday"
-    if weekday == 3:
-        return "Wednesday"
-    if weekday == 4:
-        return "Thursday"
-    if weekday == 5:
-        return "Friday"
-    if weekday == 6:
-        return "Saturday"
-    return "Sunday"
+    match weekday:
+        1 => return "Monday"
+        2 => return "Tuesday"
+        3 => return "Wednesday"
+        4 => return "Thursday"
+        5 => return "Friday"
+        6 => return "Saturday"
+        _ => return "Sunday"
 
 
 def _iso_year(date: Date) -> int:
@@ -2143,13 +2131,13 @@ pub def days_in_month(year: int, month: int) -> int:
         Day count for the month. Invalid month values are treated as 31-day months by this low-level helper; checked
         constructors validate month ranges before calling it.
     """
-    if month == 2:
-        if is_leap_year(year):
-            return 29
-        return 28
-    if month == 4 or month == 6 or month == 9 or month == 11:
-        return 30
-    return 31
+    match month:
+        2 =>
+            if is_leap_year(year):
+                return 29
+            return 28
+        4 | 6 | 9 | 11 => return 30
+        _ => return 31
 
 
 pub def iso_weeks_in_year(year: int) -> int:

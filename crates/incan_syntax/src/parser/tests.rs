@@ -2580,6 +2580,46 @@ def f() -> int:
     }
 
     #[test]
+    fn test_parse_match_fat_arrow_inline_compound_assignment() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f() -> str:
+  mut out = ""
+  match 1:
+    1 => out += "a"
+    _ => out += "b"
+  return out
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        assert_eq!(func.body.len(), 3);
+        let match_expr = match &func.body[1].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        assert_eq!(arms.len(), 2);
+        for arm in arms {
+            match &arm.node.body {
+                MatchBody::Block(stmts) => {
+                    assert_eq!(stmts.len(), 1);
+                    assert!(matches!(
+                        stmts[0].node,
+                        Statement::CompoundAssignment(_)
+                    ));
+                }
+                MatchBody::Expr(_) => panic!("Expected inline compound assignment to parse as statement block"),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_match_fat_arrow_block_allows_blank_before_body() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f() -> int:

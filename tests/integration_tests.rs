@@ -2166,9 +2166,18 @@ def describe(value: str) -> str:
         case other:
             return other.upper()
 
+def describe_alt(value: str) -> str:
+    mut out = ""
+    match value:
+        "star" | "sun" => out += "literal"
+        other => out += other.upper()
+    return out
+
 def main() -> None:
     println(describe("star"))
     println(describe("fallback"))
+    println(describe_alt("sun"))
+    println(describe_alt("fallback"))
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
@@ -2185,7 +2194,7 @@ def main() -> None:
         let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
         assert_eq!(
             lines,
-            vec!["literal", "FALLBACK"],
+            vec!["literal", "FALLBACK", "literal", "FALLBACK"],
             "unexpected string match output:\n{stdout}"
         );
         Ok(())
