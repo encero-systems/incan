@@ -1233,6 +1233,18 @@ impl TypeChecker {
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
                     return None;
                 }
+                let all_identical =
+                    !exp0.has_body && rest.iter().all(|(_, e)| !e.has_body && method_infos_identical(exp0, e));
+                if !all_identical {
+                    self.errors.push(errors::supertrait_method_ambiguity(
+                        adopted_trait,
+                        method,
+                        &rest[0].0,
+                        &rest[1].0,
+                        ambiguity_span,
+                    ));
+                    return None;
+                }
                 Some(exp0.clone())
             }
         }
@@ -1249,6 +1261,7 @@ impl TypeChecker {
             .map(|entry| entry.info)
     }
 
+    /// Resolve one method entry through a concrete trait adoption, preserving the originating trait provenance.
     pub(in crate::frontend::typechecker) fn trait_method_entry_resolved_for_adoption(
         &mut self,
         adoption: &TypeBoundInfo,
@@ -1310,6 +1323,18 @@ impl TypeChecker {
                 if !all_mutually_compat {
                     self.errors
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
+                    return None;
+                }
+                let all_identical =
+                    !exp0.has_body && rest.iter().all(|(_, e)| !e.has_body && method_infos_identical(exp0, e));
+                if !all_identical {
+                    self.errors.push(errors::supertrait_method_ambiguity(
+                        &adoption.name,
+                        method,
+                        &rest[0].0,
+                        &rest[1].0,
+                        ambiguity_span,
+                    ));
                     return None;
                 }
                 Some(TraitMethodEntry {
@@ -1681,6 +1706,93 @@ impl TypeChecker {
         }
     }
 
+    /// If a concrete type overrides a trait default method, the override must remain signature-compatible.
+    fn enforce_trait_default_method_overrides(
+        &mut self,
+        type_name: &str,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+    ) {
+        let adoption = ResolvedTraitAdoption {
+            name: trait_name.to_string(),
+            info: trait_info.clone(),
+            args: trait_args.map(|args| args.to_vec()).unwrap_or_default(),
+            span: adoption_span,
+        };
+        for entry in self.trait_method_entries_for_adoption(&adoption) {
+            if !entry.info.has_body {
+                continue;
+            }
+            let Some(found_group) = method_overloads.get(&entry.method_name) else {
+                continue;
+            };
+            if !found_group
+                .iter()
+                .any(|found| self.method_sigs_compatible(&entry.info, found))
+            {
+                let expected_sig = self.method_sig_string_named(&entry.method_name, &entry.info);
+                let found_sig = found_group
+                    .first()
+                    .map(|found| self.method_sig_string_named(&entry.method_name, found))
+                    .unwrap_or_else(|| "<missing>".to_string());
+                self.errors.push(errors::trait_method_signature_mismatch(
+                    &entry.origin_trait,
+                    type_name,
+                    &entry.method_name,
+                    &expected_sig,
+                    &found_sig,
+                    adoption_span,
+                ));
+            }
+        }
+    }
+
+    /// If a trait method partial explicitly overrides an inherited trait method, its projected signature must remain
+    /// compatible with the inherited surface it shadows.
+    fn validate_trait_partial_inherited_overrides(
+        &mut self,
+        trait_name: &str,
+        partials: &[Spanned<MethodPartialDecl>],
+    ) {
+        if partials.is_empty() {
+            return;
+        }
+        let Some(trait_info) = self.lookup_trait_info(trait_name).cloned() else {
+            return;
+        };
+        for partial in partials {
+            let Some(found) = trait_info.methods.get(&partial.node.name).cloned() else {
+                continue;
+            };
+            for (origin_trait, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
+                let Some(supertrait_info) = self.lookup_semantic_trait_info(origin_trait.as_str()) else {
+                    continue;
+                };
+                let Some(expected) = supertrait_info.methods.get(&partial.node.name) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
+                let expected = substitute_method_info(expected, &subst);
+                if self.method_sigs_compatible(&expected, &found) {
+                    continue;
+                }
+                let expected_sig = self.method_sig_string_named(&partial.node.name, &expected);
+                let found_sig = self.method_sig_string_named(&partial.node.name, &found);
+                self.errors.push(errors::trait_method_signature_mismatch(
+                    &origin_trait,
+                    trait_name,
+                    &partial.node.name,
+                    &expected_sig,
+                    &found_sig,
+                    partial.span,
+                ));
+            }
+        }
+    }
+
     /// Render trait type arguments into a stable diagnostic and duplicate-detection key.
     fn trait_args_key(args: &[ResolvedType]) -> String {
         args.iter()
@@ -1897,8 +2009,7 @@ impl TypeChecker {
     fn is_declaration_safe_partial_preset(&self, expr: &Spanned<Expr>) -> bool {
         match &expr.node {
             Expr::Literal(_) => true,
-            Expr::Ident(_) => true,
-            Expr::Field(base, _) => is_const_path_expr(base),
+            Expr::Ident(_) | Expr::Field(_, _) => self.is_declaration_safe_const_or_variant_path(expr),
             Expr::Paren(inner) => self.is_declaration_safe_partial_preset(inner),
             Expr::List(entries) => entries.iter().all(|entry| match entry {
                 ListEntry::Element(value) => self.is_declaration_safe_partial_preset(value),
@@ -1941,6 +2052,28 @@ impl TypeChecker {
     fn is_model_literal_name(&self, name: &str) -> bool {
         self.lookup_symbol(name)
             .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Model(_))))
+    }
+
+    /// Return whether a top-level partial preset path names a const or a zero-argument enum variant.
+    fn is_declaration_safe_const_or_variant_path(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Ident(name) => {
+                self.const_decls.contains_key(name)
+                    || self
+                        .lookup_symbol(name)
+                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+            }
+            Expr::Field(base, member) => {
+                if let Expr::Ident(type_name) = &base.node
+                    && let Some(symbol) = self.lookup_symbol(type_name)
+                    && let SymbolKind::Type(TypeInfo::Enum(info)) = &symbol.kind
+                {
+                    return info.variants.iter().any(|variant| variant == member);
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Validate preset expressions for same-type method partial declarations.
@@ -2324,6 +2457,14 @@ impl TypeChecker {
                 adoption_span,
                 &mi.method_overloads,
             );
+            self.enforce_trait_default_method_overrides(
+                &model.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &mi.method_overloads,
+            );
             self.enforce_trait_abstract_properties(
                 &model.name,
                 trait_name,
@@ -2521,6 +2662,14 @@ impl TypeChecker {
                 adoption_span,
                 &ci.method_overloads,
             );
+            self.enforce_trait_default_method_overrides(
+                &class.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &ci.method_overloads,
+            );
             self.enforce_trait_abstract_properties(
                 &class.name,
                 trait_name,
@@ -2567,6 +2716,7 @@ impl TypeChecker {
         self.current_trait_requires = Some(requires_map);
         self.current_trait_properties = self.lookup_trait_info(&tr.name).map(|info| info.properties.clone());
         self.current_trait_name = Some(tr.name.clone());
+        self.validate_trait_partial_inherited_overrides(&tr.name, &tr.method_partials);
 
         for method in &tr.methods {
             self.validate_decorators_allowing_user_defined(&method.node.decorators);
@@ -2888,6 +3038,14 @@ impl TypeChecker {
 
         if let Some(info) = enum_info {
             self.enforce_trait_abstract_methods(
+                &en.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &info.method_overloads,
+            );
+            self.enforce_trait_default_method_overrides(
                 &en.name,
                 trait_name,
                 &trait_info,
@@ -3661,14 +3819,5 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
-    }
-}
-
-/// Return whether an expression is a simple dotted const path.
-fn is_const_path_expr(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::Ident(_) => true,
-        Expr::Field(base, _) => is_const_path_expr(base),
-        _ => false,
     }
 }

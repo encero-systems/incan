@@ -1382,6 +1382,31 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_tools_metadata_api_markdown() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "tools",
+            "metadata",
+            "api",
+            "src/lib.incn",
+            "--format",
+            "markdown",
+        ])?;
+        let Some(Command::Tools {
+            command:
+                ToolsCommand::Metadata {
+                    command: ToolsMetadataCommand::Api { path, format },
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("tools metadata api"));
+        };
+        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
+        assert_eq!(format, ToolsMetadataFormat::Markdown);
+        Ok(())
+    }
+
+    #[test]
     fn test_cli_parse_debug_flags() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "--lex", "test.incn"])?;
         assert!(cli.lex_file.is_some());

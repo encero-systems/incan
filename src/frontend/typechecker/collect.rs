@@ -221,12 +221,19 @@ impl TypeChecker {
     /// Register a module-level partial as a projected callable symbol.
     fn collect_partial(&mut self, partial: &PartialDecl, span: Span) {
         let target_name = partial.target.segments.join(".");
+        let Some(kind) = self.alias_target_symbol_kind(&partial.target.segments) else {
+            self.errors.push(CompileError::type_error(
+                format!("Partial '{}' targets unknown callable '{}'", partial.name, target_name),
+                span,
+            ));
+            return;
+        };
         let Some((params, return_type, is_async, type_params, type_param_bounds, type_param_bound_details)) =
-            self.partial_target_callable_signature(&partial.target.segments)
+            Self::partial_callable_signature_from_kind(&partial.target.segments, kind)
         else {
             self.errors.push(CompileError::type_error(
                 format!(
-                    "Partial '{}' targets unknown or unsupported callable '{}'",
+                    "Partial '{}' targets unsupported symbol '{}'; expected a function, constructor, alias, or partial",
                     partial.name, target_name
                 ),
                 span,
@@ -253,9 +260,9 @@ impl TypeChecker {
         });
     }
 
-    /// Resolve the callable surface that a top-level partial declaration projects.
-    fn partial_target_callable_signature(&mut self, segments: &[String]) -> Option<PartialCallableSignature> {
-        match self.alias_target_symbol_kind(segments)? {
+    /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
+    fn partial_callable_signature_from_kind(segments: &[String], kind: SymbolKind) -> Option<PartialCallableSignature> {
+        match kind {
             SymbolKind::Function(info) => Some((
                 info.params,
                 info.return_type,
@@ -321,6 +328,19 @@ impl TypeChecker {
                 span,
             ));
             return None;
+        }
+
+        for param in &params {
+            if param.kind != ParamKind::Normal {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Partial '{partial_name}' cannot target callable '{target_name}' because parameter '{}' is a rest parameter",
+                        param.name().unwrap_or("<anonymous>")
+                    ),
+                    span,
+                ));
+                return None;
+            }
         }
 
         let mut seen = HashSet::new();

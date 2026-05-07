@@ -497,6 +497,14 @@ impl IncanLanguageServer {
                     span,
                 });
             }
+            Declaration::Partial(partial) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: partial.name.clone(),
+                    kind: "partial".to_string(),
+                    detail: format_partial_decl_signature(partial, source),
+                    span,
+                });
+            }
             Declaration::Model(model) if span.start <= offset && offset < span.end => {
                 if let Some(info) = find_property_symbol_info(&model.name, &model.properties, offset) {
                     return Some(info);
@@ -572,6 +580,9 @@ impl IncanLanguageServer {
                     return Some(decl.span);
                 }
                 Declaration::Function(func) if func.name == name => {
+                    return Some(decl.span);
+                }
+                Declaration::Partial(partial) if partial.name == name => {
                     return Some(decl.span);
                 }
                 Declaration::Model(model) if model.name == name => {
@@ -985,7 +996,8 @@ class Box[T with Clone]:
 mod lsp_api_metadata_preview_tests {
     use super::{
         api_metadata_preview_at_offset, api_metadata_previews, enum_completion_detail, enum_variant_completion_detail,
-        enum_variant_completion_label,
+        enum_variant_completion_label, format_partial_decl_signature, lsp_document_symbol_name_and_detail,
+        lsp_symbol_kind_for_decl,
     };
     use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
     use crate::frontend::ast::{Declaration, ParamKind, Span};
@@ -1042,6 +1054,83 @@ pub def endpoint() -> str:
             preview.markdown.contains("pub def endpoint(id: int) -> bool"),
             "expected rebound callable signature in LSP preview, got:\n{}",
             preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_include_public_partials() -> Result<(), String> {
+        let source = r#"
+pub def route(method: str, path: str = "/") -> str:
+    return path
+
+pub get = partial route(method="GET")
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+        let partial_offset = source
+            .find("get = partial")
+            .ok_or_else(|| "expected partial declaration in fixture".to_string())?;
+        let preview = api_metadata_preview_at_offset(&previews, partial_offset)
+            .ok_or_else(|| "expected checked partial preview".to_string())?;
+
+        assert!(
+            preview.markdown.contains("*checked API metadata: public partial*"),
+            "expected public partial metadata preview, got:\n{}",
+            preview.markdown
+        );
+        assert!(
+            preview
+                .markdown
+                .contains("pub get = partial route(method: str = ..., path: str = ...)"),
+            "expected projected partial signature with defaulted param display, got:\n{}",
+            preview.markdown
+        );
+        assert!(
+            preview.markdown.contains("target: `route`") && preview.markdown.contains("presets: `method`"),
+            "expected target and preset provenance, got:\n{}",
+            preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_partial_lsp_surfaces_completion_and_document_symbol_detail() -> Result<(), String> {
+        let source = r#"
+def route(method: str, path: str) -> str:
+    return path
+
+get = partial route(method="GET")
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let partial = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Partial(partial) => Some(partial),
+                _ => None,
+            })
+            .ok_or_else(|| "expected partial declaration".to_string())?;
+        let partial_decl = ast
+            .declarations
+            .iter()
+            .find(|decl| matches!(decl.node, Declaration::Partial(_)))
+            .ok_or_else(|| "expected partial declaration span".to_string())?;
+
+        assert_eq!(
+            format_partial_decl_signature(partial, source),
+            r#"get = partial route(method="GET")"#
+        );
+        assert_eq!(
+            lsp_symbol_kind_for_decl(&partial_decl.node),
+            Some(tower_lsp::lsp_types::SymbolKind::FUNCTION)
+        );
+        assert_eq!(
+            lsp_document_symbol_name_and_detail(&partial_decl.node, source),
+            Some(("get".to_string(), r#"get = partial route(method="GET")"#.to_string()))
         );
 
         Ok(())
@@ -1473,6 +1562,28 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl, source: 
     sig.push_str(&format_type(&func.return_type.node));
 
     sig
+}
+
+/// Format a module-level partial declaration for hover, completion detail, and document symbols.
+fn format_partial_decl_signature(partial: &crate::frontend::ast::PartialDecl, source: &str) -> String {
+    let args = partial
+        .args
+        .iter()
+        .map(|arg| {
+            format!(
+                "{}={}",
+                arg.name,
+                source_snippet(source, arg.value.span).unwrap_or("...")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} = partial {}({})",
+        partial.name,
+        partial.target.segments.join("."),
+        args
+    )
 }
 
 /// Format one AST parameter with the same local default-expression display used by hover, completion, and signature
@@ -4085,10 +4196,11 @@ fn rust_member_completions(line_prefix: &str, symbols: &[RustOriginSymbol]) -> O
     if items.is_empty() { None } else { Some(items) }
 }
 
+/// Return the LSP document-symbol kind for a top-level declaration.
 fn lsp_symbol_kind_for_decl(decl: &Declaration) -> Option<SymbolKind> {
     match decl {
         Declaration::Const(_) | Declaration::Static(_) => Some(SymbolKind::CONSTANT),
-        Declaration::Function(_) => Some(SymbolKind::FUNCTION),
+        Declaration::Function(_) | Declaration::Partial(_) => Some(SymbolKind::FUNCTION),
         Declaration::Model(_) => Some(SymbolKind::STRUCT),
         Declaration::Class(_) => Some(SymbolKind::CLASS),
         Declaration::Trait(_) => Some(SymbolKind::INTERFACE),
@@ -4115,6 +4227,7 @@ fn lsp_document_symbol_name_and_detail(decl: &Declaration, source: &str) -> Opti
             format!("static {}: {}", static_decl.name, format_type(&static_decl.ty.node)),
         )),
         Declaration::Function(func) => Some((func.name.clone(), format_function_signature(func, source))),
+        Declaration::Partial(partial) => Some((partial.name.clone(), format_partial_decl_signature(partial, source))),
         Declaration::Model(model) => Some((model.name.clone(), format!("model {}", model.name))),
         Declaration::Class(class) => Some((class.name.clone(), format!("class {}", class.name))),
         Declaration::Trait(tr) => Some((tr.name.clone(), format!("trait {}", tr.name))),
@@ -4717,6 +4830,16 @@ impl LanguageServer for IncanLanguageServer {
             })));
         }
 
+        if let Some((ident, _)) = identifier_at_offset(&doc.source, offset)
+            && let Some(def_span) = self.find_definition(ast, &ident)
+        {
+            let range = span_to_range(&doc.source, def_span.start, def_span.end);
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range,
+            })));
+        }
+
         // Find what symbol the cursor is on
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             // Find definition of that symbol
@@ -4904,6 +5027,16 @@ impl LanguageServer for IncanLanguageServer {
                             &func.name,
                             CompletionItemKind::FUNCTION,
                             Some(format_function_signature(func, &doc.source)),
+                            None,
+                        );
+                    }
+                    Declaration::Partial(partial) => {
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &partial.name,
+                            CompletionItemKind::FUNCTION,
+                            Some(format_partial_decl_signature(partial, &doc.source)),
                             None,
                         );
                     }

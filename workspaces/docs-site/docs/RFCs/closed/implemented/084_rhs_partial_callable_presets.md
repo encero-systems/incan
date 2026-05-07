@@ -1,6 +1,6 @@
 # RFC 084: RHS partial callable presets
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-29
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
 - **Issue:** [#453](https://github.com/dannys-code-corner/incan/issues/453)
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -538,8 +538,8 @@ Manifest and checked API metadata should grow explicit partial entries rather th
 - [x] Resolve concrete method partials and trait method partials.
 - [x] Project callable signatures with preset keywords as ordinary defaulted override parameters.
 - [x] Validate declaration-safe top-level preset expressions, including collection and model literals.
-- [ ] Reject unsupported targets, empty templates, duplicate fills, unknown keywords, cycles, visibility leaks, positional partials, and rest/keyword-capture targets. Initial diagnostics cover unsupported targets, empty templates, duplicate/unknown keywords, positional partials, and rest targets.
-- [ ] Diagnose trait partial collisions, override conflicts, and ambiguous inherited partials.
+- [x] Reject unsupported targets, empty templates, duplicate fills, unknown keywords, cycles, visibility leaks, positional partials, and rest/keyword-capture targets.
+- [x] Diagnose trait partial collisions, override conflicts, and ambiguous inherited partials.
 
 ### Lowering / IR / emission
 
@@ -555,22 +555,22 @@ Manifest and checked API metadata should grow explicit partial entries rather th
 - [x] Checked API metadata: represent partials distinctly from aliases and hand-written functions.
 - [x] LSP: improve ordinary default-argument display where needed.
 - [x] LSP: add signature help coverage for callable signatures and defaulted parameters.
-- [ ] LSP: partial hover is present; completion, go-to-definition, rename, and diagnostics behavior remain open.
-- [ ] Generated docs: render partials as callable presets with projected signatures and provenance.
+- [x] LSP: partial hover, completion, go-to-definition, document symbols, and diagnostics use the partial name, target, preset arguments, and projected default display where the current LSP architecture supports the behavior. Rename remains outside the current advertised LSP capability set.
+- [x] Generated docs: render partials as callable presets with projected signatures and provenance.
 
 ### Tests
 
 - [x] Parser and formatter tests for all partial syntactic forms.
-- [ ] Typechecker valid and invalid tests for target resolution, projection, diagnostics, and statically safe presets. Initial valid projection/export coverage is present.
-- [ ] Trait method partial tests for default expansion, adopter behavior, collisions, overrides, and ambiguity. Initial trait/model valid coverage is present.
-- [ ] Codegen snapshot tests for top-level partial declarations and local partial expressions. Initial top-level function/model codegen coverage is present.
-- [ ] Integration tests for callable behavior, keyword override behavior, constructor presets, trait partials, and manifest consumers.
+- [x] Typechecker valid and invalid tests for target resolution, projection, diagnostics, and statically safe presets.
+- [x] Trait method partial tests for default expansion, adopter behavior, collisions, overrides, and ambiguity.
+- [x] Codegen snapshot tests for top-level partial declarations and local partial expressions.
+- [x] Integration tests for callable behavior, keyword override behavior, constructor presets, trait partials, and manifest consumers.
 - [x] LSP/unit tests for ordinary defaults and partial-projected default display.
 
 ### Docs / release
 
 - [x] Update authored language reference/explanation docs for callable presets.
-- [ ] Update tooling docs if signature help/default display behavior changes.
+- [x] Update tooling docs if signature help/default display behavior changes.
 - [x] Add release notes entry for RFC 084.
 - [x] Bump the active `0.3.0-dev.N` version.
 

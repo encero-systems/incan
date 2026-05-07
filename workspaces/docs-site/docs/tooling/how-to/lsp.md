@@ -94,7 +94,7 @@ Hover over any symbol to see its type:
 def process(data: List[str]) -> Result[int, Error]
 ```
 
-When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public model/class fields, checked public methods, and public enum variants. These previews use the same checked metadata extractor as `incan tools metadata api`, so they can include raw docstrings, checked signatures, field aliases/descriptions, enum backing values, derives, trait adoption, and safe const values. For value enums, enum and variant hover details show the backing type and variant raw value where available.
+When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public partial callable presets, public model/class fields, checked public methods, and public enum variants. These previews use the same checked metadata extractor as `incan tools metadata api`, so they can include raw docstrings, checked signatures, partial target/preset provenance, field aliases/descriptions, enum backing values, derives, trait adoption, and safe const values. For value enums, enum and variant hover details show the backing type and variant raw value where available.
 
 If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use `incan tools metadata api` for that.
 
