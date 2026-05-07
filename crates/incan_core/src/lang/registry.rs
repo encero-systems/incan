@@ -52,6 +52,9 @@ pub const RFC_009: RfcId = "RFC 009";
 /// RFC 016 — `loop` and `break <value>` loop expressions.
 pub const RFC_016: RfcId = "RFC 016";
 
+/// RFC 017 — validated newtypes with implicit coercion.
+pub const RFC_017: RfcId = "RFC 017";
+
 /// RFC 018 — testing stdlib and assertion helpers.
 pub const RFC_018: RfcId = "RFC 018";
 
@@ -63,6 +66,9 @@ pub const RFC_022: RfcId = "RFC 022";
 
 /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
 pub const RFC_023: RfcId = "RFC 023";
+
+/// RFC 024 — extensible derive protocol.
+pub const RFC_024: RfcId = "RFC 024";
 
 /// RFC 028 — trait-based operator overloading.
 pub const RFC_028: RfcId = "RFC 028";
@@ -79,8 +85,17 @@ pub const RFC_052: RfcId = "RFC 052";
 /// RFC 057 — targeted Rust lint suppression.
 pub const RFC_057: RfcId = "RFC 057";
 
+/// RFC 069 — `list.repeat` helper for fixed-length initialization.
+pub const RFC_069: RfcId = "RFC 069";
+
+/// RFC 070 — `Result[T, E]` combinators.
+pub const RFC_070: RfcId = "RFC 070";
+
 /// RFC 083 — symbol and method aliases.
 pub const RFC_083: RfcId = "RFC 083";
+
+/// RFC 088 — iterator adapter surface.
+pub const RFC_088: RfcId = "RFC 088";
 
 /// Namespace-style access to RFC ids.
 ///
@@ -109,6 +124,8 @@ impl RFC {
     pub const _009: RfcId = RFC_009;
     /// RFC 016 — `loop` and `break <value>` loop expressions.
     pub const _016: RfcId = RFC_016;
+    /// RFC 017 — validated newtypes with implicit coercion.
+    pub const _017: RfcId = RFC_017;
     /// RFC 018 — testing stdlib and assertion helpers.
     pub const _018: RfcId = RFC_018;
     /// RFC 021 — model field metadata and aliases.
@@ -117,6 +134,8 @@ impl RFC {
     pub const _022: RfcId = RFC_022;
     /// RFC 023 — stdlib compilation and `@rust.extern` delegation.
     pub const _023: RfcId = RFC_023;
+    /// RFC 024 — extensible derive protocol.
+    pub const _024: RfcId = RFC_024;
     /// RFC 028 — trait-based operator overloading.
     pub const _028: RfcId = RFC_028;
     /// RFC 029 — union types and narrowing predicates.
@@ -127,8 +146,14 @@ impl RFC {
     pub const _052: RfcId = RFC_052;
     /// RFC 057 — targeted Rust lint suppression.
     pub const _057: RfcId = RFC_057;
+    /// RFC 069 — `list.repeat` helper for fixed-length initialization.
+    pub const _069: RfcId = RFC_069;
+    /// RFC 070 — `Result[T, E]` combinators.
+    pub const _070: RfcId = RFC_070;
     /// RFC 083 — symbol and method aliases.
     pub const _083: RfcId = RFC_083;
+    /// RFC 088 — iterator adapter surface.
+    pub const _088: RfcId = RFC_088;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

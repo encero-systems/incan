@@ -54,6 +54,7 @@ use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
 
@@ -483,6 +484,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Model(model) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&model.name, &model.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: model.name.clone(),
                     kind: "model".to_string(),
@@ -491,6 +495,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Class(class) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&class.name, &class.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: class.name.clone(),
                     kind: "class".to_string(),
@@ -499,6 +506,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Trait(tr) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&tr.name, &tr.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: tr.name.clone(),
                     kind: "trait".to_string(),
@@ -964,7 +974,8 @@ mod lsp_api_metadata_preview_tests {
         enum_variant_completion_label,
     };
     use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
-    use crate::frontend::ast::Declaration;
+    use crate::frontend::ast::{Declaration, ParamKind, Span};
+    use crate::frontend::symbols::{CallableParam, ResolvedType, Symbol, SymbolKind, VariableInfo};
     use crate::frontend::{lexer, parser, typechecker};
 
     fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
@@ -976,6 +987,50 @@ mod lsp_api_metadata_preview_tests {
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
         let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
         Ok((ast, metadata))
+    }
+
+    #[test]
+    fn checked_api_previews_use_callable_rebound_function_signature() -> Result<(), String> {
+        let source = r#"
+pub def endpoint() -> str:
+    return "raw"
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        checker.symbols.define(Symbol {
+            name: "endpoint".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(
+                    vec![CallableParam::named("id", ResolvedType::Int, ParamKind::Normal)],
+                    Box::new(ResolvedType::Bool),
+                ),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+
+        let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
+        let previews = api_metadata_previews(&ast, &metadata);
+        let function_offset = source
+            .find("endpoint")
+            .ok_or_else(|| "expected function name in fixture".to_string())?;
+        let preview = api_metadata_preview_at_offset(&previews, function_offset)
+            .ok_or_else(|| "expected checked function preview".to_string())?;
+
+        assert!(
+            preview.markdown.contains("pub def endpoint(id: int) -> bool"),
+            "expected rebound callable signature in LSP preview, got:\n{}",
+            preview.markdown
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -1164,6 +1219,51 @@ enum HttpStatus(int):
 }
 
 #[cfg(test)]
+mod lsp_computed_property_tests {
+    use super::{find_property_symbol_info, format_property_signature};
+    use crate::frontend::ast::Declaration;
+    use crate::frontend::{lexer, parser};
+
+    #[test]
+    fn computed_property_hover_surfaces_owner_and_type() -> Result<(), String> {
+        let source = r#"
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let model = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model declaration".to_string())?;
+        let property = model
+            .properties
+            .first()
+            .ok_or_else(|| "expected computed property".to_string())?;
+
+        assert_eq!(
+            format_property_signature(&model.name, &property.node),
+            "property Account.dollars -> int"
+        );
+        let offset = source
+            .find("dollars")
+            .ok_or_else(|| "expected property name in source".to_string())?;
+        let info = find_property_symbol_info(&model.name, &model.properties, offset)
+            .ok_or_else(|| "expected property hover symbol".to_string())?;
+        assert_eq!(info.kind, "property");
+        assert_eq!(info.detail, "property Account.dollars -> int");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod lsp_contract_model_command_tests {
     use super::{
         ContractModelCommandFormat, emit_contract_model_command_payload, parse_emit_contract_model_command_args,
@@ -1283,6 +1383,35 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     sig
 }
 
+/// Format a computed property declaration for hover and completion details.
+fn format_property_signature(owner: &str, property: &crate::frontend::ast::PropertyDecl) -> String {
+    format!(
+        "property {}.{} -> {}",
+        owner,
+        property.name,
+        format_type(&property.return_type.node)
+    )
+}
+
+/// Return symbol information when an offset falls inside a computed property declaration.
+fn find_property_symbol_info(
+    owner: &str,
+    properties: &[crate::frontend::ast::Spanned<crate::frontend::ast::PropertyDecl>],
+    offset: usize,
+) -> Option<SymbolInfo> {
+    for property in properties {
+        if property.span.start <= offset && offset < property.span.end {
+            return Some(SymbolInfo {
+                name: property.node.name.clone(),
+                kind: "property".to_string(),
+                detail: format_property_signature(owner, &property.node),
+                span: property.span,
+            });
+        }
+    }
+    None
+}
+
 /// Format a Type for display
 fn format_type(ty: &Type) -> String {
     match ty {
@@ -1292,6 +1421,7 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("{}[{}]", name, params_str.join(", "))
         }
+        Type::ConstrainedPrimitive(_, _) => ty.to_string(),
         Type::Tuple(types) => {
             let types_str: Vec<String> = types.iter().map(|t| format_type(&t.node)).collect();
             format!("({})", types_str.join(", "))
@@ -1300,6 +1430,8 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("({}) -> {}", params_str.join(", "), format_type(&ret.node))
         }
+        Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
+        Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
         Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),
@@ -2309,6 +2441,58 @@ fn rust_member_completion_context(line_prefix: &str) -> Option<(&str, &str)> {
     Some((base, partial))
 }
 
+/// Return the LSP detail string for the built-in `list.repeat` helper.
+fn builtin_list_repeat_detail() -> String {
+    collection_helpers::signature(BuiltinCollectionHelperId::ListRepeat).to_string()
+}
+
+/// Return hover markdown for the built-in `list.repeat` helper.
+fn builtin_list_repeat_markdown() -> String {
+    format!(
+        "```incan\n{}\n```\n\n*list helper*\n\nCreates a list with `count` clone-derived copies of `value`. Negative counts raise `ValueError`.",
+        builtin_list_repeat_detail()
+    )
+}
+
+/// Return hover markdown when `ident` is the `repeat` member in `list.repeat`.
+fn builtin_list_repeat_hover(source: &str, ident: &str, span: Span) -> Option<String> {
+    let helper = BuiltinCollectionHelperId::ListRepeat;
+    if ident != collection_helpers::member(helper) {
+        return None;
+    }
+    let prefix = &source[..span.start.min(source.len())];
+    let receiver_prefix = format!("{}.", collection_helpers::receiver(helper));
+    prefix
+        .trim_end()
+        .ends_with(&receiver_prefix)
+        .then(builtin_list_repeat_markdown)
+}
+
+/// Return completions for built-in members on the import-free `list` surface.
+fn builtin_list_member_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let (base, partial) = rust_member_completion_context(line_prefix)?;
+    if base != collection_helpers::receiver(BuiltinCollectionHelperId::ListRepeat) {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for helper in collection_helpers::BUILTIN_COLLECTION_HELPERS
+        .iter()
+        .filter(|helper| helper.receiver == base && helper.member.starts_with(partial))
+    {
+        push_completion(
+            &mut items,
+            &mut seen,
+            helper.member,
+            CompletionItemKind::METHOD,
+            Some(helper.signature.to_string()),
+            Some(format!("0_{}", helper.member)),
+        );
+    }
+    if items.is_empty() { None } else { Some(items) }
+}
+
 fn rust_member_completions(line_prefix: &str, symbols: &[RustOriginSymbol]) -> Option<Vec<CompletionItem>> {
     let (base, partial) = rust_member_completion_context(line_prefix)?;
     let rust_symbol = symbols.iter().find(|sym| sym.local_name == base)?;
@@ -2821,6 +3005,18 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && let Some(markdown) = builtin_list_repeat_hover(&doc.source, &ident, span)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
             // Call-site explicit type arguments: `f[T](...)`, `_.method[U](...)`
             if let Some(ty_spanned) = call_site_type_args::call_site_innermost_type_at_offset(ast, offset) {
                 let display = format_type(&ty_spanned.node);
@@ -3001,6 +3197,11 @@ impl LanguageServer for IncanLanguageServer {
             return Ok(Some(CompletionResponse::Array(decorator_items)));
         }
 
+        // ---- Context: built-in collection member completions (`list.<member>`) ----
+        if let Some(list_member_items) = builtin_list_member_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(list_member_items)));
+        }
+
         // ---- Context: Rust-origin member completions (`Alias.<member>`) ----
         if let Some(rust_member_items) = rust_member_completions(&line_prefix, &doc.rust_origin_symbols) {
             return Ok(Some(CompletionResponse::Array(rust_member_items)));
@@ -3162,6 +3363,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &model.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&model.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Class(class) => {
                         push_completion(
@@ -3196,6 +3407,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &class.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&class.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Trait(tr) => {
                         push_completion(
@@ -3206,6 +3427,16 @@ impl LanguageServer for IncanLanguageServer {
                             Some(format!("trait {}", tr.name)),
                             None,
                         );
+                        for property in &tr.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&tr.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Enum(en) => {
                         push_completion(
@@ -3430,7 +3661,8 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
 #[cfg(test)]
 mod completion_tests {
-    use super::stdlib_module_completions;
+    use super::{builtin_list_member_completions, builtin_list_repeat_hover, stdlib_module_completions};
+    use crate::frontend::ast::Span;
 
     #[test]
     fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
@@ -3441,6 +3673,39 @@ mod completion_tests {
                 .iter()
                 .any(|item| item.label == "fs" && item.detail.as_deref() == Some("std.fs module")),
             "expected std.fs to be exposed through stdlib registry completions: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_member_completions_include_repeat() -> Result<(), String> {
+        let items = builtin_list_member_completions("let xs = list.re")
+            .ok_or_else(|| "expected built-in list member completions".to_string())?;
+        assert!(
+            items.iter().any(|item| {
+                item.label == "repeat"
+                    && item.detail.as_deref() == Some("list.repeat[T](value: T, count: int) -> list[T]")
+            }),
+            "expected list.repeat completion: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_repeat_hover_documents_helper() -> Result<(), String> {
+        let source = "let xs = list.repeat(0, 3)";
+        let start = source
+            .find("repeat")
+            .ok_or_else(|| "expected repeat in fixture".to_string())?;
+        let markdown = builtin_list_repeat_hover(source, "repeat", Span::new(start, start + "repeat".len()))
+            .ok_or_else(|| "expected list.repeat hover".to_string())?;
+        assert!(
+            markdown.contains("list.repeat[T](value: T, count: int) -> list[T]"),
+            "expected signature in hover markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("Negative counts raise `ValueError`."),
+            "expected negative-count detail in hover markdown: {markdown}"
         );
         Ok(())
     }

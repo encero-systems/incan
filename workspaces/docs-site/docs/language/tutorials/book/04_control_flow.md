@@ -16,9 +16,9 @@ def describe(n: int) -> str:
 
 Use ordinary `if` when the condition is a boolean expression.
 
-## `if let` (do something only when one pattern matches)
+## `if let` (do something only when a pattern matches)
 
-Use `if let` when you care about exactly one successful pattern and want the non-match case to do nothing.
+Use `if let` when you care about one success branch and want the non-match case to do nothing.
 
 ```incan
 def greet(user: Option[User]) -> None:
@@ -37,6 +37,19 @@ def greet(user: Option[User]) -> None:
 
 Use `match` instead when both branches matter. In v1, `if let` is single-arm only and does not accept `elif` or `else`.
 
+The success branch can use pattern alternation when several patterns share the same body:
+
+```incan
+enum JobStatus:
+    Running
+    Completed
+    Cancelled
+
+def log_done(status: JobStatus) -> None:
+    if let Completed | Cancelled = status:
+        println("done")
+```
+
 ## `match` (pattern matching)
 
 `match` is the main way to branch on enums like `Result` and `Option`:
@@ -49,6 +62,21 @@ def main() -> None:
         case Ok(port): println(f"port={port}")
         case Err(e): println(f"error: {e}")
 ```
+
+Use `|` inside a `match` arm when alternatives should share the same body:
+
+```incan
+enum PortLookup:
+    Cached(int)
+    Fresh(int)
+    Failed(str)
+
+match lookup_port(raw):
+    case Cached(port) | Fresh(port): println(f"port={port}")
+    case Failed(e): println(f"error: {e}")
+```
+
+Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
 !!! tip "Coming from Rust?"
     Incan also supports a more Rust-like match-arm style using `=>`:

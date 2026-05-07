@@ -158,6 +158,72 @@ pub fn unknown_decorator(path: &str, span: Span) -> CompileError {
         .with_hint("Import the module alias or use a fully qualified decorator path")
 }
 
+/// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
+pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("User-defined decorator '@{path}' cannot be used on {kind} declarations"),
+        span,
+    )
+    .with_hint("User-defined decorators are supported on functions and methods")
+}
+
+/// Report a decorator expression that resolves but is not callable.
+pub fn decorator_not_callable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("decorator '{path}' is not callable"), span)
+}
+
+/// Report a decorator factory expression whose result is not callable.
+pub fn decorator_factory_not_callable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("'{path}' does not return a callable"), span)
+}
+
+/// Report a type-valued decorator argument on a user-defined decorator factory.
+pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("User-defined decorator '{path}' cannot use type-valued decorator arguments"),
+        span,
+    )
+    .with_hint("Use expression arguments such as name=value for decorator factories")
+}
+
+/// Report a malformed `ValidationError(...)` constructor call.
+pub fn validation_error_constructor_shape(span: Span) -> CompileError {
+    CompileError::type_error(
+        "ValidationError requires exactly one message argument and an optional code".to_string(),
+        span,
+    )
+    .with_hint("Use ValidationError(\"message\") or ValidationError(message=\"message\")")
+}
+
+/// Report a `from_underlying` hook that does not satisfy the RFC 017 contract.
+pub fn invalid_newtype_validation_hook(newtype_name: &str, detail: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Invalid '{newtype_name}.from_underlying' validation hook: {detail}"),
+        span,
+    )
+    .with_hint(format!(
+        "Use: def from_underlying(value: <underlying>) -> Result[{newtype_name}, ValidationError]"
+    ))
+}
+
+/// Report an implicit coercion attempt into a newtype that opted out.
+pub fn implicit_newtype_coercion_disabled(newtype_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Implicit coercion into newtype '{newtype_name}' is disabled"),
+        span,
+    )
+    .with_hint("Use an explicit constructor or from_underlying call at this site")
+}
+
+/// Report a cycle in validated-newtype underlying/coercion resolution.
+pub fn newtype_coercion_cycle(newtype_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Validated-newtype coercion cycle detected while resolving '{newtype_name}'"),
+        span,
+    )
+    .with_hint("Break the newtype-underlying cycle before relying on implicit coercion")
+}
+
 pub fn reserved_root_namespace(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("'{}' is a reserved root namespace", name), span)
         .with_hint("Choose a different name (reserved: std, rust)")
@@ -309,6 +375,15 @@ pub fn derive_wrong_kind(name: &str, kind: &str, span: Span) -> CompileError {
     .with_hint(format!("Did you mean: `with {}` to implement a trait?", name))
 }
 
+/// Report `@derive(module)` on an imported module that has no RFC 024 `__derives__` declaration.
+pub fn derive_module_missing_derives(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot derive module '{}' - it does not declare `__derives__`", name),
+        span,
+    )
+    .with_hint("Add module-level `__derives__ = [TraitName]` metadata or derive an imported trait directly")
+}
+
 // -- Functions & error handling ----------------------------------------------
 
 /// Type error for using a **generic** function name in **value** position.
@@ -444,6 +519,15 @@ pub fn await_outside_async(span: Span) -> CompileError {
     )
     .with_note("'await' is only valid inside `async def` and async method bodies")
     .with_hint("Declare the enclosing function or method with the `async` keyword (after importing `std.async`)")
+}
+
+/// An async callable was invoked in a context where the returned future is not awaited directly.
+pub fn async_call_without_await(callable: &str, span: Span) -> CompileError {
+    CompileError::warning(format!("Async call `{callable}` is not awaited"), span)
+        .with_note("Calling an async function or method produces work that should usually be awaited")
+        .with_hint(format!(
+            "Use `await {callable}(...)` when the result should be observed here"
+        ))
 }
 
 /// `break` appeared outside any enclosing loop body.
@@ -740,6 +824,33 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
+/// Report a concrete type that has not implemented a required trait property.
+pub fn missing_trait_property(trait_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait '{}' requires property '{}' to be implemented",
+            trait_name, property
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Add the required property: property {} -> ReturnType:",
+        property
+    ))
+    .with_note("All required trait properties must be implemented")
+}
+
+/// Report a body on a trait property requirement.
+pub fn trait_property_body_not_supported(trait_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{}' property '{}' cannot define a body", trait_name, property),
+        span,
+    )
+    .with_hint(
+        "Declare the abstract requirement as `property name -> Type` and provide the body in each implementation",
+    )
+}
+
 pub fn trait_method_signature_mismatch(
     trait_name: &str,
     type_name: &str,
@@ -758,6 +869,60 @@ pub fn trait_method_signature_mismatch(
     .with_note(format!("Expected: {expected_sig}"))
     .with_note(format!("Found:    {found_sig}"))
     .with_hint("Update the method signature to match the trait requirement")
+}
+
+/// Report a computed property whose return type does not match the adopted trait requirement.
+pub fn trait_property_signature_mismatch(
+    trait_name: &str,
+    type_name: &str,
+    property: &str,
+    expected: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait '{}' requires '{}'::{} to match its property type",
+            trait_name, type_name, property
+        ),
+        span,
+    )
+    .with_note(format!("Expected: property {property} -> {expected}"))
+    .with_note(format!("Found:    property {property} -> {found}"))
+    .with_hint("Update the property return type to match the trait requirement")
+}
+
+/// Report incompatible same-name property requirements from two adopted traits.
+pub fn trait_property_conflict(trait_a: &str, trait_b: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Conflicting implementations: both {} and {} define property '{}'",
+            trait_a, trait_b, property
+        ),
+        span,
+    )
+    .with_hint("Resolve the conflict by declaring a compatible property on the adopting trait or concrete type")
+}
+
+/// Report an ambiguous property requirement inherited through multiple supertraits.
+pub fn supertrait_property_ambiguity(
+    adopted_trait: &str,
+    property: &str,
+    via_a: &str,
+    via_b: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Ambiguous trait property '{}' when adopting '{}' — supertraits '{}' and '{}' disagree",
+            property, adopted_trait, via_a, via_b
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Declare `property {property} -> Type:` on '{}' or on the concrete type to disambiguate",
+        adopted_trait
+    ))
 }
 
 pub fn trait_required_field_type_mismatch(
@@ -962,6 +1127,19 @@ pub fn missing_field(type_name: &str, field: &str, span: Span) -> CompileError {
 pub fn private_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Field '{field}' on '{type_name}' is private"), span)
         .with_hint("Access this field from a method on the declaring class, or mark the field `pub`")
+}
+
+/// Report access to a class computed property that is not visible from the current member-access context.
+pub fn private_property(type_name: &str, property: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Property '{property}' on '{type_name}' is private"), span)
+        .with_hint("Access this property from a method on the declaring class, or mark the property `pub`")
+}
+
+/// Report a computed property selected with method-call syntax.
+pub fn property_called_as_method(property: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Computed property '{}' is not callable", property), span)
+        .with_hint(format!("Use `.{property}` without parentheses"))
+        .with_note("Computed properties are read with field-like syntax")
 }
 
 pub fn missing_method(type_name: &str, method: &str, span: Span) -> CompileError {
@@ -1267,6 +1445,18 @@ pub fn positional_constructor_args_not_supported(type_name: &str, span: Span) ->
     .with_hint(format!("Use named arguments: {}(field=value, ...)", type_name))
 }
 
+/// Report a newtype constructor call that does not pass exactly one positional underlying value.
+pub fn newtype_constructor_shape(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Newtype constructor '{}' requires exactly one positional underlying value",
+            type_name
+        ),
+        span,
+    )
+    .with_hint(format!("Use {}(<underlying value>)", type_name))
+}
+
 pub fn positional_pattern_not_supported(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(
@@ -1281,6 +1471,31 @@ pub fn positional_pattern_not_supported(type_name: &str, span: Span) -> CompileE
 pub fn named_pattern_not_supported(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Named pattern fields are not supported for '{}'", name), span)
         .with_hint("Use positional patterns for enum variants and builtins")
+}
+
+/// Report an alternation whose alternatives do not bind the same names.
+pub fn pattern_alternation_binding_mismatch(expected: &[String], found: &[String], span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding mismatch: expected bindings [{}], found [{}]",
+            expected.join(", "),
+            found.join(", ")
+        ),
+        span,
+    )
+    .with_hint("Every alternative in a pattern alternation must bind the same names")
+}
+
+/// Report an alternation whose same-named binding resolves to different types across alternatives.
+pub fn pattern_alternation_binding_type_mismatch(name: &str, expected: &str, found: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding '{}' has incompatible types: expected '{}', found '{}'",
+            name, expected, found
+        ),
+        span,
+    )
+    .with_hint("Use separate branches when alternatives bind the same name with different types")
 }
 
 pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> CompileError {
@@ -1358,6 +1573,16 @@ pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     )
     .with_note("List.append clones non-Copy values before pushing")
     .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+}
+
+/// Report that `list.repeat(value, count)` requires cloneable element values.
+pub fn list_repeat_requires_clone(elem_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("list.repeat requires element type '{}' to be Clone", elem_type),
+        span,
+    )
+    .with_note("list.repeat preserves the source value, so non-Copy values are cloned into the new list")
+    .with_hint("Add @derive(Clone) to the element type or repeat a Copy type")
 }
 
 pub fn list_concat_requires_clone(elem_type: &str, span: Span) -> CompileError {

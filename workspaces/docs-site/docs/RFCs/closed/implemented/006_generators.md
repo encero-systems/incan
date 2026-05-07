@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/324
-- **Follow-up:** RFC 088 (iterator adapter surface), tracked by https://github.com/dannys-code-corner/incan/issues/127
+- **Follow-up:** RFC 088 (iterator adapter surface), implemented by https://github.com/dannys-code-corner/incan/issues/127
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.3
@@ -189,7 +189,7 @@ Generator helper methods should lower to backend-native lazy iterator machinery 
 - `for` loops consume generators the same way they consume other iterable sources.
 - Recursive generators are valid as long as the yielded element type remains consistent.
 - Generator expressions are the lazy counterpart to eager list-comprehension syntax rather than a separate collection feature.
-- The broader `Iterator[T]` adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that design and issue #127 tracks it.
+- The broader `Iterator[T]` adapter API is a follow-up surface, not part of this RFC. RFC 088 owns that implemented design.
 
 ### Compatibility / migration
 
@@ -301,7 +301,7 @@ The feature is additive. Existing functions, loops, and comprehensions keep thei
 
 1. `Generator[T]` is the user-facing semantic type for `yield`-produced values. It should satisfy the iteration protocol rather than being collapsed into a bare `Iterator[T]` return type.
 2. The first stable generator helper surface is intentionally small: `.map()`, `.filter()`, `.take()`, and `.collect()`.
-3. The broader iterator adapter surface belongs in RFC 088, tracked by issue #127.
+3. The broader iterator adapter surface belongs in RFC 088, implemented by issue #127.
 4. Generator expressions support the full comprehension-clause surface rather than only a single `for` clause.
 5. `return` without a value may terminate a generator early, but `return value` is rejected in RFC 006 and reserved for future generator delegation or coroutine work.
 6. Fixture `yield` and generator `yield` do not need extra lint or style guidance beyond precise context-sensitive diagnostics.

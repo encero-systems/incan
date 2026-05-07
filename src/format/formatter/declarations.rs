@@ -1,5 +1,5 @@
-//! Declaration formatting: imports, models, classes, traits, enums, newtypes, functions, methods, decorators, fields,
-//! params, and type params.
+//! Declaration formatting: imports, models, classes, traits, enums, newtypes, functions, methods, properties,
+//! decorators, fields, params, and type params.
 
 use crate::frontend::ast::*;
 
@@ -10,6 +10,11 @@ impl Formatter {
         method.body.is_some()
     }
 
+    /// Return whether a property body should participate in body-bearing member spacing.
+    fn property_is_body_bearing(property: &PropertyDecl) -> bool {
+        property.body.is_some()
+    }
+
     fn format_methods_with_spacing(&mut self, methods: &[Spanned<MethodDecl>], seen_member_before_methods: bool) {
         let mut seen_member = seen_member_before_methods;
         for method in methods {
@@ -17,6 +22,22 @@ impl Formatter {
                 self.writer.blank_lines(RFC053_METHOD_BLANK_LINES);
             }
             self.format_method(&method.node);
+            seen_member = true;
+        }
+    }
+
+    /// Format computed properties with the same body-bearing spacing contract used for methods.
+    fn format_properties_with_spacing(
+        &mut self,
+        properties: &[Spanned<PropertyDecl>],
+        seen_member_before_properties: bool,
+    ) {
+        let mut seen_member = seen_member_before_properties;
+        for property in properties {
+            if Self::property_is_body_bearing(&property.node) && seen_member {
+                self.writer.blank_lines(RFC053_METHOD_BLANK_LINES);
+            }
+            self.format_property(&property.node);
             seen_member = true;
         }
     }
@@ -334,7 +355,11 @@ impl Formatter {
 
         if let Some(docstring) = &model.docstring {
             self.format_docstring(docstring);
-            if !model.fields.is_empty() || !model.method_aliases.is_empty() || !model.methods.is_empty() {
+            if !model.fields.is_empty()
+                || !model.method_aliases.is_empty()
+                || !model.properties.is_empty()
+                || !model.methods.is_empty()
+            {
                 self.writer.newline();
             }
         }
@@ -344,13 +369,19 @@ impl Formatter {
             self.format_field(&field.node);
         }
         self.format_method_aliases(&model.method_aliases);
-        if !model.method_aliases.is_empty() && !model.methods.is_empty() {
+        if !model.method_aliases.is_empty() && (!model.properties.is_empty() || !model.methods.is_empty()) {
             self.writer.newline();
         }
 
-        self.format_methods_with_spacing(&model.methods, has_fields || !model.method_aliases.is_empty());
+        let seen_before_properties = has_fields || !model.method_aliases.is_empty();
+        self.format_properties_with_spacing(&model.properties, seen_before_properties);
+        self.format_methods_with_spacing(&model.methods, seen_before_properties || !model.properties.is_empty());
 
-        if model.fields.is_empty() && model.method_aliases.is_empty() && model.methods.is_empty() {
+        if model.fields.is_empty()
+            && model.method_aliases.is_empty()
+            && model.properties.is_empty()
+            && model.methods.is_empty()
+        {
             if model.docstring.is_some() {
                 self.writer.newline();
             }
@@ -401,7 +432,11 @@ impl Formatter {
 
         if let Some(docstring) = &class.docstring {
             self.format_docstring(docstring);
-            if !class.fields.is_empty() || !class.method_aliases.is_empty() || !class.methods.is_empty() {
+            if !class.fields.is_empty()
+                || !class.method_aliases.is_empty()
+                || !class.properties.is_empty()
+                || !class.methods.is_empty()
+            {
                 self.writer.newline();
             }
         }
@@ -411,13 +446,19 @@ impl Formatter {
             self.format_field(&field.node);
         }
         self.format_method_aliases(&class.method_aliases);
-        if !class.method_aliases.is_empty() && !class.methods.is_empty() {
+        if !class.method_aliases.is_empty() && (!class.properties.is_empty() || !class.methods.is_empty()) {
             self.writer.newline();
         }
 
-        self.format_methods_with_spacing(&class.methods, has_fields || !class.method_aliases.is_empty());
+        let seen_before_properties = has_fields || !class.method_aliases.is_empty();
+        self.format_properties_with_spacing(&class.properties, seen_before_properties);
+        self.format_methods_with_spacing(&class.methods, seen_before_properties || !class.properties.is_empty());
 
-        if class.fields.is_empty() && class.method_aliases.is_empty() && class.methods.is_empty() {
+        if class.fields.is_empty()
+            && class.method_aliases.is_empty()
+            && class.properties.is_empty()
+            && class.methods.is_empty()
+        {
             if class.docstring.is_some() {
                 self.writer.newline();
             }
@@ -451,19 +492,20 @@ impl Formatter {
 
         if let Some(docstring) = &tr.docstring {
             self.format_docstring(docstring);
-            if !tr.method_aliases.is_empty() || !tr.methods.is_empty() {
+            if !tr.method_aliases.is_empty() || !tr.properties.is_empty() || !tr.methods.is_empty() {
                 self.writer.newline();
             }
         }
 
         self.format_method_aliases(&tr.method_aliases);
-        if !tr.method_aliases.is_empty() && !tr.methods.is_empty() {
+        if !tr.method_aliases.is_empty() && (!tr.properties.is_empty() || !tr.methods.is_empty()) {
             self.writer.newline();
         }
 
-        self.format_methods_with_spacing(&tr.methods, !tr.method_aliases.is_empty());
+        self.format_properties_with_spacing(&tr.properties, !tr.method_aliases.is_empty());
+        self.format_methods_with_spacing(&tr.methods, !tr.method_aliases.is_empty() || !tr.properties.is_empty());
 
-        if tr.method_aliases.is_empty() && tr.methods.is_empty() {
+        if tr.method_aliases.is_empty() && tr.properties.is_empty() && tr.methods.is_empty() {
             if tr.docstring.is_some() {
                 self.writer.newline();
             }
@@ -787,6 +829,40 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a computed property declaration.
+    fn format_property(&mut self, property: &PropertyDecl) {
+        self.write_visibility(property.visibility);
+        self.writer.write("property ");
+        self.writer.write(&property.name);
+        self.writer.write(" -> ");
+        self.format_type(&property.return_type.node);
+
+        if property.body.is_none() {
+            self.writer.newline();
+            return;
+        }
+
+        self.writer.writeln(":");
+        self.writer.indent();
+
+        if let Some(body) = &property.body {
+            let (docstring, body) = self.split_leading_docstring(body);
+            if let Some(docstring) = docstring {
+                self.format_docstring(docstring);
+            }
+
+            if body.is_empty() && docstring.is_none() {
+                self.writer.writeln("pass");
+            } else {
+                for stmt in body {
+                    self.format_statement(stmt);
+                }
+            }
+        }
+
+        self.writer.dedent();
+    }
+
     /// Write the reusable prefix before a function's opening parameter parenthesis.
     fn write_function_prefix(&mut self, visibility: Visibility, is_async: bool, name: &str, type_params: &[TypeParam]) {
         self.write_visibility(visibility);
@@ -853,10 +929,11 @@ impl Formatter {
 
     // ---- Decorators ----
 
+    /// Format one declaration decorator, preserving `@name` versus `@name()`.
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
         self.format_decorator_path(&dec.path);
-        if !dec.args.is_empty() {
+        if dec.is_call {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {
                 if i > 0 {

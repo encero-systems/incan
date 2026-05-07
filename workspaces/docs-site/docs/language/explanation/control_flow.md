@@ -18,7 +18,7 @@ Use ordinary `if` when the condition is a boolean expression and both the true/f
 
 ## Pattern-oriented branching with `if let`
 
-Use `if let` when you want to try one pattern match and do something only on success.
+Use `if let` when you want to try a pattern match and do something only on success.
 
 ```incan
 def print_primary_email(user: Option[User]) -> None:
@@ -26,7 +26,7 @@ def print_primary_email(user: Option[User]) -> None:
         println(u.email)
 ```
 
-This is the concise form of “match one successful shape, otherwise do nothing.” It is most useful with `Option`, `Result`, and enum payloads.
+This is the concise form of “match a successful shape, otherwise do nothing.” It is most useful with `Option`, `Result`, and enum payloads.
 
 ```incan
 def log_port(raw: str) -> None:
@@ -34,9 +34,22 @@ def log_port(raw: str) -> None:
         println(f"listening on {port}")
 ```
 
+When several successful patterns share the same body, join them with `|`:
+
+```incan
+enum JobStatus:
+    Running
+    Completed
+    Cancelled
+
+def log_terminal(status: JobStatus) -> None:
+    if let Completed | Cancelled = status:
+        println("done")
+```
+
 Prefer `if let` when:
 
-- exactly one successful pattern matters;
+- one success branch matters, whether it uses one pattern or a pattern alternation;
 - the non-match path should do nothing;
 - the code reads more naturally as opportunistic extraction than as full branching.
 
@@ -68,6 +81,21 @@ Use `match` when:
 - both success and failure paths matter;
 - more than one variant needs its own behavior;
 - you want the full branching structure to stay visible.
+
+Use pattern alternation in a `match` arm when several patterns should run the same body:
+
+```incan
+enum PortLookup:
+    Cached(int)
+    Fresh(int)
+    Failed(str)
+
+match lookup_port(raw):
+    case Cached(port) | Fresh(port): println(f"port={port}")
+    case Failed(e): println(f"error: {e}")
+```
+
+Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
 ## Looping while a pattern keeps matching with `while let`
 

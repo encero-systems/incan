@@ -168,6 +168,99 @@ main = "src/main.incn"
 }
 
 #[test]
+fn validated_newtype_runtime_success_coerces_approved_sites() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(incan_debug_binary())
+        .args([
+            "run",
+            "-c",
+            r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("attempts must be >= 1"))
+    return Ok(Attempts(n))
+
+def retry(attempts: Attempts) -> None:
+  println(f"retry={attempts.0}")
+
+def main() -> None:
+  retry(3)
+  attempts: Attempts = 4
+  println(f"local={attempts.0}")
+"#,
+        ])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "validated-newtype success program failed.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("retry=3"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("local=4"), "unexpected stdout:\n{stdout}");
+
+    Ok(())
+}
+
+#[test]
+fn validated_newtype_runtime_fail_fast_reports_validation_error() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("attempts must be >= 1"))
+    return Ok(Attempts(n))
+
+def retry(attempts: Attempts) -> None:
+  return
+
+def read_attempts(attempts: Attempts) -> int:
+  return attempts.0
+
+def main() -> None:
+  println(f"ok={read_attempts(Attempts(1))}")
+  retry(0)
+"#,
+        "ValidationError",
+        &["Attempts::from_underlying", "attempts must be >= 1"],
+    )
+}
+
+#[test]
+fn validated_newtype_runtime_aggregates_model_field_errors() -> Result<(), Box<dyn std::error::Error>> {
+    assert_runtime_error_cli(
+        r#"
+type PositiveInt = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    if n <= 0:
+      return Err(ValidationError("positive int must be greater than zero"))
+    return Ok(PositiveInt(n))
+
+model Bounds:
+  low: PositiveInt
+  high: PositiveInt
+
+def width(bounds: Bounds) -> int:
+  return bounds.high.0 - bounds.low.0
+
+def main() -> None:
+  println(f"width={width(Bounds(low=1, high=2))}")
+  _ = Bounds(low=0, high=-1)
+"#,
+        "ValidationError",
+        &[
+            "Bounds validation failed with 2 error(s)",
+            "low: positive int must be greater than zero",
+            "high: positive int must be greater than zero",
+        ],
+    )
+}
+
+#[test]
 fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let src_dir = tmp.path().join("src");
@@ -1328,6 +1421,40 @@ def main() -> None:
         vec!["London", "9", "GET /status", "11"],
         "unexpected fixed unpack runtime output:\n{stdout}"
     );
+    Ok(())
+}
+
+#[test]
+fn rfc046_computed_properties_run_as_getters() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Named:
+  property label -> str
+
+model Money with Named:
+  cents: int
+
+  pub property adjusted -> int:
+    return self.cents + 1
+
+  property label -> str:
+    return "money"
+
+def main() -> None:
+  value = Money(cents=250)
+  println(value.adjusted)
+  println(value.label)
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected computed property program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "251\nmoney\n");
     Ok(())
 }
 
@@ -2701,6 +2828,232 @@ def main() -> None:
         let stdout = String::from_utf8_lossy(&output.stdout);
         let lines = stdout.lines().collect::<Vec<_>>();
         assert_eq!(lines, vec!["true"], "unexpected output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_inspect_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::fs import ReadDir
+from rust::std::path import Path as RustPath
+
+def observe_entries(_entries: ReadDir) -> None:
+    pass
+
+def main() -> None:
+    result = read_dir(RustPath.new(".")).inspect(observe_entries)
+    match result:
+        Ok(entries) =>
+            mut seen = False
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+            println(seen)
+        Err(err) => println(err.to_string())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.inspect Rust Result non-Clone regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true"],
+            "unexpected Result.inspect non-Clone Rust Result output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_user_authored_result_tap_borrows_callback_payload() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from rust::std::fs import read_dir
+from rust::std::fs import ReadDir
+from rust::std::path import Path as RustPath
+
+def observe_entries(_entries: ReadDir) -> None:
+    pass
+
+def tap[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]:
+    match result:
+        Ok(value) =>
+            f(value)
+            return Ok(value)
+        Err(error) => return Err(error)
+
+def main() -> None:
+    result = tap(read_dir(RustPath.new(".")), observe_entries)
+    match result:
+        Ok(entries) =>
+            mut seen = False
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) =>
+                        seen = seen or entry.path().to_string_lossy().into_owned() != ""
+                    Err(err) => println(err.to_string())
+            println(seen)
+        Err(err) => println(err.to_string())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "user-authored Result tap borrowed callback regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true"],
+            "unexpected user-authored Result tap output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.result import map as result_map, map_err as result_map_err
+from std.result import and_then as result_and_then, or_else as result_or_else
+
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    even_value: Result[int, str] = Ok(4)
+    missing_value: Result[int, str] = Err("missing")
+    match result_map(ok_value, double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_map_err(err_value, prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_and_then(even_value, keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match result_or_else(missing_value, recover):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "4", "7"],
+            "unexpected std.result helper output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_methods_dogfood_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def double(value: int) -> int:
+    return value * 2
+
+def prefix(error: str) -> str:
+    return f"error: {error}"
+
+def keep_even(value: int) -> Result[int, str]:
+    if value % 2 == 0:
+        return Ok(value)
+    return Err("odd")
+
+def recover(_error: str) -> Result[int, str]:
+    return Ok(7)
+
+def main() -> None:
+    ok_value: Result[int, str] = Ok(2)
+    err_value: Result[int, str] = Err("bad")
+    missing_value: Result[int, str] = Err("missing")
+    match ok_value.map(double).and_then(keep_even):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match err_value.map_err(prefix):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match missing_value.or_else(recover).map(double):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result method std.result helper run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["4", "error: bad", "14"],
+            "unexpected Result method std.result helper output:\n{stdout}"
+        );
         Ok(())
     }
 
@@ -10420,6 +10773,78 @@ def main() -> None:\n  println(describe(parse_value(False)))\n  println(describe
     }
 
     #[test]
+    fn build_and_run_rfc088_iterator_adapter_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc088_iterator_pipeline\"\nversion = \"0.1.0\"\n",
+            "def is_even(n: int) -> bool:\n  return n % 2 == 0\n\n\
+def double(n: int) -> int:\n  return n * 2\n\n\
+def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).map(double).take(2).collect()\n  batches = xs.iter().batch(2).collect()\n  println(len(ys))\n  println(ys[0])\n  println(len(batches))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected RFC 088 iterator pipeline to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected RFC 088 iterator pipeline to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_and_run_list_comprehension_stays_eager_after_rfc088() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"rfc088_comprehension_regression\"\nversion = \"0.1.0\"\n",
+            "def main() -> None:\n  xs = [1, 2, 3]\n  ys = [n * 2 for n in xs if n > 1]\n  println(len(ys))\n  println(ys[0])\n  println(len(xs))\n",
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected eager list comprehension regression to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let run_output = Command::new(incan_bin_path())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected eager list comprehension regression to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&run_output.stdout);
+        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn build_and_run_rfc049_if_let_while_let() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(
@@ -11387,6 +11812,76 @@ def main() -> None:
             "expected conflicting crate name in test output, got:\n{test_stdout}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_tempfile_compile_and_run_named_file_and_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+from std.fs import IoError, Path
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
+
+def run() -> Result[None, IoError]:
+    file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
+    path = file.path()
+    path.write_text("hello", "utf-8", "strict", None)?
+    println(path.read_text("utf-8", "strict")?)
+
+    directory = TemporaryDirectory.try_new_with("incan-dir-", "", None)?
+    child = directory.path() / "child.txt"
+    child.write_text("world", "utf-8", "strict", None)?
+    println(child.read_text("utf-8", "strict")?)
+
+    mut memory = SpooledTemporaryFile(max_size=64)
+    memory.write(b"memory")?
+    println(memory.rolled_to_disk())
+    memory.seek(0, 0)?
+    println(len(memory.read(-1)?))
+
+    mut spool = SpooledTemporaryFile(max_size=4)
+    spool.write(b"rolled")?
+    println(spool.rolled_to_disk())
+    println(spool.path()?.exists())
+    spool.seek(0, 0)?
+    println(len(spool.read(-1)?))
+    kept_spool = spool.persist()?
+    println(kept_spool.exists())
+    kept_spool.unlink()?
+
+    kept_file = file.persist()?
+    println(kept_file.exists())
+    kept_file.unlink()?
+
+    kept_directory = directory.persist()?
+    println(kept_directory.exists())
+    kept_directory.remove_tree()?
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.tempfile smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "hello", "world", "false", "6", "true", "true", "6", "true", "true", "true",
+            ],
+            "unexpected std.tempfile output:\n{stdout}"
+        );
         Ok(())
     }
 }

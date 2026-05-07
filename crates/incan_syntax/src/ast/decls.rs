@@ -1,5 +1,5 @@
-//! Declaration AST types: models, classes, traits, newtypes, enums, functions, methods, decorators, type parameters,
-//! and trait bounds.
+//! Declaration AST types: models, classes, traits, newtypes, enums, functions, methods, properties, decorators, type
+//! parameters, and trait bounds.
 
 use incan_core::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
@@ -23,6 +23,7 @@ pub struct ModelDecl {
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -60,6 +61,7 @@ pub struct ClassDecl {
     pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -79,6 +81,7 @@ pub struct TraitDecl {
     /// Docstring at the start of the trait body (surface `"""..."""`), when present.
     pub docstring: Option<String>,
     pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -285,6 +288,18 @@ impl MethodDecl {
     }
 }
 
+/// A computed property declaration within a model, class, or trait.
+///
+/// Properties expose field-like member access while carrying a typed body-bearing declaration for later semantic
+/// stages. `body: None` is reserved for abstract trait property requirements, mirroring abstract methods.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropertyDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub return_type: Spanned<Type>,
+    pub body: Option<Vec<Spanned<Statement>>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Receiver {
     /// `self` - immutable receiver
@@ -332,6 +347,8 @@ pub enum ParamKind {
 pub struct Decorator {
     pub path: ImportPath,
     pub name: Ident,
+    /// Whether the decorator was written with a call suffix, including zero-argument factory calls like `@factory()`.
+    pub is_call: bool,
     pub args: Vec<DecoratorArg>,
 }
 

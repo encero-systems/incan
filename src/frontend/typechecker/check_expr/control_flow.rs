@@ -29,7 +29,9 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        let prev_await_operand_span = self.await_operand_span.replace((inner.span.start, inner.span.end));
         let inner_ty = self.check_expr(inner);
+        self.await_operand_span = prev_await_operand_span;
 
         if let ResolvedType::Generic(name, args) = &inner_ty
             && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle)

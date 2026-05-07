@@ -68,6 +68,9 @@ impl TypeChecker {
             &type_bindings,
             call_span,
         );
+        if info.is_async {
+            self.warn_if_unawaited_async_call(func_name, call_span);
+        }
 
         let explicit_arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
         if !explicit_type_args.is_empty() && explicit_arity_ok {
@@ -194,6 +197,9 @@ impl TypeChecker {
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
         self.validate_callable_arg_bindings(method, &params, args, arg_types, &mut type_bindings, call_site_span);
         self.type_info.record_call_site_callable_params(call_site_span, &params);
+        if method_info.is_async {
+            self.warn_if_unawaited_async_call(method, call_site_span);
+        }
 
         self.emit_explicit_bound_errors(
             method,

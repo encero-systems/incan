@@ -2,15 +2,15 @@
 JSON serialization traits for typed models.
 
 This module provides `Serialize` and `Deserialize` traits that enable `.to_json()` and `.from_json()` on models.
-Use `@derive(Serialize, Deserialize)` to adopt both traits, or import and derive individually for partial support
-(serialize-only or deserialize-only).
+Use `@derive(json)` to adopt both traits, or import and derive individually for partial support (serialize-only or
+deserialize-only).
 
 Example:
 
 ```incan
-from std.serde.json import Serialize, Deserialize
+from std.serde import json
 
-@derive(Serialize, Deserialize)
+@derive(json)
 model Config:
     host: str
     port: int
@@ -26,6 +26,9 @@ Python equivalents: `json.dumps()`, `json.loads()`.
 
 rust.module("incan_stdlib::serde")
 
+__derives__ = [Serialize, Deserialize]
+
+@rust.derive("serde::Serialize")
 trait Serialize:
     """
     Enables serialization of a type to a JSON string.
@@ -51,6 +54,7 @@ trait Serialize:
         return json_stringify(self)
 
 
+@rust.derive("serde::Deserialize")
 trait Deserialize:
     """
     Enables deserialization of a type from a JSON string.

@@ -129,7 +129,10 @@ impl AstLowering {
                     self.define_for_pattern_bindings(&item.node, &item_ty);
                 }
             }
-            ast::Pattern::Literal(_) | ast::Pattern::Constructor(_, _) => {}
+            ast::Pattern::Literal(_)
+            | ast::Pattern::Constructor(_, _)
+            | ast::Pattern::Group(_)
+            | ast::Pattern::Or(_) => {}
         }
     }
 

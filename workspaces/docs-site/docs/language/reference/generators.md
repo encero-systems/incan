@@ -52,18 +52,18 @@ Rules:
 - Nested `for` clauses and trailing `if` filters are supported.
 - Generator expressions are lazy; list comprehensions remain the eager collection form.
 
-## Helper methods
+## Iterator adapter methods
 
-`Generator[T]` supports this helper surface:
+`Generator[T]` satisfies `Iterator[T]`, so generator values support the standard iterator adapter and consumer surface.
 
 ```incan
-def map[U](self, f: (T) -> U) -> Generator[U]
-def filter(self, f: (T) -> bool) -> Generator[T]
-def take(self, n: int) -> Generator[T]
-def collect(self) -> List[T]
+def map[U](self, f: (T) -> U) -> Iterator[U]
+def filter(self, f: (T) -> bool) -> Iterator[T]
+def take(self, n: int) -> Iterator[T]
+def collect(self) -> list[T]
 ```
 
-`map`, `filter`, and `take` are lazy and return generator values. `collect` is terminal and materializes the remaining items into a list.
+Lazy adapters return iterator values and do not materialize intermediate lists. Terminal consumers such as `collect`, `count`, `fold`, `reduce`, `any`, `all`, `find`, `for_each`, and `sum` consume the generator. See [Collection protocols](stdlib_traits/collection_protocols.md) for the full surface.
 
 ## Consumption
 

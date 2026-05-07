@@ -54,9 +54,10 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo,
+    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind,
+    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
 mod tests;
@@ -76,6 +77,8 @@ use crate::frontend::symbols::*;
 use crate::rust_inspect::RustMetadataCache;
 use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
+use incan_core::lang::conventions;
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::SurfaceTypeKind;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
@@ -132,16 +135,24 @@ pub struct TypeChecker {
     pub(crate) warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub(crate) mutable_bindings: HashSet<String>,
+    /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
+    pub(crate) consumed_iterator_bindings: HashMap<String, Span>,
     /// Current function's error type for `?` operator compatibility.
     pub(crate) current_return_error_type: Option<ResolvedType>,
     /// Active declaration-level interpretation for `yield` expressions.
     pub(crate) current_yield_context: YieldContext,
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub(crate) in_async_body: bool,
+    /// Expression span currently being typechecked as an `await` operand.
+    pub(crate) await_operand_span: Option<(usize, usize)>,
+    /// Nesting depth for expressions being checked as call arguments.
+    pub(crate) call_argument_depth: usize,
     /// Stack of active loop contexts, innermost last.
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
     pub(crate) current_trait_requires: Option<HashMap<String, ResolvedType>>,
+    /// Active trait computed-property contract for default member bodies.
+    pub(crate) current_trait_properties: Option<HashMap<String, PropertyInfo>>,
     /// Active trait name for default method diagnostics.
     pub(crate) current_trait_name: Option<String>,
     /// Active nominal owner while checking a method body.
@@ -168,6 +179,12 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
+    pub(crate) dependency_derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_module_traits: HashMap<String, TraitInfo>,
+    /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
+    pub(crate) dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
     pub(crate) library_manifests: Arc<LibraryManifestIndex>,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
@@ -238,11 +255,15 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            consumed_iterator_bindings: HashMap::new(),
             current_return_error_type: None,
             current_yield_context: YieldContext::Disallowed,
             in_async_body: false,
+            await_operand_span: None,
+            call_argument_depth: 0,
             loop_stack: Vec::new(),
             current_trait_requires: None,
+            current_trait_properties: None,
             current_trait_name: None,
             current_method_owner: None,
             current_classmethod_self_ty: None,
@@ -256,6 +277,9 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            dependency_derivable_modules: HashMap::new(),
+            dependency_module_traits: HashMap::new(),
+            dependency_trait_rust_derive_paths: HashMap::new(),
             library_manifests: Arc::new(LibraryManifestIndex::default()),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
@@ -296,6 +320,19 @@ impl TypeChecker {
     /// Borrow the innermost active loop so `break` checking can append inferred break types.
     pub(crate) fn current_loop_context_mut(&mut self) -> Option<&mut LoopContext> {
         self.loop_stack.last_mut()
+    }
+
+    /// Return whether this call expression is inside the active `await` operand.
+    pub(crate) fn is_in_await_operand(&self, span: Span) -> bool {
+        self.await_operand_span
+            .is_some_and(|(start, end)| start <= span.start && span.end <= end)
+    }
+
+    /// Emit the missing-await warning for a direct async call when the current expression context should report it.
+    pub(crate) fn warn_if_unawaited_async_call(&mut self, callable: &str, span: Span) {
+        if !self.is_in_await_operand(span) && self.call_argument_depth == 0 {
+            self.errors.push(errors::async_call_without_await(callable, span));
+        }
     }
 
     /// Resolve the final type of a `loop:` expression from the `break` types observed in its body.
@@ -821,6 +858,16 @@ impl TypeChecker {
         }
     }
 
+    /// Return a Rust generic type-parameter name when the display is the simple identifier form rust-analyzer uses
+    /// for params like `T` or `U`.
+    pub(crate) fn rust_display_type_var_name(normalized: &str) -> Option<&str> {
+        if normalized.len() == 1 && normalized.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+            Some(normalized)
+        } else {
+            None
+        }
+    }
+
     /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
     ///
     /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
@@ -830,6 +877,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
+            return ResolvedType::TypeVar(name.to_string());
+        }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
@@ -949,41 +999,56 @@ impl TypeChecker {
         self.generic_placeholder_name(ty).is_some()
     }
 
+    /// Return declared type parameters and explicit trait adoptions for a semantic type.
+    fn semantic_type_params_and_adoptions(&self, type_name: &str) -> Option<(&[String], &[TypeBoundInfo])> {
+        match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Model(model) => Some((&model.type_params, &model.trait_adoptions)),
+            TypeInfo::Class(class) => Some((&class.type_params, &class.trait_adoptions)),
+            TypeInfo::Enum(enum_info) => Some((&enum_info.type_params, &enum_info.trait_adoptions)),
+            _ => None,
+        }
+    }
+
     /// Infer the concrete instantiation of `trait_name` for `type_name`, if the type adopts that trait.
     ///
-    /// RFC 042 currently uses the same implicit positional mapping as trait-annotation compatibility: a concrete
-    /// adopter's leading type arguments instantiate the adopted trait's type parameters, and transitive supertrait
-    /// arguments are substituted through the recorded closure.
+    /// Explicit `with Trait[...]` arguments are authoritative. The older positional mapping remains as a fallback for
+    /// nullary adoption metadata and derives.
     fn instantiated_trait_args_for_type(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],
         trait_name: &str,
     ) -> Option<Vec<ResolvedType>> {
-        let adopted = match self.lookup_semantic_type_info(type_name) {
-            Some(TypeInfo::Model(model)) => &model.traits,
-            Some(TypeInfo::Class(class)) => &class.traits,
-            _ => return None,
-        };
+        let (type_params, adopted) = self.semantic_type_params_and_adoptions(type_name)?;
+        let concrete_subst =
+            crate::frontend::resolved_type_subst::type_param_subst_map(type_params, concrete_type_args);
 
         for adopted_trait in adopted {
-            let Some(adopted_info) = self.lookup_semantic_trait_info(adopted_trait) else {
+            let Some(adopted_info) = self.lookup_semantic_trait_info(&adopted_trait.name) else {
                 continue;
             };
-            let direct_args: Vec<ResolvedType> = concrete_type_args
-                .iter()
-                .take(adopted_info.type_params.len())
-                .cloned()
-                .collect();
+            let direct_args: Vec<ResolvedType> = if adopted_trait.type_args.is_empty() {
+                concrete_type_args
+                    .iter()
+                    .take(adopted_info.type_params.len())
+                    .cloned()
+                    .collect()
+            } else {
+                adopted_trait
+                    .type_args
+                    .iter()
+                    .map(|arg| crate::frontend::resolved_type_subst::substitute_resolved_type(arg, &concrete_subst))
+                    .collect()
+            };
             if direct_args.len() != adopted_info.type_params.len() {
                 continue;
             }
 
-            if adopted_trait == trait_name {
+            if adopted_trait.name == trait_name {
                 return Some(direct_args);
             }
 
-            let closure = self.semantic_supertrait_closure(adopted_trait);
+            let closure = self.semantic_supertrait_closure(&adopted_trait.name);
             let subst =
                 crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
             for (supertrait_name, supertrait_args) in closure {
@@ -1050,17 +1115,17 @@ impl TypeChecker {
             return false;
         };
         let (adopted, derives) = match info {
-            TypeInfo::Model(m) => (m.traits.as_slice(), Some(m.derives.as_slice())),
-            TypeInfo::Class(c) => (c.traits.as_slice(), Some(c.derives.as_slice())),
-            TypeInfo::Enum(e) => (e.traits.as_slice(), Some(e.derives.as_slice())),
+            TypeInfo::Model(m) => (m.trait_adoptions.as_slice(), Some(m.derives.as_slice())),
+            TypeInfo::Class(c) => (c.trait_adoptions.as_slice(), Some(c.derives.as_slice())),
+            TypeInfo::Enum(e) => (e.trait_adoptions.as_slice(), Some(e.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
-            if t == trait_name {
+            if t.name == trait_name {
                 return true;
             }
             if self
-                .semantic_supertrait_closure(t)
+                .semantic_supertrait_closure(&t.name)
                 .iter()
                 .any(|(name, _)| name == trait_name)
             {
@@ -1224,6 +1289,8 @@ impl TypeChecker {
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.trait_direct_supertraits.clear();
         self.type_info.trait_type_params.clear();
+        self.type_info.derivable_modules = self.dependency_derivable_modules.clone();
+        self.type_info.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         for sym in self.symbols.all_symbols() {
             if let SymbolKind::Trait(info) = &sym.kind {
                 self.type_info
@@ -2201,11 +2268,15 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&arg.node, arg.span);
                 }
             }
+            Type::ConstrainedPrimitive(name, _) => self.validate_stdlib_type_name(name, span),
             Type::Function(params, ret) => {
                 for param in params {
                     self.validate_stdlib_type_usage_inner(&param.node, param.span);
                 }
                 self.validate_stdlib_type_usage_inner(&ret.node, ret.span);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => {
+                self.validate_stdlib_type_usage_inner(&inner.node, inner.span);
             }
             Type::Tuple(elems) => {
                 for elem in elems {
@@ -2314,10 +2385,15 @@ impl TypeChecker {
     fn validate_alias_declarations(&mut self, program: &Program) {
         let mut public_decls = HashMap::new();
         let mut alias_targets = HashMap::new();
+        let mut newtype_names = HashSet::new();
+        let mut newtype_underlyings = HashMap::new();
 
         for decl in &program.declarations {
             if let Some(name) = declaration_name(decl) {
                 public_decls.insert(name.to_string(), is_public_decl(decl));
+            }
+            if let Declaration::Newtype(nt) = &decl.node {
+                newtype_names.insert(nt.name.clone());
             }
         }
 
@@ -2341,22 +2417,57 @@ impl TypeChecker {
                     }
                 }
                 Declaration::Model(model) => {
-                    self.validate_method_alias_declarations(&model.name, &model.method_aliases, &model.methods)
+                    self.validate_member_name_collisions(
+                        &model.name,
+                        &model.fields,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &model.name,
+                        &model.method_aliases,
+                        &model.properties,
+                        &model.methods,
+                    )
                 }
                 Declaration::Class(class) => {
-                    self.validate_method_alias_declarations(&class.name, &class.method_aliases, &class.methods)
+                    self.validate_member_name_collisions(
+                        &class.name,
+                        &class.fields,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    );
+                    self.validate_method_alias_declarations(
+                        &class.name,
+                        &class.method_aliases,
+                        &class.properties,
+                        &class.methods,
+                    )
                 }
                 Declaration::Trait(tr) => {
-                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.methods);
+                    self.validate_member_name_collisions(
+                        &tr.name,
+                        &[],
+                        &tr.method_aliases,
+                        &tr.properties,
+                        &tr.methods,
+                    );
+                    self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
                 }
                 Declaration::Newtype(nt) => {
-                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &nt.methods);
+                    self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
+                    if let Type::Simple(target) = &nt.underlying.node {
+                        newtype_underlyings.insert(nt.name.clone(), (target.clone(), nt.underlying.span));
+                    }
                 }
                 _ => {}
             }
         }
 
         self.validate_top_level_alias_cycles(&alias_targets);
+        self.validate_newtype_underlying_cycles(&newtype_underlyings, &newtype_names);
     }
 
     /// Reject direct and indirect cycles between top-level aliases.
@@ -2382,19 +2493,53 @@ impl TypeChecker {
         }
     }
 
+    /// Reject direct and indirect cycles in newtype underlying declarations before coercion planning.
+    fn validate_newtype_underlying_cycles(
+        &mut self,
+        newtype_underlyings: &HashMap<String, (String, Span)>,
+        newtype_names: &HashSet<String>,
+    ) {
+        let mut reported = HashSet::new();
+        for (name, (_, span)) in newtype_underlyings {
+            let mut path = Vec::new();
+            let mut current = name.clone();
+            while let Some((target, _)) = newtype_underlyings.get(&current) {
+                if !newtype_names.contains(target) {
+                    break;
+                }
+                if let Some(cycle_start) = path.iter().position(|seen| seen == &current) {
+                    let mut cycle = path[cycle_start..].to_vec();
+                    cycle.push(current.clone());
+                    let key = cycle.join(" -> ");
+                    if reported.insert(key.clone()) {
+                        self.errors.push(errors::newtype_coercion_cycle(&key, *span));
+                    }
+                    break;
+                }
+                path.push(current);
+                current = target.clone();
+            }
+        }
+    }
+
     /// Validate same-type method alias names and targets for one method-bearing declaration.
     fn validate_method_alias_declarations(
         &mut self,
         owner: &str,
         aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
         let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
         let mut alias_targets = HashMap::new();
         let mut alias_names = HashSet::new();
 
         for alias in aliases {
-            if !alias_names.insert(alias.node.name.as_str()) || method_names.contains(alias.node.name.as_str()) {
+            if !alias_names.insert(alias.node.name.as_str())
+                || method_names.contains(alias.node.name.as_str())
+                || property_names.contains(alias.node.name.as_str())
+            {
                 self.errors.push(CompileError::type_error(
                     format!("Duplicate method alias '{}' on '{}'", alias.node.name, owner),
                     alias.span,
@@ -2413,6 +2558,62 @@ impl TypeChecker {
         }
 
         self.validate_method_alias_cycles(owner, &alias_targets);
+    }
+
+    /// Reject computed property names that collide with storage fields, aliases, properties, or methods.
+    fn validate_member_name_collisions(
+        &mut self,
+        owner: &str,
+        fields: &[Spanned<FieldDecl>],
+        aliases: &[Spanned<MethodAliasDecl>],
+        properties: &[Spanned<PropertyDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let mut seen: HashMap<&str, (&str, Span)> = HashMap::new();
+        for field in fields {
+            seen.entry(field.node.name.as_str()).or_insert(("field", field.span));
+        }
+        for alias in aliases {
+            seen.entry(alias.node.name.as_str())
+                .or_insert(("method alias", alias.span));
+        }
+        let mut method_seen: HashMap<&str, Span> = HashMap::new();
+        for method in methods {
+            if method_seen.insert(method.node.name.as_str(), method.span).is_none()
+                && !seen.contains_key(method.node.name.as_str())
+            {
+                seen.insert(method.node.name.as_str(), ("method", method.span));
+            }
+        }
+        for property in properties {
+            self.validate_one_member_name(owner, "property", property.node.name.as_str(), property.span, &mut seen);
+        }
+    }
+
+    /// Validate one property name against the member names already used in the same owner declaration.
+    fn validate_one_member_name<'a>(
+        &mut self,
+        owner: &str,
+        kind: &'static str,
+        name: &'a str,
+        span: Span,
+        seen: &mut HashMap<&'a str, (&'static str, Span)>,
+    ) {
+        if let Some((previous_kind, previous_span)) = seen.insert(name, (kind, span)) {
+            self.errors.push(
+                CompileError::type_error(
+                    format!(
+                        "Duplicate member '{}.{}' declared as both {} and {}",
+                        owner, name, previous_kind, kind
+                    ),
+                    span,
+                )
+                .with_note(format!(
+                    "First declaration span: {}..{}",
+                    previous_span.start, previous_span.end
+                )),
+            );
+        }
     }
 
     /// Reject direct and indirect cycles between method aliases on one owner type.
@@ -2552,6 +2753,7 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
     }
 
     /// Import all symbols from another module's AST into the symbol table.
@@ -2569,6 +2771,95 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.register_dependency_derivable_metadata(_module_name, module_ast);
+    }
+
+    /// Register RFC 024 metadata exported by a dependency source module.
+    ///
+    /// `__derives__` is compiler metadata rather than a public const, so consumers need this side channel even when the
+    /// declaration itself is not imported as a symbol.
+    fn register_dependency_derivable_metadata(&mut self, module_name: &str, module_ast: &Program) {
+        let mut module_paths = vec![module_name.to_string()];
+        let dotted_module_path = module_name.replace('_', ".");
+        if dotted_module_path != module_name {
+            module_paths.push(dotted_module_path);
+        }
+        let traits = Self::derivable_traits_from_program(module_ast);
+        if !traits.is_empty() {
+            for module_path in &module_paths {
+                self.dependency_derivable_modules
+                    .insert(module_path.clone(), traits.clone());
+            }
+        }
+
+        for decl in &module_ast.declarations {
+            let Declaration::Trait(tr) = &decl.node else {
+                continue;
+            };
+            if let Some(info) = self.lookup_trait_info(&tr.name).cloned() {
+                for module_path in &module_paths {
+                    self.dependency_module_traits
+                        .insert(format!("{module_path}.{}", tr.name), info.clone());
+                }
+            }
+            let paths = Self::rust_derive_paths_from_trait(tr);
+            if paths.is_empty() {
+                continue;
+            }
+            for module_path in &module_paths {
+                let qualified = format!("{module_path}.{}", tr.name);
+                self.dependency_trait_rust_derive_paths.insert(qualified, paths.clone());
+            }
+        }
+    }
+
+    /// Extract RFC 024 `__derives__` trait names from an imported dependency AST.
+    fn derivable_traits_from_program(program: &Program) -> Vec<String> {
+        for decl in &program.declarations {
+            let Declaration::Const(konst) = &decl.node else {
+                continue;
+            };
+            if konst.name != "__derives__" {
+                continue;
+            }
+            let Expr::List(entries) = &konst.value.node else {
+                return Vec::new();
+            };
+            return entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    ListEntry::Element(expr) => match &expr.node {
+                        Expr::Ident(name) => Some(name.clone()),
+                        _ => None,
+                    },
+                    ListEntry::Spread(_) => None,
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
+    /// Extract `@rust.derive(...)` path strings from one imported trait declaration.
+    fn rust_derive_paths_from_trait(tr: &TraitDecl) -> Vec<String> {
+        let mut paths = Vec::new();
+        for decorator in &tr.decorators {
+            let path = decorator.node.path.segments.join(".");
+            if core_decorators::from_str(&path) != Some(DecoratorId::RustDerive) {
+                continue;
+            }
+            for arg in &decorator.node.args {
+                let DecoratorArg::Positional(expr) = arg else {
+                    continue;
+                };
+                let Expr::Literal(Literal::String(path)) = &expr.node else {
+                    continue;
+                };
+                if !paths.iter().any(|existing| existing == path) {
+                    paths.push(path.clone());
+                }
+            }
+        }
+        paths
     }
 
     /// Predeclare dependency interface names before collecting imported declarations.
@@ -2603,6 +2894,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2621,6 +2913,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
                         method_aliases: HashMap::new(),
@@ -2636,6 +2929,7 @@ impl TypeChecker {
                         type_params: tr.type_params.iter().map(|tp| tp.name.clone()).collect(),
                         methods: HashMap::new(),
                         method_aliases: HashMap::new(),
+                        properties: HashMap::new(),
                         requires: Vec::new(),
                         supertraits: Vec::new(),
                     }),
@@ -2659,6 +2953,8 @@ impl TypeChecker {
                         is_rusttype: nt.is_rusttype,
                         has_interop: !nt.interop_edges.is_empty(),
                         underlying: ResolvedType::Unknown,
+                        constraints: Vec::new(),
+                        implicit_coercion_enabled: true,
                         method_rebindings: HashMap::new(),
                         method_aliases: HashMap::new(),
                         methods: HashMap::new(),
@@ -2709,6 +3005,9 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         for (name, dep_ast) in dependencies {
             self.dependency_exports
                 .insert(name.to_string(), exported_symbols(dep_ast));
@@ -2734,6 +3033,9 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
+        self.dependency_derivable_modules.clear();
+        self.dependency_module_traits.clear();
+        self.dependency_trait_rust_derive_paths.clear();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             self.import_module_all(dep_ast, name);
@@ -2744,6 +3046,145 @@ impl TypeChecker {
     // ========================================================================
     // Type compatibility (shared helper)
     // ========================================================================
+
+    /// Record an RFC 017 validated-newtype coercion when `actual` may flow into `expected` at an approved site.
+    ///
+    /// This deliberately stays outside [`Self::types_compatible`]: ordinary compatibility queries have no source span
+    /// and are used in contexts where implicit coercion must not be inserted.
+    pub(crate) fn record_validated_newtype_coercion_if_possible(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> bool {
+        let Some(coercion) = self.validated_newtype_coercion(actual, expected, span) else {
+            return false;
+        };
+        self.type_info.record_validated_newtype_coercion(span, coercion);
+        true
+    }
+
+    /// Record an RFC 017 model/class field coercion that should aggregate validation errors.
+    pub(crate) fn record_validated_newtype_field_coercion_if_possible(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        field_name: &str,
+        span: Span,
+    ) -> bool {
+        let Some(mut coercion) = self.validated_newtype_coercion(actual, expected, span) else {
+            return false;
+        };
+        coercion.mode = ValidatedNewtypeCoercionMode::AggregateField {
+            field_name: field_name.to_string(),
+        };
+        self.type_info.record_validated_newtype_coercion(span, coercion);
+        true
+    }
+
+    /// Return the coercion metadata needed to convert `actual` into expected newtype `expected`.
+    fn validated_newtype_coercion(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> Option<ValidatedNewtypeCoercionInfo> {
+        if actual == expected {
+            return None;
+        }
+        let steps = self.validated_newtype_coercion_steps(actual, expected, &mut HashSet::new(), span)?;
+        Some(ValidatedNewtypeCoercionInfo {
+            steps,
+            target_type: expected.clone(),
+            mode: ValidatedNewtypeCoercionMode::FailFast,
+        })
+    }
+
+    /// Build the ordered underlying-to-target chain for one validated-newtype coercion.
+    fn validated_newtype_coercion_steps(
+        &mut self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+        visiting: &mut HashSet<String>,
+        span: Span,
+    ) -> Option<Vec<ValidatedNewtypeCoercionStep>> {
+        let target_name = match expected {
+            ResolvedType::Named(name) => name,
+            // Generic newtypes need type-parameter substitution for their underlying type. Keep that out of the
+            // initial implicit path instead of silently guessing.
+            ResolvedType::Generic(_, _) => return None,
+            _ => return None,
+        };
+        if !visiting.insert(target_name.clone()) {
+            self.errors.push(errors::newtype_coercion_cycle(target_name, span));
+            return None;
+        }
+
+        let Some(TypeInfo::Newtype(newtype)) = self.lookup_semantic_type_info(target_name).cloned() else {
+            visiting.remove(target_name);
+            return None;
+        };
+        if newtype.is_rusttype {
+            visiting.remove(target_name);
+            return None;
+        }
+
+        let mut steps = if Self::validated_newtype_source_matches_underlying(actual, &newtype.underlying) {
+            Vec::new()
+        } else {
+            self.validated_newtype_coercion_steps(actual, &newtype.underlying, visiting, span)?
+        };
+        if !newtype.implicit_coercion_enabled {
+            self.errors
+                .push(errors::implicit_newtype_coercion_disabled(target_name, span));
+            visiting.remove(target_name);
+            return Some(Vec::new());
+        }
+        steps.push(ValidatedNewtypeCoercionStep {
+            newtype_name: target_name.clone(),
+            ctor: self.validated_newtype_ctor_name(target_name, &newtype),
+            constraints: if self.validated_newtype_ctor_name(target_name, &newtype).is_some() {
+                Vec::new()
+            } else {
+                newtype.constraints.clone()
+            },
+        });
+        visiting.remove(target_name);
+        Some(steps)
+    }
+
+    /// Return whether a source value can be passed to a newtype's underlying constructor without primitive parsing.
+    fn validated_newtype_source_matches_underlying(actual: &ResolvedType, underlying: &ResolvedType) -> bool {
+        matches!(actual, ResolvedType::Unknown | ResolvedType::TypeVar(_)) || actual == underlying
+    }
+
+    /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
+    fn validated_newtype_ctor_name(&self, newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
+        let method = newtype.methods.get(conventions::NEWTYPE_FROM_UNDERLYING_METHOD)?;
+        if method.receiver.is_some() || method.params.len() != 1 {
+            return None;
+        }
+        if !Self::validated_newtype_source_matches_underlying(&method.params[0].ty, &newtype.underlying) {
+            return None;
+        }
+        let ResolvedType::Generic(result_name, result_args) = &method.return_type else {
+            return None;
+        };
+        if collection_type_id(result_name.as_str()) != Some(CollectionTypeId::Result) {
+            return None;
+        }
+        let ok_ty = result_args.first()?;
+        if !(matches!(ok_ty, ResolvedType::Named(name) if name == newtype_name)
+            || matches!(ok_ty, ResolvedType::SelfType))
+        {
+            return None;
+        }
+        let err_ty = result_args.get(1)?;
+        if !matches!(err_ty, ResolvedType::Named(name) if name == "ValidationError") {
+            return None;
+        }
+        Some(conventions::NEWTYPE_FROM_UNDERLYING_METHOD.to_string())
+    }
 
     /// Check if two types are compatible for assignment or comparison.
     ///
@@ -2773,6 +3214,11 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
+                if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
+            {
+                true
+            }
             (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
@@ -2853,6 +3299,35 @@ impl TypeChecker {
                     .iter()
                     .zip(instantiated.iter())
                     .all(|(e, a)| self.types_compatible(a, e))
+            }
+
+            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable)
+                    && expected_args.len() == 1
+                    && actual_args.len() == 1 =>
+            {
+                let actual_is_iterable = actual_name == builtin_traits::as_str(TraitId::Iterator)
+                    || matches!(
+                        collection_type_id(actual_name.as_str()),
+                        Some(
+                            CollectionTypeId::List
+                                | CollectionTypeId::Set
+                                | CollectionTypeId::FrozenList
+                                | CollectionTypeId::FrozenSet
+                        )
+                    );
+                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+            }
+            (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
+            }
+            (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
+                if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
+            {
+                self.types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).

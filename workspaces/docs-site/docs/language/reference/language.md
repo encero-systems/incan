@@ -21,6 +21,7 @@
 - [Builtin types](#builtin-types)
 - [Surface constructors](#surface-constructors)
 - [Surface functions](#surface-functions)
+- [Built-in collection helpers](#built-in-collection-helpers)
 - [Surface string methods](#surface-string-methods)
 - [Surface types](#surface-types)
 - [Surface methods](#surface-methods)
@@ -102,6 +103,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
+| `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
@@ -109,6 +111,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.error`, `std.datetime.prelude` | - |
 | `std.graph` | - | - | - |
 | `std.io` | - | - | - |
+| `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 
 ## Builtin exceptions
@@ -275,11 +278,46 @@ def main() -> None:
 
 ## Decorators
 
+User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:
+
+```incan
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def main() -> None:
+    result = label(1)  # int
+```
+
+Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+`@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.
+
+Method decorators receive an unbound callable shape with the receiver first. A decorator on
+`def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on
+`def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.
+
+Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`,
+and `@requires` keep their existing special behavior.
+
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
+| RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
 | RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
 | RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
+| NoImplicitCoercion | `@no_implicit_coercion` |  | Disable RFC 017 implicit newtype coercion for this type. | RFC 017 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
 | ClassMethod | `@classmethod` |  | Mark a method as a class method (no implicit self receiver). | RFC 000 | 0.2 | Stable |
 | Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |
@@ -323,6 +361,7 @@ def main() -> None:
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |
 | Iterable | `Iterable` |  | Trait for values that produce iterators. | RFC 006 | 0.3 | Stable |
+| Sum | `Sum` |  | Trait for values that can be produced by summing iterator items. | RFC 088 | 0.3 | Stable |
 
 ## Operators
 
@@ -472,6 +511,12 @@ def main() -> None:
 | UnboundedChannel | `unbounded_channel` |  | Create an unbounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | Oneshot | `oneshot` |  | Create a oneshot channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 
+## Built-in collection helpers
+
+| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|---|---|
+| ListRepeat | `list` | `repeat` | `list.repeat[T](value: T, count: int) -> list[T]` |  | Create a list containing `count` clone-derived copies of `value`; negative counts raise `ValueError`. | RFC 069 | 0.3 | Stable |
+
 ## Surface string methods
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
@@ -515,6 +560,7 @@ def main() -> None:
 | Body | `Body` |  | Generic | Request body extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | Request | `Request` |  | Named | Full HTTP request access for web handlers. | RFC 000 | 0.1 | Stable |
 | FieldInfo | `FieldInfo` |  | Named | Field metadata record returned by __fields__(). | RFC 021 | 0.1 | Stable |
+| ValidationError | `ValidationError` |  | Named | Structured validation error used by validated newtypes. | RFC 017 | 0.3 | Stable |
 
 ## Surface methods
 
@@ -581,6 +627,18 @@ def main() -> None:
 | Copied | `copied` |  | Copy from Option[&T] to Option[T] when T: Copy. | RFC 000 | 0.1 | Stable |
 | UnwrapOr | `unwrap_or` |  | Return the contained value or a default. | RFC 000 | 0.1 | Stable |
 | Unwrap | `unwrap` |  | Return the contained value or panic. | RFC 000 | 0.1 | Stable |
+
+
+### Result methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Map | `map` |  | Transform an Ok payload while preserving Err. | RFC 070 | 0.3 | Stable |
+| MapErr | `map_err` |  | Transform an Err payload while preserving Ok. | RFC 070 | 0.3 | Stable |
+| AndThen | `and_then` |  | Chain a Result-returning operation from an Ok payload. | RFC 070 | 0.3 | Stable |
+| OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
+| Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
 
 
 ### FrozenList methods

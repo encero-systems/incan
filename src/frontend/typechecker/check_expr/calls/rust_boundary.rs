@@ -21,6 +21,42 @@ enum RustArgBoundaryMatch {
 }
 
 impl TypeChecker {
+    /// Eagerly cache metadata for Rust path types returned by inspected Rust calls.
+    ///
+    /// CLI prewarm covers explicit `from rust::... import Item` paths, but chained registry APIs often return helper
+    /// types that users never import directly. Caching those returned receiver types while the originating Rust
+    /// signature is known lets the next method call validate against its real signature instead of falling back to
+    /// permissive unknown-method lowering.
+    fn prewarm_rust_return_type_metadata(&self, ty: &ResolvedType) {
+        match ty {
+            ResolvedType::RustPath(path) => {
+                let _ = self.rust_item_metadata_for_path_blocking(path);
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_return_type_metadata(inner),
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                for arg in args {
+                    self.prewarm_rust_return_type_metadata(arg);
+                }
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+                self.prewarm_rust_return_type_metadata(inner);
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                self.prewarm_rust_return_type_metadata(key);
+                self.prewarm_rust_return_type_metadata(value);
+            }
+            ResolvedType::Function(_, ret) => self.prewarm_rust_return_type_metadata(ret),
+            _ => {}
+        }
+    }
+
+    /// Resolve an inspected Rust return display and cache any returned Rust receiver metadata.
+    fn resolved_rust_return_type_from_sig(&self, sig: &RustFunctionSig) -> ResolvedType {
+        let return_ty = self.resolved_type_from_rust_display(sig.return_type.as_str());
+        self.prewarm_rust_return_type_metadata(&return_ty);
+        return_ty
+    }
+
     fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
         if let ResolvedType::Named(type_name) = arg_ty
             && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
@@ -310,7 +346,7 @@ impl TypeChecker {
                 arg_types.len(),
                 span,
             ));
-            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+            return self.resolved_rust_return_type_from_sig(sig);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
@@ -342,7 +378,7 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_type_from_rust_display(sig.return_type.as_str())
+        self.resolved_rust_return_type_from_sig(sig)
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
@@ -358,7 +394,7 @@ impl TypeChecker {
         if arg_types.len() != sig.params.len() {
             self.errors
                 .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
-            return self.resolved_type_from_rust_display(sig.return_type.as_str());
+            return self.resolved_rust_return_type_from_sig(sig);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
@@ -387,7 +423,7 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_type_from_rust_display(sig.return_type.as_str())
+        self.resolved_rust_return_type_from_sig(sig)
     }
 }
 
@@ -687,6 +723,8 @@ mod validate_rust_function_call_tests {
                 is_rusttype: true,
                 has_interop: true,
                 underlying: ResolvedType::Named("RustString".to_string()),
+                constraints: Vec::new(),
+                implicit_coercion_enabled: true,
                 method_rebindings: HashMap::new(),
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(),
@@ -845,6 +883,8 @@ mod validate_rust_function_call_tests {
                 is_rusttype: true,
                 has_interop: true,
                 underlying: ResolvedType::Named("RustString".to_string()),
+                constraints: Vec::new(),
+                implicit_coercion_enabled: true,
                 method_rebindings: HashMap::new(),
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(),
@@ -900,6 +940,8 @@ mod validate_rust_function_call_tests {
                 is_rusttype: true,
                 has_interop: true,
                 underlying: ResolvedType::Named("RustString".to_string()),
+                constraints: Vec::new(),
+                implicit_coercion_enabled: true,
                 method_rebindings: HashMap::new(),
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(),

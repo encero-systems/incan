@@ -31,8 +31,8 @@ use incan_core::lang::trait_bounds::rust as tb;
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use super::expr::{
-    BinOp, FormatPart, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodCallArgPolicy, VarAccess,
-    VarRefKind,
+    BinOp, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodCallArgPolicy,
+    VarAccess, VarRefKind,
 };
 use super::ownership::{ValueUseSite, plan_value_use};
 use super::stmt::{IrStmt, IrStmtKind};
@@ -545,7 +545,25 @@ fn collect_backend_clone_bounds_in_stmt(
                 self_clone_params,
                 clone_params,
             );
-            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+            if let IrExprKind::Call {
+                func,
+                args,
+                callable_signature,
+                ..
+            } = &expr.kind
+            {
+                collect_backend_clone_bounds_in_call(
+                    func,
+                    args,
+                    callable_signature.as_ref(),
+                    true,
+                    type_param_names,
+                    self_clone_params,
+                    clone_params,
+                );
+            } else {
+                collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+            }
         }
         IrStmtKind::Expr(expr) => {
             collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
@@ -754,6 +772,44 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
 ///
 /// Ordinary trait-bound inference catches user-written operations. This pass catches clones introduced by backend call
 /// argument and owned-sink planning, while preserving external Rust call shapes that should not use Incan clone policy.
+fn collect_backend_clone_bounds_in_call(
+    func: &IrExpr,
+    args: &[IrCallArg],
+    callable_signature: Option<&super::FunctionSignature>,
+    in_return: bool,
+    type_param_names: &HashSet<&str>,
+    self_clone_params: Option<&HashSet<String>>,
+    clone_params: &mut HashSet<String>,
+) {
+    if call_args_use_incan_clone_policy(func) {
+        for (idx, arg) in args.iter().enumerate() {
+            let sig_param = callable_signature.and_then(|sig| sig.params.get(idx));
+            let target_ty = sig_param.map(|param| &param.ty).or_else(|| match &func.ty {
+                IrType::Function { params, .. } => params.get(idx),
+                _ => None,
+            });
+            let requires_clone = value_use_requires_backend_clone(
+                &arg.expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty,
+                    callee_param: sig_param,
+                    in_return,
+                },
+            );
+            if requires_clone {
+                add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            }
+            collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+        }
+    } else {
+        for arg in args {
+            collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+        }
+    }
+    collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
+}
+
+/// Walk an expression tree for backend-planned clones and explicit clone calls that affect generic bounds.
 fn collect_backend_clone_bounds_in_expr(
     expr: &IrExpr,
     type_param_names: &HashSet<&str>,
@@ -792,26 +848,20 @@ fn collect_backend_clone_bounds_in_expr(
                 collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
             }
         }
-        IrExprKind::Call { func, args, .. } => {
-            if call_args_use_incan_clone_policy(func) {
-                for arg in args {
-                    if incan_call_arg_requires_backend_clone(&arg.expr) {
-                        add_backend_clone_bounds_for_cloned_expr(
-                            &arg.expr,
-                            type_param_names,
-                            self_clone_params,
-                            clone_params,
-                        );
-                    }
-                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
-                }
-            } else {
-                for arg in args {
-                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
-                }
-            }
-            collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
-        }
+        IrExprKind::Call {
+            func,
+            args,
+            callable_signature,
+            ..
+        } => collect_backend_clone_bounds_in_call(
+            func,
+            args,
+            callable_signature.as_ref(),
+            false,
+            type_param_names,
+            self_clone_params,
+            clone_params,
+        ),
         IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) => {
             for arg in args {
                 collect_backend_clone_bounds_in_expr(arg, type_param_names, self_clone_params, clone_params);
@@ -994,6 +1044,7 @@ fn collect_backend_clone_bounds_in_expr(
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -1399,6 +1450,13 @@ fn scan_expr_for_bounds(
                 && let Some(tp_name) = expr_type_param_name(receiver, type_params, params)
             {
                 add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+            } else if method == "clone"
+                && matches!(receiver.ty, IrType::Unknown)
+                && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
+            {
+                for tp_name in type_params {
+                    add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
+                }
             }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
@@ -1631,6 +1689,7 @@ fn scan_expr_for_bounds(
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -2282,6 +2341,7 @@ mod tests {
             entry_point: None,
             function_registry: FunctionRegistry::new(),
             rust_module_path: None,
+            newtype_checked_ctor: Default::default(),
         }
     }
 

@@ -2,8 +2,10 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::ast_walk::any_expr_in_body;
-use crate::frontend::diagnostics::errors;
-use crate::frontend::resolved_type_subst::{substitute_method_info, substitute_resolved_type, type_param_subst_map};
+use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::resolved_type_subst::{
+    substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
+};
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::{
     TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
@@ -11,12 +13,13 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::{TestingFixtureInfo, TypeChecker, YieldContext};
+use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
+use incan_semantics_core::SurfaceModifierTypeCheck;
 use std::collections::{HashMap, HashSet};
 
 /// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
@@ -28,12 +31,30 @@ fn method_infos_identical(a: &MethodInfo, b: &MethodInfo) -> bool {
         && a.return_type == b.return_type
 }
 
+/// Return whether two trait property requirements are structurally identical.
+fn property_infos_identical(a: &PropertyInfo, b: &PropertyInfo) -> bool {
+    a.has_body == b.has_body && a.return_type == b.return_type
+}
+
 fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
     match kind {
         ParamKind::Normal => ty,
         ParamKind::RestPositional => list_ty(ty),
         ParamKind::RestKeyword => dict_ty(ResolvedType::Str, ty),
     }
+}
+
+/// Convert a collected function signature into the callable value type that decorators receive.
+fn function_info_callable_type(info: &FunctionInfo) -> ResolvedType {
+    ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone()))
+}
+
+/// Convert a collected method signature into the callable value type that method decorators receive.
+fn method_info_callable_type(info: &MethodInfo, receiver_ty: ResolvedType) -> ResolvedType {
+    let mut params = Vec::with_capacity(info.params.len() + 1);
+    params.push(CallableParam::named("self", receiver_ty, ParamKind::Normal));
+    params.extend(info.params.clone());
+    ResolvedType::Function(params, Box::new(info.return_type.clone()))
 }
 
 /// Callable signature resolved for one `interop:` adapter reference.
@@ -293,6 +314,33 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// Run declaration-level typecheck actions selected by the surface semantics registry.
+    fn validate_surface_modifier_typecheck_actions(
+        &mut self,
+        modifiers: &[SurfaceModifier],
+        return_type: &Spanned<Type>,
+    ) {
+        use crate::semantics_registry::semantics_registry;
+
+        for modifier in modifiers {
+            let Some(action) = semantics_registry().typecheck_surface_modifier_action(&modifier.key) else {
+                continue;
+            };
+            match action {
+                SurfaceModifierTypeCheck::AsyncCallable => self.validate_async_callable_return_type(return_type),
+            }
+        }
+    }
+
+    /// Validate return annotations for an async callable.
+    ///
+    /// Incan async declarations spell the callable's logical output type, not an explicit `Future[T]` wrapper, so no
+    /// additional return-type rejection is currently applicable. Keeping this routed through the semantics registry
+    /// prevents `async` from becoming another hardcoded declaration special case.
+    fn validate_async_callable_return_type(&mut self, return_type: &Spanned<Type>) {
+        let _ = return_type;
     }
 
     /// Return whether a method carries a resolved builtin decorator.
@@ -798,6 +846,22 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Drop supertrait property obligations shadowed by a more derived trait in the same obligation group.
+    fn filter_supertrait_dominated_property_entries(
+        &self,
+        entries: Vec<(String, PropertyInfo)>,
+    ) -> Vec<(String, PropertyInfo)> {
+        let names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
+        entries
+            .into_iter()
+            .filter(|(ta, _)| {
+                !names
+                    .iter()
+                    .any(|tb| ta != tb && self.is_strict_supertrait_name(ta, tb))
+            })
+            .collect()
+    }
+
     /// Apply resolved type arguments to one trait definition so conformance uses the instantiated contract.
     fn instantiate_trait_info(&self, trait_info: &TraitInfo, args: &[ResolvedType]) -> TraitInfo {
         let subst = type_param_subst_map(&trait_info.type_params, args);
@@ -822,6 +886,11 @@ impl TypeChecker {
                 .map(|(name, info)| (name.clone(), substitute_method_info(info, &subst)))
                 .collect(),
             method_aliases: trait_info.method_aliases.clone(),
+            properties: trait_info
+                .properties
+                .iter()
+                .map(|(name, info)| (name.clone(), substitute_property_info(info, &subst)))
+                .collect(),
             requires: trait_info
                 .requires
                 .iter()
@@ -861,6 +930,44 @@ impl TypeChecker {
         Some((instantiated, resolved_args))
     }
 
+    /// Resolve a previously collected trait adoption into instantiated trait metadata for validation.
+    fn resolve_collected_trait_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        adoption_span: Span,
+    ) -> Option<ResolvedTraitAdoption> {
+        let trait_info = self.lookup_trait_info(&adoption.name)?.clone();
+        if adoption.type_args.len() != trait_info.type_params.len() {
+            self.errors.push(errors::trait_adoption_bound_arity_mismatch(
+                &adoption.name,
+                trait_info.type_params.len(),
+                adoption.type_args.len(),
+                adoption_span,
+            ));
+            return None;
+        }
+        let info = if adoption.type_args.is_empty() {
+            trait_info
+        } else {
+            self.instantiate_trait_info(&trait_info, &adoption.type_args)
+        };
+        Some(ResolvedTraitAdoption {
+            name: adoption.name.clone(),
+            info,
+            args: adoption.type_args.clone(),
+            span: adoption_span,
+        })
+    }
+
+    /// Return the first `@derive` span for diagnostics tied to synthetic derive adoptions.
+    fn first_derive_span(decorators: &[Spanned<Decorator>]) -> Span {
+        decorators
+            .iter()
+            .find(|decorator| decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive))
+            .map(|decorator| decorator.span)
+            .unwrap_or_default()
+    }
+
     /// Recursively collect abstract trait methods after applying any explicit adoption-time type arguments.
     fn collect_instantiated_trait_abstract_method_entries(
         &self,
@@ -894,6 +1001,48 @@ impl TypeChecker {
             };
             let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
             self.collect_instantiated_trait_abstract_method_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                seen,
+                out,
+            );
+        }
+    }
+
+    /// Recursively collect abstract trait properties after applying adoption-time type arguments.
+    fn collect_instantiated_trait_abstract_property_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, PropertyInfo)>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (property_name, property_info) in &trait_info.properties {
+            if !property_info.has_body {
+                out.push((property_name.clone(), trait_name.to_string(), property_info.clone()));
+            }
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_abstract_property_entries(
                 supertrait_name,
                 &instantiated,
                 supertrait_args,
@@ -939,6 +1088,46 @@ impl TypeChecker {
             };
             let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
             self.collect_instantiated_trait_method_entries(supertrait_name, &instantiated, supertrait_args, seen, out);
+        }
+    }
+
+    /// Collect all properties from an instantiated trait and its supertraits with type arguments applied.
+    fn collect_instantiated_trait_property_entries(
+        &self,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: &[ResolvedType],
+        seen: &mut HashSet<String>,
+        out: &mut Vec<(String, String, PropertyInfo)>,
+    ) {
+        let key = format!(
+            "{trait_name}<{}>",
+            trait_args
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen.insert(key) {
+            return;
+        }
+
+        for (property_name, property_info) in &trait_info.properties {
+            out.push((property_name.clone(), trait_name.to_string(), property_info.clone()));
+        }
+
+        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
+            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                continue;
+            };
+            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
+            self.collect_instantiated_trait_property_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                seen,
+                out,
+            );
         }
     }
 
@@ -1139,6 +1328,57 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a trait property visible through an adopted trait, including transitive supertraits.
+    pub(in crate::frontend::typechecker) fn trait_property_info_resolved_for_adoption(
+        &mut self,
+        adoption: &TypeBoundInfo,
+        property: &str,
+        ambiguity_span: Span,
+    ) -> Option<PropertyInfo> {
+        let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
+        let root_info = if adoption.type_args.is_empty() {
+            root
+        } else {
+            self.instantiate_trait_info(&root, &adoption.type_args)
+        };
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_instantiated_trait_property_entries(
+            &adoption.name,
+            &root_info,
+            &adoption.type_args,
+            &mut seen,
+            &mut entries,
+        );
+        let matching: Vec<(String, PropertyInfo)> = entries
+            .into_iter()
+            .filter(|(name, _, _)| name == property)
+            .map(|(_, origin, info)| (origin, info))
+            .collect();
+        let filtered = self.filter_supertrait_dominated_property_entries(matching);
+        match filtered.as_slice() {
+            [] => None,
+            [(_, info)] => Some(info.clone()),
+            rest => {
+                let exp0 = &rest[0].1;
+                let all_mutually_compat = rest.iter().all(|(_, e)| {
+                    self.types_compatible(&exp0.return_type, &e.return_type)
+                        && self.types_compatible(&e.return_type, &exp0.return_type)
+                });
+                if !all_mutually_compat {
+                    self.errors.push(errors::trait_property_conflict(
+                        &rest[0].0,
+                        &rest[1].0,
+                        property,
+                        ambiguity_span,
+                    ));
+                    return None;
+                }
+                Some(exp0.clone())
+            }
+        }
+    }
+
     /// Group abstract (`...`) methods required by `trait_name` and its transitive supertraits by method name.
     ///
     /// Each group lists `(declaring_trait, signature)` after supertrait shadowing so diamonds can be merged or rejected
@@ -1161,6 +1401,161 @@ impl TypeChecker {
             }
         }
         out
+    }
+
+    /// Group abstract (`...`) properties required by `trait_name` and its transitive supertraits.
+    fn grouped_trait_abstract_property_obligations(
+        &self,
+        trait_name: &str,
+        explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
+    ) -> HashMap<String, Vec<(String, PropertyInfo)>> {
+        let raw = if let Some((trait_info, trait_args)) = explicit_root {
+            let mut out = Vec::new();
+            let mut seen = HashSet::new();
+            self.collect_instantiated_trait_abstract_property_entries(
+                trait_name, trait_info, trait_args, &mut seen, &mut out,
+            );
+            out
+        } else {
+            let mut out = Vec::new();
+            if let Some(root) = self.lookup_semantic_trait_info(trait_name) {
+                for (p, info) in &root.properties {
+                    if !info.has_body {
+                        out.push((p.clone(), trait_name.to_string(), info.clone()));
+                    }
+                }
+            }
+            for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
+                let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
+                for (p, info) in &supertrait_info.properties {
+                    if !info.has_body {
+                        out.push((
+                            p.clone(),
+                            supertrait_name.clone(),
+                            substitute_property_info(info, &subst),
+                        ));
+                    }
+                }
+            }
+            out
+        };
+
+        let mut map: HashMap<String, Vec<(String, PropertyInfo)>> = HashMap::new();
+        for (property, origin, info) in raw {
+            map.entry(property).or_default().push((origin, info));
+        }
+        let mut out = HashMap::new();
+        for (property, entries) in map {
+            let filtered = self.filter_supertrait_dominated_property_entries(entries);
+            if !filtered.is_empty() {
+                out.insert(property, filtered);
+            }
+        }
+        out
+    }
+
+    /// Check one concrete property implementation against one trait property requirement.
+    fn check_impl_against_trait_property_requirement(
+        &mut self,
+        type_name: &str,
+        via_trait: &str,
+        property_name: &str,
+        property_info: &PropertyInfo,
+        properties: &HashMap<String, PropertyInfo>,
+        adoption_span: Span,
+    ) {
+        match properties.get(property_name) {
+            None => self
+                .errors
+                .push(errors::missing_trait_property(via_trait, property_name, adoption_span)),
+            Some(found) => {
+                if !self.types_compatible(&found.return_type, &property_info.return_type) {
+                    self.errors.push(errors::trait_property_signature_mismatch(
+                        via_trait,
+                        type_name,
+                        property_name,
+                        &property_info.return_type.to_string(),
+                        &found.return_type.to_string(),
+                        adoption_span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Enforce abstract properties from `trait_name` and its supertraits on a concrete type.
+    fn enforce_trait_abstract_properties(
+        &mut self,
+        type_name: &str,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+        properties: &HashMap<String, PropertyInfo>,
+    ) {
+        let grouped =
+            self.grouped_trait_abstract_property_obligations(trait_name, trait_args.map(|args| (trait_info, args)));
+        let mut property_names: Vec<String> = grouped.keys().cloned().collect();
+        property_names.sort();
+        for property_name in property_names {
+            let Some(group) = grouped.get(&property_name) else {
+                continue;
+            };
+            let exp0 = &group[0].1;
+            if group.len() == 1 {
+                self.check_impl_against_trait_property_requirement(
+                    type_name,
+                    &group[0].0,
+                    property_name.as_str(),
+                    exp0,
+                    properties,
+                    adoption_span,
+                );
+                continue;
+            }
+            let all_mutually_compat = group.iter().all(|(_, e)| {
+                self.types_compatible(&exp0.return_type, &e.return_type)
+                    && self.types_compatible(&e.return_type, &exp0.return_type)
+            });
+            if !all_mutually_compat {
+                self.errors.push(errors::trait_property_conflict(
+                    &group[0].0,
+                    &group[1].0,
+                    property_name.as_str(),
+                    adoption_span,
+                ));
+                continue;
+            }
+            let all_identical = group.iter().all(|(_, e)| property_infos_identical(exp0, e));
+            if all_identical {
+                self.check_impl_against_trait_property_requirement(
+                    type_name,
+                    &group[0].0,
+                    property_name.as_str(),
+                    exp0,
+                    properties,
+                    adoption_span,
+                );
+                continue;
+            }
+            if properties.get(property_name.as_str()).is_some_and(|found| {
+                group
+                    .iter()
+                    .all(|(_, e)| self.types_compatible(&found.return_type, &e.return_type))
+            }) {
+                continue;
+            }
+            self.errors.push(errors::supertrait_property_ambiguity(
+                trait_name,
+                property_name.as_str(),
+                &group[0].0,
+                &group[1].0,
+                adoption_span,
+            ));
+        }
     }
 
     /// Check that `methods` on a concrete type satisfy one abstract requirement from the trait graph.
@@ -1469,15 +1864,70 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Check a const declaration, routing RFC 024 `__derives__` metadata through derive-specific validation.
     fn check_const(&mut self, konst: &ConstDecl, span: Span) {
+        if konst.name == "__derives__" {
+            self.check_derives_metadata(konst);
+            return;
+        }
         // RFC 008: const-eval (with cycle detection + category classification).
         self.check_and_resolve_const(konst, span);
     }
 
+    /// Validate RFC 024 module-level `__derives__` metadata against the module's local trait declarations.
+    fn check_derives_metadata(&mut self, konst: &ConstDecl) {
+        let Expr::List(entries) = &konst.value.node else {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must be a list of trait names".to_string(),
+                konst.value.span,
+            ));
+            return;
+        };
+        if entries.is_empty() {
+            self.errors.push(CompileError::type_error(
+                "`__derives__` must list at least one trait".to_string(),
+                konst.value.span,
+            ));
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for entry in entries {
+            let crate::frontend::ast::ListEntry::Element(expr) = entry else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names, not spreads".to_string(),
+                    konst.value.span,
+                ));
+                continue;
+            };
+            let Expr::Ident(name) = &expr.node else {
+                self.errors.push(CompileError::type_error(
+                    "`__derives__` entries must be trait names".to_string(),
+                    expr.span,
+                ));
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                self.errors.push(CompileError::type_error(
+                    format!("Duplicate trait '{name}' in `__derives__`"),
+                    expr.span,
+                ));
+            }
+            if self.lookup_trait_info(name).is_none() {
+                self.errors.push(CompileError::type_error(
+                    format!("`__derives__` entry '{name}' is not a trait"),
+                    expr.span,
+                ));
+            }
+        }
+    }
+
+    /// Validate a module static declaration and record its final type for later lowering.
     fn check_static(&mut self, static_decl: &StaticDecl, span: Span) {
         let expected_ty = self.resolve_type_checked(&static_decl.ty);
         let value_ty = self.check_expr_with_expected(&static_decl.value, Some(&expected_ty));
-        if !self.types_compatible(&value_ty, &expected_ty) {
+        if !self.types_compatible(&value_ty, &expected_ty)
+            && !self.record_validated_newtype_coercion_if_possible(&value_ty, &expected_ty, static_decl.value.span)
+        {
             self.errors.push(errors::type_mismatch(
                 &expected_ty.to_string(),
                 &value_ty.to_string(),
@@ -1508,7 +1958,7 @@ impl TypeChecker {
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
 
-        self.validate_decorators(&model.decorators);
+        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
         let derives = self.extract_derive_names(&model.decorators);
@@ -1557,6 +2007,13 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }
+        let derive_adoption_span = Self::first_derive_span(&model.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
 
         let mut method_names = HashSet::new();
         if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) {
@@ -1593,9 +2050,11 @@ impl TypeChecker {
 
             // Check default expression type
             if let Some(default) = &field.node.default {
-                let default_ty = self.check_expr(default);
                 let field_ty = self.resolve_type_checked(&field.node.ty);
-                if !self.types_compatible(&default_ty, &field_ty) {
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
                         &default_ty.to_string(),
@@ -1607,7 +2066,10 @@ impl TypeChecker {
 
         // Check methods
         for method in &model.methods {
-            self.check_method(&method.node, &model.name);
+            self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
+        }
+        for property in &model.properties {
+            self.check_property(&property.node, &model.name);
         }
 
         if has_validate {
@@ -1724,6 +2186,14 @@ impl TypeChecker {
                 adoption_span,
                 &mi.method_overloads,
             );
+            self.enforce_trait_abstract_properties(
+                &model.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &mi.properties,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {
@@ -1741,9 +2211,10 @@ impl TypeChecker {
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
-        self.validate_decorators(&class.decorators);
+        self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
+        let derives = self.extract_derive_names(&class.decorators);
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -1781,6 +2252,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&class.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         // RFC 021: Field aliases are NOT supported on class declarations.
@@ -1820,9 +2298,11 @@ impl TypeChecker {
             });
 
             if let Some(default) = &field.node.default {
-                let default_ty = self.check_expr(default);
                 let field_ty = self.resolve_type_checked(&field.node.ty);
-                if !self.types_compatible(&default_ty, &field_ty) {
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
                     self.errors.push(errors::type_mismatch(
                         &field_ty.to_string(),
                         &default_ty.to_string(),
@@ -1834,7 +2314,10 @@ impl TypeChecker {
 
         // Check methods
         for method in &class.methods {
-            self.check_method(&method.node, &class.name);
+            self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
+        }
+        for property in &class.properties {
+            self.check_property(&property.node, &class.name);
         }
         if let Some(TypeInfo::Class(info)) = self.lookup_type_info(&class.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&class.methods);
@@ -1899,6 +2382,14 @@ impl TypeChecker {
                 adoption_span,
                 &ci.method_overloads,
             );
+            self.enforce_trait_abstract_properties(
+                &class.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &ci.properties,
+            );
         } else {
             for (method_name, method_info) in &trait_info.methods {
                 if !method_info.has_body {
@@ -1909,10 +2400,12 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a trait declaration, including required fields, abstract properties, defaults, and self-typed method
+    /// bodies.
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
-        self.validate_decorators(&tr.decorators);
+        self.validate_decorators_rejecting_user_defined(&tr.decorators, "trait");
         self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
@@ -1929,12 +2422,15 @@ impl TypeChecker {
                 acc
             });
         let prev_trait_requires = self.current_trait_requires.take();
+        let prev_trait_properties = self.current_trait_properties.take();
         let prev_trait_name = self.current_trait_name.take();
         let prev_missing_emitted = self.current_trait_missing_requires_emitted.take();
         self.current_trait_requires = Some(requires_map);
+        self.current_trait_properties = self.lookup_trait_info(&tr.name).map(|info| info.properties.clone());
         self.current_trait_name = Some(tr.name.clone());
 
         for method in &tr.methods {
+            self.validate_decorators_allowing_user_defined(&method.node.decorators);
             if method.node.body.is_some() {
                 let prev_method_seen = self.current_trait_missing_requires_emitted.take();
                 self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
@@ -1942,12 +2438,28 @@ impl TypeChecker {
                 // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
                 // `@requires`).
                 let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-                self.check_method_with_self_ty(&method.node, ResolvedType::SelfType, &trait_type_params);
+                self.check_method_with_self_ty(
+                    &method.node,
+                    ResolvedType::SelfType,
+                    &trait_type_params,
+                    &tr.type_params,
+                );
                 self.current_trait_missing_requires_emitted = prev_method_seen;
+            }
+            self.apply_user_defined_method_decorators(&method.node, &tr.name);
+        }
+        for property in &tr.properties {
+            if property.node.body.is_some() {
+                self.errors.push(errors::trait_property_body_not_supported(
+                    &tr.name,
+                    &property.node.name,
+                    property.span,
+                ));
             }
         }
 
         self.current_trait_requires = prev_trait_requires;
+        self.current_trait_properties = prev_trait_properties;
         self.current_trait_name = prev_trait_name;
         self.current_trait_missing_requires_emitted = prev_missing_emitted;
         self.symbols.exit_scope();
@@ -1955,7 +2467,7 @@ impl TypeChecker {
 
     /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
-        self.validate_decorators(&nt.decorators);
+        self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -1986,6 +2498,7 @@ impl TypeChecker {
             self.errors
                 .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));
         }
+        self.validate_newtype_from_underlying_hook(nt, &underlying);
 
         for rebinding in &nt.rebindings {
             // Short-form rebinding targets (`alias = method`) should be interpreted as method names,
@@ -2035,8 +2548,92 @@ impl TypeChecker {
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         for method in &nt.methods {
             if method.node.body.is_some() {
-                self.check_method(&method.node, &nt.name);
+                self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
+        }
+    }
+
+    /// Validate the canonical RFC 017 `from_underlying` hook when a newtype declares one.
+    fn validate_newtype_from_underlying_hook(&mut self, nt: &NewtypeDecl, underlying: &ResolvedType) {
+        let Some(method_decl) = nt
+            .methods
+            .iter()
+            .find(|method| method.node.name == incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+        else {
+            return;
+        };
+        let method_span = method_decl.span;
+        let method_info = self.lookup_type_info(&nt.name).and_then(|info| match info {
+            TypeInfo::Newtype(newtype) => newtype
+                .methods
+                .get(incan_core::lang::conventions::NEWTYPE_FROM_UNDERLYING_METHOD)
+                .cloned(),
+            _ => None,
+        });
+        let Some(method_info) = method_info else {
+            return;
+        };
+
+        if method_info.receiver.is_some() {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must be a static method with no self receiver",
+                method_span,
+            ));
+        }
+        if method_info.is_async {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must be deterministic and cannot be async",
+                method_span,
+            ));
+        }
+        if method_info.params.len() != 1
+            || method_info
+                .params
+                .first()
+                .is_some_and(|param| param.kind != ParamKind::Normal)
+        {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                "the hook must accept exactly one ordinary parameter",
+                method_span,
+            ));
+        } else if let Some(param) = method_info.params.first()
+            && !self.types_compatible(&param.ty, underlying)
+        {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                &format!(
+                    "parameter type must be the newtype underlying type '{underlying}', found '{}'",
+                    param.ty
+                ),
+                method_span,
+            ));
+        }
+
+        let expected_err = ResolvedType::Named("ValidationError".to_string());
+        let valid_return = matches!(
+            &method_info.return_type,
+            ResolvedType::Generic(name, args)
+                if crate::frontend::typechecker::helpers::collection_type_id(name.as_str())
+                    == Some(incan_core::lang::types::collections::CollectionTypeId::Result)
+                    && args.len() == 2
+                    && (
+                        matches!(&args[0], ResolvedType::Named(name) if name == &nt.name)
+                            || matches!(&args[0], ResolvedType::SelfType)
+                    )
+                    && args[1] == expected_err
+        );
+        if !valid_return {
+            self.errors.push(errors::invalid_newtype_validation_hook(
+                &nt.name,
+                &format!(
+                    "return type must be Result[{}, ValidationError], found '{}'",
+                    nt.name, method_info.return_type
+                ),
+                method_span,
+            ));
         }
     }
 
@@ -2044,8 +2641,9 @@ impl TypeChecker {
     fn check_enum(&mut self, en: &EnumDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
 
-        self.validate_decorators(&en.decorators);
+        self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
+        let derives = self.extract_derive_names(&en.decorators);
 
         for param in &en.type_params {
             self.symbols.define(Symbol {
@@ -2085,6 +2683,13 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
         }
+        let derive_adoption_span = Self::first_derive_span(&en.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
 
         self.check_value_enum_decl(en);
         // Check variant field types exist
@@ -2099,7 +2704,7 @@ impl TypeChecker {
         }
 
         for method in &en.methods {
-            self.check_method(&method.node, &en.name);
+            self.check_method_with_owner_type_params(&method.node, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let method_spans = Self::method_decl_spans_by_name(&en.methods);
@@ -2148,6 +2753,14 @@ impl TypeChecker {
                 trait_args,
                 adoption_span,
                 &info.method_overloads,
+            );
+            self.enforce_trait_abstract_properties(
+                &en.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &HashMap::new(),
             );
         } else {
             for (method_name, method_info) in &trait_info.methods {
@@ -2248,11 +2861,280 @@ impl TypeChecker {
         }
     }
 
+    /// Apply RFC 036 user-defined decorators to a top-level function binding after its body has been checked.
+    ///
+    /// The undecorated function is already present in the module symbol table from collection. Each user-defined
+    /// decorator is checked as `decorator(current_binding)`, bottom-up, and the module-visible binding is then replaced
+    /// with the resulting type as an ordinary immutable value.
+    fn apply_user_defined_function_decorators(&mut self, func: &FunctionDecl, span: Span) {
+        if !func
+            .decorators
+            .iter()
+            .any(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))
+        {
+            return;
+        }
+
+        let Some(original_ty) = self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Function(info) => Some(function_info_callable_type(info)),
+            SymbolKind::Variable(info) => Some(info.ty.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        let mut binding_ty = original_ty;
+        for decorator in func.decorators.iter().rev() {
+            if self.is_user_defined_decorator_candidate(&decorator.node) {
+                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &func.name);
+            }
+        }
+
+        if let Some(symbol_id) = self.symbols.lookup(&func.name)
+            && let Some(symbol) = self.symbols.get_mut(symbol_id)
+        {
+            self.type_info.decorated_function_bindings.insert(
+                func.name.clone(),
+                DecoratedFunctionBindingInfo { ty: binding_ty.clone() },
+            );
+            symbol.kind = SymbolKind::Variable(VariableInfo {
+                ty: binding_ty,
+                is_mutable: false,
+                is_used: false,
+            });
+            symbol.span = span;
+        }
+    }
+
+    /// Apply RFC 036 user-defined decorators to a method table entry when the current method representation can store
+    /// the resulting callable signature.
+    fn apply_user_defined_method_decorators(&mut self, method: &MethodDecl, owner: &str) {
+        if !method
+            .decorators
+            .iter()
+            .any(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))
+        {
+            return;
+        }
+
+        let Some(mut method_info) = self.lookup_method_info_for_update(owner, &method.name) else {
+            return;
+        };
+        let receiver_ty = self.decorated_method_receiver_type(owner, method.receiver);
+        let original_binding_ty = method_info_callable_type(&method_info, receiver_ty);
+        let mut binding_ty = original_binding_ty.clone();
+        for decorator in method.decorators.iter().rev() {
+            if self.is_user_defined_decorator_candidate(&decorator.node) {
+                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &method.name);
+            }
+        }
+
+        let ResolvedType::Function(params, ret) = binding_ty.clone() else {
+            return;
+        };
+        let Some((_receiver, surface_params)) = params.split_first() else {
+            return;
+        };
+        self.type_info.decorated_method_bindings.insert(
+            (owner.to_string(), method.name.clone()),
+            DecoratedMethodBindingInfo {
+                unbound_ty: binding_ty,
+                original_unbound_ty: original_binding_ty,
+            },
+        );
+        method_info.params = surface_params.to_vec();
+        method_info.return_type = *ret;
+        self.replace_method_info(owner, &method.name, method_info);
+    }
+
+    /// Return the source-level receiver type passed as the first argument to a method decorator.
+    fn decorated_method_receiver_type(&self, owner: &str, receiver: Option<Receiver>) -> ResolvedType {
+        let owner_ty = ResolvedType::Named(owner.to_string());
+        if receiver == Some(Receiver::Mutable) {
+            ResolvedType::RefMut(Box::new(owner_ty))
+        } else {
+            ResolvedType::Ref(Box::new(owner_ty))
+        }
+    }
+
+    /// Return the method metadata currently visible for an owner and method name.
+    fn lookup_method_info_for_update(&self, owner: &str, method_name: &str) -> Option<MethodInfo> {
+        let symbol_id = self.symbols.lookup(owner)?;
+        let symbol = self.symbols.get(symbol_id)?;
+        match &symbol.kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Class(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Newtype(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Enum(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Trait(info) => info.methods.get(method_name).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Replace an owner method entry after decorator application has produced a representable callable type.
+    fn replace_method_info(&mut self, owner: &str, method_name: &str, method_info: MethodInfo) {
+        let Some(symbol_id) = self.symbols.lookup(owner) else {
+            return;
+        };
+        let Some(symbol) = self.symbols.get_mut(symbol_id) else {
+            return;
+        };
+        match &mut symbol.kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Type(TypeInfo::Newtype(info)) => {
+                info.methods.insert(method_name.to_string(), method_info);
+            }
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Trait(info) => {
+                info.methods.insert(method_name.to_string(), method_info);
+            }
+            _ => {}
+        }
+    }
+
+    /// Type-check one decorator application against the current decorated binding type.
+    fn apply_user_defined_decorator(
+        &mut self,
+        decorator: &Spanned<Decorator>,
+        binding_ty: ResolvedType,
+        binding_name: &str,
+    ) -> ResolvedType {
+        let display = Self::decorator_display(&decorator.node);
+        let callable_ty = if decorator.node.is_call {
+            self.check_decorator_factory_expr(decorator, &display)
+        } else {
+            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
+        };
+
+        self.apply_decorator_callable(&display, callable_ty, binding_ty, binding_name, decorator.span)
+    }
+
+    /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
+    fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        let Some(args) = self.decorator_call_args(decorator, display) else {
+            return ResolvedType::Unknown;
+        };
+        let path = &decorator.node.path.segments;
+        let factory_expr = if path.len() >= 2 {
+            let base_path = ImportPath {
+                parent_levels: decorator.node.path.parent_levels,
+                is_absolute: decorator.node.path.is_absolute,
+                segments: path[..path.len() - 1].to_vec(),
+            };
+            let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+            let method = path.last().cloned().unwrap_or_default();
+            Spanned::new(
+                Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                decorator.span,
+            )
+        } else {
+            let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
+            Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+        };
+        self.check_expr(&factory_expr)
+    }
+
+    /// Apply a callable decorator value to the decorated binding type and return the post-decoration binding type.
+    fn apply_decorator_callable(
+        &mut self,
+        display: &str,
+        callable_ty: ResolvedType,
+        binding_ty: ResolvedType,
+        binding_name: &str,
+        span: Span,
+    ) -> ResolvedType {
+        let ResolvedType::Function(params, ret) = callable_ty else {
+            if !matches!(callable_ty, ResolvedType::Unknown) {
+                self.errors.push(if display.contains('(') {
+                    errors::decorator_factory_not_callable(display, span)
+                } else {
+                    errors::decorator_not_callable(display, span)
+                });
+            }
+            return ResolvedType::Unknown;
+        };
+
+        let arg_expr = Spanned::new(Expr::Ident(binding_name.to_string()), span);
+        let args = vec![CallArg::Positional(arg_expr)];
+        let arg_types = vec![binding_ty];
+        let mut type_bindings = HashMap::new();
+        let error_count = self.errors.len();
+        self.validate_callable_arg_bindings(display, &params, &args, &arg_types, &mut type_bindings, span);
+        if self.errors.len() != error_count {
+            return ResolvedType::Unknown;
+        }
+        substitute_resolved_type(&ret, &type_bindings)
+    }
+
+    /// Convert decorator arguments into ordinary call arguments for user-defined decorator factory checking.
+    fn decorator_call_args(&mut self, decorator: &Spanned<Decorator>, display: &str) -> Option<Vec<CallArg>> {
+        let mut args = Vec::new();
+        let mut valid = true;
+        for arg in &decorator.node.args {
+            match arg {
+                DecoratorArg::Positional(expr) => args.push(CallArg::Positional(expr.clone())),
+                DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => {
+                    args.push(CallArg::Named(name.clone(), expr.clone()));
+                }
+                DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) => {
+                    self.errors
+                        .push(errors::decorator_type_argument_not_supported(display, ty.span));
+                    valid = false;
+                }
+            }
+        }
+        valid.then_some(args)
+    }
+
+    /// Render a decorator path with a coarse call marker for diagnostics.
+    fn decorator_display(decorator: &Decorator) -> String {
+        let path = decorator.path.segments.join(".");
+        if decorator.is_call {
+            format!("{path}(...)")
+        } else {
+            path
+        }
+    }
+
+    /// Build an expression from a decorator's path.
+    fn decorator_path_expr(decorator: &Decorator, span: Span) -> Spanned<Expr> {
+        Self::decorator_path_expr_from_import_path(&decorator.path, span)
+    }
+
+    /// Build an identifier/field expression from an import-style decorator path.
+    fn decorator_path_expr_from_import_path(path: &ImportPath, span: Span) -> Spanned<Expr> {
+        let mut segments = path.segments.iter();
+        let Some(first) = segments.next() else {
+            return Spanned::new(Expr::Ident(String::new()), span);
+        };
+        let mut expr = Spanned::new(Expr::Ident(first.clone()), span);
+        for segment in segments {
+            expr = Spanned::new(Expr::Field(Box::new(expr), segment.clone()), span);
+        }
+        expr
+    }
+
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl) {
         self.symbols.enter_scope(ScopeKind::Function);
 
-        self.validate_decorators(&func.decorators);
+        self.validate_decorators_allowing_user_defined(&func.decorators);
         self.validate_callable_rest_params(&func.params);
         let fixture_span = fixture_function_span(func);
         let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
@@ -2302,8 +3184,7 @@ impl TypeChecker {
                 },
             );
         }
-        // TODO(#146): add async return-type and related validation here via the surface semantics registry — not
-        // hardcoded KeywordId checks.
+        self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.
         for param in &func.type_params {
@@ -2358,17 +3239,20 @@ impl TypeChecker {
         let prev_in_async_body = self.in_async_body;
         let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
         self.in_async_body = func.is_async();
+        let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
 
         // Check body
         for stmt in &func.body {
             self.check_statement(stmt);
         }
 
+        self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.in_async_body = prev_in_async_body;
         self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
+        self.apply_user_defined_function_decorators(func, fixture_span);
     }
 
     /// Resolve generic type-parameter bounds while preserving trait type arguments for call-site checks.
@@ -2398,8 +3282,8 @@ impl TypeChecker {
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
-    pub(crate) fn check_method(&mut self, method: &MethodDecl, owner: &str) {
-        self.validate_decorators(&method.decorators);
+    fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
+        self.validate_decorators_allowing_user_defined(&method.decorators);
         let owner_type_params = self
             .lookup_type_info(owner)
             .map(|info| match info {
@@ -2422,8 +3306,84 @@ impl TypeChecker {
                     .collect(),
             )
         };
-        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params);
+        self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params, owner_params);
         self.current_method_owner = previous_owner;
+        self.apply_user_defined_method_decorators(method, owner);
+    }
+
+    /// Validate a model or class computed property body using the concrete nominal owner as immutable `self`.
+    pub(crate) fn check_property(&mut self, property: &PropertyDecl, owner: &str) {
+        let owner_type_params = self
+            .lookup_type_info(owner)
+            .map(|info| match info {
+                TypeInfo::Model(model) => model.type_params.clone(),
+                TypeInfo::Class(class) => class.type_params.clone(),
+                TypeInfo::Builtin | TypeInfo::TypeAlias | TypeInfo::Newtype(_) | TypeInfo::Enum(_) => Vec::new(),
+            })
+            .unwrap_or_default();
+        let previous_owner = self.current_method_owner.replace(owner.to_string());
+        let owner_self_ty = if owner_type_params.is_empty() {
+            ResolvedType::Named(owner.to_string())
+        } else {
+            ResolvedType::Generic(
+                owner.to_string(),
+                owner_type_params
+                    .iter()
+                    .map(|type_param| ResolvedType::TypeVar(type_param.clone()))
+                    .collect(),
+            )
+        };
+        self.check_property_with_self_ty(property, owner_self_ty, &owner_type_params);
+        self.current_method_owner = previous_owner;
+    }
+
+    /// Check a computed property body with the supplied `self` type.
+    fn check_property_with_self_ty(
+        &mut self,
+        property: &PropertyDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+    ) {
+        self.symbols.enter_scope(ScopeKind::Method {
+            receiver: Some(Receiver::Immutable),
+        });
+
+        for type_param in owner_type_params {
+            self.symbols.define(Symbol {
+                name: type_param.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
+        self.symbols.define(Symbol {
+            name: "self".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: self_ty.clone(),
+                is_mutable: false,
+                is_used: true,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+
+        let return_type = self.resolve_type_checked(&property.return_type);
+        let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        self.symbols.set_return_type(effective_return_type);
+        self.current_return_error_type = return_type.result_err_type().cloned();
+
+        if let Some(body) = &property.body {
+            let prev_in_async_body = self.in_async_body;
+            self.in_async_body = false;
+            for stmt in body {
+                self.check_statement(stmt);
+            }
+            self.in_async_body = prev_in_async_body;
+        }
+
+        self.current_return_error_type = None;
+        self.symbols.exit_scope();
     }
 
     /// Check a method body with the concrete owner type used for `Self` in annotations and classmethod constructors.
@@ -2431,12 +3391,18 @@ impl TypeChecker {
     /// Generic owners pass `Owner[T, ...]` here so return checking and `cls(...)` constructor calls see the same
     /// generic surface that call sites use. Trait default methods may still pass bare `Self` because their eventual
     /// adopter is resolved later during trait conformance and method-call substitution.
-    fn check_method_with_self_ty(&mut self, method: &MethodDecl, self_ty: ResolvedType, owner_type_params: &[String]) {
+    fn check_method_with_self_ty(
+        &mut self,
+        method: &MethodDecl,
+        self_ty: ResolvedType,
+        owner_type_params: &[String],
+        owner_params: &[TypeParam],
+    ) {
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });
         self.validate_callable_rest_params(&method.params);
-        // TODO(#146): add async return-type and related validation for methods via the surface semantics registry.
+        self.validate_surface_modifier_typecheck_actions(&method.surface_modifiers, &method.return_type);
 
         // Define owner type parameters so generic wrappers can use them in bodies and annotations.
         for type_param in owner_type_params {
@@ -2457,7 +3423,8 @@ impl TypeChecker {
                 scope: 0,
             });
         }
-        let active_bounds = self.type_param_bound_details_from_type_params(&method.type_params);
+        let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
+        active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
 
         // Define self if present
@@ -2531,9 +3498,11 @@ impl TypeChecker {
             let prev_in_async_body = self.in_async_body;
             let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();
+            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
             for stmt in body {
                 self.check_statement(stmt);
             }
+            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.in_async_body = prev_in_async_body;
             self.current_yield_context = prev_yield_context;
         }

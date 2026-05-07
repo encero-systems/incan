@@ -4,7 +4,7 @@
 //! diagnostics for missing fields/methods and incompatible uses.
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
@@ -15,12 +15,14 @@ use crate::frontend::typechecker::helpers::{
 use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    list_methods, set_methods,
+    list_methods, result_methods, set_methods,
 };
+use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::NumericFamily;
 use incan_core::lang::{enum_helpers, surface::option_methods};
@@ -58,6 +60,704 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Return whether `method` names an RFC 070 `Result[T, E]` combinator.
+    fn result_combinator_name(method: &str) -> bool {
+        result_methods::from_str(method).is_some()
+    }
+
+    /// Resolve a callable function or callable object to its parameter and return types.
+    fn callable_signature_for_value_type(
+        &mut self,
+        ty: &ResolvedType,
+        span: Span,
+    ) -> Option<(Vec<CallableParam>, ResolvedType)> {
+        match ty {
+            ResolvedType::Function(params, ret) => Some((params.clone(), ret.as_ref().clone())),
+            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
+                let type_info = self.lookup_semantic_type_info(name).cloned()?;
+                let methods = match type_info {
+                    TypeInfo::Model(model) => model.methods,
+                    TypeInfo::Class(class) => class.methods,
+                    TypeInfo::Enum(en) => en.methods,
+                    TypeInfo::Newtype(newtype) => newtype.methods,
+                    _ => return None,
+                };
+                let Some(call) = methods.get("__call__") else {
+                    self.errors
+                        .push(errors::missing_method(&ty.to_string(), "__call__", span));
+                    return None;
+                };
+                Some(self.method_types_substituting_call_site_self(call, ty))
+            }
+            ResolvedType::Unknown => Some((Vec::new(), ResolvedType::Unknown)),
+            _ => {
+                self.errors
+                    .push(errors::missing_method(&ty.to_string(), "__call__", span));
+                None
+            }
+        }
+    }
+
+    /// Validate the callback passed to one `Result[T, E]` combinator and return its output type.
+    fn validate_result_combinator_callback(
+        &mut self,
+        _method: &str,
+        callback_ty: &ResolvedType,
+        input_ty: &ResolvedType,
+        expected_ret: Option<&ResolvedType>,
+        span: Span,
+    ) -> ResolvedType {
+        let Some((params, ret)) = self.callable_signature_for_value_type(callback_ty, span) else {
+            return ResolvedType::Unknown;
+        };
+        if params.len() != 1 {
+            self.errors.push(errors::type_mismatch(
+                "one-parameter callable",
+                &format!("{}-parameter callable", params.len()),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        if let Some(param) = params.first()
+            && !self.types_compatible(input_ty, &param.ty)
+        {
+            self.errors.push(errors::type_mismatch(
+                &param.ty.to_string(),
+                &input_ty.to_string(),
+                span,
+            ));
+        }
+        if let Some(expected) = expected_ret
+            && !self.types_compatible(&ret, expected)
+        {
+            self.errors
+                .push(errors::type_mismatch(&expected.to_string(), &ret.to_string(), span));
+        }
+        ret
+    }
+
+    /// Typecheck one RFC 070 `Result[T, E]` combinator method call.
+    fn check_result_combinator_method(
+        &mut self,
+        ok_ty: ResolvedType,
+        err_ty: ResolvedType,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> ResolvedType {
+        if args.len() != 1 {
+            self.errors.push(errors::type_mismatch(
+                "one callable argument",
+                &format!("{} argument(s)", args.len()),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        let Some(callback_ty) = arg_types.first() else {
+            return ResolvedType::Unknown;
+        };
+        let Some(method_id) = result_methods::from_str(method) else {
+            return ResolvedType::Unknown;
+        };
+        match method_id {
+            result_methods::ResultMethodId::Map => {
+                let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, None, span);
+                ResolvedType::Generic("Result".to_string(), vec![ret, err_ty])
+            }
+            result_methods::ResultMethodId::MapErr => {
+                let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, None, span);
+                ResolvedType::Generic("Result".to_string(), vec![ok_ty, ret])
+            }
+            result_methods::ResultMethodId::AndThen => {
+                let expected = ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty.clone()]);
+                let ret = self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&expected), span);
+                let ResolvedType::Generic(name, args) = ret else {
+                    return ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty]);
+                };
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
+                    return ResolvedType::Generic(name, args);
+                }
+                ResolvedType::Generic("Result".to_string(), vec![ResolvedType::Unknown, err_ty])
+            }
+            result_methods::ResultMethodId::OrElse => {
+                let expected = ResolvedType::Generic("Result".to_string(), vec![ok_ty.clone(), ResolvedType::Unknown]);
+                let ret = self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&expected), span);
+                let ResolvedType::Generic(name, args) = ret else {
+                    return ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown]);
+                };
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result) && args.len() == 2 {
+                    return ResolvedType::Generic(name, args);
+                }
+                ResolvedType::Generic("Result".to_string(), vec![ok_ty, ResolvedType::Unknown])
+            }
+            result_methods::ResultMethodId::Inspect => {
+                self.validate_result_combinator_callback(method, callback_ty, &ok_ty, Some(&ResolvedType::Unit), span);
+                ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
+            }
+            result_methods::ResultMethodId::InspectErr => {
+                self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&ResolvedType::Unit), span);
+                ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
+            }
+        }
+    }
+
+    /// Bind `list.repeat(...)` arguments to the helper's fixed `value` and `count` parameters.
+    ///
+    /// This mirrors ordinary fixed-parameter call binding closely enough for named arguments while keeping unpacking
+    /// rejected: `list.repeat` has no rest parameters and lowering expects the two canonical arguments explicitly.
+    fn bind_builtin_list_repeat_args<'a>(
+        &mut self,
+        args: &'a [CallArg],
+        span: Span,
+    ) -> (Option<&'a Spanned<Expr>>, Option<&'a Spanned<Expr>>, bool) {
+        let helper = BuiltinCollectionHelperId::ListRepeat;
+        let callee = collection_helpers::full_name(helper);
+        let mut value = None;
+        let mut count = None;
+        let mut valid = true;
+        let mut positional_index = 0usize;
+
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let target = match positional_index {
+                        0 => Some((&mut value, "value")),
+                        1 => Some((&mut count, "count")),
+                        _ => None,
+                    };
+                    positional_index += 1;
+                    if let Some((slot, name)) = target {
+                        if slot.is_some() {
+                            self.errors
+                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                            self.check_expr(expr);
+                            valid = false;
+                        } else {
+                            *slot = Some(expr);
+                        }
+                    } else {
+                        self.check_expr(expr);
+                        valid = false;
+                    }
+                }
+                CallArg::Named(name, expr) => {
+                    let slot = match name.as_str() {
+                        "value" => Some(&mut value),
+                        "count" => Some(&mut count),
+                        _ => None,
+                    };
+                    if let Some(slot) = slot {
+                        if slot.is_some() {
+                            self.errors
+                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                            self.check_expr(expr);
+                            valid = false;
+                        } else {
+                            *slot = Some(expr);
+                        }
+                    } else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, name, expr.span));
+                        self.check_expr(expr);
+                        valid = false;
+                    }
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "*", expr.span));
+                    self.check_expr(expr);
+                    valid = false;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "**", expr.span));
+                    self.check_expr(expr);
+                    valid = false;
+                }
+            }
+        }
+
+        if args.len() != 2 {
+            self.errors.push(errors::builtin_arity(callee, 2, args.len(), span));
+            valid = false;
+        }
+        if value.is_none() {
+            self.errors
+                .push(errors::missing_required_argument(callee, "value", span));
+            valid = false;
+        }
+        if count.is_none() {
+            self.errors
+                .push(errors::missing_required_argument(callee, "count", span));
+            valid = false;
+        }
+
+        (value, count, valid)
+    }
+
+    /// Type-check the built-in `list.repeat(value, count)` helper.
+    ///
+    /// The receiver is the built-in `list` collection surface, not a runtime list value, so this has to run before
+    /// ordinary receiver expression checking would report `list` as an unknown value symbol.
+    fn check_builtin_list_repeat_call(&mut self, args: &[CallArg], span: Span) -> ResolvedType {
+        let (value_arg, count_arg, valid_args) = self.bind_builtin_list_repeat_args(args, span);
+
+        let value_ty = value_arg
+            .map(|expr| self.check_expr(expr))
+            .unwrap_or(ResolvedType::Unknown);
+
+        if let Some(count_arg) = count_arg {
+            let count_ty = self.check_expr(count_arg);
+            if !self.types_compatible(&count_ty, &ResolvedType::Int) {
+                self.errors
+                    .push(errors::type_mismatch("int", &count_ty.to_string(), span));
+            }
+        }
+
+        if !matches!(value_ty, ResolvedType::Unknown) && !self.is_copy_type(&value_ty) && !self.is_clone_type(&value_ty)
+        {
+            self.errors
+                .push(errors::list_repeat_requires_clone(&value_ty.to_string(), span));
+        }
+
+        if !valid_args {
+            return ResolvedType::Unknown;
+        }
+
+        list_ty(value_ty)
+    }
+
+    /// Return whether `base` resolves to the built-in `list` collection type surface.
+    fn is_builtin_list_surface_receiver(&self, base: &Spanned<Expr>) -> bool {
+        let Expr::Ident(name) = &base.node else {
+            return false;
+        };
+        name == collection_helpers::receiver(BuiltinCollectionHelperId::ListRepeat)
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::List)
+            && self
+                .lookup_symbol(name)
+                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Builtin)))
+    }
+
+    /// Return the canonical stdlib iterator trait name from the shared language registry.
+    fn iterator_protocol_name() -> &'static str {
+        core_traits::as_str(TraitId::Iterator)
+    }
+
+    /// Return the canonical RFC 088 iterable protocol trait spelling.
+    fn iterable_protocol_name() -> &'static str {
+        core_traits::as_str(TraitId::Iterable)
+    }
+
+    /// Construct the protocol-facing `Iterator[T]` type used by RFC 088 adapter method typing.
+    fn iterator_protocol_ty(elem: ResolvedType) -> ResolvedType {
+        ResolvedType::Generic(Self::iterator_protocol_name().to_string(), vec![elem])
+    }
+
+    /// Return whether `name` is the canonical RFC 088 iterable protocol trait spelling.
+    fn is_iterable_protocol_name(name: &str) -> bool {
+        name == Self::iterable_protocol_name()
+    }
+
+    /// Return whether `name` is the canonical RFC 088 iterator protocol trait spelling.
+    fn is_iterator_protocol_name(name: &str) -> bool {
+        name == Self::iterator_protocol_name()
+    }
+
+    /// Return the element type for values that can participate in the RFC 088 iterator protocol surface.
+    ///
+    /// This intentionally recognizes both explicit trait-typed values (`Iterator[T]` / `Iterable[T]`) and builtin
+    /// collection values that have an obvious frontend iterator element type. It is a typechecker-only surface helper;
+    /// lowering and emission use the same protocol shape to route known iterator methods through dedicated backend
+    /// handling.
+    fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Generic(name, args)
+                if (Self::is_iterator_protocol_name(name) || Self::is_iterable_protocol_name(name))
+                    && args.len() == 1 =>
+            {
+                args.first().cloned()
+            }
+            ResolvedType::Generic(name, args)
+                if matches!(
+                    collection_type_id(name.as_str()),
+                    Some(
+                        CollectionTypeId::List
+                            | CollectionTypeId::Set
+                            | CollectionTypeId::FrozenList
+                            | CollectionTypeId::FrozenSet
+                    )
+                ) && args.len() == 1 =>
+            {
+                args.first().cloned()
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => Some((**inner).clone()),
+            _ => None,
+        }
+    }
+
+    /// Return the element type for values that are already typed as `Iterator[T]`.
+    fn iterator_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Generic(name, args) if Self::is_iterator_protocol_name(name) && args.len() == 1 => {
+                args.first().cloned()
+            }
+            _ => None,
+        }
+    }
+
+    /// Validate fixed-arity RFC 088 method calls and report the same arity diagnostic style as other builtin calls.
+    fn validate_iterator_method_arity(&mut self, method: &str, expected: usize, found: usize, span: Span) -> bool {
+        if found == expected {
+            return true;
+        }
+        self.errors.push(errors::builtin_arity(
+            &format!("{}.{method}", Self::iterator_protocol_name()),
+            expected,
+            found,
+            span,
+        ));
+        false
+    }
+
+    /// Build a resolved callable type from parameter and return types for adapter diagnostics.
+    fn iterator_callback_ty(params: Vec<ResolvedType>, ret: ResolvedType) -> ResolvedType {
+        ResolvedType::Function(
+            params.into_iter().map(CallableParam::positional).collect(),
+            Box::new(ret),
+        )
+    }
+
+    /// Reject `.batch(size)` calls when a non-positive literal size is visible to the frontend.
+    fn validate_iterator_batch_size_literal(&mut self, args: &[CallArg], span: Span) {
+        let Some(CallArg::Positional(expr)) = args.first() else {
+            return;
+        };
+        let Expr::Literal(Literal::Int(value)) = &expr.node else {
+            return;
+        };
+        if value.value > 0 {
+            return;
+        }
+        self.errors.push(CompileError::type_error(
+            "Iterator.batch() size must be greater than zero".to_string(),
+            span,
+        ));
+    }
+
+    /// Return whether `method` consumes the receiver under RFC 088 terminal semantics.
+    fn is_iterator_terminal_method(method: &str) -> bool {
+        matches!(
+            method,
+            "collect" | "count" | "reduce" | "fold" | "any" | "all" | "find" | "for_each" | "sum"
+        )
+    }
+
+    /// Validate `.sum()` item types against the backend-supported summable item surface.
+    fn iterator_sum_output_type(&mut self, elem: &ResolvedType, span: Span) -> ResolvedType {
+        if self.iterator_sum_underlying_type(elem).is_some() {
+            return elem.clone();
+        }
+        self.errors.push(CompileError::type_error(
+            format!(
+                "Iterator.sum() requires int, float, or a newtype over a summable type; found {}",
+                elem
+            ),
+            span,
+        ));
+        ResolvedType::Unknown
+    }
+
+    /// Return the primitive summation carrier for an iterator item type.
+    ///
+    /// Primitive numeric types carry themselves. Newtypes recursively carry their underlying summable type, which lets
+    /// `.sum()` accept transparent domain wrappers while still rejecting non-summable shapes.
+    fn iterator_sum_underlying_type(&self, elem: &ResolvedType) -> Option<ResolvedType> {
+        match elem {
+            ResolvedType::Int | ResolvedType::Float | ResolvedType::Unknown => Some(elem.clone()),
+            ResolvedType::Named(name) => self.newtype_sum_underlying_type(name, &[]),
+            ResolvedType::Generic(name, args) => self.newtype_sum_underlying_type(name, args),
+            _ => None,
+        }
+    }
+
+    /// Resolve the summation carrier for a newtype, applying generic type arguments before checking the underlying.
+    fn newtype_sum_underlying_type(&self, name: &str, args: &[ResolvedType]) -> Option<ResolvedType> {
+        let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name) else {
+            return None;
+        };
+        let underlying = if args.is_empty() {
+            newtype.underlying.clone()
+        } else {
+            let subst = type_param_subst_map(&newtype.type_params, args);
+            substitute_resolved_type(&newtype.underlying, &subst)
+        };
+        self.iterator_sum_underlying_type(&underlying)
+    }
+
+    /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.
+    fn mark_direct_iterator_binding_consumed(&mut self, base: &Spanned<Expr>, method: &str, span: Span) {
+        if !Self::is_iterator_terminal_method(method) {
+            return;
+        }
+        let Expr::Ident(name) = &base.node else {
+            return;
+        };
+        self.consumed_iterator_bindings.insert(name.clone(), span);
+    }
+
+    /// Validate an adapter callback whose return type is fully specified by the method contract.
+    fn validate_iterator_callback_return(
+        &mut self,
+        method: &str,
+        actual: &ResolvedType,
+        params: Vec<ResolvedType>,
+        ret: ResolvedType,
+        span: Span,
+    ) {
+        if matches!(actual, ResolvedType::Unknown) {
+            return;
+        }
+        let expected = Self::iterator_callback_ty(params, ret);
+        if !self.types_compatible(actual, &expected) {
+            self.errors
+                .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
+        }
+        if !matches!(actual, ResolvedType::Function(_, _)) {
+            self.errors.push(errors::missing_method(
+                &actual.to_string(),
+                &format!("__call__ for {method} callback"),
+                span,
+            ));
+        }
+    }
+
+    /// Validate a mapping-style callback and return its concrete output type when it is known.
+    fn iterator_mapping_callback_return_type(
+        &mut self,
+        actual: &ResolvedType,
+        param_ty: ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        let ResolvedType::Function(params, ret) = actual else {
+            if !matches!(actual, ResolvedType::Unknown) {
+                let expected = Self::iterator_callback_ty(vec![param_ty], ResolvedType::Unknown);
+                self.errors
+                    .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
+            }
+            return ResolvedType::Unknown;
+        };
+        if params.len() != 1 || !self.types_compatible(&params[0].ty, &param_ty) {
+            let expected = Self::iterator_callback_ty(vec![param_ty], (**ret).clone());
+            self.errors
+                .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
+        }
+        (**ret).clone()
+    }
+
+    /// Typecheck one RFC 088 iterator/iterable adapter or terminal method.
+    ///
+    /// The frontend treats these protocol methods as a typed surface even when the receiver is a builtin collection
+    /// whose methods are not represented as ordinary user-declared methods. Backend lowering and emission classify the
+    /// same method family as known iterator calls.
+    fn resolve_iterator_protocol_method_call(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let elem = self.iterable_protocol_element_type(base_ty)?;
+        let iterator_elem = self
+            .iterator_protocol_element_type(base_ty)
+            .unwrap_or_else(|| elem.clone());
+
+        match method {
+            "iter" => {
+                self.validate_iterator_method_arity(method, 0, args.len(), span);
+                Some(Self::iterator_protocol_ty(elem))
+            }
+            "map" => {
+                if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
+                }
+                let mapped = self.iterator_mapping_callback_return_type(
+                    arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                    iterator_elem,
+                    span,
+                );
+                Some(Self::iterator_protocol_ty(mapped))
+            }
+            "filter" | "take_while" | "skip_while" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    self.validate_iterator_callback_return(
+                        method,
+                        arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                        vec![iterator_elem.clone()],
+                        ResolvedType::Bool,
+                        span,
+                    );
+                }
+                Some(Self::iterator_protocol_ty(iterator_elem))
+            }
+            "flat_map" => {
+                if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
+                }
+                let returned = self.iterator_mapping_callback_return_type(
+                    arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                    iterator_elem,
+                    span,
+                );
+                let Some(flat_elem) = self.iterable_protocol_element_type(&returned) else {
+                    if !matches!(returned, ResolvedType::Unknown) {
+                        let expected = ResolvedType::Generic(
+                            Self::iterable_protocol_name().to_string(),
+                            vec![ResolvedType::Unknown],
+                        );
+                        self.errors.push(errors::type_mismatch(
+                            &expected.to_string(),
+                            &returned.to_string(),
+                            span,
+                        ));
+                    }
+                    return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
+                };
+                Some(Self::iterator_protocol_ty(flat_elem))
+            }
+            "take" | "skip" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span)
+                    && let Some(arg_ty) = arg_types.first()
+                    && !self.types_compatible(arg_ty, &ResolvedType::Int)
+                {
+                    self.errors
+                        .push(errors::type_mismatch("int", &arg_ty.to_string(), span));
+                }
+                Some(Self::iterator_protocol_ty(iterator_elem))
+            }
+            "chain" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span)
+                    && let Some(arg_ty) = arg_types.first()
+                {
+                    let expected = Self::iterator_protocol_ty(iterator_elem.clone());
+                    if !self.types_compatible(arg_ty, &expected) {
+                        self.errors
+                            .push(errors::type_mismatch(&expected.to_string(), &arg_ty.to_string(), span));
+                    }
+                }
+                Some(Self::iterator_protocol_ty(iterator_elem))
+            }
+            "enumerate" => {
+                self.validate_iterator_method_arity(method, 0, args.len(), span);
+                Some(Self::iterator_protocol_ty(ResolvedType::Tuple(vec![
+                    ResolvedType::Int,
+                    iterator_elem,
+                ])))
+            }
+            "zip" => {
+                if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
+                }
+                let other_elem = arg_types
+                    .first()
+                    .and_then(|arg_ty| self.iterable_protocol_element_type(arg_ty))
+                    .unwrap_or_else(|| {
+                        if let Some(arg_ty) = arg_types.first()
+                            && !matches!(arg_ty, ResolvedType::Unknown)
+                        {
+                            let expected = ResolvedType::Generic(
+                                Self::iterator_protocol_name().to_string(),
+                                vec![ResolvedType::Unknown],
+                            );
+                            self.errors
+                                .push(errors::type_mismatch(&expected.to_string(), &arg_ty.to_string(), span));
+                        }
+                        ResolvedType::Unknown
+                    });
+                Some(Self::iterator_protocol_ty(ResolvedType::Tuple(vec![
+                    iterator_elem,
+                    other_elem,
+                ])))
+            }
+            "batch" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span)
+                    && let Some(arg_ty) = arg_types.first()
+                    && !self.types_compatible(arg_ty, &ResolvedType::Int)
+                {
+                    self.errors
+                        .push(errors::type_mismatch("int", &arg_ty.to_string(), span));
+                }
+                self.validate_iterator_batch_size_literal(args, span);
+                Some(Self::iterator_protocol_ty(list_ty(iterator_elem)))
+            }
+            "collect" => {
+                self.validate_iterator_method_arity(method, 0, args.len(), span);
+                Some(list_ty(iterator_elem))
+            }
+            "count" => {
+                self.validate_iterator_method_arity(method, 0, args.len(), span);
+                Some(ResolvedType::Int)
+            }
+            "any" | "all" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    self.validate_iterator_callback_return(
+                        method,
+                        arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                        vec![iterator_elem],
+                        ResolvedType::Bool,
+                        span,
+                    );
+                }
+                Some(ResolvedType::Bool)
+            }
+            "find" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    self.validate_iterator_callback_return(
+                        method,
+                        arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                        vec![iterator_elem.clone()],
+                        ResolvedType::Bool,
+                        span,
+                    );
+                }
+                Some(option_ty(iterator_elem))
+            }
+            "reduce" | "fold" => {
+                if !self.validate_iterator_method_arity(method, 2, args.len(), span) {
+                    return Some(ResolvedType::Unknown);
+                }
+                let acc_ty = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
+                self.validate_iterator_callback_return(
+                    method,
+                    arg_types.get(1).unwrap_or(&ResolvedType::Unknown),
+                    vec![acc_ty.clone(), iterator_elem],
+                    acc_ty.clone(),
+                    span,
+                );
+                Some(acc_ty)
+            }
+            "for_each" => {
+                if self.validate_iterator_method_arity(method, 1, args.len(), span) {
+                    self.validate_iterator_callback_return(
+                        method,
+                        arg_types.first().unwrap_or(&ResolvedType::Unknown),
+                        vec![iterator_elem],
+                        ResolvedType::Unit,
+                        span,
+                    );
+                }
+                Some(ResolvedType::Unit)
+            }
+            "sum" => {
+                self.validate_iterator_method_arity(method, 0, args.len(), span);
+                Some(self.iterator_sum_output_type(&iterator_elem, span))
+            }
+            _ => None,
+        }
+    }
+
     fn explicit_trait_dispatch_for_backend(
         &self,
         trait_name: &str,
@@ -346,7 +1046,7 @@ impl TypeChecker {
     ///
     /// This keeps field access on `Named(Type)` and `Generic(Type[...])` owners on the same path instead of letting
     /// generic owners fall through to "missing field" diagnostics despite having declared fields.
-    fn resolve_nominal_field_type(
+    pub(in crate::frontend::typechecker) fn resolve_nominal_field_type(
         &mut self,
         type_name: &str,
         type_args: Option<&[ResolvedType]>,
@@ -432,6 +1132,95 @@ impl TypeChecker {
         Some(field_info)
     }
 
+    /// Resolve a declared computed property on a nominal user-defined type, applying generic substitutions.
+    fn resolve_nominal_property_type(
+        &mut self,
+        type_name: &str,
+        type_args: Option<&[ResolvedType]>,
+        property: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let type_info = self.lookup_semantic_type_info(type_name)?;
+        match type_info {
+            TypeInfo::Model(model) => {
+                let info = model.properties.get(property)?;
+                let return_type = if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&model.type_params, args);
+                    substitute_resolved_type(&info.return_type, &subst)
+                } else {
+                    info.return_type.clone()
+                };
+                self.type_info
+                    .record_computed_property_access(span, type_name, property);
+                Some(return_type)
+            }
+            TypeInfo::Class(class) => {
+                let info = class.properties.get(property)?;
+                let owner = info.owner.as_deref().unwrap_or(type_name);
+                if matches!(info.visibility, Visibility::Private) && self.current_method_owner.as_deref() != Some(owner)
+                {
+                    self.errors.push(errors::private_property(type_name, property, span));
+                    return Some(ResolvedType::Unknown);
+                }
+                let return_type = if let Some(args) = type_args {
+                    let subst = type_param_subst_map(&class.type_params, args);
+                    substitute_resolved_type(&info.return_type, &subst)
+                } else {
+                    info.return_type.clone()
+                };
+                self.type_info
+                    .record_computed_property_access(span, type_name, property);
+                Some(return_type)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return whether the receiver has a computed property with this name.
+    pub(in crate::frontend::typechecker::check_expr) fn receiver_has_computed_property(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        property: &str,
+        span: Span,
+    ) -> bool {
+        match receiver_ty {
+            ResolvedType::Named(type_name) => self
+                .resolve_nominal_property_type(type_name, None, property, span)
+                .is_some(),
+            ResolvedType::Generic(type_name, type_args) => self
+                .resolve_nominal_property_type(type_name, Some(type_args.as_slice()), property, span)
+                .is_some(),
+            ResolvedType::TypeVar(name) => self
+                .resolve_generic_placeholder_property(name, property, span)
+                .is_some(),
+            _ => false,
+        }
+    }
+
+    /// Resolve a computed property on an active generic placeholder bound (`T with Trait[...]`).
+    fn resolve_generic_placeholder_property(
+        &mut self,
+        placeholder_name: &str,
+        property: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let mut active_bounds = Vec::new();
+        for frame in self.current_type_param_bound_details.iter().rev() {
+            if let Some(bounds) = frame.get(placeholder_name) {
+                active_bounds = bounds.clone();
+                break;
+            }
+        }
+        for bound in &active_bounds {
+            if let Some(info) = self.trait_property_info_resolved_for_adoption(bound, property, span) {
+                self.type_info
+                    .record_computed_property_access(span, &bound.name, property);
+                return Some(info.return_type);
+            }
+        }
+        None
+    }
+
     /// Resolve and validate a method call on a rust-inspect-backed path.
     ///
     /// Returns:
@@ -459,6 +1248,14 @@ impl TypeChecker {
                     // not yet extracted. Stay permissive rather than false-positiving on valid calls.
                     return Some(ResolvedType::Unknown);
                 };
+                if Self::rust_signature_has_receiver(&sig)
+                    && sig.params[1..].iter().any(|param| {
+                        let normalized = param.type_display.replace(' ', "");
+                        Self::rust_display_type_var_name(normalized.as_str()).is_some()
+                    })
+                {
+                    self.type_info.record_regular_method_arg_shape(receiver_span, method);
+                }
                 let callable_display = format!("rust::{rust_path}.{method}");
                 Some(self.validate_rust_method_call(
                     callable_display.as_str(),
@@ -1319,7 +2116,14 @@ impl TypeChecker {
                 // Trait default methods typecheck against `Self`, but field access must be declared via
                 // `@requires(...)` on the trait.
                 ResolvedType::SelfType => checker
-                    .trait_required_field_type(field, span)
+                    .current_trait_properties
+                    .as_ref()
+                    .and_then(|properties| properties.get(field))
+                    .map(|info| {
+                        checker.type_info.record_computed_property_access(span, "Self", field);
+                        info.return_type.clone()
+                    })
+                    .or_else(|| checker.trait_required_field_type(field, span))
                     .unwrap_or(ResolvedType::Unknown),
                 ResolvedType::Tuple(elements) => {
                     if let Ok(idx) = field.parse::<usize>()
@@ -1334,6 +2138,9 @@ impl TypeChecker {
                     if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
                         return field_ty;
                     }
+                    if let Some(property_ty) = checker.resolve_nominal_property_type(type_name, None, field, span) {
+                        return property_ty;
+                    }
                     checker.errors.push(errors::missing_field(type_name, field, span));
                     ResolvedType::Unknown
                 }
@@ -1343,7 +2150,19 @@ impl TypeChecker {
                     {
                         return field_ty;
                     }
+                    if let Some(property_ty) =
+                        checker.resolve_nominal_property_type(type_name, Some(type_args.as_slice()), field, span)
+                    {
+                        return property_ty;
+                    }
                     checker.errors.push(errors::missing_field(type_name, field, span));
+                    ResolvedType::Unknown
+                }
+                ResolvedType::TypeVar(name) => {
+                    if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
+                        return property_ty;
+                    }
+                    checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
                     ResolvedType::Unknown
                 }
                 _ => {
@@ -1497,6 +2316,22 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if self.is_builtin_list_surface_receiver(base)
+            && method == collection_helpers::member(BuiltinCollectionHelperId::ListRepeat)
+        {
+            if !type_args.is_empty() {
+                self.errors.push(errors::type_mismatch(
+                    "inferred type arguments",
+                    "explicit type arguments",
+                    span,
+                ));
+            }
+            self.type_info
+                .ident_kinds
+                .insert((base.span.start, base.span.end), IdentKind::TypeName);
+            return self.check_builtin_list_repeat_call(args, span);
+        }
+
         let base_ty = self.check_expr(base);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
@@ -1525,6 +2360,16 @@ impl TypeChecker {
                 | CallArg::KeywordUnpack(e) => self.check_expr(e),
             })
             .collect();
+
+        if self.receiver_has_computed_property(&base_ty, method, span) {
+            self.errors.push(errors::property_called_as_method(method, span));
+            return ResolvedType::Unknown;
+        }
+
+        if let Some(ret) = self.resolve_iterator_protocol_method_call(&base_ty, method, args, &arg_types, span) {
+            self.mark_direct_iterator_binding_consumed(base, method, span);
+            return ret;
+        }
 
         if let Some(path) = self.rust_canonical_path_for_receiver_type(&base_ty) {
             let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
@@ -1735,6 +2580,21 @@ impl TypeChecker {
                 }
                 None => {}
             }
+        }
+
+        if let ResolvedType::Generic(name, type_args) = &base_ty
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+            && type_args.len() == 2
+            && Self::result_combinator_name(method)
+        {
+            return self.check_result_combinator_method(
+                type_args[0].clone(),
+                type_args[1].clone(),
+                method,
+                args,
+                &arg_types,
+                span,
+            );
         }
 
         // FIXME: Too many levels of nesting here.

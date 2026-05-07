@@ -25,6 +25,11 @@ fn generate_rust(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+fn parse_incan_program(source: &str, context: &str) -> incan::frontend::ast::Program {
+    let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lexer failed: {errs:?}"));
+    parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parser failed: {errs:?}"))
+}
+
 /// Generate Rust code from Incan source with a populated library index
 fn generate_rust_with_widgets_manifest(source: &str) -> String {
     use incan::frontend::library_manifest_index::{
@@ -642,6 +647,137 @@ fn test_function_references_codegen() {
 }
 
 #[test]
+fn test_user_defined_decorators_codegen() {
+    let source = load_test_file("user_defined_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_decorators", rust_code);
+}
+
+#[test]
+fn test_user_defined_method_decorators_codegen() {
+    let source = load_test_file("user_defined_method_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_method_decorators", rust_code);
+}
+
+#[test]
+fn test_user_defined_mutable_method_decorators_codegen() {
+    let source = load_test_file("user_defined_mutable_method_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_mutable_method_decorators", rust_code);
+}
+
+#[test]
+fn test_rfc070_result_combinators_codegen() {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def observe_int(_value: int) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> Result[int, str]:
+  observer = Observer()
+  return result.map(double).and_then(keep_positive).inspect(observe_int).inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("crate::__incan_std::result::map(result, double)"),
+        "map with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::and_then"),
+        "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::inspect"),
+        "inspect with a named function callback should dogfood the std.result helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observe_int"),
+        "inspect should pass Copy named observers through the std.result helper without cloning:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains(".inspect(|__incan_result_value|"),
+        "callable-object inspect should use Rust's borrowed Result observer surface:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__call__(*__incan_result_value)"),
+        "callable objects should route through __call__ inside Result combinators:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("clone()"),
+        "Copy observer adaptation should not introduce clone calls:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() {
+    let source = r#"
+model Payload:
+  name: str
+
+def observe_payload(_payload: Payload) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model PayloadObserver with Callable1[Payload, None]:
+  def __call__(self, _payload: Payload) -> None:
+    pass
+
+pub def transform(result: Result[Payload, str]) -> Result[Payload, str]:
+  return result.inspect(observe_payload)
+
+pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload, str]:
+  observer = PayloadObserver()
+  return result.inspect(observer)
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("fn __incan_borrow_adapter_observe_payload_0(_: &Payload)"),
+        "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("crate::__incan_std::result::inspect(")
+            && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
+        "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_observer_borrow_observe_payload"),
+        "named function observers should use the generic borrowed adapter, not the old Result-specific helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("fn __incan_result_observer_borrow___call__(&self, _: &Payload)"),
+        "non-Copy callable observers should get a generated borrowed __call__ helper:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("fn __incan_result_observer_borrow___call__").count(),
+        1,
+        "callable-object borrowed observer helper should be emitted once:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("observer.__incan_result_observer_borrow___call__(__incan_result_value)"),
+        "inspect should route non-Copy callable objects through the borrowed __call__ helper:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_result_value).clone()"),
+        "non-Copy inspect observers must not clone the payload:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_dict_operations_codegen() {
     let source = load_test_file("dict_operations");
     let rust_code = generate_rust(&source);
@@ -1018,6 +1154,33 @@ fn test_std_fs_import_codegen() {
 }
 
 #[test]
+fn test_std_tempfile_import_codegen() {
+    let source = load_test_file("std_tempfile_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
+        "std.tempfile NamedTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
+        "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
+        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.tempfile must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_tempfile_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
@@ -1048,6 +1211,20 @@ fn test_collections_codegen() {
         rust_code.contains("(2, \"two\".to_string())"),
         "expected dict[_, str] literal values to materialize owned String values"
     );
+}
+
+#[test]
+fn test_list_repeat_codegen() {
+    let source = load_test_file("list_repeat");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("list_repeat", rust_code);
+}
+
+#[test]
+fn test_rfc088_iterator_adapters_codegen() {
+    let source = load_test_file("rfc088_iterator_adapters");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("rfc088_iterator_adapters", rust_code);
 }
 
 #[test]
@@ -1087,6 +1264,13 @@ fn test_control_flow_codegen() {
     let source = load_test_file("control_flow");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("control_flow", rust_code);
+}
+
+#[test]
+fn test_pattern_alternation_codegen() {
+    let source = load_test_file("pattern_alternation");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("pattern_alternation", rust_code);
 }
 
 #[test]
@@ -1486,6 +1670,21 @@ fn test_models_codegen() {
     let source = load_test_file("models");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("models", rust_code);
+}
+
+#[test]
+fn test_rfc046_computed_properties_codegen() {
+    let source = load_test_file("rfc046_computed_properties");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub fn dollars(&self) -> i64"),
+        "public computed properties should emit as Rust methods:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("value.dollars() + value.cents"),
+        "computed property reads must emit getter calls, not field reads:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc046_computed_properties", rust_code);
 }
 
 #[test]
@@ -2128,10 +2327,49 @@ fn test_newtype_checked_construction_codegen() {
         "checked newtype construction should not emit .expect():\n{rust_code}"
     );
     assert!(
-        rust_code.contains("panic!(\"validated newtype construction failed"),
-        "checked newtype construction panic remains the explicit out-of-scope exemption for #351:\n{rust_code}"
+        rust_code.contains("incan_stdlib::validation::raise_validation_error"),
+        "checked newtype construction should route validation failures through the runtime helper:\n{rust_code}"
     );
     insta::assert_snapshot!("newtype_checked_construction", rust_code);
+}
+
+#[test]
+fn test_newtype_implicit_coercion_codegen() {
+    let source = load_test_file("newtype_implicit_coercion");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.matches("Attempts::from_underlying").count() >= 4,
+        "implicit coercion should route int inputs through Attempts::from_underlying:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let retry: RetryAttempts = RetryAttempts("),
+        "transitive coercion should wrap the checked Attempts value in RetryAttempts:\n{rust_code}"
+    );
+    insta::assert_snapshot!("newtype_implicit_coercion", rust_code);
+}
+
+#[test]
+fn test_constrained_newtype_generated_validation_codegen() {
+    let source = r#"
+type PositiveInt = newtype int[gt=0]
+
+def take_positive(value: PositiveInt) -> None:
+    println(f"{value.0}")
+
+def main() -> None:
+    take_positive(1)
+    explicit = PositiveInt(2)
+    println(f"{explicit.0}")
+"#;
+    let rust_code = generate_rust(source);
+    assert!(
+        rust_code.contains("incan_stdlib::validation::raise_constraint_error"),
+        "generated constrained newtype validation should use the runtime helper:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("if __incan_newtype_input > 0"),
+        "generated validation should enforce the gt constraint before wrapping:\n{rust_code}"
+    );
 }
 
 #[test]
@@ -2313,6 +2551,17 @@ fn test_std_derives_string_compiled_codegen() {
     insta::assert_snapshot!("std_derives_string_compiled", rust_code);
 }
 
+/// compile `std.derives.collection` (collection/iterator protocols and adapters) from `.incn` source.
+#[test]
+fn test_std_derives_collection_compiled_codegen() {
+    let path = "crates/incan_stdlib/stdlib/derives/collection.incn";
+    let Ok(source) = fs::read_to_string(path) else {
+        panic!("Failed to read stdlib source file: {}", path);
+    };
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("std_derives_collection_compiled", rust_code);
+}
+
 /// RFC 023: compile `std.serde.json` (Serialize, Deserialize) from `.incn` source.
 ///
 /// Verifies that trait declarations with `@rust.extern` methods compile through the full pipeline when serde namespace
@@ -2389,6 +2638,140 @@ fn test_std_serde_with_serialize_trait_codegen() {
     let source = load_test_file("std_serde_with_serialize_trait");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
+}
+
+/// RFC 024: module-level derive metadata should let `@derive(json)` adopt serde traits and emit Rust derives.
+#[test]
+fn test_rfc024_module_derive_json_codegen() {
+    let source = load_test_file("rfc024_module_derive_json");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("serde::Serialize,serde::Deserialize"),
+        "expected @derive(json) to forward serde derives; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impljson::SerializeforPayload{fnto_json(&self)->String"),
+        "expected @derive(json) to emit the adopted json.Serialize trait impl with its serde adapter; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc024_module_derive_json", rust_code);
+}
+
+/// RFC 024: imported trait aliases should work as partial derives.
+#[test]
+fn test_rfc024_partial_alias_derive_codegen() {
+    let source = load_test_file("rfc024_partial_alias_derive");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implJsonSerializeforPayload{fnto_json(&self)->String"),
+        "expected @derive(JsonSerialize) to emit the adopted aliased trait impl with its serde adapter; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc024_partial_alias_derive", rust_code);
+}
+
+/// RFC 024: user modules can define a second serde-backed format without compiler changes.
+#[test]
+fn test_rfc024_user_module_serde_format_codegen() {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+from std.serde import json
+import yaml
+
+@derive(json, yaml)
+model Payload:
+  value: int
+
+def encode_yaml[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def encode_json[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode_yaml(Payload(value=1))
+"#;
+
+    let yaml_ast = parse_incan_program(yaml_source, "yaml module");
+    let main_ast = parse_incan_program(source, "consumer");
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("yaml", &yaml_ast, vec!["yaml".to_string()]);
+    let (main_code, _modules) = codegen
+        .try_generate_multi_file_nested(&main_ast, &[vec!["yaml".to_string()]])
+        .unwrap_or_else(|err| panic!("user serde derivable module should codegen: {err:?}"));
+    let rust_code = normalize_codegen_output(&main_code);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert_eq!(
+        rust_code.matches("serde::Serialize").count(),
+        1,
+        "expected duplicate serde derive paths to be deduplicated; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impljson::SerializeforPayload"),
+        "expected stdlib json.Serialize impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implyaml::SerializeforPayload"),
+        "expected user yaml.Serialize impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnto_yaml(&self)->String"),
+        "expected yaml default method body to expand into the impl; generated:\n{rust_code}"
+    );
+}
+
+/// RFC 024: derivable modules are not limited to serde-backed Rust derives.
+#[test]
+fn test_rfc024_user_module_pure_incan_derivable_codegen() {
+    let schema_source = r#"
+__derives__ = [Named]
+
+pub trait Named:
+  def schema_name(self) -> str:
+    return str("schema")
+"#;
+    let source = r#"
+import schema
+
+@derive(schema)
+model Payload:
+  value: int
+
+def name[T with schema.Named](value: T) -> str:
+  return value.schema_name()
+
+def main() -> str:
+  return name(Payload(value=1))
+"#;
+
+    let schema_ast = parse_incan_program(schema_source, "schema module");
+    let main_ast = parse_incan_program(source, "consumer");
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("schema", &schema_ast, vec!["schema".to_string()]);
+    let (main_code, _modules) = codegen
+        .try_generate_multi_file_nested(&main_ast, &[vec!["schema".to_string()]])
+        .unwrap_or_else(|err| panic!("pure Incan derivable module should codegen: {err:?}"));
+    let rust_code = normalize_codegen_output(&main_code);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implschema::NamedforPayload"),
+        "expected user schema.Named impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnschema_name(&self)->String"),
+        "expected pure Incan default method body to expand into the impl; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("serde::Serialize"),
+        "pure derivable fixture should not emit serde derives; generated:\n{rust_code}"
+    );
 }
 
 #[test]

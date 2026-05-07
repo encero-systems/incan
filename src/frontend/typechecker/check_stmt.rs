@@ -2,7 +2,6 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
-use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
@@ -447,7 +446,7 @@ impl TypeChecker {
         }
     }
 
-    /// Validate assignment to an object field and check the assigned value against the resolved field type.
+    /// Validate assignment to an object field, including generic-owner field substitution.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
@@ -475,18 +474,7 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => {
-                let Some(type_info) = self.lookup_type_info(type_name) else {
-                    // Type not found — already reported elsewhere
-                    return;
-                };
-
-                let field_type = match type_info {
-                    TypeInfo::Model(model) => model.fields.get(field).map(|f| f.ty.clone()),
-                    TypeInfo::Class(class) => class.fields.get(field).map(|f| f.ty.clone()),
-                    _ => None,
-                };
-
-                match field_type {
+                match self.resolve_nominal_field_type(type_name, None, field, field_assign.target_span) {
                     Some(expected_ty) => {
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
@@ -504,24 +492,12 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Generic(type_name, type_args) => {
-                let Some(type_info) = self.lookup_type_info(type_name) else {
-                    // Type not found — already reported elsewhere
-                    return;
-                };
-
-                let field_type = match type_info {
-                    TypeInfo::Model(model) => model.fields.get(field).map(|f| {
-                        let subst = type_param_subst_map(&model.type_params, type_args);
-                        substitute_resolved_type(&f.ty, &subst)
-                    }),
-                    TypeInfo::Class(class) => class.fields.get(field).map(|f| {
-                        let subst = type_param_subst_map(&class.type_params, type_args);
-                        substitute_resolved_type(&f.ty, &subst)
-                    }),
-                    _ => None,
-                };
-
-                match field_type {
+                match self.resolve_nominal_field_type(
+                    type_name,
+                    Some(type_args.as_slice()),
+                    field,
+                    field_assign.target_span,
+                ) {
                     Some(expected_ty) => {
                         let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
                         if !self.types_compatible(&value_ty, &expected_ty) {
@@ -678,6 +654,7 @@ impl TypeChecker {
                     assign.value.span,
                 ));
             }
+            self.consumed_iterator_bindings.remove(&assign.name);
             return;
         }
 
@@ -727,7 +704,9 @@ impl TypeChecker {
                 ));
             }
             // Check value matches annotation
-            if !self.types_compatible(&value_ty, &ann_ty) {
+            if !self.types_compatible(&value_ty, &ann_ty)
+                && !self.record_validated_newtype_coercion_if_possible(&value_ty, &ann_ty, assign.value.span)
+            {
                 self.errors.push(errors::type_mismatch(
                     &ann_ty.to_string(),
                     &value_ty.to_string(),
@@ -749,6 +728,7 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        self.consumed_iterator_bindings.remove(&assign.name);
     }
 
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
@@ -1187,7 +1167,7 @@ impl TypeChecker {
                     self.define_for_pattern_bindings(item, &item_ty);
                 }
             }
-            Pattern::Constructor(_, _) | Pattern::Literal(_) => {
+            Pattern::Constructor(_, _) | Pattern::Literal(_) | Pattern::Group(_) | Pattern::Or(_) => {
                 self.errors.push(errors::expected_token_message(
                     "Expected identifier, wildcard, or tuple binding in for-loop pattern",
                     &format!("{:?}", pattern.node),

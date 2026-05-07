@@ -2,6 +2,57 @@
 
 This tutorial shows how to choose between plain return values, `Option`, `Result`, and panics.
 
+## Coming from Python
+
+Python code often uses `None`, `raise`, `try`/`except`, and `assert` to describe paths that do not produce the ordinary value. Incan keeps those paths visible in signatures and at call sites.
+
+| Python habit                                               | Incan shape                         |
+| ---------------------------------------------------------- | ----------------------------------- |
+| `None` means "not found" or "not present"                  | `Option[T]`                         |
+| `ValueError`, `OSError`, or a custom recoverable exception | `Result[T, E]`                      |
+| `raise SomeError(...)`                                     | `return Err(SomeError(...))`        |
+| `try`/`except` handles a failure locally                   | `match` on `Result`                 |
+| Let an exception bubble to the caller                      | `?` propagates an `Err(...)`        |
+| `assert` for an impossible state or programmer mistake     | `panic()` or a narrowly proven path |
+
+In Python, an exception can skip the rest of the current block and search outward for a handler. In Incan, fallible paths are ordinary return values. Propagation is visible where it happens:
+
+```python title="Python"
+def load_username(path: str) -> str:
+    try:
+        text = read_text(path)
+    except OSError:
+        return "guest"
+
+    if text.strip() == "":
+        raise ValueError("name must not be empty")
+
+    return text.strip()
+```
+
+```incan title="Incan"
+from std.fs import IoError, Path
+
+enum NameError:
+    Io(IoError)
+    Empty
+
+def read_username(path: Path) -> Result[str, NameError]:
+    text = path.read_text().map_err(NameError.Io)?
+    name = text.strip()
+    if len(name) == 0:
+        return Err(NameError.Empty)
+    return Ok(name)
+
+def load_username(path: Path) -> str:
+    match read_username(path):
+        Ok(name) => return name
+        Err(NameError.Io(_)) => return "guest"
+        Err(NameError.Empty) => return "guest"
+```
+
+The important difference is not syntax. It is control flow: Incan makes recovery (`match`) and propagation (`?`) explicit instead of hiding them behind exception unwinding.
+
 The short rule:
 
 - Return a plain value when the operation is expected to succeed for valid inputs.
@@ -94,6 +145,76 @@ def import_user(path: Path, users: list[User]) -> Result[User, ImportError]:
 
 The `?` is visible in the body, and the fallibility is visible in the return type. There is no hidden exception path.
 
+## Compose `Result` with combinators
+
+Use `Result` combinators when the code is transforming one branch of a result rather than making a multi-branch decision. The six standard methods are Rust-shaped and keep the same names in Incan: `map`, `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err`.
+
+| Method | Callable argument | Use it when |
+| ------ | ----------------- | ----------- |
+| `map` | `Callable[T, U]` | transform an `Ok(T)` value into `Ok(U)` |
+| `map_err` | `Callable[E, F]` | transform an `Err(E)` value into `Err(F)` |
+| `and_then` | `Callable[T, Result[U, E]]` | chain another fallible operation after success |
+| `or_else` | `Callable[E, Result[T, F]]` | recover from or remap a failure with another fallible operation |
+| `inspect` | `Callable[T, None]` | observe or log a success value without changing the result |
+| `inspect_err` | `Callable[E, None]` | observe or log an error value without changing the result |
+
+The method form is usually the clearest spelling because the value flows left to right. The same operations are also available from `std.result` when a function-shaped API reads better or when you need to pass a combinator as a named helper:
+
+```incan
+from std.result import map as result_map
+
+def double(value: int) -> int:
+    return value * 2
+
+def double_if_present(result: Result[int, str]) -> Result[int, str]:
+    return result_map(result, double)
+```
+
+`map` and `map_err` are good at API boundaries because they keep the success path and error path separated:
+
+```incan
+from std.fs import Path
+
+enum LoadError:
+    Io(str)
+    Parse(str)
+
+def parse_profile(data: bytes) -> Result[Profile, str]:
+    # Imagine a real parser here.
+    return Ok(Profile.from_bytes(data))
+
+def parse_profile_for_load(data: bytes) -> Result[Profile, LoadError]:
+    return parse_profile(data).map_err(LoadError.Parse)
+
+def load_profile(path: Path) -> Result[Profile, LoadError]:
+    return path.read_bytes().map_err(LoadError.Io).and_then(parse_profile_for_load)
+```
+
+`and_then` avoids nested `match` when the next step is also fallible. `or_else` keeps recovery explicit:
+
+```incan
+def read_default_profile(_err: LoadError) -> Result[Profile, LoadError]:
+    return Ok(Profile.guest())
+
+def load_profile_or_guest(path: Path) -> Result[Profile, LoadError]:
+    return load_profile(path).or_else(read_default_profile)
+```
+
+Use `inspect` and `inspect_err` for side effects such as logging, metrics, or debugging taps. They return the original `Result` unchanged, so they should not replace code that needs to transform the value or recover. The compiler passes the observed payload to the callable through an implicit borrow when preserving the branch requires it, which lets the original `Ok` or `Err` value continue through the pipeline without forcing a clone just because it was observed.
+
+```incan
+def log_profile(profile: Profile) -> None:
+    println(f"loaded profile {profile.name}")
+
+def log_load_error(err: LoadError) -> None:
+    println(f"profile load failed: {err}")
+
+def load_profile_with_logging(path: Path) -> Result[Profile, LoadError]:
+    return load_profile(path).inspect(log_profile).inspect_err(log_load_error)
+```
+
+Prefer `match` when both branches matter, when you need multiple statements with local branching, or when the reader benefits from seeing every case explicitly. Prefer combinators when the intent is a single branch transformation, chain, recovery, or inspection tap.
+
 ## Convert at boundaries
 
 Low-level functions should usually return low-level errors. Boundary functions should convert those errors into the language of the caller.
@@ -155,6 +276,7 @@ Ask these in order:
 3. Is failure a bug in the caller or an impossible internal state? A panic may be acceptable.
 4. Is the current function the right place to decide? If yes, `match`; if no, `?`.
 5. Is this a public boundary? Convert low-level errors into the caller-facing error type.
+6. Is the code only transforming, chaining, recovering, or observing one `Result` branch? Use a Result combinator.
 
 ## Try it
 
@@ -162,6 +284,7 @@ Ask these in order:
 2. Write `def find_age(name: str, ages: dict[str, int]) -> Option[int]`.
 3. Write `def describe_age(name: str, ages: dict[str, int]) -> str` that handles `None` locally.
 4. Write `def require_age(name: str, ages: dict[str, int]) -> Result[int, str]` that converts `None` into `Err(...)`.
+5. Rewrite a nested `match` over `Result[int, str]` using `map`, `map_err`, or `and_then`.
 
 ## What to learn next
 

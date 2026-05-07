@@ -25,6 +25,15 @@ Use `append` to add an element at the end, and `pop()` to remove and return the 
 !!! tip "Coming from Python?"
     Incan lists are close to Python’s: out-of-range indexing and empty `list.pop()` both surface as [`IndexError`](../../reference/language.md#indexerror) panics with the same canonical messages as CPython where applicable (including `pop from empty list`).
 
+Use `list.repeat(value, count)` for fixed-length initialization when every element should start from the same clone-derived value:
+
+```incan
+ids: list[int] = list.repeat(-1, 8)
+labels: list[str] = list.repeat("pending", 3)
+```
+
+The helper is available without importing `std.collections`. `count` must be an `int`; negative counts raise [`ValueError`](../../reference/language.md#valueerror) with the provided count in the message.
+
 ## Dicts
 
 ```incan
@@ -54,6 +63,66 @@ def main() -> None:
 ```
 
 When you iterate a list stored in a variable, the compiler picks a Rust iteration strategy that matches Incan’s element type. Scalars such as `int` are stepped by value. For **enums**, the loop variable is the enum type itself (the compiler uses clone-backed iteration under the hood), so you can compare it to another value of the same enum with `==` without extra cloning in your source.
+
+## Iterator adapter chains
+
+Use iterator adapters when you want to describe a lazy pipeline and only build the final list at the end:
+
+```incan
+def is_ready(job: Job) -> bool:
+    return job.ready
+
+def job_name(job: Job) -> str:
+    return job.name
+
+ready_names: list[str] = jobs.iter()
+    .filter(is_ready)
+    .map(job_name)
+    .collect()
+```
+
+The adapter calls above do not build intermediate lists. `.filter(...)` and `.map(...)` return new iterators; `.collect()` is the terminal step that consumes the iterator and returns a `list[T]`.
+
+Short-circuiting consumers are useful when you need a summary instead of a list:
+
+```incan
+has_blocked_job: bool = jobs.iter().any(is_blocked)
+all_ready: bool = jobs.iter().all(is_ready)
+first_failed: Option[Job] = jobs.iter().find(is_failed)
+```
+
+Terminal methods consume the iterator they are called on. If you need to keep the iterator for a later pass, clone it before the terminal method:
+
+```incan
+job_iter = jobs.iter()
+ready_count = job_iter.clone().filter(is_ready).count()
+
+for job in job_iter:
+    println(job.name)
+```
+
+Some adapters combine or reshape streams:
+
+```incan
+pairs: list[tuple[str, int]] = names.iter()
+    .zip(scores.iter())
+    .collect()
+
+chunks: list[list[Job]] = jobs.iter()
+    .batch(100)
+    .collect()
+```
+
+Use `.flat_map(...)` when each input item expands into another iterable value:
+
+```incan
+words: list[str] = documents.iter()
+    .flat_map(document_words)
+    .filter(is_searchable)
+    .collect()
+```
+
+Here `document_words` can return any `Iterable[str]`, including a list or another iterator. `.collect()` still returns only `list[T]`; use an explicit conversion after collection if another container type is needed.
 
 ## Comprehensions (quick transforms)
 

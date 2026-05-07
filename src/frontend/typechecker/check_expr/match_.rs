@@ -3,7 +3,7 @@
 //! This module validates `match` expressions by type-checking each arm, binding pattern variables,
 //! and ensuring exhaustiveness for enums, `Result`, and `Option`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
@@ -14,6 +14,19 @@ use incan_core::lang::surface::constructors::ConstructorId;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
+
+#[derive(Clone)]
+struct PatternBinding {
+    ty: ResolvedType,
+    span: Span,
+}
+
+/// Return a stable name list for binding-set comparison and diagnostics.
+fn sorted_binding_names(bindings: &HashMap<String, PatternBinding>) -> Vec<String> {
+    let mut names: Vec<_> = bindings.keys().cloned().collect();
+    names.sort();
+    names
+}
 
 impl TypeChecker {
     /// Split a constructor pattern name into its optional enum qualifier and variant segment.
@@ -106,6 +119,12 @@ impl TypeChecker {
                     span: pattern.span,
                     scope: 0,
                 });
+            }
+            Pattern::Group(inner) => {
+                self.check_pattern(inner, expected_ty);
+            }
+            Pattern::Or(alternatives) => {
+                self.check_or_pattern(alternatives, expected_ty);
             }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
@@ -333,6 +352,102 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check alternatives in isolated scopes, then define only the agreed binding set in the surrounding arm
+    /// scope.
+    ///
+    /// Without the isolation step, `A(x) | B(y)` would accidentally leak both `x` and `y` into the branch body even
+    /// though no single successful match can provide both names. RFC 071 requires every alternative to bind the same
+    /// names with the same types before any branch-local binding is made visible.
+    fn check_or_pattern(&mut self, alternatives: &[Spanned<Pattern>], expected_ty: &ResolvedType) {
+        let mut binding_sets = Vec::new();
+
+        for alternative in alternatives {
+            let before = self.symbols.all_symbols().len();
+            self.symbols.enter_scope(ScopeKind::Block);
+            self.check_pattern(alternative, expected_ty);
+            let bindings = self.collect_pattern_bindings_since(before);
+            self.symbols.exit_scope();
+            binding_sets.push((alternative.span, bindings));
+        }
+
+        let Some((_, first_bindings)) = binding_sets.first() else {
+            return;
+        };
+
+        let expected_names = sorted_binding_names(first_bindings);
+        let mut agreement_ok = true;
+
+        for (span, bindings) in binding_sets.iter().skip(1) {
+            let found_names = sorted_binding_names(bindings);
+            if found_names != expected_names {
+                self.errors.push(errors::pattern_alternation_binding_mismatch(
+                    &expected_names,
+                    &found_names,
+                    *span,
+                ));
+                agreement_ok = false;
+                continue;
+            }
+
+            for name in &expected_names {
+                let Some(expected) = first_bindings.get(name) else {
+                    continue;
+                };
+                let Some(found) = bindings.get(name) else {
+                    continue;
+                };
+                if expected.ty != found.ty {
+                    self.errors.push(errors::pattern_alternation_binding_type_mismatch(
+                        name,
+                        &expected.ty.to_string(),
+                        &found.ty.to_string(),
+                        found.span,
+                    ));
+                    agreement_ok = false;
+                }
+            }
+        }
+
+        if !agreement_ok {
+            return;
+        }
+
+        for name in expected_names {
+            let Some(binding) = first_bindings.get(&name) else {
+                continue;
+            };
+            self.symbols.define(Symbol {
+                name,
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: binding.ty.clone(),
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: binding.span,
+                scope: 0,
+            });
+        }
+    }
+
+    /// Collect variable bindings defined while checking one isolated alternation alternative.
+    fn collect_pattern_bindings_since(&self, start: usize) -> HashMap<String, PatternBinding> {
+        self.symbols
+            .all_symbols()
+            .iter()
+            .skip(start)
+            .filter_map(|symbol| match &symbol.kind {
+                SymbolKind::Variable(info) => Some((
+                    symbol.name.clone(),
+                    PatternBinding {
+                        ty: info.ty.clone(),
+                        span: symbol.span,
+                    },
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Positional sub-patterns for enum-like constructor patterns: known payload types per index, or all
     /// [`ResolvedType::Unknown`] when `known_fields` is `None` (Rust interop best-effort).
     fn check_constructor_subpatterns_enum_like(
@@ -525,29 +640,7 @@ impl TypeChecker {
             let mut has_wildcard = false;
 
             for arm in arms {
-                match &arm.node.pattern.node {
-                    Pattern::Wildcard | Pattern::Binding(_) => {
-                        has_wildcard = true;
-                    }
-                    Pattern::Literal(Literal::None) if subject_ty.is_option() => {
-                        covered.insert(constructors::as_str(ConstructorId::None).to_string());
-                    }
-                    Pattern::Constructor(name, _) => {
-                        let variant_name = if subject_ty.union_members().is_some()
-                            || subject_ty
-                                .option_inner_type()
-                                .is_some_and(|inner| inner.union_members().is_some())
-                        {
-                            resolve_type(&Type::Simple(name.clone()), &self.symbols).to_string()
-                        } else if name.contains("::") {
-                            name.split("::").last().unwrap_or(name).to_string()
-                        } else {
-                            name.clone()
-                        };
-                        covered.insert(variant_name);
-                    }
-                    _ => {}
-                }
+                self.collect_pattern_coverage(&arm.node.pattern.node, subject_ty, &mut covered, &mut has_wildcard);
             }
 
             if !has_wildcard {
@@ -557,6 +650,47 @@ impl TypeChecker {
                     self.errors.push(errors::non_exhaustive_match(&missing, span));
                 }
             }
+        }
+    }
+
+    /// Add the variants covered by a pattern to the match-exhaustiveness accumulator.
+    fn collect_pattern_coverage(
+        &self,
+        pattern: &Pattern,
+        subject_ty: &ResolvedType,
+        covered: &mut HashSet<String>,
+        has_wildcard: &mut bool,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => {
+                *has_wildcard = true;
+            }
+            Pattern::Literal(Literal::None) if subject_ty.is_option() => {
+                covered.insert(constructors::as_str(ConstructorId::None).to_string());
+            }
+            Pattern::Constructor(name, _) => {
+                let variant_name = if subject_ty.union_members().is_some()
+                    || subject_ty
+                        .option_inner_type()
+                        .is_some_and(|inner| inner.union_members().is_some())
+                {
+                    resolve_type(&Type::Simple(name.clone()), &self.symbols).to_string()
+                } else if name.contains("::") {
+                    name.split("::").last().unwrap_or(name).to_string()
+                } else {
+                    name.clone()
+                };
+                covered.insert(variant_name);
+            }
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.collect_pattern_coverage(&alternative.node, subject_ty, covered, has_wildcard);
+                }
+            }
+            Pattern::Group(inner) => {
+                self.collect_pattern_coverage(&inner.node, subject_ty, covered, has_wildcard);
+            }
+            _ => {}
         }
     }
 }

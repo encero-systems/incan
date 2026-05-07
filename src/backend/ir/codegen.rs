@@ -103,6 +103,11 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
+    if module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "derives", "collection"])
+        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "result"])
+    {
+        return true;
+    }
     if !preserve_non_stdlib_public_items {
         return false;
     }
@@ -110,6 +115,15 @@ fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_
         module_path.first().map(String::as_str),
         Some(stdlib::INCAN_STD_NAMESPACE)
     )
+}
+
+/// Return whether a generated module path exactly matches a static path literal.
+fn module_path_matches(module_path: &[String], expected: &[&str]) -> bool {
+    module_path.len() == expected.len()
+        && module_path
+            .iter()
+            .zip(expected.iter())
+            .all(|(actual, expected)| actual == expected)
 }
 
 /// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
@@ -850,6 +864,7 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.seed_dependency_trait_decls(&self.dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -1052,6 +1067,7 @@ impl<'a> IrCodegen<'a> {
                 }
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.seed_dependency_trait_decls(&self.dependency_modules);
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1233,6 +1249,7 @@ impl<'a> IrCodegen<'a> {
                     }
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.seed_dependency_trait_decls(&self.dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.
@@ -2000,6 +2017,49 @@ edition = "2021"
     }
 
     #[cfg(feature = "rust_inspect")]
+    fn reqwest_shaped_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "reqwest"
+version = "0.0.0"
+edition = "2021"
+"#,
+        )?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("src").join("lib.rs"),
+            r#"
+pub struct Client;
+
+pub struct RequestBuilder;
+
+pub trait IntoUrl {}
+
+impl IntoUrl for &str {}
+
+impl Client {
+    pub fn new() -> Client {
+        Client
+    }
+
+    pub fn post<U: IntoUrl>(&self, _url: U) -> RequestBuilder {
+        RequestBuilder
+    }
+}
+
+impl RequestBuilder {
+    pub fn json<T: ?Sized>(self, _json: &T) -> RequestBuilder {
+        self
+    }
+}
+"#,
+        )?;
+        Ok(tmp)
+    }
+
+    #[cfg(feature = "rust_inspect")]
     fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
         let inspector =
             crate::rust_inspect::Inspector::new(crate::rust_inspect::InspectorConfig::new(manifest_dir.to_path_buf()));
@@ -2733,6 +2793,63 @@ pub def forward(payload: Payload) -> int:
         assert!(
             code.contains("builder.json(&payload);"),
             "expected borrowed rust method arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_reqwest_json_payload_returned_from_registry_client()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from rust::reqwest import Client
+
+model Payload:
+  name: str
+
+pub def forward(payload: Payload) -> None:
+  builder = Client.new().post("https://example.invalid")
+  _ = builder.json(payload)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = reqwest_shaped_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        prewarm_metadata(&manifest_dir, &["reqwest::Client"])?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir);
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("builder.json(&payload);"),
+            "expected registry-returned reqwest RequestBuilder::json payload to be borrowed; got:\n{code}"
+        );
+        assert!(
+            code.contains(r#"Client::new().post("https://example.invalid")"#),
+            "expected generic reqwest Client::post string literal to keep inferable &str shape; got:\n{code}"
+        );
+        assert!(
+            !code.contains(r#".post("https://example.invalid".into())"#),
+            "generic reqwest Client::post must not force ambiguous `.into()` on string literals; got:\n{code}"
         );
         Ok(())
     }

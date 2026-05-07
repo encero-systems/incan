@@ -1,0 +1,21 @@
+type Attempts = newtype int:
+    def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+        if n <= 0:
+            return Err(ValidationError("attempts must be >= 1"))
+        return Ok(Attempts(n))
+
+type RetryAttempts = newtype Attempts
+
+model Job:
+    attempts: Attempts
+
+def take_attempts(a: Attempts) -> None:
+    println(f"{a.0}")
+
+def main() -> None:
+    take_attempts(3)
+    attempts: Attempts = 4
+    retry: RetryAttempts = 5
+    job = Job(attempts=6)
+    retry_attempts = retry.0
+    println(f"{attempts.0} {retry_attempts.0} {job.attempts.0}")

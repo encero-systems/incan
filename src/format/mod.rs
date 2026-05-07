@@ -538,6 +538,40 @@ def MixedName() -> int:
     }
 
     #[test]
+    fn test_format_source_preserves_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter|PrismNodeKind.OrderBy|_=>return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.Filter | PrismNodeKind.OrderBy | _ => return str("passthrough")
+"#;
+        assert_eq!(format_source(source)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_wraps_long_pattern_alternation() -> Result<(), FormatError> {
+        let source = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        PrismNodeKind.FilterStageWithLongName | PrismNodeKind.OrderByStageWithLongName | PrismNodeKind.LimitStageWithLongName => return str("passthrough")
+"#;
+        let expected = r#"def authored_node_kind_name(node: PrismNode) -> str:
+    match node.kind:
+        (
+            PrismNodeKind.FilterStageWithLongName
+            | PrismNodeKind.OrderByStageWithLongName
+            | PrismNodeKind.LimitStageWithLongName
+        ) => return str("passthrough")
+"#;
+        let config = FormatConfig::new().with_line_length(80);
+        assert_eq!(format_source_with_config(source, config.clone())?, expected);
+        assert_eq!(format_source_with_config(expected, config)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_normalizes_blank_after_match_arm_arrow() -> Result<(), FormatError> {
         let source = r#"def f(result: Result[int, str]) -> int:
     match result:
@@ -1108,6 +1142,24 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
             formatted.contains("def get[T with Clone](self, value: T) -> T:"),
             "expected method type params preserved by formatter; got: {formatted}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_constrained_primitive_newtype_round_trip() -> Result<(), FormatError> {
+        let source = "type Digit = newtype int[gt=-1, lt=10]\n";
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_constrained_primitive_spacing() -> Result<(), FormatError> {
+        let source = "type Ratio = newtype float[ge = 0,le=1]\n";
+        let formatted = format_source(source)?;
+        let expected = "type Ratio = newtype float[ge=0, le=1]\n";
+        assert_eq!(formatted, expected);
+        assert_eq!(assert_format_round_trip_lex_parse(&formatted)?, expected);
         Ok(())
     }
 
@@ -2006,6 +2058,51 @@ pub def allocate_prism_store_id() -> int:
 
     def reset(self) -> None:
         pass
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_computed_properties() -> Result<(), FormatError> {
+        let source = r#"class Dataset:
+  fields: list[str]
+  property schema_fields -> list[str]:
+    return self.fields
+  def len(self) -> int:
+    return 0
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"class Dataset:
+    fields: list[str]
+
+    property schema_fields -> list[str]:
+        return self.fields
+
+    def len(self) -> int:
+        return 0
+"#;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_trait_abstract_properties_stay_tight() -> Result<(), FormatError> {
+        let source = r#"trait HasShape:
+  property area -> float: ...
+  property perimeter -> float: ...
+  def describe(self) -> str:
+    return "shape"
+"#;
+        let result = format_source(source)?;
+
+        let expected = r#"trait HasShape:
+    property area -> float
+    property perimeter -> float
+
+    def describe(self) -> str:
+        return "shape"
 "#;
         assert_eq!(result, expected);
         Ok(())

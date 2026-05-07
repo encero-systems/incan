@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{ParamKind, Span};
-use crate::frontend::symbols::{CallableParam, ResolvedType};
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::CoercionPolicy;
 
@@ -46,12 +46,27 @@ pub struct TypeCheckInfo {
     /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
     /// without relying on local AST declarations.
     pub trait_type_params: HashMap<String, Vec<String>>,
+    /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
+    ///
+    /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
+    /// user-authored derivable modules participate in the same derive expansion path as stdlib modules.
+    pub derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024: Trait-level Rust derive paths keyed by module-qualified trait name, such as `yaml.Serialize`.
+    ///
+    /// The typechecker owns this because dependency modules are already imported and validated there. Lowering should
+    /// not re-run module resolution or assume RFC 024 metadata only exists in stdlib source.
+    pub trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.
     pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// RFC 046 computed property reads keyed by the full field-access expression span.
+    ///
+    /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while
+    /// still consuming the same resolved expression type map for the property return type.
+    pub computed_property_accesses: HashMap<(usize, usize), ComputedPropertyAccessInfo>,
     /// RFC 038: unpack operands whose static shape has been proven by call binding.
     ///
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
@@ -70,6 +85,11 @@ pub struct TypeCheckInfo {
     pub const_values: HashMap<String, ConstValue>,
     /// Rust-boundary coercion decisions keyed by argument expression span.
     pub rust_arg_coercions: HashMap<(usize, usize), RustArgCoercionInfo>,
+    /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
+    ///
+    /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
+    /// function argument, typed initializer, or model/class field initializer.
+    pub validated_newtype_coercions: HashMap<(usize, usize), ValidatedNewtypeCoercionInfo>,
     /// Rust trait imports keyed by the source binding name with the trait method names they can place in scope.
     ///
     /// Lowering carries this into IR import items so codegen can retain extension-trait imports that Rust method
@@ -87,6 +107,10 @@ pub struct TypeCheckInfo {
     pub regular_method_arg_shape_preserving_calls: HashSet<(usize, usize, String)>,
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
+    /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
+    pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
+    /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
+    pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
     /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
     /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
     ///
@@ -169,6 +193,13 @@ pub struct ProtocolIterationInfo {
     pub item_type: ResolvedType,
 }
 
+/// Lowering metadata for one RFC 046 computed property read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputedPropertyAccessInfo {
+    pub owner_type: String,
+    pub property: String,
+}
+
 /// Operator expression shape for a resolved user-defined operator call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedOperatorKind {
@@ -234,11 +265,58 @@ pub struct RustArgCoercionInfo {
     pub kind: RustArgCoercionKind,
 }
 
+/// One typechecker-approved validated-newtype coercion chain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidatedNewtypeCoercionInfo {
+    /// Ordered underlying-to-target conversion steps.
+    pub steps: Vec<ValidatedNewtypeCoercionStep>,
+    /// Final target type after all steps.
+    pub target_type: ResolvedType,
+    /// Runtime failure strategy selected for the coercion site.
+    pub mode: ValidatedNewtypeCoercionMode,
+}
+
+/// Runtime failure behavior for one validated-newtype coercion site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidatedNewtypeCoercionMode {
+    /// Ordinary sites panic on the first validation error.
+    FailFast,
+    /// Model/class constructor fields collect this field's validation error before the constructor fails.
+    AggregateField { field_name: String },
+}
+
+/// One conversion step in a validated-newtype coercion chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedNewtypeCoercionStep {
+    /// Newtype being constructed by this step.
+    pub newtype_name: String,
+    /// Canonical validation hook to call. `None` means direct newtype wrapping is sufficient.
+    pub ctor: Option<String>,
+    /// Generated constrained-primitive predicates to enforce before direct wrapping.
+    pub constraints: Vec<NewtypePrimitiveConstraint>,
+}
+
 /// Lowering metadata for a visible static binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticBindingInfo {
     /// `true` when this name came from `from pub::... import NAME`.
     pub is_imported: bool,
+}
+
+/// Lowering metadata for one RFC 036 decorated function binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecoratedFunctionBindingInfo {
+    /// Final type of the module-visible binding after applying all user-defined decorators.
+    pub ty: ResolvedType,
+}
+
+/// Lowering metadata for one RFC 036 decorated method binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecoratedMethodBindingInfo {
+    /// Final unbound callable type after applying all user-defined decorators. The receiver is the first parameter.
+    pub unbound_ty: ResolvedType,
+    /// Original unbound callable type before decorators are applied. The receiver is the first parameter.
+    pub original_unbound_ty: ResolvedType,
 }
 
 /// Lowering and test-runner metadata for one `std.testing.fixture` function.
@@ -263,6 +341,22 @@ impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
+    pub fn computed_property_access(&self, span: Span) -> Option<&ComputedPropertyAccessInfo> {
+        self.computed_property_accesses.get(&(span.start, span.end))
+    }
+
+    /// Record that a field-access expression resolved to a computed property read.
+    pub(crate) fn record_computed_property_access(&mut self, span: Span, owner_type: &str, property: &str) {
+        self.computed_property_accesses.insert(
+            (span.start, span.end),
+            ComputedPropertyAccessInfo {
+                owner_type: owner_type.to_string(),
+                property: property.to_string(),
+            },
+        );
     }
 
     /// Return the RFC 038 fixed/static unpack plan recorded for an unpack operand, if any.
@@ -293,6 +387,16 @@ impl TypeCheckInfo {
     /// Return the recorded Rust-boundary argument coercion for the expression at `span`, if any.
     pub fn rust_arg_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
         self.rust_arg_coercions.get(&(span.start, span.end))
+    }
+
+    /// Return the validated-newtype coercion recorded for the expression at `span`, if any.
+    pub fn validated_newtype_coercion(&self, span: Span) -> Option<&ValidatedNewtypeCoercionInfo> {
+        self.validated_newtype_coercions.get(&(span.start, span.end))
+    }
+
+    /// Record a typechecker-approved validated-newtype coercion for a source expression span.
+    pub(crate) fn record_validated_newtype_coercion(&mut self, span: Span, info: ValidatedNewtypeCoercionInfo) {
+        self.validated_newtype_coercions.insert((span.start, span.end), info);
     }
 
     /// Return the recorded return coercion for the call expression at `span`, if any.

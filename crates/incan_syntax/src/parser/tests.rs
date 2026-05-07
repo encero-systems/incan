@@ -6,6 +6,7 @@
 mod tests {
     use super::*;
     use crate::lexer;
+    use incan_core::lang::types::collections::{self, CollectionTypeId};
 
     fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;
@@ -882,6 +883,66 @@ def f(x: int) -> int:
     }
 
     #[test]
+    fn test_parse_match_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    Kind.Read | Kind.Scan | _ => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Or(patterns) => {
+                assert_eq!(patterns.len(), 3);
+                assert!(matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty()));
+                assert!(matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty()));
+                assert!(matches!(&patterns[2].node, Pattern::Wildcard));
+            }
+            _ => panic!("Expected pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_grouped_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    (
+      Kind.Read
+      | Kind.Scan
+      | _
+    ) => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Expr(match_expr) = &func.body[0].node else {
+            panic!("Expected match expression statement");
+        };
+        let Expr::Match(_, arms) = &match_expr.node else {
+            panic!("Expected match expression");
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Group(inner) => {
+                assert!(matches!(&inner.node, Pattern::Or(patterns) if patterns.len() == 3));
+            }
+            _ => panic!("Expected grouped pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_if_let_condition() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def f(opt: Option[int]) -> int:
@@ -908,6 +969,49 @@ def f(opt: Option[int]) -> int:
                         ));
                     }
                     _ => panic!("Expected constructor pattern"),
+                }
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_let_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::If(if_stmt) = &func.body[0].node else {
+            panic!("Expected if statement");
+        };
+        match &if_stmt.condition {
+            Condition::Let { pattern, value } => {
+                let Expr::Ident(value_name) = &value.node else {
+                    panic!("Expected identifier value");
+                };
+                assert_eq!(value_name, "result");
+                match &pattern.node {
+                    Pattern::Or(patterns) => {
+                        assert_eq!(patterns.len(), 2);
+                        assert!(matches!(
+                            &patterns[0].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Ok"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                        assert!(matches!(
+                            &patterns[1].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Err"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                    }
+                    _ => panic!("Expected pattern alternation"),
                 }
             }
             Condition::Expr(_) => panic!("Expected let condition"),
@@ -946,6 +1050,23 @@ def drain(current: Option[int]) -> int:
             Condition::Expr(_) => panic!("Expected let condition"),
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_while_let_rejects_pattern_alternation() {
+        let source = r#"
+def drain(current: Result[int, int]) -> int:
+  while let Ok(value) | Err(value) = current:
+    return value
+  return 0
+"#;
+        let errors = parse_str_err(source, "`while let` pattern alternation should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Pattern alternation is only supported in match arms and if let patterns")),
+            "expected `while let` pattern alternation rejection, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -1003,6 +1124,51 @@ def c() -> None:
         let dec_c = &funcs[2].decorators[0].node;
         assert_eq!(dec_c.path.segments, vec!["web", "route"]);
         assert_eq!(dec_c.name, "route");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_unknown_decorators_on_functions_async_defs_and_methods() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.async
+
+@logged
+def sync_func() -> None:
+  pass
+
+@traced
+async def async_func() -> None:
+  pass
+
+class Service:
+  value: int
+
+  @cached
+  def read(self) -> int:
+    return self.value
+"#;
+        let program = parse_str(source)?;
+        let funcs: Vec<_> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match &d.node {
+                Declaration::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(funcs.len(), 2);
+        assert_eq!(funcs[0].decorators[0].node.name, "logged");
+        assert_eq!(funcs[1].decorators[0].node.name, "traced");
+
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|d| match &d.node {
+                Declaration::Class(c) => Some(c),
+                _ => None,
+            })
+            .ok_or_else(|| vec![CompileError::new("expected class declaration".to_string(), Span::default())])?;
+        assert_eq!(class.methods[0].node.decorators[0].node.name, "cached");
         Ok(())
     }
 
@@ -1167,6 +1333,131 @@ def value(async: int) -> int:
 "#;
         parse_str(source)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_property_identifier_without_member_context_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def value(property: int) -> int:
+  return property
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.params[0].node.name, "property");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Dataset:
+  property schema_fields -> list[str]:
+    return self._fields
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.properties.len(), 1);
+        let property = &class.properties[0];
+        assert_eq!(property.node.name, "schema_fields");
+        assert!(matches!(property.node.visibility, Visibility::Private));
+        assert!(
+            matches!(property.node.return_type.node, Type::Generic(ref name, _) if collections::from_str(name) == Some(CollectionTypeId::List))
+        );
+        assert!(property.node.body.is_some());
+        assert!(
+            property.span.start < property.node.return_type.span.start
+                && property.node.return_type.span.end <= property.span.end,
+            "property span should enclose return type span"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_pub_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model User:
+  name: str
+
+  pub property display_name -> str:
+    return self.name
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.fields.len(), 1);
+        assert_eq!(model.properties.len(), 1);
+        let property = &model.properties[0].node;
+        assert_eq!(property.name, "display_name");
+        assert!(matches!(property.visibility, Visibility::Public));
+        assert!(property.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        let property = &trait_decl.properties[0].node;
+        assert_eq!(property.name, "area");
+        assert!(matches!(property.return_type.node, Type::Simple(ref name) if name == "float"));
+        assert!(property.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property_without_ellipsis() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        assert!(trait_decl.properties[0].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_abstract_property_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area -> float\n",
+            "bodyless properties outside traits should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected ':' after property return type")),
+            "expected property body diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_parameter_list_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area(self) -> float:\n    return 0.0\n",
+            "property declarations with parameter lists should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Computed properties do not accept parameter lists")),
+            "expected property parameter diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_declaration_modifier_is_focused_error() {
+        let errs = parse_str_err(
+            "import std.async\n\nclass Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
+            "property declarations with async modifiers should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Declaration modifiers are not supported on properties")),
+            "expected property modifier diagnostic, got: {errs:?}"
+        );
     }
 
     #[test]
@@ -2395,6 +2686,41 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_implicit_derives_metadata_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+__derives__ = [Serialize, Deserialize]
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected __derives__ metadata as const declaration");
+        };
+        assert_eq!(c.name, "__derives__");
+        assert!(c.ty.is_none());
+        let Expr::List(entries) = &c.value.node else {
+            panic!("Expected __derives__ value to parse as list literal");
+        };
+        assert_eq!(entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_qualified_trait_bound() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.type_params[0].bounds.len(), 1);
+        assert_eq!(func.type_params[0].bounds[0].name, "json.Serialize");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_decimal_literal() -> Result<(), Vec<CompileError>> {
         let source = r#"
 const PRICE = 19.99d
@@ -2431,6 +2757,115 @@ const PRICE: decimal[10, 2] = 19.99d
         assert!(matches!(&args[0].node, Type::IntLiteral(value) if value.value == 10));
         assert!(matches!(&args[1].node, Type::IntLiteral(value) if value.value == 2));
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_int_single_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type NonNegativeInt = newtype int[ge=0]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[0].node.value.value, 0);
+        assert_eq!(constraints[0].node.value.repr, "0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_multiple_constraints() -> Result<(), Vec<CompileError>> {
+        let source = "type Digit = newtype int[gt=-1, lt=10]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Gt);
+        assert_eq!(constraints[0].node.value.value, -1);
+        assert_eq!(constraints[0].node.value.repr, "-1");
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Lt);
+        assert_eq!(constraints[1].node.value.value, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_float_accepts_integer_literal_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type UnitRatio = newtype float[ge=0, le=1]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "float");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Le);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_duplicate_key() {
+        let source = "type Bad = newtype int[ge=0, ge=1]\n";
+        let errs = parse_str_err(source, "duplicate constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Duplicate constrained primitive key `ge`")),
+            "Expected duplicate constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_unsupported_key() {
+        let source = "type Bad = newtype int[min=0]\n";
+        let errs = parse_str_err(source, "unsupported constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Unsupported constrained primitive key `min`")),
+            "Expected unsupported constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_empty_constraint_block() {
+        let source = "type Bad = newtype int[]\n";
+        let errs = parse_str_err(source, "empty constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("requires at least one constraint")),
+            "Expected empty constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_second_constraint_block() {
+        let source = "type Bad = newtype int[ge=0][lt=10]\n";
+        let errs = parse_str_err(source, "second constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Only one constraint block is allowed")),
+            "Expected second constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_non_integer_literal_value() {
+        let source = "type Bad = newtype int[ge=MIN_VALUE]\n";
+        let errs = parse_str_err(source, "non-literal constrained primitive value should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected integer literal constraint value")),
+            "Expected integer literal constraint value error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -3291,6 +3726,31 @@ def check(f: Callable[(int, str), bool]) -> None:
                 assert!(matches!(ret.node, Type::Simple(ref name) if name == "bool"));
             }
             other => panic!("Expected desugared function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_type_accepts_reference_params() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  value: int
+
+def decorate(f: (&Box, &mut Box) -> int) -> (&Box) -> int:
+  return f
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[1].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, _) => {
+                assert!(matches!(params[0].node, Type::Ref(_)));
+                assert!(matches!(params[1].node, Type::RefMut(_)));
+            }
+            other => panic!("Expected function type, got: {other:?}"),
         }
         Ok(())
     }

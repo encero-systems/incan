@@ -61,6 +61,10 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) public_types: HashSet<String>,
     /// Whether emitted method calls require the stdlib `Error` trait in Rust scope.
     pub(super) uses_stdlib_error_trait: bool,
+    /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
+    pub(super) result_observer_callable_types: HashSet<String>,
+    /// Top-level function values adapted to a borrowed function-pointer parameter.
+    pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
 }
 
 /// Emit Rust source code from typed IR.
@@ -141,6 +145,11 @@ pub struct IrEmitter<'a> {
     /// Used by derive passthrough and newtype emission to locate the original Rust crate path for
     /// imported types.
     rust_import_paths: RefCell<std::collections::HashMap<String, Vec<String>>>,
+    /// Newtype -> selected checked constructor method.
+    ///
+    /// Backend-generated newtype construction, such as lifted iterator sums, uses this to preserve normal checked
+    /// construction behavior instead of directly invoking the tuple-struct constructor.
+    newtype_checked_ctor: HashMap<String, String>,
     /// Whether the currently emitted module contains any local `static` declarations.
     module_has_local_statics: RefCell<bool>,
     /// Whether expression emission is currently inside a static initializer.
@@ -168,6 +177,12 @@ pub struct IrEmitter<'a> {
     /// `live.with_mut(...)` the local wrapper still must be declared `mut`. This stack is pushed per emitted
     /// statement slice so `emit_stmt` can make that decision without reintroducing blanket `mut` noise.
     storage_binding_mut_names: RefCell<Vec<HashSet<String>>>,
+    /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
+    result_observer_callable_types: RefCell<HashSet<String>>,
+    /// Callable object types whose borrowed observer helper has already been emitted.
+    emitted_result_observer_callable_helpers: RefCell<HashSet<String>>,
+    /// Top-level function values adapted to a borrowed function-pointer parameter.
+    borrowed_function_adapters: RefCell<HashSet<(String, Vec<usize>)>>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -202,6 +217,7 @@ impl<'a> IrEmitter<'a> {
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
+            newtype_checked_ctor: HashMap::new(),
             module_has_local_statics: RefCell::new(false),
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
@@ -209,6 +225,9 @@ impl<'a> IrEmitter<'a> {
             generated_union_types: HashMap::new(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
+            result_observer_callable_types: RefCell::new(HashSet::new()),
+            emitted_result_observer_callable_helpers: RefCell::new(HashSet::new()),
+            borrowed_function_adapters: RefCell::new(HashSet::new()),
         }
     }
 
@@ -219,6 +238,46 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         }
+    }
+
+    /// Return the private helper method name used to call callable-object observers through a borrowed payload.
+    pub(super) fn result_observer_borrowed_method_name() -> &'static str {
+        "__incan_result_observer_borrow___call__"
+    }
+
+    /// Return the private helper name used to adapt a named function to a borrowed function-pointer parameter.
+    pub(super) fn borrowed_function_adapter_name(name: &str, indices: &[usize]) -> String {
+        let suffix = indices.iter().map(usize::to_string).collect::<Vec<_>>().join("_");
+        format!("__incan_borrow_adapter_{name}_{suffix}")
+    }
+
+    /// Store pre-emission facts describing which observer callbacks need borrowed helper emission.
+    pub(super) fn set_result_observer_callable_types(&self, callable_types: HashSet<String>) {
+        *self.result_observer_callable_types.borrow_mut() = callable_types;
+    }
+
+    /// Store pre-emission facts for named function values that need borrowed function-pointer adapters.
+    pub(super) fn set_borrowed_function_adapters(&self, adapters: HashSet<(String, Vec<usize>)>) {
+        *self.borrowed_function_adapters.borrow_mut() = adapters;
+    }
+
+    /// Return whether a source-owned callable object type needs a borrowed observer helper.
+    pub(super) fn needs_result_observer_callable_helper(&self, type_name: &str) -> bool {
+        self.result_observer_callable_types.borrow().contains(type_name)
+    }
+
+    /// Mark a callable-object borrowed observer helper as emitted, returning false if it was already emitted.
+    pub(super) fn claim_result_observer_callable_helper(&self, type_name: &str) -> bool {
+        self.emitted_result_observer_callable_helpers
+            .borrow_mut()
+            .insert(type_name.to_string())
+    }
+
+    /// Return whether `name` needs a borrowed adapter for the selected parameter indices.
+    pub(super) fn needs_borrowed_function_adapter(&self, name: &str, indices: &[usize]) -> bool {
+        self.borrowed_function_adapters
+            .borrow()
+            .contains(&(name.to_string(), indices.to_vec()))
     }
 
     /// Set the internal module roots (top-level module names) for a multi-file compilation.

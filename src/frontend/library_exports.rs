@@ -11,7 +11,7 @@ use crate::frontend::ast::{
 };
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, resolve_type,
+    TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, VariableInfo, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -266,24 +266,33 @@ fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<Chec
     })
 }
 
+/// Build checked export metadata for a function or callable-valued decorated function binding.
 fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Option<CheckedFunctionExport> {
     let symbol = checker.lookup_symbol(function.name.as_str())?;
-    let SymbolKind::Function(FunctionInfo {
-        params,
-        return_type,
-        is_async,
-        ..
-    }) = &symbol.kind
-    else {
-        return None;
+    let (params, return_type, is_async) = match &symbol.kind {
+        SymbolKind::Function(FunctionInfo {
+            params,
+            return_type,
+            is_async,
+            ..
+        }) => (params.clone(), return_type.clone(), *is_async),
+        SymbolKind::Variable(VariableInfo {
+            ty: ResolvedType::Function(params, return_type),
+            ..
+        }) => {
+            // Callable values do not yet carry asyncness, so preserve the source declaration marker until decorator
+            // typing records async callable metadata explicitly.
+            (params.clone(), return_type.as_ref().clone(), function.is_async())
+        }
+        _ => return None,
     };
 
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         type_params: checked_type_params(&function.type_params, checker),
-        params: params.clone(),
-        return_type: return_type.clone(),
-        is_async: *is_async,
+        params,
+        return_type,
+        is_async,
     })
 }
 

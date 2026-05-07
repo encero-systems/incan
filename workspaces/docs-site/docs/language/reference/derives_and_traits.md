@@ -159,6 +159,7 @@ Incan has several built-in decorators with different roles.
 - `@derive(...)` is covered [above](#derive-catalog-quick-index).
 - `@rust.extern` and `@rust.allow(...)` belong to Rust interop and are documented in the Rust interop reference.
 - This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.
+- User-defined function and method decorators are covered in the [language reference](language.md#decorators).
 
 ### `@staticmethod`
 
@@ -752,6 +753,20 @@ model User with Serialize:
 
 def main() -> None:
     println(User(name="Alice", age=30).to_json())
+```
+
+Use the RFC 024 module derive when a model should adopt both JSON traits and expose module-qualified bounds:
+
+```incan
+from std.serde import json
+
+@derive(json)
+model User:
+    name: str
+    age: int
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
 ```
 
 ---

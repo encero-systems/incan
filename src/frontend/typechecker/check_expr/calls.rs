@@ -65,6 +65,11 @@ impl TypeChecker {
                 self.check_call_args(args);
                 return ResolvedType::Named(enum_name.clone());
             }
+            if self.receiver_has_computed_property(&base_ty, member_name, span) {
+                self.check_call_args(args);
+                self.errors.push(errors::property_called_as_method(member_name, span));
+                return ResolvedType::Unknown;
+            }
         }
 
         // Imported module function calls whose signatures are known via the stdlib AST cache
@@ -129,6 +134,19 @@ impl TypeChecker {
                 match sym.kind {
                     SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
                         return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                    }
+                    SymbolKind::Type(TypeInfo::Newtype(_)) => {
+                        if !type_args.is_empty() {
+                            self.errors
+                                .push(errors::explicit_call_site_type_args_not_supported(span));
+                            self.check_call_args(args);
+                            return ResolvedType::Unknown;
+                        }
+                        self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                        self.type_info
+                            .ident_kinds
+                            .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                        return self.check_constructor(name, args, span);
                     }
                     SymbolKind::Function(func_info) => {
                         return self.validate_function_call(name, &func_info, type_args, args, span);

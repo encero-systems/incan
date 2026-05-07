@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::symbols::{CallableParam, MethodInfo, ResolvedType};
+use crate::frontend::symbols::{CallableParam, MethodInfo, PropertyInfo, ResolvedType};
 
 /// Build a substitution map from declared type parameter names to concrete (or still-generic) arguments.
 ///
@@ -60,10 +60,26 @@ pub(crate) fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, 
         ResolvedType::Tuple(elems) => {
             ResolvedType::Tuple(elems.iter().map(|e| substitute_resolved_type(e, map)).collect())
         }
+        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(substitute_resolved_type(inner, map))),
+        ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+            Box::new(substitute_resolved_type(key, map)),
+            Box::new(substitute_resolved_type(value, map)),
+        ),
+        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(substitute_resolved_type(inner, map))),
         ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(substitute_resolved_type(inner, map))),
         ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(substitute_resolved_type(inner, map))),
         ResolvedType::CallSiteInfer => ty.clone(),
         _ => ty.clone(),
+    }
+}
+
+/// Substitute a computed property return type using `map`.
+pub(crate) fn substitute_property_info(info: &PropertyInfo, map: &HashMap<String, ResolvedType>) -> PropertyInfo {
+    PropertyInfo {
+        return_type: substitute_resolved_type(&info.return_type, map),
+        visibility: info.visibility,
+        owner: info.owner.clone(),
+        has_body: info.has_body,
     }
 }
 

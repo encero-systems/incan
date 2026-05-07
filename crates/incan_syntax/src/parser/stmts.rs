@@ -524,9 +524,15 @@ impl<'a> Parser<'a> {
     /// Ordinary boolean conditions stay as expression-backed conditions, while
     /// `let PATTERN = VALUE` is captured explicitly so later stages can apply
     /// match-equivalent semantics without reparsing the surface spelling.
-    fn control_flow_condition(&mut self) -> Result<Condition, CompileError> {
+    fn control_flow_condition(&mut self, allow_pattern_alternation: bool) -> Result<Condition, CompileError> {
         if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             let pattern = self.pattern()?;
+            if !allow_pattern_alternation && Self::pattern_contains_alternation(&pattern.node) {
+                return Err(CompileError::syntax(
+                    "Pattern alternation is only supported in match arms and if let patterns".to_string(),
+                    pattern.span,
+                ));
+            }
             self.expect(
                 &TokenKind::Operator(OperatorId::Eq),
                 "Expected '=' after let pattern in control-flow condition",
@@ -538,9 +544,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Return whether a parsed pattern contains an alternation at any nested level.
+    fn pattern_contains_alternation(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Or(_) => true,
+            Pattern::Group(inner) => Self::pattern_contains_alternation(&inner.node),
+            Pattern::Tuple(items) => items.iter().any(|item| Self::pattern_contains_alternation(&item.node)),
+            Pattern::Constructor(_, args) => args.iter().any(|arg| match arg {
+                PatternArg::Positional(pattern) => Self::pattern_contains_alternation(&pattern.node),
+                PatternArg::Named(_, pattern) => Self::pattern_contains_alternation(&pattern.node),
+            }),
+            Pattern::Binding(_) | Pattern::Wildcard | Pattern::Literal(_) => false,
+        }
+    }
+
+    /// Parse a statement-form `if`, including `if let` conditions that accept pattern alternation.
     fn if_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::If), "Expected 'if'")?;
-        let condition = self.control_flow_condition()?;
+        let condition = self.control_flow_condition(true)?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after if condition",
@@ -598,9 +619,10 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse a statement-form `while`, keeping `while let` on the narrower non-alternation pattern surface.
     fn while_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::While), "Expected 'while'")?;
-        let condition = self.control_flow_condition()?;
+        let condition = self.control_flow_condition(false)?;
         self.expect(
             &TokenKind::Punctuation(PunctuationId::Colon),
             "Expected ':' after while condition",

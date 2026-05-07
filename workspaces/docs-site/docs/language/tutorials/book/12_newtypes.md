@@ -44,15 +44,50 @@ Newtypes can optionally define a reserved validation hook:
 
 ```incan
 type Attempts = newtype int:
-    def from_underlying(n: int) -> Result[Attempts, str]:
+    def from_underlying(n: int) -> Result[Attempts, ValidationError]:
         if n <= 0:
-            return Err("attempts must be >= 1")
+            return Err(ValidationError("attempts must be >= 1"))
         return Ok(Attempts(n))
 ```
 
 If a newtype defines `from_underlying`, then calling it like `Attempts(5)` performs **checked construction**
-(it calls `Attempts.from_underlying(5)` and panics if it returns `Err(...)`). This is a stepping stone toward the full
-v0.2 RFC behavior.
+(it calls `Attempts.from_underlying(5)` and raises a validation error if it returns `Err(...)`).
+
+The compiler also applies that checked construction at typed boundary sites where the destination type is already known:
+
+```incan
+def retry(attempts: Attempts) -> None:
+    println(f"attempts={attempts.0}")
+
+def main() -> None:
+    retry(3)                  # checked as Attempts.from_underlying(3)
+    attempts: Attempts = 4    # checked at the typed initializer
+```
+
+Implicit coercion does not parse unrelated primitive types. For example, `"3"` does not become an `int` on the way into `Attempts`; parse strings explicitly before constructing the newtype.
+
+You can also write simple numeric constraints on primitive underlyings:
+
+```incan
+type NonNegativeInt = newtype int[ge=0]
+type Percentage = newtype int[ge=0, le=100]
+```
+
+Generated constraints are checked at the same validated construction sites as `from_underlying`.
+
+Use `@no_implicit_coercion` when a newtype should require explicit construction:
+
+```incan
+@no_implicit_coercion
+type Attempts = newtype int
+
+def retry(attempts: Attempts) -> None:
+    return
+
+def main() -> None:
+    retry(Attempts(3))  # ok
+    # retry(3)          # type error
+```
 
 To access the wrapped value, use `.0`:
 
@@ -84,14 +119,11 @@ You can then use `match` (or `?` if you’re inside a function returning `Result
 Newtypes can also define methods:
 
 ```incan
-enum EmailError:
-    MissingAt
-
 type Email = newtype str:
-    def from_underlying(v: str) -> Result[Email, EmailError]:
+    def from_underlying(v: str) -> Result[Email, ValidationError]:
         """Validate an email address by checking for the presence of an @ symbol"""
         if "@" not in v:
-            return Err(EmailError.MissingAt)
+            return Err(ValidationError("missing @"))
         return Ok(Email(v.lower()))
 
 def main() -> None:
@@ -103,7 +135,7 @@ def main() -> None:
 ## Try it
 
 1. Define `type CartItems = newtype List[str]`.
-2. Write `def non_empty(items: List[str]) -> Result[CartItems, str]` that rejects empty lists.
+2. Write `def non_empty(items: List[str]) -> Result[CartItems, ValidationError]` that rejects empty lists.
 3. In `main()`, call it with both `[]` and `["a"]` and print either the error or the first item.
 
 ??? example "One possible solution"
@@ -111,9 +143,9 @@ def main() -> None:
     ```incan
     type CartItems = newtype List[str]
 
-    def non_empty(items: List[str]) -> Result[CartItems, str]:
+    def non_empty(items: List[str]) -> Result[CartItems, ValidationError]:
         if len(items) == 0:
-            return Err("must not be empty")
+            return Err(ValidationError("must not be empty"))
         return Ok(CartItems(items))
 
     def main() -> None:

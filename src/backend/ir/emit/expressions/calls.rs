@@ -19,6 +19,36 @@ use incan_core::lang::surface::constructors::{self, ConstructorId};
 const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
 
 impl<'a> IrEmitter<'a> {
+    /// Return the borrowed helper function item for a named function argument when the target parameter expects one.
+    fn borrowed_function_adapter_arg(&self, arg: &TypedExpr, target_ty: Option<&IrType>) -> Option<TokenStream> {
+        let IrType::Function { params, .. } = target_ty? else {
+            return None;
+        };
+        let borrowed_indices: Vec<usize> = params
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ty)| matches!(ty, IrType::Ref(_)).then_some(idx))
+            .collect();
+        if borrowed_indices.is_empty() {
+            return None;
+        }
+        let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &arg.kind
+        else {
+            return None;
+        };
+        if !matches!(arg.ty, IrType::Function { .. }) || !self.needs_borrowed_function_adapter(name, &borrowed_indices)
+        {
+            return None;
+        }
+        let helper_name = Self::borrowed_function_adapter_name(name, &borrowed_indices);
+        let helper = Self::rust_ident(&helper_name);
+        Some(quote! { #helper })
+    }
+
     /// Heuristic: detect whether a type still has unresolved generic parts.
     ///
     /// This is used when seeding emitted literals (`None`, `Ok`, `Err`) with explicit Rust type arguments to help
@@ -555,6 +585,10 @@ impl<'a> IrEmitter<'a> {
                 }
                 let emitted = emitted?;
 
+                if let Some(adapter) = self.borrowed_function_adapter_arg(a, target_ty) {
+                    return Ok(adapter);
+                }
+
                 // Check VarAccess for explicit borrow requirements
                 if let IrExprKind::Var { access, .. } = &a.kind {
                     match access {
@@ -1086,6 +1120,9 @@ impl<'a> IrEmitter<'a> {
         param: &FunctionParam,
     ) -> Result<TokenStream, EmitError> {
         let target_ty = Some(&param.ty);
+        if let Some(adapter) = self.borrowed_function_adapter_arg(arg, target_ty) {
+            return Ok(adapter);
+        }
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
             seed
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
@@ -1165,7 +1202,14 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
-        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+        let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
+            let mut segments = vec![quote! { incan_stdlib }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
             if canonical_path.len() < 3 || !stdlib::is_known_stdlib_module(&module_path) {
                 return Ok(None);
             }

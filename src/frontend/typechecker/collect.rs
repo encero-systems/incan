@@ -8,6 +8,7 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
+use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 
 use super::TypeChecker;
 
@@ -17,14 +18,37 @@ mod stdlib_imports;
 
 use self::decl_helpers::{
     collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
-    inject_json_methods, inject_validate_methods,
+    collect_properties, inject_json_methods, inject_validate_methods,
 };
 
 type InheritedMembers = (
     HashMap<String, FieldInfo>,
+    HashMap<String, PropertyInfo>,
     HashMap<String, MethodInfo>,
     HashMap<String, Vec<MethodInfo>>,
 );
+
+/// Extract constrained-primitive predicates from a newtype underlying annotation.
+fn newtype_constraints(ty: &Type) -> Vec<NewtypePrimitiveConstraint> {
+    let Type::ConstrainedPrimitive(_, constraints) = ty else {
+        return Vec::new();
+    };
+    constraints
+        .iter()
+        .map(|constraint| NewtypePrimitiveConstraint {
+            key: constraint.node.key,
+            value: constraint.node.value.value,
+            repr: constraint.node.value.repr.clone(),
+        })
+        .collect()
+}
+
+/// Return whether a newtype declaration permits RFC 017 implicit coercion.
+fn newtype_allows_implicit_coercion(decorators: &[Spanned<Decorator>]) -> bool {
+    !decorators.iter().any(|decorator| {
+        core_decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::NoImplicitCoercion)
+    })
+}
 
 /// Convert parsed value enum backing syntax into symbol-table metadata.
 fn value_enum_backing(value_type: ValueEnumType) -> ValueEnumBacking {
@@ -56,6 +80,9 @@ impl TypeChecker {
         match &decl.node {
             Declaration::Import(import) => self.collect_import(import, decl.span),
             Declaration::Const(konst) => {
+                if konst.name == "__derives__" {
+                    return;
+                }
                 self.validate_root_namespace(&konst.name, decl.span);
                 self.collect_const(konst, decl.span);
             }
@@ -237,6 +264,7 @@ impl TypeChecker {
     /// Register a model declaration with its fields, methods, and derived traits.
     fn collect_model(&mut self, model: &ModelDecl, span: Span) {
         let fields = collect_fields(&model.fields, self, &model.name);
+        let properties = collect_properties(&model.properties, self, Some(&model.name), &model.type_params);
         let mut method_overloads =
             collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
@@ -254,7 +282,8 @@ impl TypeChecker {
             &derives,
         );
         let method_aliases = collect_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
-        let trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
+        let mut trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
+        trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         self.symbols.define(Symbol {
             name: model.name.clone(),
@@ -264,6 +293,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                properties,
                 methods,
                 method_overloads,
                 method_aliases,
@@ -275,10 +305,16 @@ impl TypeChecker {
 
     /// Register a class declaration, inheriting from parent if present.
     fn collect_class(&mut self, class: &ClassDecl, span: Span) {
-        let (mut fields, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
+        let (mut fields, mut properties, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
         fields.extend(collect_fields(&class.fields, self, &class.name));
+        properties.extend(collect_properties(
+            &class.properties,
+            self,
+            Some(&class.name),
+            &class.type_params,
+        ));
 
         // Add own methods (can override inherited ones)
         let own_method_overloads =
@@ -290,7 +326,8 @@ impl TypeChecker {
         let derives = self.extract_derive_names(&class.decorators);
         inject_json_methods(&mut methods, &mut method_overloads, &class.name, &derives);
         let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
-        let trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
+        let mut trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
+        trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         self.symbols.define(Symbol {
             name: class.name.clone(),
@@ -301,6 +338,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                properties,
                 methods,
                 method_overloads,
                 method_aliases,
@@ -313,13 +351,14 @@ impl TypeChecker {
     /// Inherit fields and methods from a parent class if present.
     fn inherit_from_parent(&self, extends: &Option<String>) -> InheritedMembers {
         let Some(parent_name) = extends else {
-            return (HashMap::new(), HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
         };
         let Some(TypeInfo::Class(parent_info)) = self.lookup_type_info(parent_name) else {
-            return (HashMap::new(), HashMap::new(), HashMap::new());
+            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
         };
         (
             parent_info.fields.clone(),
+            parent_info.properties.clone(),
             parent_info.methods.clone(),
             parent_info.method_overloads.clone(),
         )
@@ -330,7 +369,7 @@ impl TypeChecker {
         traits
             .iter()
             .map(|trait_ref| TypeBoundInfo {
-                name: trait_ref.node.name.clone(),
+                name: self.resolve_trait_bound_name(&trait_ref.node.name, trait_ref.span),
                 type_args: trait_ref
                     .node
                     .type_args
@@ -341,10 +380,154 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Resolve a trait bound name, installing hidden symbols for module-qualified imported traits.
+    pub(crate) fn resolve_trait_bound_name(&mut self, name: &str, span: Span) -> String {
+        if name.contains('.')
+            && let Some((canonical, info)) = self.resolve_qualified_trait(name)
+        {
+            self.define_hidden_trait_symbol(&canonical, info, span);
+            return canonical;
+        }
+        name.to_string()
+    }
+
+    /// Collect synthetic trait adoptions introduced by RFC 024 `@derive(...)` arguments.
+    pub(crate) fn collect_derive_trait_adoption_infos(&mut self, derives: &[String]) -> Vec<TypeBoundInfo> {
+        let mut out = Vec::new();
+        for derive_name in derives {
+            if incan_core::lang::derives::from_str(derive_name).is_some() {
+                continue;
+            }
+            if let Some(module_path) = self.module_path_for_imported_name(derive_name)
+                && let Some(traits) = self.lookup_derivable_traits(&module_path)
+            {
+                for trait_name in traits {
+                    let Some(info) = self.lookup_imported_module_trait(&module_path, &trait_name) else {
+                        continue;
+                    };
+                    let canonical = format!("{}.{}", derive_name, trait_name);
+                    self.define_hidden_trait_symbol(&canonical, info, Span::default());
+                    if !out.iter().any(|existing: &TypeBoundInfo| existing.name == canonical) {
+                        out.push(TypeBoundInfo {
+                            name: canonical,
+                            type_args: Vec::new(),
+                        });
+                    }
+                }
+                continue;
+            }
+            let resolved = self
+                .import_aliases
+                .get(derive_name)
+                .cloned()
+                .unwrap_or_else(|| vec![derive_name.to_string()]);
+            if resolved.len() >= 2 {
+                let module_segments = &resolved[..resolved.len() - 1];
+                let trait_name = &resolved[resolved.len() - 1];
+                if self.imported_trait_is_derivable(module_segments, trait_name)
+                    && let Some(info) = self.lookup_imported_module_trait(module_segments, trait_name)
+                {
+                    self.define_hidden_trait_symbol(derive_name, info, Span::default());
+                    if !out.iter().any(|existing: &TypeBoundInfo| existing.name == *derive_name) {
+                        out.push(TypeBoundInfo {
+                            name: derive_name.clone(),
+                            type_args: Vec::new(),
+                        });
+                    }
+                } else if self.lookup_trait_info(derive_name).is_some() {
+                    out.push(TypeBoundInfo {
+                        name: derive_name.clone(),
+                        type_args: Vec::new(),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Resolve a module-qualified trait name through the imported-module metadata table.
+    pub(crate) fn resolve_qualified_trait(&mut self, name: &str) -> Option<(String, TraitInfo)> {
+        let (module_name, trait_name) = name.rsplit_once('.')?;
+        let module_path = self.module_path_for_imported_name(module_name)?;
+        let info = self.lookup_imported_module_trait(&module_path, trait_name)?;
+        Some((name.to_string(), info))
+    }
+
+    /// Look up a module's RFC 024 `__derives__` trait list from stdlib or imported dependency metadata.
+    pub(crate) fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
+        if let Some(traits) = self.stdlib_cache.lookup_derivable_traits(module_path) {
+            return Some(traits);
+        }
+        self.dependency_derivable_modules
+            .get(&module_path.join("."))
+            .cloned()
+            .filter(|traits| !traits.is_empty())
+    }
+
+    /// Look up a trait declared by an imported module, falling back to the current scope for direct imports.
+    pub(crate) fn lookup_imported_module_trait(
+        &mut self,
+        module_path: &[String],
+        trait_name: &str,
+    ) -> Option<TraitInfo> {
+        if let Some(info) = self.stdlib_cache.lookup_trait(module_path, trait_name) {
+            return Some(info);
+        }
+        if let Some(info) = self
+            .dependency_module_traits
+            .get(&format!("{}.{}", module_path.join("."), trait_name))
+        {
+            return Some(info.clone());
+        }
+        self.lookup_trait_info(trait_name).cloned()
+    }
+
+    /// Return whether a module-qualified trait may be adopted through `@derive(...)`.
+    pub(crate) fn imported_trait_is_derivable(&mut self, module_path: &[String], trait_name: &str) -> bool {
+        if self
+            .stdlib_cache
+            .lookup_trait_meta(module_path, trait_name)
+            .is_some_and(|meta| meta.rust_module_path.is_some() || !meta.rust_derive_paths.is_empty())
+        {
+            return true;
+        }
+        self.lookup_imported_module_trait(module_path, trait_name).is_some()
+            && self
+                .lookup_derivable_traits(module_path)
+                .is_some_and(|traits| traits.iter().any(|name| name == trait_name))
+    }
+
+    /// Resolve an imported name or alias to a module path.
+    pub(crate) fn module_path_for_imported_name(&self, name: &str) -> Option<Vec<String>> {
+        if name.contains('.') {
+            return Some(name.split('.').map(str::to_string).collect());
+        }
+        if let Some(symbol) = self.lookup_symbol(name)
+            && let SymbolKind::Module(info) = &symbol.kind
+        {
+            return Some(info.path.clone());
+        }
+        self.import_aliases.get(name).cloned()
+    }
+
+    /// Define a compiler-internal trait symbol used for qualified imported trait references.
+    pub(crate) fn define_hidden_trait_symbol(&mut self, name: &str, info: TraitInfo, span: Span) {
+        if self.symbols.lookup(name).is_some() {
+            return;
+        }
+        self.symbols.define(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Trait(info),
+            span,
+            scope: 0,
+        });
+    }
+
     /// Register a trait declaration with its method signatures, supertraits, and requirements.
     fn collect_trait(&mut self, tr: &TraitDecl, span: Span) {
         let mut method_overloads = collect_method_overloads(&tr.methods, self, None, &tr.type_params);
         let mut methods = collect_methods_from_overloads(&method_overloads);
+        let properties = collect_properties(&tr.properties, self, None, &tr.type_params);
         let method_aliases = collect_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
         let requires = self.extract_requires(&tr.decorators);
         if !tr.traits.is_empty() {
@@ -359,6 +542,7 @@ impl TypeChecker {
                 supertraits: Vec::new(),
                 methods,
                 method_aliases,
+                properties,
                 requires,
             }),
             span,
@@ -590,6 +774,8 @@ impl TypeChecker {
                 is_rusttype: nt.is_rusttype,
                 has_interop: !nt.interop_edges.is_empty(),
                 underlying: underlying.clone(),
+                constraints: newtype_constraints(&nt.underlying.node),
+                implicit_coercion_enabled: newtype_allows_implicit_coercion(&nt.decorators),
                 method_rebindings,
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(), // Empty for now
@@ -645,7 +831,8 @@ impl TypeChecker {
                 .collect(),
         });
 
-        let trait_adoptions = self.collect_trait_adoption_infos(&en.traits);
+        let mut trait_adoptions = self.collect_trait_adoption_infos(&en.traits);
+        trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
         self.symbols.define(Symbol {
             name: en.name.clone(),
             kind: SymbolKind::Type(TypeInfo::Enum(EnumInfo {
@@ -704,7 +891,10 @@ impl TypeChecker {
             .map(|tp| {
                 (
                     tp.name.clone(),
-                    tp.bounds.iter().map(|bound| bound.name.clone()).collect(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| self.resolve_trait_bound_name(&bound.name, Span::default()))
+                        .collect(),
                 )
             })
             .collect();
@@ -717,7 +907,7 @@ impl TypeChecker {
                     tp.bounds
                         .iter()
                         .map(|bound| TypeBoundInfo {
-                            name: bound.name.clone(),
+                            name: self.resolve_trait_bound_name(&bound.name, Span::default()),
                             type_args: bound
                                 .type_args
                                 .iter()

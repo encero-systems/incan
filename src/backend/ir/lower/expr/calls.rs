@@ -6,19 +6,19 @@ use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
     Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
 };
+use super::super::super::stmt::IrStmtKind;
 use super::super::super::types::IrType;
-use super::super::super::{FunctionSignature, TypedExpr};
+use super::super::super::{FunctionSignature, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use crate::frontend::ast;
-use crate::frontend::symbols::{CallableParam, ResolvedType};
-use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind};
+use crate::frontend::ast::{self, TypeConstraintKey};
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
+use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
-
-pub(crate) const INTERNAL_PANIC_FN: &str = "__incan_internal_panic";
+use incan_core::lang::surface::types as surface_types;
 
 impl AstLowering {
     /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
@@ -121,6 +121,982 @@ impl AstLowering {
         }
     }
 
+    /// Wrap an expression with any RFC 017 validated-newtype coercion selected by the typechecker.
+    pub(in crate::backend::ir::lower) fn wrap_with_validated_newtype_coercion(
+        &mut self,
+        mut expr: TypedExpr,
+        span: ast::Span,
+    ) -> Result<TypedExpr, LoweringError> {
+        let Some(coercion) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.validated_newtype_coercion(span).cloned())
+        else {
+            return Ok(expr);
+        };
+        if matches!(coercion.mode, ValidatedNewtypeCoercionMode::AggregateField { .. }) {
+            return Ok(expr);
+        }
+
+        for step in coercion.steps {
+            let struct_ty = self
+                .struct_names
+                .get(&step.newtype_name)
+                .cloned()
+                .unwrap_or_else(|| IrType::Struct(step.newtype_name.clone()));
+            expr = if let Some(ctor) = step.ctor {
+                Self::checked_newtype_match_expr(&step.newtype_name, &ctor, expr, struct_ty)
+            } else if !step.constraints.is_empty() {
+                Self::generated_constrained_newtype_expr(&step.newtype_name, &step.constraints, expr, struct_ty)
+            } else {
+                TypedExpr::new(
+                    IrExprKind::Struct {
+                        name: step.newtype_name,
+                        fields: vec![(String::new(), expr)],
+                    },
+                    struct_ty,
+                )
+            };
+        }
+        Ok(expr)
+    }
+
+    /// Build the fail-fast `Result` match used by checked newtype construction and implicit coercion.
+    fn checked_newtype_match_expr(name: &str, ctor: &str, lowered_value: TypedExpr, struct_ty: IrType) -> TypedExpr {
+        let receiver = TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::TypeName,
+            },
+            struct_ty.clone(),
+        );
+        let from_underlying_call = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(receiver),
+                method: ctor.to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: lowered_value,
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(Box::new(struct_ty.clone()), Box::new(IrType::Unknown)),
+        );
+        let value_name = "__incan_newtype_value".to_string();
+        let ok_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Ok).to_string(),
+                fields: vec![Pattern::Var(value_name.clone())],
+            },
+            guard: None,
+            body: TypedExpr::new(
+                IrExprKind::Var {
+                    name: value_name,
+                    access: VarAccess::Move,
+                    ref_kind: VarRefKind::Value,
+                },
+                struct_ty.clone(),
+            ),
+        };
+        let err_name = "__incan_validation_error".to_string();
+        let err_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Err).to_string(),
+                fields: vec![Pattern::Var(err_name.clone())],
+            },
+            guard: None,
+            body: TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "raise_validation_error".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    type_args: Vec::new(),
+                    args: vec![
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Literal(IrLiteral::StaticStr(name.to_string())),
+                                IrType::StaticStr,
+                            ),
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Literal(IrLiteral::StaticStr(ctor.to_string())),
+                                IrType::StaticStr,
+                            ),
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: err_name,
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("ValidationError".to_string()),
+                            ),
+                        },
+                    ],
+                    callable_signature: None,
+                    canonical_path: Some(vec![
+                        "incan_stdlib".to_string(),
+                        "validation".to_string(),
+                        "raise_validation_error".to_string(),
+                    ]),
+                },
+                struct_ty.clone(),
+            ),
+        };
+        TypedExpr::new(
+            IrExprKind::Match {
+                scrutinee: Box::new(from_underlying_call),
+                arms: vec![ok_arm, err_arm],
+            },
+            struct_ty,
+        )
+    }
+
+    /// Build the generated checked-construction expression for a constrained primitive newtype.
+    fn generated_constrained_newtype_expr(
+        name: &str,
+        constraints: &[NewtypePrimitiveConstraint],
+        lowered_value: TypedExpr,
+        struct_ty: IrType,
+    ) -> TypedExpr {
+        let value_name = "__incan_newtype_input".to_string();
+        let value_ty = lowered_value.ty.clone();
+        let value_ref = || {
+            TypedExpr::new(
+                IrExprKind::Var {
+                    name: value_name.clone(),
+                    access: VarAccess::Copy,
+                    ref_kind: VarRefKind::Value,
+                },
+                value_ty.clone(),
+            )
+        };
+        let condition = constraints
+            .iter()
+            .map(|constraint| Self::constraint_condition(value_ref(), constraint))
+            .reduce(|left, right| {
+                TypedExpr::new(
+                    IrExprKind::BinOp {
+                        op: super::super::super::expr::BinOp::And,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    IrType::Bool,
+                )
+            })
+            .unwrap_or_else(|| TypedExpr::new(IrExprKind::Bool(true), IrType::Bool));
+        let success = TypedExpr::new(
+            IrExprKind::Struct {
+                name: name.to_string(),
+                fields: vec![(String::new(), value_ref())],
+            },
+            struct_ty.clone(),
+        );
+        let failed_constraint = constraints
+            .iter()
+            .map(|constraint| format!("{}={}", Self::constraint_key_name(constraint.key), constraint.repr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let failure = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "raise_constraint_error".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(IrLiteral::StaticStr(name.to_string())),
+                            IrType::StaticStr,
+                        ),
+                    },
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(IrLiteral::StaticStr(failed_constraint)),
+                            IrType::StaticStr,
+                        ),
+                    },
+                ],
+                callable_signature: None,
+                canonical_path: Some(vec![
+                    "incan_stdlib".to_string(),
+                    "validation".to_string(),
+                    "raise_constraint_error".to_string(),
+                ]),
+            },
+            struct_ty.clone(),
+        );
+        TypedExpr::new(
+            IrExprKind::Block {
+                stmts: vec![IrStmt::new(IrStmtKind::Let {
+                    name: value_name,
+                    ty: value_ty,
+                    type_annotation: None,
+                    mutability: Mutability::Immutable,
+                    value: lowered_value,
+                })],
+                value: Some(Box::new(TypedExpr::new(
+                    IrExprKind::If {
+                        condition: Box::new(condition),
+                        then_branch: Box::new(success),
+                        else_branch: Some(Box::new(failure)),
+                    },
+                    struct_ty.clone(),
+                ))),
+            },
+            struct_ty,
+        )
+    }
+
+    /// Lower one constrained-primitive predicate into a boolean IR expression.
+    fn constraint_condition(value: TypedExpr, constraint: &NewtypePrimitiveConstraint) -> TypedExpr {
+        let op = match constraint.key {
+            TypeConstraintKey::Ge => super::super::super::expr::BinOp::Ge,
+            TypeConstraintKey::Gt => super::super::super::expr::BinOp::Gt,
+            TypeConstraintKey::Le => super::super::super::expr::BinOp::Le,
+            TypeConstraintKey::Lt => super::super::super::expr::BinOp::Lt,
+        };
+        let literal = if matches!(value.ty, IrType::Float) {
+            TypedExpr::new(IrExprKind::Float(constraint.value as f64), IrType::Float)
+        } else {
+            TypedExpr::new(IrExprKind::Int(constraint.value), IrType::Int)
+        };
+        TypedExpr::new(
+            IrExprKind::BinOp {
+                op,
+                left: Box::new(value),
+                right: Box::new(literal),
+            },
+            IrType::Bool,
+        )
+    }
+
+    /// Return the source spelling for a constrained-primitive predicate key.
+    fn constraint_key_name(key: TypeConstraintKey) -> &'static str {
+        match key {
+            TypeConstraintKey::Ge => "ge",
+            TypeConstraintKey::Gt => "gt",
+            TypeConstraintKey::Le => "le",
+            TypeConstraintKey::Lt => "lt",
+        }
+    }
+
+    /// Build a call to `ValidationErrorsBuilder::new` for aggregated constructor validation.
+    fn validation_builder_new(target: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "new".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Literal(IrLiteral::StaticStr(target.to_string())),
+                        IrType::StaticStr,
+                    ),
+                }],
+                callable_signature: None,
+                canonical_path: Some(vec![
+                    "incan_stdlib".to_string(),
+                    "validation".to_string(),
+                    "ValidationErrorsBuilder".to_string(),
+                    "new".to_string(),
+                ]),
+            },
+            IrType::Struct("ValidationErrorsBuilder".to_string()),
+        )
+    }
+
+    /// Build an IR variable reference to the current validation-error builder.
+    fn validation_builder_var(name: &str, access: VarAccess) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("ValidationErrorsBuilder".to_string()),
+        )
+    }
+
+    /// Return the IR type used for runtime validation errors.
+    fn validation_error_ty() -> IrType {
+        IrType::Struct("ValidationError".to_string())
+    }
+
+    /// Build a receiver `.clone()` call for payloads that are intentionally reused by generated validation code.
+    fn clone_expr(expr: TypedExpr) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(expr.clone()),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            expr.ty.clone(),
+        )
+    }
+
+    /// Build an explicitly typed `Ok::<T, ValidationError>(value)` call.
+    fn result_ok_expr(value: TypedExpr, ok_ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: constructors::as_str(ConstructorId::Ok).to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: vec![ok_ty.clone(), Self::validation_error_ty()],
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: value,
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            IrType::Result(Box::new(ok_ty), Box::new(Self::validation_error_ty())),
+        )
+    }
+
+    /// Build an explicitly typed `Err::<T, ValidationError>(error)` call.
+    fn result_err_expr(error: TypedExpr, ok_ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: constructors::as_str(ConstructorId::Err).to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: vec![ok_ty.clone(), Self::validation_error_ty()],
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: error,
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            IrType::Result(Box::new(ok_ty), Box::new(Self::validation_error_ty())),
+        )
+    }
+
+    /// Build a typed result expression for one validated-newtype coercion step without panicking.
+    fn validated_newtype_step_result_expr(
+        name: &str,
+        ctor: Option<&str>,
+        constraints: &[NewtypePrimitiveConstraint],
+        lowered_value: TypedExpr,
+        struct_ty: IrType,
+    ) -> TypedExpr {
+        if let Some(ctor) = ctor {
+            let receiver = TypedExpr::new(
+                IrExprKind::Var {
+                    name: name.to_string(),
+                    access: VarAccess::Copy,
+                    ref_kind: VarRefKind::TypeName,
+                },
+                struct_ty.clone(),
+            );
+            return TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    method: ctor.to_string(),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: lowered_value,
+                    }],
+                    callable_signature: None,
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Result(Box::new(struct_ty), Box::new(Self::validation_error_ty())),
+            );
+        }
+
+        if !constraints.is_empty() {
+            return Self::constrained_newtype_result_expr(name, constraints, lowered_value, struct_ty);
+        }
+
+        Self::result_ok_expr(
+            TypedExpr::new(
+                IrExprKind::Struct {
+                    name: name.to_string(),
+                    fields: vec![(String::new(), lowered_value)],
+                },
+                struct_ty.clone(),
+            ),
+            struct_ty,
+        )
+    }
+
+    /// Build a generated constrained-newtype validation result without raising.
+    fn constrained_newtype_result_expr(
+        name: &str,
+        constraints: &[NewtypePrimitiveConstraint],
+        lowered_value: TypedExpr,
+        struct_ty: IrType,
+    ) -> TypedExpr {
+        let condition = constraints
+            .iter()
+            .map(|constraint| Self::constraint_condition(lowered_value.clone(), constraint))
+            .reduce(|left, right| {
+                TypedExpr::new(
+                    IrExprKind::BinOp {
+                        op: super::super::super::expr::BinOp::And,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    IrType::Bool,
+                )
+            })
+            .unwrap_or_else(|| TypedExpr::new(IrExprKind::Bool(true), IrType::Bool));
+        let success = Self::result_ok_expr(
+            TypedExpr::new(
+                IrExprKind::Struct {
+                    name: name.to_string(),
+                    fields: vec![(String::new(), lowered_value)],
+                },
+                struct_ty.clone(),
+            ),
+            struct_ty.clone(),
+        );
+        let failed_constraint = constraints
+            .iter()
+            .map(|constraint| format!("{}={}", Self::constraint_key_name(constraint.key), constraint.repr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let failure_error = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "new".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Literal(IrLiteral::StaticStr(format!(
+                            "{name} constraint {failed_constraint} failed"
+                        ))),
+                        IrType::StaticStr,
+                    ),
+                }],
+                callable_signature: None,
+                canonical_path: Some(vec![
+                    "incan_stdlib".to_string(),
+                    "validation".to_string(),
+                    "ValidationError".to_string(),
+                    "new".to_string(),
+                ]),
+            },
+            Self::validation_error_ty(),
+        );
+        let failure = Self::result_err_expr(failure_error, struct_ty.clone());
+        TypedExpr::new(
+            IrExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(success),
+                else_branch: Some(Box::new(failure)),
+            },
+            IrType::Result(Box::new(struct_ty), Box::new(Self::validation_error_ty())),
+        )
+    }
+
+    /// Feed an `Ok` value into the next newtype step while preserving an existing `Err`.
+    fn chained_validated_newtype_result_expr(
+        previous_result_name: &str,
+        previous_ok_ty: IrType,
+        next_name: &str,
+        next_ctor: Option<&str>,
+        next_constraints: &[NewtypePrimitiveConstraint],
+        next_ty: IrType,
+    ) -> TypedExpr {
+        let value_name = "__incan_chained_newtype_value".to_string();
+        let error_name = "__incan_chained_newtype_error".to_string();
+        let ok_value = TypedExpr::new(
+            IrExprKind::Var {
+                name: value_name.clone(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            previous_ok_ty.clone(),
+        );
+        let ok_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Ok).to_string(),
+                fields: vec![Pattern::Var(value_name)],
+            },
+            guard: None,
+            body: Self::validated_newtype_step_result_expr(
+                next_name,
+                next_ctor,
+                next_constraints,
+                ok_value,
+                next_ty.clone(),
+            ),
+        };
+        let err_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Err).to_string(),
+                fields: vec![Pattern::Var(error_name.clone())],
+            },
+            guard: None,
+            body: Self::result_err_expr(
+                TypedExpr::new(
+                    IrExprKind::Var {
+                        name: error_name,
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    Self::validation_error_ty(),
+                ),
+                next_ty.clone(),
+            ),
+        };
+        TypedExpr::new(
+            IrExprKind::Match {
+                scrutinee: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: previous_result_name.to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Result(Box::new(previous_ok_ty), Box::new(Self::validation_error_ty())),
+                )),
+                arms: vec![ok_arm, err_arm],
+            },
+            IrType::Result(Box::new(next_ty), Box::new(Self::validation_error_ty())),
+        )
+    }
+
+    /// Build a statement that appends one field validation error to the aggregate builder.
+    fn push_field_error_stmt(builder_name: &str, field_name: &str, error_expr: TypedExpr) -> IrStmt {
+        IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(Self::validation_builder_var(builder_name, VarAccess::Read)),
+                method: "push_field_error".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(IrLiteral::StaticStr(field_name.to_string())),
+                            IrType::StaticStr,
+                        ),
+                    },
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: error_expr,
+                    },
+                ],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unit,
+        )))
+    }
+
+    /// Build an expression that records `Err` and returns the same `Result` shape.
+    fn record_result_error_expr(builder_name: &str, field_name: &str, result_name: &str, ok_ty: IrType) -> TypedExpr {
+        let error_name = format!("__incan_{field_name}_validation_error");
+        let value_name = format!("__incan_{field_name}_validation_value");
+        let ok_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Ok).to_string(),
+                fields: vec![Pattern::Var(value_name.clone())],
+            },
+            guard: None,
+            body: Self::result_ok_expr(
+                TypedExpr::new(
+                    IrExprKind::Var {
+                        name: value_name,
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    ok_ty.clone(),
+                ),
+                ok_ty.clone(),
+            ),
+        };
+        let err_var = TypedExpr::new(
+            IrExprKind::Var {
+                name: error_name.clone(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            Self::validation_error_ty(),
+        );
+        let err_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Err).to_string(),
+                fields: vec![Pattern::Var(error_name.clone())],
+            },
+            guard: None,
+            body: TypedExpr::new(
+                IrExprKind::Block {
+                    stmts: vec![Self::push_field_error_stmt(
+                        builder_name,
+                        field_name,
+                        Self::clone_expr(err_var.clone()),
+                    )],
+                    value: Some(Box::new(Self::result_err_expr(err_var, ok_ty.clone()))),
+                },
+                IrType::Result(Box::new(ok_ty.clone()), Box::new(Self::validation_error_ty())),
+            ),
+        };
+        TypedExpr::new(
+            IrExprKind::Match {
+                scrutinee: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: result_name.to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Result(Box::new(ok_ty.clone()), Box::new(Self::validation_error_ty())),
+                )),
+                arms: vec![ok_arm, err_arm],
+            },
+            IrType::Result(Box::new(ok_ty), Box::new(Self::validation_error_ty())),
+        )
+    }
+
+    /// Build the statement that raises the aggregate error after all fields are checked.
+    fn validation_builder_raise_stmt(builder_name: &str) -> IrStmt {
+        IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(Self::validation_builder_var(builder_name, VarAccess::Move)),
+                method: "raise_if_any".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unit,
+        )))
+    }
+
+    /// Extract the `Ok` value from a checked-construction result after aggregate validation has run.
+    fn result_value_match_expr(name: &str, ctor: &str, result_name: &str, struct_ty: IrType) -> TypedExpr {
+        let value_name = "__incan_newtype_value".to_string();
+        let err_name = "__incan_validation_error".to_string();
+        let ok_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Ok).to_string(),
+                fields: vec![Pattern::Var(value_name.clone())],
+            },
+            guard: None,
+            body: TypedExpr::new(
+                IrExprKind::Var {
+                    name: value_name,
+                    access: VarAccess::Move,
+                    ref_kind: VarRefKind::Value,
+                },
+                struct_ty.clone(),
+            ),
+        };
+        let err_arm = MatchArm {
+            pattern: Pattern::Enum {
+                name: "Result".to_string(),
+                variant: constructors::as_str(ConstructorId::Err).to_string(),
+                fields: vec![Pattern::Var(err_name.clone())],
+            },
+            guard: None,
+            body: TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "raise_validation_error".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    type_args: Vec::new(),
+                    args: vec![
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Literal(IrLiteral::StaticStr(name.to_string())),
+                                IrType::StaticStr,
+                            ),
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Literal(IrLiteral::StaticStr(ctor.to_string())),
+                                IrType::StaticStr,
+                            ),
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: err_name,
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                Self::validation_error_ty(),
+                            ),
+                        },
+                    ],
+                    callable_signature: None,
+                    canonical_path: Some(vec![
+                        "incan_stdlib".to_string(),
+                        "validation".to_string(),
+                        "raise_validation_error".to_string(),
+                    ]),
+                },
+                struct_ty.clone(),
+            ),
+        };
+        TypedExpr::new(
+            IrExprKind::Match {
+                scrutinee: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: result_name.to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Result(Box::new(struct_ty.clone()), Box::new(Self::validation_error_ty())),
+                )),
+                arms: vec![ok_arm, err_arm],
+            },
+            struct_ty,
+        )
+    }
+
+    /// Return aggregate-mode coercion metadata for a constructor field expression span.
+    fn aggregate_field_coercion(
+        &self,
+        span: ast::Span,
+    ) -> Option<crate::frontend::typechecker::ValidatedNewtypeCoercionInfo> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.validated_newtype_coercion(span).cloned())
+            .filter(|coercion| matches!(coercion.mode, ValidatedNewtypeCoercionMode::AggregateField { .. }))
+    }
+
+    /// Return whether a constructor call contains any fields needing aggregate validation.
+    fn has_aggregate_constructor_fields(&self, args: &[ast::CallArg]) -> bool {
+        args.iter().any(|arg| match arg {
+            ast::CallArg::Named(_, expr) => self.aggregate_field_coercion(expr.span).is_some(),
+            _ => false,
+        })
+    }
+
+    /// Lower a model/class constructor call that must aggregate field validation errors.
+    fn lower_aggregate_constructor_call(
+        &mut self,
+        name: &str,
+        args: &[ast::CallArg],
+        struct_ty: IrType,
+    ) -> Result<(IrExprKind, IrType), LoweringError> {
+        let builder_name = "__incan_validation_errors".to_string();
+        let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
+            name: builder_name.clone(),
+            ty: IrType::Struct("ValidationErrorsBuilder".to_string()),
+            type_annotation: None,
+            mutability: Mutability::Mutable,
+            value: Self::validation_builder_new(name),
+        })];
+        let mut fields = Vec::new();
+
+        for (idx, arg) in args.iter().enumerate() {
+            let value = Self::call_arg_expr(arg);
+            let lowered_value = self.lower_expr_spanned(value)?;
+            let raw_name = format!("__incan_field_{idx}_raw");
+            let raw_ty = lowered_value.ty.clone();
+            stmts.push(IrStmt::new(IrStmtKind::Let {
+                name: raw_name.clone(),
+                ty: raw_ty.clone(),
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value: lowered_value,
+            }));
+            let raw_var = |access| {
+                TypedExpr::new(
+                    IrExprKind::Var {
+                        name: raw_name.clone(),
+                        access,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    raw_ty.clone(),
+                )
+            };
+            match arg {
+                ast::CallArg::Named(field_name, _) => {
+                    let canonical = self.resolve_field_alias(name, field_name);
+                    let Some(coercion) = self.aggregate_field_coercion(value.span) else {
+                        fields.push((canonical, raw_var(VarAccess::Move)));
+                        continue;
+                    };
+
+                    let mut current_result_name = None;
+                    let mut current_ok_ty = raw_ty.clone();
+                    let mut final_newtype_name = None;
+                    let mut final_ctor_name = None;
+                    for (step_idx, step) in coercion.steps.iter().enumerate() {
+                        let step_ty = self
+                            .struct_names
+                            .get(&step.newtype_name)
+                            .cloned()
+                            .unwrap_or_else(|| IrType::Struct(step.newtype_name.clone()));
+                        let result_name = format!("__incan_field_{idx}_{step_idx}_result");
+                        let result_expr = if let Some(previous_name) = current_result_name.as_deref() {
+                            Self::chained_validated_newtype_result_expr(
+                                previous_name,
+                                current_ok_ty.clone(),
+                                &step.newtype_name,
+                                step.ctor.as_deref(),
+                                &step.constraints,
+                                step_ty.clone(),
+                            )
+                        } else {
+                            Self::validated_newtype_step_result_expr(
+                                &step.newtype_name,
+                                step.ctor.as_deref(),
+                                &step.constraints,
+                                raw_var(VarAccess::Copy),
+                                step_ty,
+                            )
+                        };
+                        let result_ty = result_expr.ty.clone();
+                        stmts.push(IrStmt::new(IrStmtKind::Let {
+                            name: result_name.clone(),
+                            ty: result_ty,
+                            type_annotation: None,
+                            mutability: Mutability::Immutable,
+                            value: result_expr,
+                        }));
+                        current_result_name = Some(result_name);
+                        current_ok_ty = self
+                            .struct_names
+                            .get(&step.newtype_name)
+                            .cloned()
+                            .unwrap_or_else(|| IrType::Struct(step.newtype_name.clone()));
+                        final_newtype_name = Some(step.newtype_name.clone());
+                        final_ctor_name = step
+                            .ctor
+                            .clone()
+                            .or_else(|| (!step.constraints.is_empty()).then(|| "constraint".to_string()))
+                            .or_else(|| Some("constructor".to_string()));
+                    }
+                    let Some(result_name) = current_result_name else {
+                        fields.push((canonical, raw_var(VarAccess::Move)));
+                        continue;
+                    };
+                    let recorded_result_name = format!("__incan_field_{idx}_validated_result");
+                    stmts.push(IrStmt::new(IrStmtKind::Let {
+                        name: recorded_result_name.clone(),
+                        ty: IrType::Result(Box::new(current_ok_ty.clone()), Box::new(Self::validation_error_ty())),
+                        type_annotation: None,
+                        mutability: Mutability::Immutable,
+                        value: Self::record_result_error_expr(
+                            &builder_name,
+                            &canonical,
+                            &result_name,
+                            current_ok_ty.clone(),
+                        ),
+                    }));
+                    fields.push((
+                        canonical,
+                        Self::result_value_match_expr(
+                            final_newtype_name.as_deref().unwrap_or(name),
+                            final_ctor_name.as_deref().unwrap_or("constructor"),
+                            &recorded_result_name,
+                            current_ok_ty,
+                        ),
+                    ));
+                }
+                ast::CallArg::Positional(_) => {
+                    fields.push((String::new(), raw_var(VarAccess::Move)));
+                }
+                ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_) => {
+                    fields.push((String::new(), raw_var(VarAccess::Move)));
+                }
+            }
+        }
+        stmts.push(Self::validation_builder_raise_stmt(&builder_name));
+        Ok((
+            IrExprKind::Block {
+                stmts,
+                value: Some(Box::new(TypedExpr::new(
+                    IrExprKind::Struct {
+                        name: name.to_string(),
+                        fields,
+                    },
+                    struct_ty.clone(),
+                ))),
+            },
+            struct_ty,
+        ))
+    }
+
     /// Return the typechecker-proven callable signature for a full call expression span.
     pub(in crate::backend::ir::lower) fn callable_signature_for_call_span(
         &self,
@@ -159,6 +1135,91 @@ impl AstLowering {
             | ast::CallArg::PositionalUnpack(e)
             | ast::CallArg::KeywordUnpack(e) => e,
         }
+    }
+
+    /// Build a synthetic callable signature from an already-lowered function type.
+    fn function_signature_from_ir_type(params: &[IrType], ret: &IrType) -> FunctionSignature {
+        FunctionSignature {
+            params: params
+                .iter()
+                .enumerate()
+                .map(|(idx, ty)| FunctionParam {
+                    name: format!("__incan_arg_{idx}"),
+                    ty: ty.clone(),
+                    mutability: super::super::super::types::Mutability::Immutable,
+                    is_self: false,
+                    kind: ast::ParamKind::Normal,
+                    default: None,
+                })
+                .collect(),
+            return_type: ret.clone(),
+        }
+    }
+
+    /// Return whether passing `arg` to a callable parameter should refine that parameter to a shared borrow.
+    fn callable_arg_needs_implicit_borrow(arg: &TypedExpr, target_ty: &IrType) -> bool {
+        if arg.ty.is_copy() || matches!(target_ty, IrType::Ref(_) | IrType::RefMut(_)) {
+            return false;
+        }
+        matches!(
+            arg.kind,
+            IrExprKind::Var {
+                access: VarAccess::Read | VarAccess::Borrow,
+                ..
+            }
+        )
+    }
+
+    /// Refine a function-typed local parameter call when borrowing preserves a non-`Copy` argument for later use.
+    fn refine_function_typed_local_call(
+        &mut self,
+        func: &mut TypedExpr,
+        args: &[IrCallArg],
+        callable_signature: Option<FunctionSignature>,
+    ) -> Option<FunctionSignature> {
+        let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::Value,
+            ..
+        } = &func.kind
+        else {
+            return callable_signature;
+        };
+        let local_name = name.clone();
+        if !self.current_callable_param_scope_contains(&local_name) {
+            return callable_signature;
+        }
+
+        let IrType::Function { params, ret } = &func.ty else {
+            return callable_signature;
+        };
+        let mut signature =
+            callable_signature.unwrap_or_else(|| Self::function_signature_from_ir_type(params, ret.as_ref()));
+        let mut changed = false;
+
+        for (idx, arg) in args.iter().enumerate() {
+            if !matches!(arg.kind, IrCallArgKind::Positional | IrCallArgKind::Named) {
+                continue;
+            }
+            let Some(param) = signature.params.get_mut(idx) else {
+                continue;
+            };
+            if Self::callable_arg_needs_implicit_borrow(&arg.expr, &param.ty) {
+                param.ty = IrType::Ref(Box::new(param.ty.clone()));
+                changed = true;
+            }
+        }
+
+        if changed {
+            let refined_ty = IrType::Function {
+                params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: Box::new(signature.return_type.clone()),
+            };
+            func.ty = refined_ty.clone();
+            self.update_local_binding(&local_name, refined_ty);
+        }
+
+        Some(signature)
     }
 
     fn lower_adapter_kind(adapter_kind: ast::InteropAdapterKind) -> super::super::super::decl::IrInteropAdapterKind {
@@ -324,9 +1385,9 @@ impl AstLowering {
                             receiver_ty.clone(),
                         )),
                         method: "__incan_new".to_string(),
+                        dispatch: None,
                         type_args: Vec::new(),
                         args: Vec::new(),
-                        dispatch: None,
                         callable_signature: None,
                         arg_policy: MethodCallArgPolicy::Default,
                     },
@@ -358,7 +1419,7 @@ impl AstLowering {
             ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
             _ => None,
         };
-        let func = self.lower_expr_spanned(f)?;
+        let mut func = self.lower_expr_spanned(f)?;
         if let Some(resolved_operator) = self
             .type_info
             .as_ref()
@@ -459,6 +1520,13 @@ impl AstLowering {
                 ret_ty,
             ));
         }
+        let callable_signature = imported_callee_path
+            .as_deref()
+            .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .or_else(|| self.callable_signature_for_call_span(call_span))
+            .or_else(|| self.callable_signature_for_callee_span(f.span));
+        let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
+
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             (**ret).clone()
         } else {
@@ -469,11 +1537,7 @@ impl AstLowering {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
-                callable_signature: imported_callee_path
-                    .as_deref()
-                    .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
-                    .or_else(|| self.callable_signature_for_call_span(call_span))
-                    .or_else(|| self.callable_signature_for_callee_span(f.span)),
+                callable_signature,
                 canonical_path: imported_callee_path,
             },
             ret_ty,
@@ -486,8 +1550,74 @@ impl AstLowering {
         name: &str,
         args: &[ast::CallArg],
     ) -> Result<(IrExprKind, IrType), LoweringError> {
+        if name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError) {
+            let mut message = None;
+            let mut code = None;
+            for arg in args {
+                match arg {
+                    ast::CallArg::Positional(expr) => {
+                        message = Some(self.lower_expr_spanned(expr)?);
+                    }
+                    ast::CallArg::Named(field, expr) if field == "message" => {
+                        message = Some(self.lower_expr_spanned(expr)?);
+                    }
+                    ast::CallArg::Named(field, expr) if field == "code" => {
+                        code = Some(self.lower_expr_spanned(expr)?);
+                    }
+                    ast::CallArg::Named(_, expr)
+                    | ast::CallArg::PositionalUnpack(expr)
+                    | ast::CallArg::KeywordUnpack(expr) => {
+                        message.get_or_insert(self.lower_expr_spanned(expr)?);
+                    }
+                }
+            }
+            let mut lowered_args = Vec::new();
+            if let Some(message) = message {
+                lowered_args.push(IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: message,
+                });
+            }
+            let method = if let Some(code) = code {
+                lowered_args.push(IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: code,
+                });
+                "with_code"
+            } else {
+                "new"
+            };
+            return Ok((
+                IrExprKind::Call {
+                    func: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: method.to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    type_args: Vec::new(),
+                    args: lowered_args,
+                    callable_signature: None,
+                    canonical_path: Some(vec![
+                        "incan_stdlib".to_string(),
+                        "validation".to_string(),
+                        "ValidationError".to_string(),
+                        method.to_string(),
+                    ]),
+                },
+                IrType::Struct(surface_types::as_str(surface_types::SurfaceTypeId::ValidationError).to_string()),
+            ));
+        }
+
         // Get type if known, otherwise Unknown (will be inferred at emit time)
         let struct_ty = self.struct_names.get(name).cloned().unwrap_or(IrType::Unknown);
+        if self.has_aggregate_constructor_fields(args) {
+            return self.lower_aggregate_constructor_call(name, args, struct_ty);
+        }
 
         // ----------------------------------------------------------------
         // Newtype checked construction (v0.1 hardening for #44, RFC runway)
@@ -506,93 +1636,23 @@ impl AstLowering {
                 .get(name)
                 .cloned()
                 .unwrap_or_else(|| "from_underlying".to_string());
-
-            // Use the actual newtype struct type for the receiver (not Unknown)
-            let receiver = TypedExpr::new(
-                IrExprKind::Var {
-                    name: name.to_string(),
-                    access: VarAccess::Copy,
-                    ref_kind: VarRefKind::TypeName,
-                },
-                struct_ty.clone(),
-            );
-            let from_underlying_call = TypedExpr::new(
-                IrExprKind::MethodCall {
-                    receiver: Box::new(receiver),
-                    method: ctor.clone(),
-                    dispatch: None,
-                    type_args: Vec::new(),
-                    args: vec![IrCallArg {
-                        name: None,
-                        kind: IrCallArgKind::Positional,
-                        expr: lowered_value,
-                    }],
-                    callable_signature: None,
-                    arg_policy: MethodCallArgPolicy::Default,
-                },
-                IrType::Result(Box::new(struct_ty.clone()), Box::new(IrType::Unknown)),
-            );
-            let value_name = "__incan_newtype_value".to_string();
             // Keep the failure path local to generated code: the Err branch still panics, but we no longer emit an
             // `.expect()` extraction in the generated Rust.
-            let ok_arm = MatchArm {
-                pattern: Pattern::Enum {
-                    name: "Result".to_string(),
-                    variant: constructors::as_str(ConstructorId::Ok).to_string(),
-                    fields: vec![Pattern::Var(value_name.clone())],
-                },
-                guard: None,
-                body: TypedExpr::new(
-                    IrExprKind::Var {
-                        name: value_name,
-                        access: VarAccess::Move,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    struct_ty.clone(),
-                ),
+            let checked = Self::checked_newtype_match_expr(name, &ctor, lowered_value, struct_ty.clone());
+            return Ok((checked.kind, struct_ty));
+        }
+        if let Some(constraints) = self.newtype_constraints.get(name).cloned()
+            && args.len() == 1
+            && matches!(args[0], ast::CallArg::Positional(_))
+            && self.current_impl_type.as_deref() != Some(name)
+        {
+            let ast::CallArg::Positional(value) = &args[0] else {
+                unreachable!("checked by matches! above")
             };
-            let panic_message = TypedExpr::new(
-                IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(format!(
-                    "validated newtype construction failed: {name}::{ctor}"
-                ))),
-                IrType::StaticStr,
-            );
-            let err_arm = MatchArm {
-                pattern: Pattern::Enum {
-                    name: "Result".to_string(),
-                    variant: constructors::as_str(ConstructorId::Err).to_string(),
-                    fields: vec![Pattern::Wildcard],
-                },
-                guard: None,
-                body: TypedExpr::new(
-                    IrExprKind::Call {
-                        func: Box::new(TypedExpr::new(
-                            IrExprKind::Var {
-                                name: INTERNAL_PANIC_FN.to_string(),
-                                access: VarAccess::Read,
-                                ref_kind: VarRefKind::Value,
-                            },
-                            IrType::Unknown,
-                        )),
-                        type_args: Vec::new(),
-                        args: vec![IrCallArg {
-                            name: None,
-                            kind: IrCallArgKind::Positional,
-                            expr: panic_message,
-                        }],
-                        callable_signature: None,
-                        canonical_path: None,
-                    },
-                    struct_ty.clone(),
-                ),
-            };
-            return Ok((
-                IrExprKind::Match {
-                    scrutinee: Box::new(from_underlying_call),
-                    arms: vec![ok_arm, err_arm],
-                },
-                struct_ty,
-            ));
+            let lowered_value = self.lower_expr_spanned(value)?;
+            let checked =
+                Self::generated_constrained_newtype_expr(name, &constraints, lowered_value, struct_ty.clone());
+            return Ok((checked.kind, struct_ty));
         }
 
         // This is a constructor call - lower as struct instantiation

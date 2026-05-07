@@ -19,8 +19,10 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorId {
     Derive,
+    RustDerive,
     RustExtern,
     RustAllow,
+    NoImplicitCoercion,
     StaticMethod,
     ClassMethod,
     Requires,
@@ -75,6 +77,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         Since(0, 1),
     ),
     info(
+        DecoratorId::RustDerive,
+        "rust.derive",
+        &[],
+        "Declare a Rust derive path required by a derivable Incan trait.",
+        RFC::_024,
+        Since(0, 3),
+    ),
+    info(
         DecoratorId::RustExtern,
         "rust.extern",
         &[],
@@ -88,6 +98,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         &[],
         "Emit targeted Rust #[allow(...)] lint suppressions on a generated item.",
         RFC::_057,
+        Since(0, 3),
+    ),
+    info(
+        DecoratorId::NoImplicitCoercion,
+        "no_implicit_coercion",
+        &[],
+        "Disable RFC 017 implicit newtype coercion for this type.",
+        RFC::_017,
         Since(0, 3),
     ),
     info(

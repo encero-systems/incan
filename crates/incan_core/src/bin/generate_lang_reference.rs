@@ -112,6 +112,7 @@ fn write_language_reference(path: &Path) {
     out.push_str("- [Builtin types](#builtin-types)\n");
     out.push_str("- [Surface constructors](#surface-constructors)\n");
     out.push_str("- [Surface functions](#surface-functions)\n");
+    out.push_str("- [Built-in collection helpers](#built-in-collection-helpers)\n");
     out.push_str("- [Surface string methods](#surface-string-methods)\n");
     out.push_str("- [Surface types](#surface-types)\n");
     out.push_str("- [Surface methods](#surface-methods)\n\n");
@@ -130,6 +131,7 @@ fn write_language_reference(path: &Path) {
 
     render_surface_constructors_section(&mut out);
     render_surface_functions_section(&mut out);
+    render_builtin_collection_helpers_section(&mut out);
     render_surface_string_methods_section(&mut out);
     render_surface_types_section(&mut out);
     render_surface_methods_section(&mut out);
@@ -369,6 +371,43 @@ fn render_builtins_section(out: &mut String) {
 /// Render builtin decorator metadata.
 fn render_decorators_section(out: &mut String) {
     start_section(out, "## Decorators");
+
+    out.push_str(
+        r#"User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:
+
+```incan
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def main() -> None:
+    result = label(1)  # int
+```
+
+Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+`@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.
+
+Method decorators receive an unbound callable shape with the receiver first. A decorator on
+`def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on
+`def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.
+
+Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`,
+and `@requires` keep their existing special behavior.
+
+"#,
+    );
 
     out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
     out.push_str("|---|---|---|---|---|---|---|\n");
@@ -612,6 +651,40 @@ fn render_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render import-free built-in collection helpers such as `list.repeat(...)`.
+fn render_builtin_collection_helpers_section(out: &mut String) {
+    start_section(out, "## Built-in collection helpers");
+
+    out.push_str("| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+
+    for helper in surface::collection_helpers::BUILTIN_COLLECTION_HELPERS {
+        let id = format!("{:?}", helper.item.id);
+        let receiver = format!("`{}`", helper.receiver);
+        let member = format!("`{}`", helper.member);
+        let signature = format!("`{}`", helper.signature);
+        let aliases = if helper.item.aliases.is_empty() {
+            String::new()
+        } else {
+            helper
+                .item
+                .aliases
+                .iter()
+                .map(|alias| format!("`{}`", alias))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = helper.item.description;
+        let rfc = helper.item.introduced_in_rfc;
+        let since = helper.item.since;
+        let stability = format!("{:?}", helper.item.stability);
+        out.push_str(&format!(
+            "| {id} | {receiver} | {member} | {signature} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+}
+
 /// Render compiler-recognized surface constructor metadata.
 fn render_surface_constructors_section(out: &mut String) {
     start_section(out, "## Surface constructors");
@@ -848,6 +921,31 @@ fn render_surface_methods_section(out: &mut String) {
     out.push_str("\n### Option methods\n\n");
     out.push_str(table_header());
     for m in surface::option_methods::OPTION_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
+    // Result
+    out.push_str("\n### Result methods\n\n");
+    out.push_str(table_header());
+    for m in surface::result_methods::RESULT_METHODS {
         let id = format!("{:?}", m.id);
         let canonical = format!("`{}`", m.canonical);
         let aliases = if m.aliases.is_empty() {

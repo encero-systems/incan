@@ -385,10 +385,31 @@ impl TypeChecker {
             self.define_from_import_symbol(item, SymbolKind::Type(TypeInfo::Builtin), span);
             return true;
         }
+        if self.materialize_stdlib_submodule_import(context.module, item, span) {
+            return true;
+        }
         if stdlib_context.has_stub {
             return self.materialize_stdlib_stub_import(context, item, testing_semantics, span);
         }
         false
+    }
+
+    /// Materialize `from std.namespace import submodule` as a module binding when the submodule is registered.
+    fn materialize_stdlib_submodule_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+        if module.segments.len() != 2 {
+            return false;
+        }
+        let mut submodule_path = module.segments.clone();
+        submodule_path.push(item.name.clone());
+        if !stdlib::is_known_stdlib_module(&submodule_path) {
+            return false;
+        }
+
+        let local_name = Self::import_item_local_name(item);
+        self.validate_root_namespace(&local_name, span);
+        let path = canonicalize_source_module_segments(&submodule_path);
+        self.define_import_symbol(local_name, path, false, span);
+        true
     }
 
     /// Materialize typechecker-only stdlib capability bounds as empty trait symbols.
@@ -408,6 +429,7 @@ impl TypeChecker {
                 type_params: vec![],
                 methods: HashMap::new(),
                 method_aliases: HashMap::new(),
+                properties: HashMap::new(),
                 requires: vec![],
                 supertraits: vec![],
             }),
@@ -880,6 +902,7 @@ impl TypeChecker {
         )
     }
 
+    /// Return a stable diagnostic label for a symbol that already exists in the current local scope.
     fn existing_local_symbol_kind(&self, name: &str) -> Option<&'static str> {
         let symbol_id = self.symbols.lookup_local(name)?;
         let symbol = self.symbols.get(symbol_id)?;
@@ -892,6 +915,7 @@ impl TypeChecker {
             SymbolKind::Module(_) => "imported module",
             SymbolKind::Variant(_) => "enum variant",
             SymbolKind::Field(_) => "field",
+            SymbolKind::Property(_) => "property",
             SymbolKind::RustItem(_) => "rust import",
         };
         Some(kind)
@@ -962,6 +986,7 @@ impl TypeChecker {
         });
     }
 
+    /// Rewrite imported semantic type references through type aliases from the source library manifest.
     fn remap_symbol_kind_with_import_aliases(
         &self,
         kind: &mut SymbolKind,
@@ -994,6 +1019,9 @@ impl TypeChecker {
                     for field in info.fields.values_mut() {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
                     }
+                    for property in info.properties.values_mut() {
+                        Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
+                    }
                     for method in info.methods.values_mut() {
                         for param in &mut method.params {
                             Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
@@ -1004,6 +1032,9 @@ impl TypeChecker {
                 TypeInfo::Model(info) => {
                     for field in info.fields.values_mut() {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
+                    }
+                    for property in info.properties.values_mut() {
+                        Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
                     }
                     for method in info.methods.values_mut() {
                         for param in &mut method.params {
@@ -1033,8 +1064,15 @@ impl TypeChecker {
                 for (_, ty) in &mut info.requires {
                     Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
                 }
+                for property in info.properties.values_mut() {
+                    Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
+                }
             }
-            SymbolKind::Module(_) | SymbolKind::Variant(_) | SymbolKind::Field(_) | SymbolKind::RustItem(_) => {}
+            SymbolKind::Module(_)
+            | SymbolKind::Variant(_)
+            | SymbolKind::Field(_)
+            | SymbolKind::Property(_)
+            | SymbolKind::RustItem(_) => {}
         }
     }
 
@@ -1114,6 +1152,7 @@ impl TypeChecker {
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
+            properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
             method_aliases: std::collections::HashMap::new(),
@@ -1131,6 +1170,7 @@ impl TypeChecker {
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
+            properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
             method_aliases: std::collections::HashMap::new(),
@@ -1157,6 +1197,7 @@ impl TypeChecker {
                 .collect(),
             methods: self.methods_from_manifest(&export.methods),
             method_aliases: std::collections::HashMap::new(),
+            properties: std::collections::HashMap::new(),
             requires: export
                 .requires
                 .iter()
@@ -1237,6 +1278,8 @@ impl TypeChecker {
             is_rusttype: export.is_rusttype,
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
+            constraints: Vec::new(),
+            implicit_coercion_enabled: true,
             method_rebindings: std::collections::HashMap::new(),
             method_aliases: std::collections::HashMap::new(),
             methods: self.methods_from_manifest(&export.methods),
