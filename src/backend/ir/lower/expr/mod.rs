@@ -543,6 +543,17 @@ impl AstLowering {
 
             // ---- Field access ----
             ast::Expr::Field(o, f) => {
+                if let ast::Expr::Ident(type_name) = &o.node
+                    && f.starts_with("__incan_original_")
+                {
+                    return Ok(TypedExpr::new(
+                        IrExprKind::AssociatedFunction {
+                            type_name: type_name.clone(),
+                            function_name: f.clone(),
+                        },
+                        IrType::Unknown,
+                    ));
+                }
                 // Prefer spanned lowering so typechecker output can drive the receiver type.
                 // This is important for RFC 021 alias-aware field access, especially for `self.<alias>`.
                 let obj = self.lower_expr_spanned(o)?;

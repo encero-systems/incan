@@ -1,0 +1,19 @@
+# RFC 036: user-defined mutable method decorators
+
+class Counter:
+    value: int
+
+    @keep
+    def bump(mut self, by: int) -> int:
+        self.value = self.value + by
+        return self.value
+
+def keep(func: (&mut Counter, int) -> int) -> (&mut Counter, int) -> int:
+    return func
+
+def run(mut counter: Counter) -> int:
+    return counter.bump(2)
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    result = run(counter)

@@ -592,6 +592,7 @@ impl Formatter {
 
     // ---- Types ----
 
+    /// Format a type annotation using stable Incan syntax.
     pub(super) fn format_type(&mut self, ty: &Type) {
         match ty {
             Type::Simple(name) => self.writer.write(name),
@@ -634,6 +635,14 @@ impl Formatter {
                 }
                 self.writer.write(") -> ");
                 self.format_type(&return_type.node);
+            }
+            Type::Ref(inner) => {
+                self.writer.write("&");
+                self.format_type(&inner.node);
+            }
+            Type::RefMut(inner) => {
+                self.writer.write("&mut ");
+                self.format_type(&inner.node);
             }
             Type::SelfType => self.writer.write("Self"),
             Type::Unit => self.writer.write("None"),

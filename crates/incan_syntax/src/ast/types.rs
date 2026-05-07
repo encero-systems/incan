@@ -20,6 +20,10 @@ pub enum Type {
     Generic(Ident, Vec<Spanned<Type>>),
     /// Function type: `(int, str) -> bool`
     Function(Vec<Spanned<Type>>, Box<Spanned<Type>>),
+    /// Immutable reference type: `&T`
+    Ref(Box<Spanned<Type>>),
+    /// Mutable reference type: `&mut T`
+    RefMut(Box<Spanned<Type>>),
     /// Unit type
     Unit,
     /// Tuple type: `(int, str)`
@@ -31,6 +35,7 @@ pub enum Type {
 }
 
 impl fmt::Display for Type {
+    /// Render a type using Incan source syntax.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Simple(name) => write!(f, "{}", name),
@@ -63,6 +68,8 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {}", ret.node)
             }
+            Type::Ref(inner) => write!(f, "&{}", inner.node),
+            Type::RefMut(inner) => write!(f, "&mut {}", inner.node),
             Type::Unit => write!(f, "Unit"),
             Type::Tuple(elems) => {
                 write!(f, "(")?;

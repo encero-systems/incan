@@ -988,6 +988,8 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             let resolved_ret = resolve_type(&ret.node, symbols);
             ResolvedType::Function(resolved_params, Box::new(resolved_ret))
         }
+        Type::Ref(inner) => ResolvedType::Ref(Box::new(resolve_type(&inner.node, symbols))),
+        Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_type(&inner.node, symbols))),
         Type::Unit => ResolvedType::Unit,
         Type::Tuple(elems) => {
             let resolved_elems: Vec<_> = elems.iter().map(|e| resolve_type(&e.node, symbols)).collect();

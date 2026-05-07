@@ -150,6 +150,18 @@ impl<'a> Parser<'a> {
     fn type_atom(&mut self) -> Result<Spanned<Type>, CompileError> {
         let start = self.current_span().start;
 
+        if self.match_op(OperatorId::Amp) {
+            let mutable = self.match_keyword(KeywordId::Mut);
+            let inner = self.type_atom()?;
+            let end = inner.span.end;
+            let ty = if mutable {
+                Type::RefMut(Box::new(inner))
+            } else {
+                Type::Ref(Box::new(inner))
+            };
+            return Ok(Spanned::new(ty, Span::new(start, end)));
+        }
+
         // Unit type
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
             if self.match_token(&TokenKind::Punctuation(PunctuationId::RParen)) {

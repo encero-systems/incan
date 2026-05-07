@@ -19,6 +19,17 @@ impl AstLowering {
     // RFC 023: Type parameter lowering with trait bounds
     // ========================================================================
 
+    /// Return whether this decorator should lower through RFC 036 user-defined decorator semantics.
+    pub(in crate::backend::ir::lower) fn is_user_defined_decorator_candidate(&self, dec: &ast::Decorator) -> bool {
+        let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        if decorators::from_segments(&resolved).is_some() {
+            return false;
+        }
+        !resolved
+            .first()
+            .is_some_and(|first| decorators::is_known_decorator_namespace(first))
+    }
+
     /// Lower AST type parameters to IR type parameters, mapping explicit `with` bounds to Rust trait paths.
     ///
     /// RFC 023: Incan trait names (e.g., `Eq`) are mapped to their Rust equivalents (e.g., `PartialEq`).
@@ -97,6 +108,8 @@ impl AstLowering {
                 params: params.iter().map(|param| Self::lower_bound_type(&param.node)).collect(),
                 ret: Box::new(Self::lower_bound_type(&ret.node)),
             },
+            ast::Type::Ref(inner) => IrType::Ref(Box::new(Self::lower_bound_type(&inner.node))),
+            ast::Type::RefMut(inner) => IrType::RefMut(Box::new(Self::lower_bound_type(&inner.node))),
             ast::Type::Unit => IrType::Unit,
             ast::Type::Tuple(items) => {
                 IrType::Tuple(items.iter().map(|item| Self::lower_bound_type(&item.node)).collect())
@@ -368,6 +381,7 @@ impl AstLowering {
                     parent_levels: 0,
                 },
                 name: derive_name.to_string(),
+                is_call: false,
                 args: Vec::new(),
             },
             &self.import_aliases,
@@ -445,6 +459,8 @@ impl AstLowering {
                 format!("{name}<{inner}>")
             }
             ast::Type::Function(_, _) => "fn".to_string(),
+            ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
+            ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
             ast::Type::Unit => "()".to_string(),
             ast::Type::Tuple(items) => {
                 let inner = items

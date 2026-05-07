@@ -969,6 +969,7 @@ fn collect_backend_clone_bounds_in_expr(
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -1585,6 +1586,7 @@ fn scan_expr_for_bounds(
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)

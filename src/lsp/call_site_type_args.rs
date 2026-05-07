@@ -80,6 +80,7 @@ pub(crate) fn offset_in_call_site_type_argument_list(source: &str, offset: usize
 
 // ---- Innermost [`Spanned<Type>`] under cursor inside a call ----
 
+/// Return the innermost type node containing `offset`.
 pub(crate) fn innermost_type_node_at_offset(ty: &Spanned<Type>, offset: usize) -> Option<&Spanned<Type>> {
     if offset < ty.span.start || offset >= ty.span.end {
         return None;
@@ -104,6 +105,7 @@ pub(crate) fn innermost_type_node_at_offset(ty: &Spanned<Type>, offset: usize) -
             }
             Some(ty)
         }
+        Type::Ref(inner) | Type::RefMut(inner) => innermost_call_site_type_in_type(inner, offset).or(Some(ty)),
         Type::Qualified(_) | Type::Simple(_) | Type::Unit | Type::SelfType | Type::Infer => Some(ty),
     }
 }

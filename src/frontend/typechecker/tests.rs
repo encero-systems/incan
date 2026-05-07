@@ -2917,6 +2917,193 @@ def foo() -> None:
 }
 
 #[test]
+fn test_user_defined_plain_decorator_updates_function_binding_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def parse(value: int) -> int:
+  return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+  return parse
+
+@as_int
+def label(value: int) -> str:
+  return "value"
+
+def main() -> int:
+  return label(1)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let symbol = checker
+        .lookup_symbol("label")
+        .ok_or_else(|| "expected decorated label binding".to_string())?;
+    let SymbolKind::Variable(info) = &symbol.kind else {
+        return Err(format!("expected decorated binding to be a value, got {:?}", symbol.kind).into());
+    };
+    let ResolvedType::Function(_, ret) = &info.ty else {
+        return Err(format!("expected decorated binding to stay callable, got {:?}", info.ty).into());
+    };
+    assert_eq!(**ret, ResolvedType::Int);
+    Ok(())
+}
+
+#[test]
+fn test_user_defined_decorator_factory_and_stacking_apply_bottom_up() {
+    let source = r#"
+def keep(func: (int) -> str) -> (int) -> str:
+  return func
+
+def parse(value: int) -> int:
+  return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+  return parse
+
+def named(label: str) -> Callable[(int) -> str, (int) -> str]:
+  return keep
+
+@as_int
+@named(label="inner")
+def label(value: int) -> str:
+  return "value"
+
+def main() -> int:
+  return label(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_on_async_def_is_kept_as_candidate() {
+    let source = r#"
+import std.async
+
+def keep(func: () -> int) -> () -> int:
+  return func
+
+@keep
+async def fetch() -> int:
+  return 1
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_method_decorator_updates_method_binding_type() {
+    let source = r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def parse(box: &Box, value: int) -> int:
+  return value
+
+def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+  return parse
+
+def main(box: Box) -> int:
+  return box.label(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_trait_method_decorator_is_checked() {
+    let source = r#"
+trait Service:
+  @keep
+  def read(self) -> int
+
+def keep(func: (&Service) -> int) -> (&Service) -> int:
+  return func
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_on_unsupported_target_is_rejected() {
+    let errors = check_str_err(
+        r#"
+def keep(func: () -> int) -> () -> int:
+  return func
+
+@keep
+model Bad:
+  value: int
+"#,
+        "user-defined model decorator should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err
+            .message
+            .contains("User-defined decorator '@keep' cannot be used on model declarations")),
+        "expected unsupported target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_user_defined_decorator_on_mutable_method_is_checked() {
+    let source = r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self) -> int:
+    self.value = self.value + 1
+    return self.value
+
+def keep(func: (&mut Counter) -> int) -> (&mut Counter) -> int:
+  return func
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_rejects_non_callable_and_factory_result() {
+    let non_callable = check_str_err(
+        r#"
+const count: int = 1
+
+@count
+def label() -> int:
+  return 1
+"#,
+        "non-callable decorator should be rejected",
+    );
+    assert!(
+        non_callable
+            .iter()
+            .any(|err| err.message.contains("decorator 'count' is not callable")),
+        "expected non-callable decorator diagnostic, got {non_callable:?}"
+    );
+
+    let bad_factory = check_str_err(
+        r#"
+def count_factory() -> int:
+  return 1
+
+@count_factory()
+def label() -> int:
+  return 1
+"#,
+        "factory returning non-callable should be rejected",
+    );
+    assert!(
+        bad_factory
+            .iter()
+            .any(|err| err.message.contains("'count_factory(...)' does not return a callable")),
+        "expected non-callable factory diagnostic, got {bad_factory:?}"
+    );
+}
+
+#[test]
 fn test_rust_allow_accepts_targeted_lints() {
     let source = r#"
 @rust.allow("dead_code", "clippy::too_many_arguments")

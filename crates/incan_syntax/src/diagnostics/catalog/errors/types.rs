@@ -158,6 +158,34 @@ pub fn unknown_decorator(path: &str, span: Span) -> CompileError {
         .with_hint("Import the module alias or use a fully qualified decorator path")
 }
 
+/// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
+pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("User-defined decorator '@{path}' cannot be used on {kind} declarations"),
+        span,
+    )
+    .with_hint("User-defined decorators are supported on functions and methods")
+}
+
+/// Report a decorator expression that resolves but is not callable.
+pub fn decorator_not_callable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("decorator '{path}' is not callable"), span)
+}
+
+/// Report a decorator factory expression whose result is not callable.
+pub fn decorator_factory_not_callable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("'{path}' does not return a callable"), span)
+}
+
+/// Report a type-valued decorator argument on a user-defined decorator factory.
+pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("User-defined decorator '{path}' cannot use type-valued decorator arguments"),
+        span,
+    )
+    .with_hint("Use expression arguments such as name=value for decorator factories")
+}
+
 pub fn reserved_root_namespace(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("'{}' is a reserved root namespace", name), span)
         .with_hint("Choose a different name (reserved: std, rust)")

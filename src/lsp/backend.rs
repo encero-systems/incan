@@ -956,7 +956,8 @@ mod lsp_api_metadata_preview_tests {
         enum_variant_completion_label,
     };
     use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
-    use crate::frontend::ast::Declaration;
+    use crate::frontend::ast::{Declaration, ParamKind, Span};
+    use crate::frontend::symbols::{CallableParam, ResolvedType, Symbol, SymbolKind, VariableInfo};
     use crate::frontend::{lexer, parser, typechecker};
 
     fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
@@ -968,6 +969,50 @@ mod lsp_api_metadata_preview_tests {
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
         let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
         Ok((ast, metadata))
+    }
+
+    #[test]
+    fn checked_api_previews_use_callable_rebound_function_signature() -> Result<(), String> {
+        let source = r#"
+pub def endpoint() -> str:
+    return "raw"
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        checker.symbols.define(Symbol {
+            name: "endpoint".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(
+                    vec![CallableParam::named("id", ResolvedType::Int, ParamKind::Normal)],
+                    Box::new(ResolvedType::Bool),
+                ),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+
+        let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
+        let previews = api_metadata_previews(&ast, &metadata);
+        let function_offset = source
+            .find("endpoint")
+            .ok_or_else(|| "expected function name in fixture".to_string())?;
+        let preview = api_metadata_preview_at_offset(&previews, function_offset)
+            .ok_or_else(|| "expected checked function preview".to_string())?;
+
+        assert!(
+            preview.markdown.contains("pub def endpoint(id: int) -> bool"),
+            "expected rebound callable signature in LSP preview, got:\n{}",
+            preview.markdown
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -1292,6 +1337,8 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("({}) -> {}", params_str.join(", "), format_type(&ret.node))
         }
+        Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
+        Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),
         Type::Infer => "_".to_string(),
