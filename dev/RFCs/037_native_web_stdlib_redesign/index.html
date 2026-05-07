@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 037: native web and HTTP stdlib redesign - Incan Documentation</title>
+        <title>RFC 037: native web stdlib redesign - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-037-native-web-and-http-stdlib-redesign" class="md-skip">
+        <a href="#rfc-037-native-web-stdlib-redesign" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 037: native web and HTTP stdlib redesign
+              RFC 037: native web stdlib redesign
             
           </span>
         </div>
@@ -4964,6 +4964,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
     <span class="md-ellipsis">
       Guide-level explanation (how users think about it)
@@ -4983,18 +5001,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#consuming-an-api-with-stdhttp" class="md-nav__link">
+  <a href="#boundary-with-stdhttp" class="md-nav__link">
     <span class="md-ellipsis">
-      Consuming an API with std.http
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#shared-concepts-across-both-sides" class="md-nav__link">
-    <span class="md-ellipsis">
-      Shared concepts across both sides
+      Boundary with std.http
     </span>
   </a>
   
@@ -5070,18 +5079,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#client-model-stdhttp" class="md-nav__link">
+  <a href="#shared-semantics-with-stdhttp" class="md-nav__link">
     <span class="md-ellipsis">
-      Client model (std.http)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#shared-semantics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Shared semantics
+      Shared semantics with std.http
     </span>
   </a>
   
@@ -5226,45 +5226,36 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#outcome-b-native-api-consumption" class="md-nav__link">
+  <a href="#outcome-b-security-and-policy" class="md-nav__link">
     <span class="md-ellipsis">
-      Outcome B — Native API consumption
+      Outcome B — Security and policy
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#outcome-c-security-and-policy" class="md-nav__link">
+  <a href="#outcome-c-contracts-validation-and-documentation" class="md-nav__link">
     <span class="md-ellipsis">
-      Outcome C — Security and policy
+      Outcome C — Contracts, validation, and documentation
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#outcome-d-contracts-validation-and-documentation" class="md-nav__link">
+  <a href="#outcome-d-organization-and-dsls" class="md-nav__link">
     <span class="md-ellipsis">
-      Outcome D — Contracts, validation, and documentation
+      Outcome D — Organization and DSLs
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#outcome-e-organization-and-dsls" class="md-nav__link">
+  <a href="#outcome-e-advanced-transports" class="md-nav__link">
     <span class="md-ellipsis">
-      Outcome E — Organization and DSLs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#outcome-f-advanced-transports" class="md-nav__link">
-    <span class="md-ellipsis">
-      Outcome F — Advanced transports
+      Outcome E — Advanced transports
     </span>
   </a>
   
@@ -5285,9 +5276,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -5311,9 +5302,9 @@
   
 
 
-<h1 id="rfc-037-native-web-and-http-stdlib-redesign">RFC 037: native web and HTTP stdlib redesign<a class="headerlink" href="#rfc-037-native-web-and-http-stdlib-redesign" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-037-native-web-stdlib-redesign">RFC 037: native web stdlib redesign<a class="headerlink" href="#rfc-037-native-web-stdlib-redesign" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-03-07</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -5322,6 +5313,7 @@
 <li>RFC 031 (Library system)</li>
 <li>RFC 035 (First-class named function references)</li>
 <li>RFC 036 (User-defined decorators)</li>
+<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
 </ul>
 </li>
 <li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/171">#171</a></li>
@@ -5330,14 +5322,10 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Redesign Incan's API platform so the stdlib can both provide APIs cleanly and consume APIs cleanly.</p>
-<p>This RFC defines the intended end-state for two closely related surfaces:</p>
-<ul>
-<li><code>std.web</code> for serving HTTP applications and APIs</li>
-<li><code>std.http</code> for calling external HTTP and REST APIs</li>
-</ul>
+<p>Redesign Incan's <code>std.web</code> platform so the stdlib can provide HTTP applications and APIs cleanly.</p>
+<p>This RFC defines the intended end-state for <code>std.web</code>: Incan's standard-library surface for serving HTTP applications and APIs.</p>
 <p>The developer experience should be native to Incan rather than shaped by backend interop constraints. The primary server-side experience is FastAPI-like: <code>app = App()</code>, <code>@app.get(...)</code>, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.</p>
-<p>This RFC is intentionally an umbrella design RFC. It defines the product shape, semantics direction, capability boundaries, and migration goals for the web/http platform. If a sub-area later proves deep enough to require its own precise RFC, that follow-up RFC should refine this design rather than replace it.</p>
+<p>This RFC is intentionally an umbrella design RFC for the serving side. It defines the product shape, semantics direction, capability boundaries, and migration goals for <code>std.web</code>. If a sub-area later proves deep enough to require its own precise RFC, that follow-up RFC should refine this design rather than replace it.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>The current <code>std.web</code> proves that Incan can compile web programs, but it does not yet provide a native, coherent API platform experience.</p>
 <p>Current problems:</p>
@@ -5347,15 +5335,28 @@ backend-oriented handoff details.</li>
 <li>Routing behavior is split across compiler logic, macros, and runtime helpers.</li>
 <li>The platform does not yet present one complete framework story for auth,
 middleware, validation, docs, and lifecycle.</li>
-<li>There is no equally clean standard-library story for consuming REST APIs from Incan code.</li>
 </ul>
-<p>The goal is not just "web works." The goal is that Incan developers can build networked applications and APIs end to end, with one coherent mental model.</p>
+<p>The goal is not just "web works." The goal is that Incan developers can expose networked applications and APIs with one coherent server-side mental model.</p>
 <p>This means:</p>
 <ul>
 <li>serving APIs must feel native</li>
-<li>consuming APIs must feel native</li>
-<li>schemas, validation, errors, auth, and docs must compose cleanly across both</li>
+<li>schemas, validation, errors, auth, and docs must compose cleanly</li>
 <li>the compiler core should provide primitives, while framework ownership lives in stdlib and libraries</li>
+</ul>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Provide a native <code>std.web</code> surface for serving HTTP applications and APIs.</li>
+<li>Center the server model on <code>App</code>-owned routing, typed handlers, request extraction, response conversion, middleware, lifecycle, auth, validation, and docs metadata.</li>
+<li>Make backend framework details an implementation concern rather than the public API contract.</li>
+<li>Keep <code>std.web</code> compatible with RFC 066 where server and client concepts overlap, without making RFC 037 responsible for the <code>std.http</code> client surface.</li>
+<li>Leave room for Django-style organization, declarative route DSLs, and future transport facades as secondary surfaces over the same serving model.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Defining the <code>std.http</code> client API, retry model, redirect behavior, timeout policy, or response decoding surface; those belong to RFC 066.</li>
+<li>Defining exact grammar for every future DSL form.</li>
+<li>Defining wire-level details for gRPC, Arrow-oriented data transports, or other future protocols.</li>
+<li>Mandating the exact implementation strategy inside the compiler, stdlib runtime, or backend framework bridge.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="providing-an-api-with-stdweb">Providing an API with <code>std.web</code><a class="headerlink" href="#providing-an-api-with-stdweb" title="Permanent link">&para;</a></h3>
@@ -5386,37 +5387,16 @@ middleware, validation, docs, and lifecycle.</li>
 <li>plain Incan values are returned, and the framework handles response conversion</li>
 <li>auth, validation, middleware, and docs are framework features, not ad hoc patterns</li>
 </ul>
-<h3 id="consuming-an-api-with-stdhttp">Consuming an API with <code>std.http</code><a class="headerlink" href="#consuming-an-api-with-stdhttp" title="Permanent link">&para;</a></h3>
-<p>The outgoing side should feel equally native. <code>std.http</code> is a general-purpose HTTP client: fluent, composable, and suitable for any Incan code that needs to make HTTP calls:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.http</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Client</span><span class="p">,</span> <span class="nc">ExponentialBackoff</span>
-
-<span class="n">client</span> <span class="o">=</span> <span class="nc">Client</span><span class="p">(</span>
-    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.example.com&quot;</span><span class="p">,</span>
-    <span class="n">auth</span><span class="o">=</span><span class="nc">BearerToken</span><span class="p">(</span><span class="n">token</span><span class="p">),</span>
-    <span class="n">retry</span><span class="o">=</span><span class="nc">ExponentialBackoff</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">initial</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
-    <span class="nb">timeout</span><span class="o">=</span><span class="mi">10</span>
-<span class="p">)</span>
-
-<span class="c1"># Single typed request</span>
-<span class="n">user</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;/users/</span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">[</span><span class="nc">User</span><span class="p">]()</span>
-
-<span class="c1"># Paginated collection</span>
-<span class="n">users</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">paginate</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">[</span><span class="kt">List</span><span class="p">[</span><span class="nc">User</span><span class="p">]]()</span>
-
-<span class="c1"># POST with body</span>
-<span class="n">created</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">body</span><span class="o">=</span><span class="nc">CreateUser</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">json</span><span class="p">[</span><span class="nc">User</span><span class="p">]()</span>
-</code></pre></div>
-<p>Error handling distinguishes transport failures, protocol failures (non-2xx), and decode/validation failures. Each is a distinct error type so callers can handle them precisely.</p>
-<p>The key point is symmetry: Incan should be good at both sides of API work. A language that can expose an API but cannot cleanly consume one is still missing half the story.</p>
-<h3 id="shared-concepts-across-both-sides">Shared concepts across both sides<a class="headerlink" href="#shared-concepts-across-both-sides" title="Permanent link">&para;</a></h3>
-<p>The serving side and client side should reuse the same broad ideas where that improves the user experience:</p>
+<h3 id="boundary-with-stdhttp">Boundary with <code>std.http</code><a class="headerlink" href="#boundary-with-stdhttp" title="Permanent link">&para;</a></h3>
+<p><code>std.http</code> is owned by RFC 066. This RFC does not define the HTTP client API, retry model, redirect behavior, timeout policy, or response decoding surface.</p>
+<p>The serving side should still align with <code>std.http</code> where that improves the user experience:</p>
 <ul>
 <li>shared schema and validation conventions</li>
 <li>shared auth building blocks</li>
 <li>shared error and serialization conventions</li>
-<li>shared middleware/interceptor ideas where appropriate</li>
+<li>compatible request/response vocabulary where appropriate</li>
 </ul>
-<p>They do not need identical APIs, but they should feel like parts of one platform.</p>
+<p>Alignment does not require identical syntax or a shared implementation schedule. It requires that <code>std.web</code> does not make choices that block <code>std.http</code> from providing a coherent client-side model later.</p>
 <h3 id="optional-organizational-surfaces">Optional organizational surfaces<a class="headerlink" href="#optional-organizational-surfaces" title="Permanent link">&para;</a></h3>
 <p>The primary model should remain FastAPI-like, but the platform may also offer:</p>
 <ul>
@@ -5426,16 +5406,16 @@ middleware, validation, docs, and lifecycle.</li>
 <p>These should be facades over the same underlying platform model, not separate frameworks with separate semantics.</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h3>
-<p>This RFC covers the end-state design for Incan's standard-library API platform.</p>
+<p>This RFC covers the end-state design for Incan's standard-library web-serving platform.</p>
 <p>In scope:</p>
 <ul>
 <li><code>std.web</code> for serving HTTP applications and APIs</li>
-<li><code>std.http</code> for calling HTTP and REST APIs</li>
-<li>shared platform concepts for schemas, auth, middleware, validation, docs, and lifecycle</li>
+<li>shared web-serving concepts for schemas, auth, middleware, validation, docs, and lifecycle</li>
 <li>the extension boundary for future transports such as gRPC and Arrow-oriented data/RPC scenarios</li>
 </ul>
 <p>Out of scope for this RFC:</p>
 <ul>
+<li><code>std.http</code> client APIs, timeout/retry semantics, redirect behavior, and response decoding; these belong to RFC 066</li>
 <li>exact grammar for every future DSL form</li>
 <li>exact wire-level details for gRPC or Arrow integrations</li>
 <li>exact implementation strategy inside the compiler/runtime</li>
@@ -5444,12 +5424,12 @@ middleware, validation, docs, and lifecycle.</li>
 <h3 id="design-constraints">Design constraints<a class="headerlink" href="#design-constraints" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>FastAPI-first server UX:</strong> the primary serving experience is <code>App</code>-owned, decorator-driven, and typed.</li>
-<li><strong>Complete platform scope:</strong> serving, consuming, auth, validation, middleware, lifecycle, and docs are all part of the intended platform, not optional afterthoughts.</li>
+<li><strong>Complete server platform scope:</strong> serving, auth, validation, middleware, lifecycle, and docs are all part of the intended platform, not optional afterthoughts.</li>
 <li><strong>No backend leakage in public APIs:</strong> users should not have to think in
 backend-runtime terms for ordinary API work.</li>
 <li><strong>One platform, multiple surfaces:</strong> FastAPI-style APIs, Django-style organization, and DSLs must reduce to one coherent underlying model.</li>
 <li><strong>Library ownership over compiler ownership:</strong> framework behavior belongs in stdlib/libraries; compiler support should remain primitive and general where possible.</li>
-<li><strong>Symmetry matters:</strong> the platform must be good at both exposing and calling APIs.</li>
+<li><strong>Client compatibility without client ownership:</strong> <code>std.web</code> should align with RFC 066 where concepts overlap, but must not own the <code>std.http</code> implementation schedule.</li>
 <li><strong>HTTP is the primary baseline:</strong> other transports may extend the model, but HTTP remains the core target.</li>
 </ol>
 <h3 id="platform-capabilities">Platform capabilities<a class="headerlink" href="#platform-capabilities" title="Permanent link">&para;</a></h3>
@@ -5459,12 +5439,11 @@ backend-runtime terms for ordinary API work.</li>
 <li>request extraction and response conversion</li>
 <li>schema and validation conventions</li>
 <li>authentication and authorization</li>
-<li>middleware/interceptor pipelines</li>
+<li>middleware pipelines</li>
 <li>request context and dependency injection</li>
 <li>application lifecycle hooks</li>
 <li>standardized error modeling</li>
 <li>documentation and OpenAPI-style metadata</li>
-<li>outgoing HTTP client workflows</li>
 </ul>
 <h3 id="canonical-concepts">Canonical concepts<a class="headerlink" href="#canonical-concepts" title="Permanent link">&para;</a></h3>
 <p>The platform should converge on a shared conceptual model, even if the exact runtime representation evolves over time.</p>
@@ -5472,13 +5451,11 @@ backend-runtime terms for ordinary API work.</li>
 <ul>
 <li><code>App</code>: a serving application that owns routes, middleware, policies, docs metadata, and startup behavior</li>
 <li><code>Route</code>: a typed handler bound to a path/method combination and associated metadata</li>
-<li><code>Client</code>: an outgoing HTTP client with configuration, auth, retry policy, pagination, interceptors, and typed response helpers</li>
 <li><code>Schema</code>: a type-level contract used for validation, serialization, and docs</li>
 <li><code>AuthProvider</code>: a component that establishes identity or credentials</li>
 <li><code>Guard</code>: a component that decides whether a request may proceed</li>
 <li><code>Context</code>: request-scoped state visible to handlers and middleware</li>
 <li><code>Middleware</code>: server-side ordered behavior around request handling</li>
-<li><code>Interceptor</code>: client-side or transport-neutral ordered behavior around request execution</li>
 </ul>
 <p>This RFC intentionally names the concepts without freezing their exact internal implementation.</p>
 <h3 id="serving-model-stdweb">Serving model (<code>std.web</code>)<a class="headerlink" href="#serving-model-stdweb" title="Permanent link">&para;</a></h3>
@@ -5493,34 +5470,15 @@ backend-runtime terms for ordinary API work.</li>
 <li>docs metadata can be inferred from signatures and augmented explicitly</li>
 </ul>
 <p>The primary user-facing default should be ergonomic API development, not low-level response plumbing.</p>
-<h3 id="client-model-stdhttp">Client model (<code>std.http</code>)<a class="headerlink" href="#client-model-stdhttp" title="Permanent link">&para;</a></h3>
-<p>The consuming side is centered on <code>Client</code>. <code>std.http</code> is intentionally general-purpose: the right primitive for any Incan code that needs to make HTTP calls, not a framework-specific abstraction.</p>
-<p>Expected semantics:</p>
-<ul>
-<li>base URL, headers, auth, timeout, retry, and transport settings are client-level concepts</li>
-<li>fluent request building: <code>client.get(path).json[T]()</code>, <code>client.post(path, body=...).json[T]()</code></li>
-<li>pagination is a first-class operation on the request chain: <code>.paginate(limit=n)</code></li>
-<li>retry with configurable backoff is a client-level option, not middleware</li>
-<li>typed response decoding is first-class; the caller names the expected type</li>
-<li>error handling distinguishes transport failure, protocol failure, and
-decode/validation failure, each as a distinct error type</li>
-<li>auth and interceptor concepts compose cleanly with request execution</li>
-</ul>
-<p>The goal is not merely "HTTP requests are possible." The goal is that calling a REST API feels like standard language work rather than framework escape hatches.</p>
-<p><strong>Boundary with higher-level libraries:</strong> step-oriented HTTP abstractions such
-as <code>HttpGetStep</code> and <code>PaginatedHttpGetStep</code> belong in purpose-built libraries, not <code>std.http</code>. Those exist for the data-pipeline mental model, "I need a step that fetches data from an API," and should be implemented as thin wrappers over
-<code>std.http</code> primitives in whichever library needs them. <code>std.http</code> stays lean
-and general; pipeline ergonomics live in the library that owns that concern.</p>
-<h3 id="shared-semantics">Shared semantics<a class="headerlink" href="#shared-semantics" title="Permanent link">&para;</a></h3>
-<p>The serving and consuming sides should align on the following where useful:</p>
+<h3 id="shared-semantics-with-stdhttp">Shared semantics with <code>std.http</code><a class="headerlink" href="#shared-semantics-with-stdhttp" title="Permanent link">&para;</a></h3>
+<p>RFC 066 owns the <code>std.http</code> client contract. <code>std.web</code> should align with it on the following where useful:</p>
 <ul>
 <li>schema and validation conventions</li>
 <li>auth primitives and token/session building blocks</li>
-<li>middleware/interceptor composition ideas</li>
 <li>standardized error surfaces</li>
 <li>documentation and metadata vocabulary</li>
 </ul>
-<p>Alignment does not require identical syntax; it requires a coherent mental model.</p>
+<p>Alignment does not require identical syntax; it requires a coherent mental model across server and client libraries without coupling their release schedules.</p>
 <h3 id="authentication-and-authorization">Authentication and authorization<a class="headerlink" href="#authentication-and-authorization" title="Permanent link">&para;</a></h3>
 <p>Authentication and authorization are first-class platform capabilities, not peripheral utilities.</p>
 <p>The platform must support:</p>
@@ -5535,7 +5493,7 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <h3 id="middleware-context-and-lifecycle">Middleware, context, and lifecycle<a class="headerlink" href="#middleware-context-and-lifecycle" title="Permanent link">&para;</a></h3>
 <p>The platform must support:</p>
 <ul>
-<li>deterministic middleware/interceptor ordering</li>
+<li>deterministic middleware ordering</li>
 <li>short-circuiting, enrichment, and error transformation</li>
 <li>request-scoped context</li>
 <li>dependency provision/override patterns</li>
@@ -5551,13 +5509,13 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <li>stable error contract documentation where possible</li>
 </ul>
 <h3 id="transport-extensions">Transport extensions<a class="headerlink" href="#transport-extensions" title="Permanent link">&para;</a></h3>
-<p>HTTP is the primary target of this RFC.</p>
+<p>HTTP serving is the primary target of this RFC.</p>
 <p>However, the platform should be designed so that future RFCs can extend it toward:</p>
 <ul>
 <li>gRPC-style service transports</li>
 <li>Arrow-oriented data and RPC transports</li>
 </ul>
-<p>The intent is not to force all transports into one fake-HTTP abstraction. The intent is to avoid designing the HTTP platform in a way that blocks adjacent transports later.</p>
+<p>The intent is not to force all transports into one fake-HTTP abstraction. The intent is to avoid designing the <code>std.web</code> platform in a way that blocks adjacent transports later.</p>
 <h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
 <p>Migration from today's <code>std.web</code> should be progressive rather than disruptive.</p>
 <p>Expected migration direction:</p>
@@ -5573,7 +5531,6 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <p>Primary surface:</p>
 <ul>
 <li>FastAPI-like <code>std.web</code> for serving</li>
-<li>ergonomic <code>std.http</code> for consuming</li>
 </ul>
 <p>Secondary surfaces:</p>
 <ul>
@@ -5592,7 +5549,7 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 </ul>
 <h3 id="why-this-is-one-rfc">Why this is one RFC<a class="headerlink" href="#why-this-is-one-rfc" title="Permanent link">&para;</a></h3>
 <p>This RFC is broad on purpose because the problem is broad on purpose.</p>
-<p>Splitting "routing," "auth," "docs," and "HTTP client" into separate RFCs too early would risk designing them in isolation and then stitching together a platform after the fact. That is exactly what this RFC is trying to avoid.</p>
+<p>Splitting "routing," "auth," and "docs" into separate RFCs too early would risk designing them in isolation and then stitching together a platform after the fact. That is exactly what this RFC is trying to avoid for <code>std.web</code>.</p>
 <p>At the same time, follow-up RFCs are still appropriate when a sub-area needs deeper precision. The rule should be:</p>
 <ul>
 <li>do not split merely to split</li>
@@ -5602,7 +5559,6 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <p>If follow-up RFCs are needed later, they should refine one of these areas:</p>
 <ul>
 <li>auth/security semantics</li>
-<li>HTTP client semantics</li>
 <li>docs/schema generation rules</li>
 <li>transport-specific integrations such as gRPC</li>
 <li>declarative DSL syntax and desugaring</li>
@@ -5611,11 +5567,10 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Stay with the current hybrid model:</strong> rejected; too much leakage and too little coherence.</li>
-<li><strong>Treat serving and consuming as unrelated stdlib features:</strong> rejected; that would fragment the mental model.</li>
+<li><strong>Let <code>std.web</code> ignore <code>std.http</code> entirely:</strong> rejected; server-side choices around schemas, errors, auth metadata, and docs should stay compatible with RFC 066 where concepts overlap.</li>
 <li><strong>Design only the routing core now:</strong> rejected; the platform problem is broader than routing.</li>
 <li><strong>Make the compiler own the web framework semantics:</strong> rejected; that would work against stdlib/library evolution.</li>
 <li><strong>Make Django-style organization the primary model:</strong> rejected; FastAPI-style ergonomics are the better default for modern API development.</li>
-<li><strong>Model <code>std.http</code> as a step-oriented API (<code>HttpGetStep</code>, <code>PaginatedHttpGetStep</code>, etc.):</strong> rejected for the stdlib. The step model is optimized for data pipeline thinking and belongs in a purpose-built library that can wrap <code>std.http</code> primitives. The stdlib should remain general-purpose.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5635,17 +5590,8 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <li>framework-owned response conversion</li>
 <li>a serving experience that feels native rather than Rust-shaped</li>
 </ul>
-<h3 id="outcome-b-native-api-consumption">Outcome B — Native API consumption<a class="headerlink" href="#outcome-b-native-api-consumption" title="Permanent link">&para;</a></h3>
-<p>Incan can call HTTP and REST APIs cleanly through <code>std.http</code>.</p>
-<p>This includes:</p>
-<ul>
-<li>standard client configuration</li>
-<li>typed response decoding</li>
-<li>auth-aware requests</li>
-<li>a clear error model for network/protocol/decode failures</li>
-</ul>
-<h3 id="outcome-c-security-and-policy">Outcome C — Security and policy<a class="headerlink" href="#outcome-c-security-and-policy" title="Permanent link">&para;</a></h3>
-<p>Incan's API platform has first-class auth and policy support.</p>
+<h3 id="outcome-b-security-and-policy">Outcome B — Security and policy<a class="headerlink" href="#outcome-b-security-and-policy" title="Permanent link">&para;</a></h3>
+<p>Incan's web platform has first-class auth and policy support.</p>
 <p>This includes:</p>
 <ul>
 <li>sessions and/or token-based auth</li>
@@ -5653,23 +5599,23 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 <li>route/group/app-level enforcement</li>
 <li>auth metadata that composes with docs and tooling</li>
 </ul>
-<h3 id="outcome-d-contracts-validation-and-documentation">Outcome D — Contracts, validation, and documentation<a class="headerlink" href="#outcome-d-contracts-validation-and-documentation" title="Permanent link">&para;</a></h3>
-<p>Incan APIs have a coherent contract story.</p>
+<h3 id="outcome-c-contracts-validation-and-documentation">Outcome C — Contracts, validation, and documentation<a class="headerlink" href="#outcome-c-contracts-validation-and-documentation" title="Permanent link">&para;</a></h3>
+<p>Incan web APIs have a coherent contract story.</p>
 <p>This includes:</p>
 <ul>
 <li>schema-aware validation and serialization</li>
 <li>standardized error contracts</li>
 <li>docs/OpenAPI-style output for HTTP APIs</li>
-<li>a consistent story between serving and consuming sides</li>
+<li>compatibility with RFC 066 where server and client contracts overlap</li>
 </ul>
-<h3 id="outcome-e-organization-and-dsls">Outcome E — Organization and DSLs<a class="headerlink" href="#outcome-e-organization-and-dsls" title="Permanent link">&para;</a></h3>
+<h3 id="outcome-d-organization-and-dsls">Outcome D — Organization and DSLs<a class="headerlink" href="#outcome-d-organization-and-dsls" title="Permanent link">&para;</a></h3>
 <p>The platform can support richer organizational layers without redesigning the foundations.</p>
 <p>This includes:</p>
 <ul>
 <li>Django-style project organization where useful</li>
 <li>declarative DSLs where they improve clarity</li>
 </ul>
-<h3 id="outcome-f-advanced-transports">Outcome F — Advanced transports<a class="headerlink" href="#outcome-f-advanced-transports" title="Permanent link">&para;</a></h3>
+<h3 id="outcome-e-advanced-transports">Outcome E — Advanced transports<a class="headerlink" href="#outcome-e-advanced-transports" title="Permanent link">&para;</a></h3>
 <p>The platform can extend beyond HTTP without redesigning the foundations.</p>
 <p>This includes:</p>
 <ul>
@@ -5678,21 +5624,19 @@ and general; pipeline ergonomics live in the library that owns that concern.</p>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: must provide the HTTP-serving and HTTP-consuming surfaces that this redesign standardizes, without leaking backend crate APIs as the primary contract.</li>
-<li><strong>Language surface</strong>: the web-platform surface must be recognized and validated coherently across serving, routing, request/response types, and client usage.</li>
+<li><strong>Stdlib / runtime</strong>: must provide the HTTP-serving surface that this redesign standardizes, without leaking backend crate APIs as the primary contract.</li>
+<li><strong>Language surface</strong>: the web-platform surface must be recognized and validated coherently across serving, routing, and request/response types.</li>
 <li><strong>Execution handoff</strong>: implementations must preserve the language-level web semantics while mapping onto the chosen runtime substrate underneath.</li>
 <li><strong>Docs / tooling</strong>: the relationship between platform primitives, decorators, routing, validation, and future transport extensions must be explained clearly.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>What should the first-class <code>std.http</code> client ergonomics look like?</li>
-<li>What is the minimum auth/authz surface that belongs in the first complete platform milestone?</li>
-<li>How much validation should happen at compile time versus runtime?</li>
-<li>Which parts of docs/schema generation should be implicit, and which should require explicit metadata?</li>
-<li>Which Django-style organizational ideas belong in the stdlib, and which belong in higher-level libraries?</li>
-<li>What is the right boundary between the HTTP platform and future gRPC or Arrow-oriented follow-up RFCs?</li>
+<li>The minimum complete <code>std.web</code> platform includes route- and group-level auth requirements, reusable guards and policies, request-scoped identity access, session- or token-oriented flows, and auth metadata that composes with docs and tooling. The exact API spelling may be refined in follow-up work, but auth is part of the platform rather than a later utility layer.</li>
+<li>Validation should be split by responsibility: compile-time validation should cover names, signatures, decorator shape, metadata shape, and other statically knowable contracts; runtime validation should handle request payloads, path/query values, auth decisions, and serialization/deserialization failures that depend on incoming data.</li>
+<li>Docs and schema generation should infer contracts from checked handler signatures, models, auth metadata, and response declarations. Explicit metadata should be available for summaries, tags, examples, security requirements, and cases where inference would be ambiguous or misleading.</li>
+<li>Django-style organization is a secondary surface, not the primary model. <code>std.web</code> should own the serving primitives and any lightweight grouping concepts needed by the core platform; larger project-layout conventions may live in higher-level libraries unless they prove necessary as standard-library facades over the same <code>App</code> model.</li>
+<li>RFC 037 owns HTTP serving. Future gRPC, Arrow-oriented, or other transport RFCs may reuse concepts such as <code>App</code>, <code>Route</code>, <code>Schema</code>, <code>Guard</code>, and lifecycle hooks, but must not be forced into a fake-HTTP abstraction or make RFC 037 responsible for their wire-level details.</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
