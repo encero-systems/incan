@@ -576,6 +576,15 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
+            IrExprKind::AssociatedFunction {
+                type_name,
+                function_name,
+            } => {
+                let type_ident = Self::rust_ident(type_name);
+                let function_ident = Self::rust_ident(function_name);
+                Ok(quote! { #type_ident :: #function_ident })
+            }
+
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
             IrExprKind::UnaryOp { op, operand } => {

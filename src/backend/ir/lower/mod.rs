@@ -34,8 +34,10 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
+use super::TypedExpr;
 use super::decl::{FunctionParam, IrDecl, IrDeclKind};
-use super::expr::VarAccess;
+use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
+use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 use super::{IrProgram, Mutability};
 use crate::frontend::ast;
@@ -689,12 +691,32 @@ impl AstLowering {
                         }
                     })
                     .collect();
-                let return_type = self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
+                let return_type = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.decorated_function_bindings.get(&f.name))
+                    .and_then(|binding| match &binding.ty {
+                        crate::frontend::symbols::ResolvedType::Function(_, ret) => Some(self.lower_resolved_type(ret)),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
                 ir_program
                     .function_registry
-                    .register(f.name.clone(), params, return_type);
+                    .register(f.name.clone(), params.clone(), return_type.clone());
                 if let Some(signature) = ir_program.function_registry.get(&f.name).cloned() {
                     self.update_root_function_binding(&f.name, &signature.params, &signature.return_type);
+                }
+                if self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.decorated_function_bindings.contains_key(&f.name))
+                {
+                    let original_name = Self::decorator_original_function_name(&f.name);
+                    let original_return_type =
+                        self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
+                    ir_program
+                        .function_registry
+                        .register(original_name, params, original_return_type);
                 }
             } else if let ast::Declaration::Alias(ref alias) = decl.node
                 && let [target] = alias.target.segments.as_slice()
@@ -720,6 +742,10 @@ impl AstLowering {
                             ir_program
                                 .declarations
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
+                            match self.lower_decorated_method_statics(&struct_ir.name, &m.methods) {
+                                Ok(statics) => ir_program.declarations.extend(statics),
+                                Err(e) => errors.push(e),
+                            }
 
                             // Generate impl block (may be empty if no methods, serde methods added during emission)
                             match self.lower_model_methods(
@@ -803,6 +829,10 @@ impl AstLowering {
 
                             // Generate impl block for all methods/properties (inherited + own)
                             if !all_methods.is_empty() || !all_properties.is_empty() {
+                                match self.lower_decorated_method_statics(&struct_ir.name, &all_methods) {
+                                    Ok(statics) => ir_program.declarations.extend(statics),
+                                    Err(e) => errors.push(e),
+                                }
                                 match self.lower_class_methods(
                                     &struct_ir.name,
                                     &c.type_params,
@@ -877,6 +907,10 @@ impl AstLowering {
 
                             // Generate impl block for newtype methods (if any).
                             if !n.methods.is_empty() {
+                                match self.lower_decorated_method_statics(&struct_ir.name, &n.methods) {
+                                    Ok(statics) => ir_program.declarations.extend(statics),
+                                    Err(e) => errors.push(e),
+                                }
                                 match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[], &[]) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
@@ -897,6 +931,10 @@ impl AstLowering {
                             .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())));
 
                         if !e.methods.is_empty() {
+                            match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
+                                Ok(statics) => ir_program.declarations.extend(statics),
+                                Err(e) => errors.push(e),
+                            }
                             match self.lower_enum_methods(&enum_ir.name, &e.type_params, &e.methods, &e.traits) {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
@@ -942,6 +980,25 @@ impl AstLowering {
                     }
                     Err(e) => errors.push(e),
                 },
+                ast::Declaration::Function(f) => match self.lower_decorated_function_declarations(f) {
+                    Ok(decls) => {
+                        if f.name == conventions::ENTRYPOINT_NAME {
+                            ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
+                        }
+                        for decl in &decls {
+                            if let IrDeclKind::Function(func) = &decl.kind {
+                                ir_program.function_registry.register(
+                                    func.name.clone(),
+                                    func.params.clone(),
+                                    func.return_type.clone(),
+                                );
+                                self.update_root_function_binding(&func.name, &func.params, &func.return_type);
+                            }
+                        }
+                        ir_program.declarations.extend(decls);
+                    }
+                    Err(e) => errors.push(e),
+                },
                 _ => {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node) {
@@ -976,6 +1033,127 @@ impl AstLowering {
         } else {
             // Return all collected errors
             Err(LoweringErrors(errors))
+        }
+    }
+
+    /// Lower a function declaration, expanding RFC 036 decorated functions into original/static/wrapper items.
+    fn lower_decorated_function_declarations(&mut self, f: &ast::FunctionDecl) -> Result<Vec<IrDecl>, LoweringError> {
+        let Some(binding) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.decorated_function_bindings.get(&f.name).cloned())
+        else {
+            return Ok(vec![self.lower_declaration(&ast::Declaration::Function(f.clone()))?]);
+        };
+        let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
+            return Err(LoweringError {
+                message: format!(
+                    "decorated function '{}' lowers only when the decorated binding remains callable",
+                    f.name
+                ),
+                span: ast::Span::default().into(),
+            });
+        };
+
+        let original_name = Self::decorator_original_function_name(&f.name);
+        let original = self.lower_function_named(f, original_name.clone(), super::decl::Visibility::Private)?;
+        let decorated_ty = IrType::Function {
+            params: callable_params
+                .iter()
+                .map(|param| self.lower_resolved_type(&param.ty))
+                .collect(),
+            ret: Box::new(self.lower_resolved_type(&callable_ret)),
+        };
+
+        let decorator_expr = self.decorator_application_expr(&f.name, &f.decorators)?;
+        let mut value = self.lower_expr_spanned(&decorator_expr)?;
+        value.ty = decorated_ty.clone();
+        let static_name = Self::decorator_static_binding_name(&f.name);
+        let wrapper = self.decorated_function_wrapper(f, &static_name, &callable_params, callable_ret.as_ref());
+
+        Ok(vec![
+            IrDecl::new(IrDeclKind::Function(original)),
+            IrDecl::new(IrDeclKind::Static {
+                visibility: super::decl::Visibility::Private,
+                name: static_name,
+                ty: decorated_ty,
+                value,
+            }),
+            IrDecl::new(IrDeclKind::Function(wrapper)),
+        ])
+    }
+
+    /// Lower the public function wrapper that dispatches through the decorated callable static.
+    fn decorated_function_wrapper(
+        &mut self,
+        f: &ast::FunctionDecl,
+        static_name: &str,
+        callable_params: &[crate::frontend::symbols::CallableParam],
+        callable_ret: &crate::frontend::symbols::ResolvedType,
+    ) -> super::decl::IrFunction {
+        let params: Vec<FunctionParam> = callable_params
+            .iter()
+            .enumerate()
+            .map(|(idx, param)| {
+                let base_ty = self.lower_resolved_type(&param.ty);
+                FunctionParam {
+                    name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                    ty: Self::lower_param_container_type(param.kind, base_ty),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: param.kind,
+                    default: None,
+                }
+            })
+            .collect();
+        let return_type = self.lower_resolved_type(callable_ret);
+        let static_func = TypedExpr::new(
+            IrExprKind::StaticRead {
+                name: static_name.to_string(),
+            },
+            IrType::Function {
+                params: params.iter().map(|param| param.ty.clone()).collect(),
+                ret: Box::new(return_type.clone()),
+            },
+        );
+        let args = params
+            .iter()
+            .map(|param| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: TypedExpr::new(
+                    IrExprKind::Var {
+                        name: param.name.clone(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    param.ty.clone(),
+                ),
+            })
+            .collect();
+        let call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(static_func),
+                type_args: Vec::new(),
+                args,
+                callable_signature: None,
+                canonical_path: None,
+            },
+            return_type.clone(),
+        );
+
+        super::decl::IrFunction {
+            name: f.name.clone(),
+            params,
+            return_type,
+            body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
+            is_async: f.is_async(),
+            is_generator: false,
+            visibility: Self::map_visibility(f.visibility),
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
         }
     }
 

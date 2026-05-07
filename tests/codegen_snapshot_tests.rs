@@ -647,6 +647,27 @@ fn test_function_references_codegen() {
 }
 
 #[test]
+fn test_user_defined_decorators_codegen() {
+    let source = load_test_file("user_defined_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_decorators", rust_code);
+}
+
+#[test]
+fn test_user_defined_method_decorators_codegen() {
+    let source = load_test_file("user_defined_method_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_method_decorators", rust_code);
+}
+
+#[test]
+fn test_user_defined_mutable_method_decorators_codegen() {
+    let source = load_test_file("user_defined_mutable_method_decorators");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("user_defined_mutable_method_decorators", rust_code);
+}
+
+#[test]
 fn test_rfc070_result_combinators_codegen() {
     let source = r#"
 def double(value: int) -> int:

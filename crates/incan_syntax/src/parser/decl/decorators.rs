@@ -1,5 +1,6 @@
 /// Decorator parsing (`@decorator(...)`) for declarations and methods.
 impl<'a> Parser<'a> {
+    /// Parse all leading decorators for the next declaration.
     fn decorators(&mut self) -> Result<Vec<Spanned<Decorator>>, CompileError> {
         let mut decorators = Vec::new();
         while self.match_punct(PunctuationId::At) {
@@ -10,7 +11,8 @@ impl<'a> Parser<'a> {
                 .last()
                 .cloned()
                 .ok_or_else(|| errors::decorator_path_expected(self.current_span()))?;
-            let args = if self.match_punct(PunctuationId::LParen) {
+            let is_call = self.match_punct(PunctuationId::LParen);
+            let args = if is_call {
                 let args = self.decorator_args()?;
                 self.expect_punct(PunctuationId::RParen, "Expected ')' after decorator arguments")?;
                 args
@@ -19,7 +21,12 @@ impl<'a> Parser<'a> {
             };
             let end = self.tokens[self.pos - 1].span.end;
             decorators.push(Spanned::new(
-                Decorator { path, name, args },
+                Decorator {
+                    path,
+                    name,
+                    is_call,
+                    args,
+                },
                 Span::new(start, end),
             ));
             self.skip_newlines();

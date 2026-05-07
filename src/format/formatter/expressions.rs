@@ -712,6 +712,14 @@ impl Formatter {
                 self.writer.write(") -> ");
                 self.format_type(&return_type.node);
             }
+            Type::Ref(inner) => {
+                self.writer.write("&");
+                self.format_type(&inner.node);
+            }
+            Type::RefMut(inner) => {
+                self.writer.write("&mut ");
+                self.format_type(&inner.node);
+            }
             Type::SelfType => self.writer.write("Self"),
             Type::Unit => self.writer.write("None"),
             Type::Infer => self.writer.write("_"),

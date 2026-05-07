@@ -1,6 +1,6 @@
 # RFC 036: user-defined decorators
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,7 @@
 - **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170)
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -296,7 +296,9 @@ A decorator applied to an `async def` receives an async function value. The deco
 
 ### Syntax
 
-No new syntax is introduced. `@name` and `@name(args)` already parse. The only change is that unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
+No new decorator syntax is introduced. `@name` and `@name(args)` already parse. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
+
+Method decorator signatures use reference callable parameters for receivers. Immutable method receivers are written as `&Owner`, and mutable method receivers are written as `&mut Owner`, for example `(&Box, int) -> str` and `(&mut Counter, int) -> int`.
 
 Class, model, trait, newtype, enum, field, alias, and module declarations continue to restrict decorators to compiler built-ins where such decorators are supported.
 
@@ -348,11 +350,93 @@ Fully additive and non-breaking. Previously-invalid unknown decorators on functi
 - **Stdlib (web)** — once the primitive lands, `App` and `router` can expose ordinary decorator syntax using `@app.get` / `@app.post`; the exact route collection and global `@route` transition are deferred.
 - **LSP** — hover on a decorated binding should show the post-decoration type.
 
+## Implementation Plan
+
+### Phase 1: Parser, AST, and Decorator Classification
+
+- Keep parsed decorator syntax unchanged, but stop rejecting unknown decorators on functions, async functions, and methods during builtin decorator validation.
+- Preserve compiler-owned decorators through the existing decorator registry and diagnostics.
+- Add explicit rejection for user-defined decorators on unsupported declaration targets.
+- Add focused parser/typechecker tests that prove functions and methods can carry unknown decorator candidates while unsupported targets still reject them.
+
+### Phase 2: Typechecker Binding Semantics
+
+- Type-check user-defined decorator expressions as callable values applied to the decorated function binding.
+- Apply stacked decorators bottom-up and update the visible binding type after each decorator application.
+- Support decorator factories by checking the factory expression first and then checking the returned callable-shaped value against the decorated binding.
+- Emit targeted diagnostics for non-callable decorators, argument mismatches, and factory results that are not callable.
+- Preserve compiler-owned decorator behavior, including `@route`, `@rust.extern`, `@staticmethod`, `@classmethod`, and `@requires`.
+
+### Phase 3: Lowering and Emission
+
+- Lower decorated function and method declarations so generated code exposes the post-decoration binding.
+- Ensure later references, exports, imports, checked API metadata, and emitted code observe the decorated binding rather than a stale undecorated function type.
+- Avoid introducing arbitrary module-level statement execution or module-initialization side effects.
+- Add codegen snapshot and integration coverage for plain decorators, decorator factories, stacked decorators, and methods.
+
+### Phase 4: Tooling, Docs, Versioning, and Closeout
+
+- Update LSP/checked metadata surfaces so hover and API metadata report post-decoration binding types where those types are known.
+- Update authored user-facing documentation for decorators and callable references.
+- Add a release note entry for RFC 036 and bump the active dev version.
+- Run focused verification during development and the repo-level gate before closeout.
+
+## Implementation log
+
+### Spec / RFC
+
+- [x] Resolve RFC 036 open questions and move settled answers into Design Decisions.
+- [x] Move RFC 036 to In Progress before implementation starts.
+- [x] Keep the checklist current as implementation slices land.
+
+### Parser / AST
+
+- [x] Preserve unknown decorator syntax on functions, async functions, and methods.
+- [x] Keep compiler-owned decorator parsing and formatting unchanged.
+- [x] Reject user-defined decorators on unsupported declaration targets.
+- [x] Add parser/typechecker coverage for valid and invalid decorator targets.
+
+### Typechecker
+
+- [x] Classify decorators as compiler-owned or user-defined after import/alias resolution.
+- [x] Type-check plain user-defined decorators as callable application to the decorated function value.
+- [x] Type-check decorator factories as factory expression plus returned callable application.
+- [x] Apply stacked decorators bottom-up and update the visible binding type after each step.
+- [x] Preserve builtin decorator behavior and diagnostics.
+- [x] Add diagnostics for non-callable decorators, type mismatches, and non-callable factory results.
+
+### Lowering / Emission
+
+- [x] Lower decorated functions and methods to post-decoration bindings.
+- [x] Ensure later references, exports, imports, and emitted code observe the decorated type.
+- [x] Avoid arbitrary module-level statement execution or module-initialization side effects.
+- [x] Add codegen snapshot coverage for plain decorators, immutable methods, and mutable methods.
+
+### Tooling / Metadata
+
+- [x] Update checked API metadata for post-decoration function and method types where known.
+- [x] Update LSP hover behavior for decorated bindings where known.
+- [x] Preserve decorator metadata for existing docs/tooling consumers.
+
+### Docs / Release
+
+- [x] Update authored docs for user-defined decorators.
+- [x] Add a release notes entry for RFC 036 / #170.
+- [x] Bump the active dev version from `0.3.0-dev.33`.
+
+### Verification
+
+- [x] Run focused parser/typechecker tests for decorator target and diagnostic behavior.
+- [x] Run focused lowering/codegen snapshot tests for decorated bindings.
+- [x] Run docs verification for edited docs-site content.
+- [x] Run `make fmt`.
+- [x] Run `make pre-commit`.
+
 ## Design Decisions
 
 1. **Generic decorators**: RFC 036 allows generic decorators where the current type system can express the decorator's callable signature and infer or check the application. More advanced parameter-pack-style callable polymorphism remains outside this RFC.
 
-2. **Methods are in scope; type declarations are not**: User-defined decorators are valid on functions, async functions, and methods. Class, model, trait, newtype, enum, field, alias, and module decorators remain compiler-built-ins only where supported. User-defined class and model decorators can be revisited once clear use cases exist.
+2. **Methods are in scope; type declarations are not**: User-defined decorators are valid on functions, async functions, immutable methods, and mutable methods. Class, model, trait, newtype, enum, field, alias, and module decorators remain compiler-built-ins only where supported. User-defined class and model decorators can be revisited once clear use cases exist.
 
 3. **`@route` stays compiler-owned for now**: `@route` displays as a decorator but receives special compiler treatment today. This RFC keeps it working unchanged while making route-style APIs expressible through ordinary decorator syntax. Any deprecation or re-expression of global `@route` belongs to RFC 037 or a dedicated web-routing transition RFC.
 

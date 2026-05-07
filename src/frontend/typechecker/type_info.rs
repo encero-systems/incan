@@ -102,6 +102,10 @@ pub struct TypeCheckInfo {
     pub regular_method_arg_shape_preserving_calls: HashSet<(usize, usize, String)>,
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
+    /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
+    pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
+    /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
+    pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
     /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
     /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
     ///
@@ -259,6 +263,22 @@ pub struct RustArgCoercionInfo {
 pub struct StaticBindingInfo {
     /// `true` when this name came from `from pub::... import NAME`.
     pub is_imported: bool,
+}
+
+/// Lowering metadata for one RFC 036 decorated function binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecoratedFunctionBindingInfo {
+    /// Final type of the module-visible binding after applying all user-defined decorators.
+    pub ty: ResolvedType,
+}
+
+/// Lowering metadata for one RFC 036 decorated method binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecoratedMethodBindingInfo {
+    /// Final unbound callable type after applying all user-defined decorators. The receiver is the first parameter.
+    pub unbound_ty: ResolvedType,
+    /// Original unbound callable type before decorators are applied. The receiver is the first parameter.
+    pub original_unbound_ty: ResolvedType,
 }
 
 /// Lowering and test-runner metadata for one `std.testing.fixture` function.

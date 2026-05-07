@@ -495,6 +495,12 @@ impl AstLowering {
                     .collect(),
                 ret: Box::new(self.lower_type_with_type_params(&ret.node, type_param_names)),
             },
+            ast::Type::Ref(inner) => IrType::Ref(Box::new(
+                self.lower_type_with_type_params(&inner.node, type_param_names),
+            )),
+            ast::Type::RefMut(inner) => IrType::RefMut(Box::new(
+                self.lower_type_with_type_params(&inner.node, type_param_names),
+            )),
             ast::Type::Unit => IrType::Unit,
             ast::Type::Tuple(items) => IrType::Tuple(
                 items

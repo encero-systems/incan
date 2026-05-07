@@ -1128,6 +1128,51 @@ def c() -> None:
     }
 
     #[test]
+    fn test_parse_unknown_decorators_on_functions_async_defs_and_methods() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.async
+
+@logged
+def sync_func() -> None:
+  pass
+
+@traced
+async def async_func() -> None:
+  pass
+
+class Service:
+  value: int
+
+  @cached
+  def read(self) -> int:
+    return self.value
+"#;
+        let program = parse_str(source)?;
+        let funcs: Vec<_> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match &d.node {
+                Declaration::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(funcs.len(), 2);
+        assert_eq!(funcs[0].decorators[0].node.name, "logged");
+        assert_eq!(funcs[1].decorators[0].node.name, "traced");
+
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|d| match &d.node {
+                Declaration::Class(c) => Some(c),
+                _ => None,
+            })
+            .ok_or_else(|| vec![CompileError::new("expected class declaration".to_string(), Span::default())])?;
+        assert_eq!(class.methods[0].node.decorators[0].node.name, "cached");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_namespaced_decorator_with_named_args() -> Result<(), Vec<CompileError>> {
         // RFC 022: Namespaced decorators with positional + named arguments
         let source = r#"
@@ -3572,6 +3617,31 @@ def check(f: Callable[(int, str), bool]) -> None:
                 assert!(matches!(ret.node, Type::Simple(ref name) if name == "bool"));
             }
             other => panic!("Expected desugared function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_type_accepts_reference_params() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  value: int
+
+def decorate(f: (&Box, &mut Box) -> int) -> (&Box) -> int:
+  return f
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[1].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, _) => {
+                assert!(matches!(params[0].node, Type::Ref(_)));
+                assert!(matches!(params[1].node, Type::RefMut(_)));
+            }
+            other => panic!("Expected function type, got: {other:?}"),
         }
         Ok(())
     }

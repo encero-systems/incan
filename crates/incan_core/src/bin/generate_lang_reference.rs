@@ -372,6 +372,43 @@ fn render_builtins_section(out: &mut String) {
 fn render_decorators_section(out: &mut String) {
     start_section(out, "## Decorators");
 
+    out.push_str(
+        r#"User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:
+
+```incan
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def main() -> None:
+    result = label(1)  # int
+```
+
+Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+`@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.
+
+Method decorators receive an unbound callable shape with the receiver first. A decorator on
+`def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on
+`def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.
+
+Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`,
+and `@requires` keep their existing special behavior.
+
+"#,
+    );
+
     out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
     out.push_str("|---|---|---|---|---|---|---|\n");
 

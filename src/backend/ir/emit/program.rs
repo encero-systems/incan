@@ -682,6 +682,20 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
                 self.mark_reachable_item(name);
             }
+            IrExprKind::AssociatedFunction {
+                type_name,
+                function_name,
+            } => {
+                self.mark_reachable_item(type_name);
+                self.analysis
+                    .used_methods
+                    .insert((type_name.clone(), function_name.clone()));
+                if let Some(original_name) = function_name.strip_suffix("_adapter") {
+                    self.analysis
+                        .used_methods
+                        .insert((type_name.clone(), original_name.to_string()));
+                }
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 self.scan_expr(left);
                 self.scan_expr(right);
@@ -1375,6 +1389,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
+            | IrExprKind::AssociatedFunction { .. }
             | IrExprKind::Var { .. }
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }

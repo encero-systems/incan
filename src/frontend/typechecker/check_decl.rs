@@ -13,7 +13,7 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
 
-use super::{TestingFixtureInfo, TypeChecker, YieldContext};
+use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::RustItemKind;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
@@ -41,6 +41,19 @@ fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
         ParamKind::RestPositional => list_ty(ty),
         ParamKind::RestKeyword => dict_ty(ResolvedType::Str, ty),
     }
+}
+
+/// Convert a collected function signature into the callable value type that decorators receive.
+fn function_info_callable_type(info: &FunctionInfo) -> ResolvedType {
+    ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone()))
+}
+
+/// Convert a collected method signature into the callable value type that method decorators receive.
+fn method_info_callable_type(info: &MethodInfo, receiver_ty: ResolvedType) -> ResolvedType {
+    let mut params = Vec::with_capacity(info.params.len() + 1);
+    params.push(CallableParam::named("self", receiver_ty, ParamKind::Normal));
+    params.extend(info.params.clone());
+    ResolvedType::Function(params, Box::new(info.return_type.clone()))
 }
 
 /// Callable signature resolved for one `interop:` adapter reference.
@@ -1914,7 +1927,7 @@ impl TypeChecker {
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
 
-        self.validate_decorators(&model.decorators);
+        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
         let derives = self.extract_derive_names(&model.decorators);
@@ -2165,7 +2178,7 @@ impl TypeChecker {
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
-        self.validate_decorators(&class.decorators);
+        self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
         let derives = self.extract_derive_names(&class.decorators);
@@ -2357,7 +2370,7 @@ impl TypeChecker {
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
-        self.validate_decorators(&tr.decorators);
+        self.validate_decorators_rejecting_user_defined(&tr.decorators, "trait");
         self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
@@ -2382,6 +2395,7 @@ impl TypeChecker {
         self.current_trait_name = Some(tr.name.clone());
 
         for method in &tr.methods {
+            self.validate_decorators_allowing_user_defined(&method.node.decorators);
             if method.node.body.is_some() {
                 let prev_method_seen = self.current_trait_missing_requires_emitted.take();
                 self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
@@ -2397,6 +2411,7 @@ impl TypeChecker {
                 );
                 self.current_trait_missing_requires_emitted = prev_method_seen;
             }
+            self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
         for property in &tr.properties {
             if property.node.body.is_some() {
@@ -2417,7 +2432,7 @@ impl TypeChecker {
 
     /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
-        self.validate_decorators(&nt.decorators);
+        self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -2506,7 +2521,7 @@ impl TypeChecker {
     fn check_enum(&mut self, en: &EnumDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
 
-        self.validate_decorators(&en.decorators);
+        self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
         let derives = self.extract_derive_names(&en.decorators);
 
@@ -2726,11 +2741,280 @@ impl TypeChecker {
         }
     }
 
+    /// Apply RFC 036 user-defined decorators to a top-level function binding after its body has been checked.
+    ///
+    /// The undecorated function is already present in the module symbol table from collection. Each user-defined
+    /// decorator is checked as `decorator(current_binding)`, bottom-up, and the module-visible binding is then replaced
+    /// with the resulting type as an ordinary immutable value.
+    fn apply_user_defined_function_decorators(&mut self, func: &FunctionDecl, span: Span) {
+        if !func
+            .decorators
+            .iter()
+            .any(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))
+        {
+            return;
+        }
+
+        let Some(original_ty) = self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Function(info) => Some(function_info_callable_type(info)),
+            SymbolKind::Variable(info) => Some(info.ty.clone()),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        let mut binding_ty = original_ty;
+        for decorator in func.decorators.iter().rev() {
+            if self.is_user_defined_decorator_candidate(&decorator.node) {
+                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &func.name);
+            }
+        }
+
+        if let Some(symbol_id) = self.symbols.lookup(&func.name)
+            && let Some(symbol) = self.symbols.get_mut(symbol_id)
+        {
+            self.type_info.decorated_function_bindings.insert(
+                func.name.clone(),
+                DecoratedFunctionBindingInfo { ty: binding_ty.clone() },
+            );
+            symbol.kind = SymbolKind::Variable(VariableInfo {
+                ty: binding_ty,
+                is_mutable: false,
+                is_used: false,
+            });
+            symbol.span = span;
+        }
+    }
+
+    /// Apply RFC 036 user-defined decorators to a method table entry when the current method representation can store
+    /// the resulting callable signature.
+    fn apply_user_defined_method_decorators(&mut self, method: &MethodDecl, owner: &str) {
+        if !method
+            .decorators
+            .iter()
+            .any(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))
+        {
+            return;
+        }
+
+        let Some(mut method_info) = self.lookup_method_info_for_update(owner, &method.name) else {
+            return;
+        };
+        let receiver_ty = self.decorated_method_receiver_type(owner, method.receiver);
+        let original_binding_ty = method_info_callable_type(&method_info, receiver_ty);
+        let mut binding_ty = original_binding_ty.clone();
+        for decorator in method.decorators.iter().rev() {
+            if self.is_user_defined_decorator_candidate(&decorator.node) {
+                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &method.name);
+            }
+        }
+
+        let ResolvedType::Function(params, ret) = binding_ty.clone() else {
+            return;
+        };
+        let Some((_receiver, surface_params)) = params.split_first() else {
+            return;
+        };
+        self.type_info.decorated_method_bindings.insert(
+            (owner.to_string(), method.name.clone()),
+            DecoratedMethodBindingInfo {
+                unbound_ty: binding_ty,
+                original_unbound_ty: original_binding_ty,
+            },
+        );
+        method_info.params = surface_params.to_vec();
+        method_info.return_type = *ret;
+        self.replace_method_info(owner, &method.name, method_info);
+    }
+
+    /// Return the source-level receiver type passed as the first argument to a method decorator.
+    fn decorated_method_receiver_type(&self, owner: &str, receiver: Option<Receiver>) -> ResolvedType {
+        let owner_ty = ResolvedType::Named(owner.to_string());
+        if receiver == Some(Receiver::Mutable) {
+            ResolvedType::RefMut(Box::new(owner_ty))
+        } else {
+            ResolvedType::Ref(Box::new(owner_ty))
+        }
+    }
+
+    /// Return the method metadata currently visible for an owner and method name.
+    fn lookup_method_info_for_update(&self, owner: &str, method_name: &str) -> Option<MethodInfo> {
+        let symbol_id = self.symbols.lookup(owner)?;
+        let symbol = self.symbols.get(symbol_id)?;
+        match &symbol.kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Class(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Newtype(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Type(TypeInfo::Enum(info)) => info.methods.get(method_name).cloned(),
+            SymbolKind::Trait(info) => info.methods.get(method_name).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Replace an owner method entry after decorator application has produced a representable callable type.
+    fn replace_method_info(&mut self, owner: &str, method_name: &str, method_info: MethodInfo) {
+        let Some(symbol_id) = self.symbols.lookup(owner) else {
+            return;
+        };
+        let Some(symbol) = self.symbols.get_mut(symbol_id) else {
+            return;
+        };
+        match &mut symbol.kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Type(TypeInfo::Newtype(info)) => {
+                info.methods.insert(method_name.to_string(), method_info);
+            }
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                info.methods.insert(method_name.to_string(), method_info.clone());
+                if let Some(overloads) = info.method_overloads.get_mut(method_name) {
+                    *overloads = vec![method_info];
+                }
+            }
+            SymbolKind::Trait(info) => {
+                info.methods.insert(method_name.to_string(), method_info);
+            }
+            _ => {}
+        }
+    }
+
+    /// Type-check one decorator application against the current decorated binding type.
+    fn apply_user_defined_decorator(
+        &mut self,
+        decorator: &Spanned<Decorator>,
+        binding_ty: ResolvedType,
+        binding_name: &str,
+    ) -> ResolvedType {
+        let display = Self::decorator_display(&decorator.node);
+        let callable_ty = if decorator.node.is_call {
+            self.check_decorator_factory_expr(decorator, &display)
+        } else {
+            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
+        };
+
+        self.apply_decorator_callable(&display, callable_ty, binding_ty, binding_name, decorator.span)
+    }
+
+    /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
+    fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        let Some(args) = self.decorator_call_args(decorator, display) else {
+            return ResolvedType::Unknown;
+        };
+        let path = &decorator.node.path.segments;
+        let factory_expr = if path.len() >= 2 {
+            let base_path = ImportPath {
+                parent_levels: decorator.node.path.parent_levels,
+                is_absolute: decorator.node.path.is_absolute,
+                segments: path[..path.len() - 1].to_vec(),
+            };
+            let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+            let method = path.last().cloned().unwrap_or_default();
+            Spanned::new(
+                Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                decorator.span,
+            )
+        } else {
+            let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
+            Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+        };
+        self.check_expr(&factory_expr)
+    }
+
+    /// Apply a callable decorator value to the decorated binding type and return the post-decoration binding type.
+    fn apply_decorator_callable(
+        &mut self,
+        display: &str,
+        callable_ty: ResolvedType,
+        binding_ty: ResolvedType,
+        binding_name: &str,
+        span: Span,
+    ) -> ResolvedType {
+        let ResolvedType::Function(params, ret) = callable_ty else {
+            if !matches!(callable_ty, ResolvedType::Unknown) {
+                self.errors.push(if display.contains('(') {
+                    errors::decorator_factory_not_callable(display, span)
+                } else {
+                    errors::decorator_not_callable(display, span)
+                });
+            }
+            return ResolvedType::Unknown;
+        };
+
+        let arg_expr = Spanned::new(Expr::Ident(binding_name.to_string()), span);
+        let args = vec![CallArg::Positional(arg_expr)];
+        let arg_types = vec![binding_ty];
+        let mut type_bindings = HashMap::new();
+        let error_count = self.errors.len();
+        self.validate_callable_arg_bindings(display, &params, &args, &arg_types, &mut type_bindings, span);
+        if self.errors.len() != error_count {
+            return ResolvedType::Unknown;
+        }
+        substitute_resolved_type(&ret, &type_bindings)
+    }
+
+    /// Convert decorator arguments into ordinary call arguments for user-defined decorator factory checking.
+    fn decorator_call_args(&mut self, decorator: &Spanned<Decorator>, display: &str) -> Option<Vec<CallArg>> {
+        let mut args = Vec::new();
+        let mut valid = true;
+        for arg in &decorator.node.args {
+            match arg {
+                DecoratorArg::Positional(expr) => args.push(CallArg::Positional(expr.clone())),
+                DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => {
+                    args.push(CallArg::Named(name.clone(), expr.clone()));
+                }
+                DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) => {
+                    self.errors
+                        .push(errors::decorator_type_argument_not_supported(display, ty.span));
+                    valid = false;
+                }
+            }
+        }
+        valid.then_some(args)
+    }
+
+    /// Render a decorator path with a coarse call marker for diagnostics.
+    fn decorator_display(decorator: &Decorator) -> String {
+        let path = decorator.path.segments.join(".");
+        if decorator.is_call {
+            format!("{path}(...)")
+        } else {
+            path
+        }
+    }
+
+    /// Build an expression from a decorator's path.
+    fn decorator_path_expr(decorator: &Decorator, span: Span) -> Spanned<Expr> {
+        Self::decorator_path_expr_from_import_path(&decorator.path, span)
+    }
+
+    /// Build an identifier/field expression from an import-style decorator path.
+    fn decorator_path_expr_from_import_path(path: &ImportPath, span: Span) -> Spanned<Expr> {
+        let mut segments = path.segments.iter();
+        let Some(first) = segments.next() else {
+            return Spanned::new(Expr::Ident(String::new()), span);
+        };
+        let mut expr = Spanned::new(Expr::Ident(first.clone()), span);
+        for segment in segments {
+            expr = Spanned::new(Expr::Field(Box::new(expr), segment.clone()), span);
+        }
+        expr
+    }
+
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl) {
         self.symbols.enter_scope(ScopeKind::Function);
 
-        self.validate_decorators(&func.decorators);
+        self.validate_decorators_allowing_user_defined(&func.decorators);
         self.validate_callable_rest_params(&func.params);
         let fixture_span = fixture_function_span(func);
         let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
@@ -2849,6 +3133,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
+        self.apply_user_defined_function_decorators(func, fixture_span);
     }
 
     /// Resolve generic type-parameter bounds while preserving trait type arguments for call-site checks.
@@ -2879,7 +3164,7 @@ impl TypeChecker {
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
-        self.validate_decorators(&method.decorators);
+        self.validate_decorators_allowing_user_defined(&method.decorators);
         let owner_type_params = self
             .lookup_type_info(owner)
             .map(|info| match info {
@@ -2904,6 +3189,7 @@ impl TypeChecker {
         };
         self.check_method_with_self_ty(method, owner_self_ty, &owner_type_params, owner_params);
         self.current_method_owner = previous_owner;
+        self.apply_user_defined_method_decorators(method, owner);
     }
 
     /// Validate a model or class computed property body using the concrete nominal owner as immutable `self`.

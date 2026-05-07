@@ -1255,6 +1255,16 @@ fn ast_type_to_resolved_with_rust_imports(
             let ret_type = ast_type_to_resolved_with_rust_imports(&ret.node, type_params, rust_imports);
             ResolvedType::Function(param_types, Box::new(ret_type))
         }
+        ast::Type::Ref(inner) => ResolvedType::Ref(Box::new(ast_type_to_resolved_with_rust_imports(
+            &inner.node,
+            type_params,
+            rust_imports,
+        ))),
+        ast::Type::RefMut(inner) => ResolvedType::RefMut(Box::new(ast_type_to_resolved_with_rust_imports(
+            &inner.node,
+            type_params,
+            rust_imports,
+        ))),
         ast::Type::Tuple(elems) => {
             let elem_types: Vec<ResolvedType> = elems
                 .iter()

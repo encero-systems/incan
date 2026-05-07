@@ -5,7 +5,7 @@ use super::super::super::decl::{FunctionParam, IrFunction, IrTraitBound, IrTrait
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use crate::frontend::ast;
+use crate::frontend::ast::{self, DecoratorArg, DecoratorArgValue, Expr, ImportPath, Spanned};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 /// Return whether a lowered callable return type is the canonical `Generator[...]` wrapper.
@@ -44,6 +44,16 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_function(
         &mut self,
         f: &ast::FunctionDecl,
+    ) -> Result<IrFunction, LoweringError> {
+        self.lower_function_named(f, f.name.clone(), Self::map_visibility(f.visibility))
+    }
+
+    /// Lower a function declaration using an explicit emitted name and visibility.
+    pub(in crate::backend::ir::lower) fn lower_function_named(
+        &mut self,
+        f: &ast::FunctionDecl,
+        name: String,
+        visibility: super::super::super::decl::Visibility,
     ) -> Result<IrFunction, LoweringError> {
         self.push_scope();
 
@@ -141,17 +151,114 @@ impl AstLowering {
         }
 
         Ok(IrFunction {
-            name: f.name.clone(),
+            name,
             params,
             return_type,
             body,
             is_async: f.is_async(),
             is_generator,
-            visibility: Self::map_visibility(f.visibility),
+            visibility,
             type_params: all_type_params,
             is_extern,
             rust_attributes,
             lint_allows,
         })
+    }
+
+    /// Return the private emitted function name that stores an undecorated original.
+    pub(in crate::backend::ir::lower) fn decorator_original_function_name(name: &str) -> String {
+        format!("__incan_original_{name}")
+    }
+
+    /// Return the private emitted static name that stores the decorated callable binding.
+    pub(in crate::backend::ir::lower) fn decorator_static_binding_name(name: &str) -> String {
+        format!("__incan_decorated_{name}")
+    }
+
+    /// Build an expression that resolves a decorator's path through ordinary expression lowering.
+    pub(in crate::backend::ir::lower) fn decorator_path_expr(
+        decorator: &ast::Decorator,
+        span: ast::Span,
+    ) -> Spanned<Expr> {
+        Self::decorator_path_expr_from_import_path(&decorator.path, span)
+    }
+
+    /// Convert an import-like decorator path into chained identifier/field expressions.
+    pub(in crate::backend::ir::lower) fn decorator_path_expr_from_import_path(
+        path: &ImportPath,
+        span: ast::Span,
+    ) -> Spanned<Expr> {
+        let mut segments = path.segments.iter();
+        let Some(first) = segments.next() else {
+            return Spanned::new(Expr::Ident(String::new()), span);
+        };
+        let mut expr = Spanned::new(Expr::Ident(first.clone()), span);
+        for segment in segments {
+            expr = Spanned::new(Expr::Field(Box::new(expr), segment.clone()), span);
+        }
+        expr
+    }
+
+    /// Build the bottom-up decorator application expression for a function declaration.
+    pub(in crate::backend::ir::lower) fn decorator_application_expr(
+        &self,
+        function_name: &str,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Result<Spanned<Expr>, LoweringError> {
+        let original_name = Self::decorator_original_function_name(function_name);
+        let mut current = Spanned::new(Expr::Ident(original_name), ast::Span::default());
+        for decorator in decorators.iter().rev() {
+            if !self.is_user_defined_decorator_candidate(&decorator.node) {
+                continue;
+            }
+            let callable = if decorator.node.is_call {
+                let args = Self::decorator_call_args(decorator)?;
+                let path = &decorator.node.path.segments;
+                if path.len() >= 2 {
+                    let base_path = ImportPath {
+                        parent_levels: decorator.node.path.parent_levels,
+                        is_absolute: decorator.node.path.is_absolute,
+                        segments: path[..path.len() - 1].to_vec(),
+                    };
+                    let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+                    let method = path.last().cloned().unwrap_or_default();
+                    Spanned::new(
+                        Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                        decorator.span,
+                    )
+                } else {
+                    let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
+                    Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+                }
+            } else {
+                Self::decorator_path_expr(&decorator.node, decorator.span)
+            };
+            current = Spanned::new(
+                Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(current)]),
+                decorator.span,
+            );
+        }
+        Ok(current)
+    }
+
+    /// Convert parsed decorator arguments into ordinary call arguments for lowering.
+    pub(in crate::backend::ir::lower) fn decorator_call_args(
+        decorator: &Spanned<ast::Decorator>,
+    ) -> Result<Vec<ast::CallArg>, LoweringError> {
+        decorator
+            .node
+            .args
+            .iter()
+            .map(|arg| match arg {
+                DecoratorArg::Positional(expr) => Ok(ast::CallArg::Positional(expr.clone())),
+                DecoratorArg::Named(name, DecoratorArgValue::Expr(expr)) => {
+                    Ok(ast::CallArg::Named(name.clone(), expr.clone()))
+                }
+                DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) => Err(LoweringError {
+                    message: "type-valued user-defined decorator arguments cannot be lowered".to_string(),
+                    span: ty.span.into(),
+                }),
+            })
+            .collect()
     }
 }

@@ -54,9 +54,9 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    ComputedPropertyAccessInfo, FixedUnpackPlan, IdentKind, ProtocolIterationInfo, ResolvedMethodCall,
-    ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
-    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind,
+    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
 };
 #[cfg(test)]
 mod tests;
@@ -2252,6 +2252,9 @@ impl TypeChecker {
                     self.validate_stdlib_type_usage_inner(&param.node, param.span);
                 }
                 self.validate_stdlib_type_usage_inner(&ret.node, ret.span);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => {
+                self.validate_stdlib_type_usage_inner(&inner.node, inner.span);
             }
             Type::Tuple(elems) => {
                 for elem in elems {

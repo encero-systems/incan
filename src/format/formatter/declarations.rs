@@ -929,10 +929,11 @@ impl Formatter {
 
     // ---- Decorators ----
 
+    /// Format one declaration decorator, preserving `@name` versus `@name()`.
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
         self.format_decorator_path(&dec.path);
-        if !dec.args.is_empty() {
+        if dec.is_call {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {
                 if i > 0 {

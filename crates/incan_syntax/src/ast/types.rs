@@ -22,6 +22,10 @@ pub enum Type {
     IntLiteral(IntLiteral),
     /// Function type: `(int, str) -> bool`
     Function(Vec<Spanned<Type>>, Box<Spanned<Type>>),
+    /// Immutable reference type: `&T`
+    Ref(Box<Spanned<Type>>),
+    /// Mutable reference type: `&mut T`
+    RefMut(Box<Spanned<Type>>),
     /// Unit type
     Unit,
     /// Tuple type: `(int, str)`
@@ -67,6 +71,8 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {}", ret.node)
             }
+            Type::Ref(inner) => write!(f, "&{}", inner.node),
+            Type::RefMut(inner) => write!(f, "&mut {}", inner.node),
             Type::Unit => write!(f, "Unit"),
             Type::Tuple(elems) => {
                 write!(f, "(")?;

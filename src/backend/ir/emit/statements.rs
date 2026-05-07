@@ -761,6 +761,7 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
+        | IrExprKind::AssociatedFunction { .. }
         | IrExprKind::Literal(_)
         | IrExprKind::FieldsList(_)
         | IrExprKind::SerdeToJson

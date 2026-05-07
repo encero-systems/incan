@@ -132,6 +132,12 @@ pub enum IrExprKind {
         name: String,
     },
 
+    /// Reference an associated function item such as `Type::method`.
+    AssociatedFunction {
+        type_name: String,
+        function_name: String,
+    },
+
     // Binary operations
     BinOp {
         op: BinOp,

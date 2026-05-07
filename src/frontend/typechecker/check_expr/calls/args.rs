@@ -190,7 +190,7 @@ impl TypeChecker {
     }
 
     /// Validate call arguments against callable parameters, including rest captures and statically shaped unpacking.
-    pub(in crate::frontend::typechecker::check_expr) fn validate_callable_arg_bindings(
+    pub(in crate::frontend::typechecker) fn validate_callable_arg_bindings(
         &mut self,
         callee: &str,
         params: &[CallableParam],

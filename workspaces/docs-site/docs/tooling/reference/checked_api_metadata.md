@@ -161,6 +161,8 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
 
+When decorator processing exposes a public function as a callable-valued binding, metadata follows that checked binding. In that case, function metadata reports the callable binding's parameters and return type rather than the original source signature. Existing decorator metadata remains attached separately through `decorators`, so consumers that inspect marker decorators, safe decorator arguments, or docstring `Decorators:` sections can keep using that lane without inferring binding types from it.
+
 ## Safe Values
 
 Metadata only carries values that the compiler can expose without executing user code:
@@ -202,7 +204,7 @@ Docstring validation is strict for mechanically checkable drift. If an `Args:` o
 
 ## Editor Previews
 
-The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, a public model/class field, or a public enum variant can show the checked signature, raw docstring text, field alias/description metadata, value-enum backing and raw-value metadata, derives, trait adoption, and safe const values.
+The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, a public model/class field, or a public enum variant can show the checked signature, raw docstring text, field alias/description metadata, value-enum backing and raw-value metadata, derives, trait adoption, and safe const values. If a decorated function's checked binding is callable-valued, its hover uses the same callable signature exposed by checked API metadata.
 
 The LSP exposes these facts through `textDocument/hover`. Use `incan tools metadata api` when an integration needs the full JSON package.
 
