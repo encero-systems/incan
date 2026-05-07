@@ -1,0 +1,42 @@
+{
+  "slice_id": "docs-deps",
+  "status": "planned",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Confirm docs dependency scope and tracked artifacts",
+      "status": "done",
+      "notes": "Current vulnerable pins are in workspaces/docs-site/requirements-docs.txt; no tracked docs lock artifact is required for this slice."
+    },
+    {
+      "id": "T2",
+      "title": "Update pymdown-extensions and Pygments pins",
+      "status": "todo",
+      "notes": ""
+    },
+    {
+      "id": "T3",
+      "title": "Install/update docs requirements",
+      "status": "todo",
+      "notes": ""
+    },
+    {
+      "id": "T4",
+      "title": "Run mkdocs build --strict",
+      "status": "todo",
+      "notes": ""
+    },
+    {
+      "id": "T5",
+      "title": "Review diff and fix any findings",
+      "status": "todo",
+      "notes": ""
+    },
+    {
+      "id": "T6",
+      "title": "Write final handoff",
+      "status": "todo",
+      "notes": ""
+    }
+  ]
+}
