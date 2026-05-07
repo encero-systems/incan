@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 000: Incan Core Language RFC (Phase 1) - Incan Documentation</title>
+        <title>RFC 017: Validated newtypes with implicit coercion (pydantic-like feel) - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-000-incan-core-language-rfc-phase-1" class="md-skip">
+        <a href="#rfc-017-validated-newtypes-with-implicit-coercion-pydantic-like-feel" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 000: Incan Core Language RFC (Phase 1)
+              RFC 017: Validated newtypes with implicit coercion (pydantic-like feel)
             
           </span>
         </div>
@@ -4739,100 +4739,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-core-semantics" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Core Semantics
+      Summary
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1. Core Semantics">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Motivation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#11-typing-model" class="md-nav__link">
+  <a href="#versioning-note-v01-vs-v02" class="md-nav__link">
     <span class="md-ellipsis">
-      1.1 Typing Model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#12-bindings-and-mutability" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.2 Bindings and Mutability
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#13-receivers-self-mut-self" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.3 Receivers (self / mut self)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#14-error-handling-result" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.4 Error Handling (Result / ?)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#15-traits" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.5 Traits
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#16-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.6 Models
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#17-classes" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.7 Classes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#18-newtypes" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.8 Newtypes
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#19-enums" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.9 Enums
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#110-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      1.10 Functions
+      Versioning note (v0.1 vs v0.2)
     </span>
   </a>
   
@@ -4844,37 +4772,55 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-builtin-types-and-traits" class="md-nav__link">
+  <a href="#goals" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Builtin Types and Traits
+      Goals
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Builtin Types and Traits">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation (how users think about it)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#21-core-types" class="md-nav__link">
+  <a href="#newtype-validationconversion-hook-canonical" class="md-nav__link">
     <span class="md-ellipsis">
-      2.1 Core Types
+      Newtype validation/conversion hook (canonical)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#22-core-traits" class="md-nav__link">
+  <a href="#constrained-underlying-type-syntax" class="md-nav__link">
     <span class="md-ellipsis">
-      2.2 Core Traits
+      Constrained underlying type syntax
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#23-derives" class="md-nav__link">
+  <a href="#newtype-on-newtype-transitive-coercion" class="md-nav__link">
     <span class="md-ellipsis">
-      2.3 Derives
+      Newtype-on-newtype (transitive coercion)
     </span>
   </a>
   
@@ -4886,73 +4832,64 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-grammar-ebnf-like" class="md-nav__link">
+  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Grammar (EBNF-like)
+      Reference-level explanation (precise rules)
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-type-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      4. Type Rules
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Type Rules">
+    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#41-assignment" class="md-nav__link">
+  <a href="#from_underlying-compiler-recognized-hook" class="md-nav__link">
     <span class="md-ellipsis">
-      4.1 Assignment
+      from_underlying (compiler-recognized hook)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#42-function-signatures" class="md-nav__link">
+  <a href="#relationship-to-tryfromt-stdlib" class="md-nav__link">
     <span class="md-ellipsis">
-      4.2 Function Signatures
+      Relationship to TryFrom[T] (stdlib)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#43-method-resolution" class="md-nav__link">
+  <a href="#constrained-primitive-types" class="md-nav__link">
     <span class="md-ellipsis">
-      4.3 Method Resolution
+      Constrained primitive types
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#44-trait-adoption" class="md-nav__link">
+  <a href="#implicit-coercion-sites" class="md-nav__link">
     <span class="md-ellipsis">
-      4.4 Trait Adoption
+      Implicit coercion sites
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#45-error-propagation" class="md-nav__link">
+  <a href="#failure-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      4.5 Error Propagation (?)
+      Failure behavior
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#46-newtype-invariants" class="md-nav__link">
+  <a href="#controls-and-policy" class="md-nav__link">
     <span class="md-ellipsis">
-      4.6 Newtype Invariants
+      Controls and policy
     </span>
   </a>
   
@@ -4964,28 +4901,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-invariants" class="md-nav__link">
+  <a href="#design-details" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Invariants
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-bracket-syntax-for-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why bracket syntax for constraints
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#6-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      6. Examples
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="6. Examples">
-      <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#complete-example" class="md-nav__link">
+  <a href="#why-keep-implicit-coercion-when-explicit-result-exists" class="md-nav__link">
     <span class="md-ellipsis">
-      Complete Example
+      Why keep implicit coercion when explicit Result exists
     </span>
   </a>
   
@@ -4997,64 +4934,82 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-checklist" class="md-nav__link">
+  <a href="#alternatives-considered" class="md-nav__link">
     <span class="md-ellipsis">
-      7. Checklist
+      Alternatives considered
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="7. Checklist">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#core-semantics" class="md-nav__link">
+  <a href="#phase-1-type-surface-and-validation-metadata" class="md-nav__link">
     <span class="md-ellipsis">
-      Core Semantics
+      Phase 1: Type surface and validation metadata
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#builtin-types" class="md-nav__link">
+  <a href="#phase-2-coercion-eligibility-and-insertion" class="md-nav__link">
     <span class="md-ellipsis">
-      Builtin Types
+      Phase 2: Coercion eligibility and insertion
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#builtin-traits" class="md-nav__link">
+  <a href="#phase-3-lowering-emission-and-runtime-errors" class="md-nav__link">
     <span class="md-ellipsis">
-      Builtin Traits
+      Phase 3: Lowering, emission, and runtime errors
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#derives" class="md-nav__link">
+  <a href="#phase-4-user-facing-docs-release-notes-and-closeout" class="md-nav__link">
     <span class="md-ellipsis">
-      Derives
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#grammar" class="md-nav__link">
-    <span class="md-ellipsis">
-      Grammar
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#type-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type Rules
+      Phase 4: User-facing docs, release notes, and closeout
     </span>
   </a>
   
@@ -5062,6 +5017,93 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation log
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation log">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / lifecycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-ast-formatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parser / AST / Formatter
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#typechecker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typechecker
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lowering-ir-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lowering / IR / Emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-stdlib" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime / Stdlib
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / Release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
   
 </li>
       
@@ -5083,638 +5125,238 @@
   
 
 
-<h1 id="rfc-000-incan-core-language-rfc-phase-1">RFC 000: Incan Core Language RFC (Phase 1)<a class="headerlink" href="#rfc-000-incan-core-language-rfc-phase-1" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Done<br />
-<strong>Created:</strong> 2024-11-26
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/pull/50">#50</a></p>
-<p>This RFC consolidates the core semantics decisions for Incan's first implementation phase.</p>
-<h2 id="1-core-semantics">1. Core Semantics<a class="headerlink" href="#1-core-semantics" title="Permanent link">&para;</a></h2>
-<h3 id="11-typing-model">1.1 Typing Model<a class="headerlink" href="#11-typing-model" title="Permanent link">&para;</a></h3>
+<h1 id="rfc-017-validated-newtypes-with-implicit-coercion-pydantic-like-feel">RFC 017: Validated newtypes with implicit coercion (pydantic-like feel)<a class="headerlink" href="#rfc-017-validated-newtypes-with-implicit-coercion-pydantic-like-feel" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Required types</strong>: All bindings, parameters, and return types must have explicit types; no gradual or optional typing.</li>
-<li><strong>Compile-time enforcement</strong>: Type mismatches fail at compile time, not runtime.</li>
-<li><strong>Inference</strong>: Local type inference is allowed where unambiguous (e.g., <code>x=42</code> infers <code>int</code>), but function signatures require explicit types.</li>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2026-01-12</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong> RFC 021 (model field metadata and aliases)</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/75</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> v0.3.0-dev.39</li>
 </ul>
-<h3 id="12-bindings-and-mutability">1.2 Bindings and Mutability<a class="headerlink" href="#12-bindings-and-mutability" title="Permanent link">&para;</a></h3>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>Introduce a pydantic-like validated boundary for <code>newtype</code> by standardizing a canonical validation/conversion hook on every newtype and allowing the compiler to perform implicit coercion from the underlying type in well-defined contexts (function arguments, typed initializers, and model/class field initialization). Invalid input fails fast with a validation panic by default to preserve “pydantic feel.” Because panics are a poor fit for reusable library code and long-running services, the design keeps an explicit <code>Result</code>-returning constructor for recoverable flows, introduces opt-out controls (e.g. <code>@no_implicit_coercion</code>), and structured/aggregated validation errors for model/class initialization.</p>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>We want guardrails for common primitives (especially numerics) without boilerplate at every use site. Many values originate at boundaries (CLI, config, env, API), and teams want strong invariants with clear errors while raw values “just work” at those boundaries.</p>
+<p>Today, authors can validate manually (e.g. helpers returning <code>Result</code>), but that requires explicit calls everywhere. The desired ergonomics are: pass raw values at boundaries, coerce and validate automatically, and get a clear validation failure on invalid input.</p>
+<p>Concrete shapes this model can express in the initial validated-newtype contract:</p>
 <ul>
-<li><strong>Immutable by default</strong>: Bindings are immutable unless marked <code>mut</code>.</li>
-<li><strong>Syntax</strong>: <code>x = value</code> for immutable; <code>mut x = value</code> for mutable.</li>
-<li><strong>Optional <code>let</code></strong>: <code>let x = value</code> is equivalent to <code>x = value</code>; <code>let</code> is optional for Pythonic feel.</li>
+<li>Constrained numerics (pure): <code>PositiveInt</code>, <code>NonNegativeInt</code>, finite float, etc.</li>
+<li>Parsing/normalization types (pure): e.g. URL/UUID/IP types as parse + normalize without DNS/network I/O.</li>
+<li>Human-friendly boundary parsing stays explicit: e.g. <code>BytesCount = newtype int[ge=0]</code> plus explicit <code>parse_byte_size(str) -&gt; Result[BytesCount, ...]</code> (this RFC does not introduce implicit <code>str -&gt; int</code> parsing).</li>
+<li>Redaction/masking types: e.g. <code>SecretStr</code> as a normal <code>newtype str</code>; masking stays a formatter/serializer concern outside this RFC’s compiler changes.</li>
 </ul>
-<h3 id="13-receivers-self-mut-self">1.3 Receivers (<code>self</code> / <code>mut self</code>)<a class="headerlink" href="#13-receivers-self-mut-self" title="Permanent link">&para;</a></h3>
+<p>Types that depend on non-determinism (filesystem existence, wall-clock time, network) are out of scope for implicit coercion; they remain explicit constructors or a future “impure validation” extension.</p>
+<h3 id="versioning-note-v01-vs-v02">Versioning note (v0.1 vs v0.2)<a class="headerlink" href="#versioning-note-v01-vs-v02" title="Permanent link">&para;</a></h3>
+<p>This RFC describes the intended <strong>v0.2</strong> direction. For <strong>v0.1</strong> stabilization, only minimum foundations may land so newtype and model/class construction stay coherent (e.g. reserved hook recognition, no validation bypass paths, better diagnostics).</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>self</code> is a keyword</strong>, not a convention; it must appear explicitly in method signatures.</li>
-<li><strong>Immutable receiver</strong>: <code>def method(self, ...)</code> — read-only access to fields.</li>
-<li><strong>Mutable receiver</strong>: <code>def method(mut self, ...)</code> — can mutate fields.</li>
-<li><strong>Static dispatch</strong>: Method calls resolve statically unless trait objects are used.</li>
-<li><strong>No full borrow checker</strong>: Simplified mutability model (<code>self</code> vs <code>mut self</code>) without Rust's full ownership/borrowing.</li>
+<li>Standardize a canonical <code>from_underlying</code>-style hook on newtypes for validated conversion from the underlying type.</li>
+<li>Allow implicit coercion from the underlying type (and transitive newtype chains) at explicit, listed language sites.</li>
+<li>Support constrained underlying primitives via type-level bracket syntax (e.g. <code>int[ge=0]</code>).</li>
+<li>Preserve explicit, non-panicking construction for library and service code.</li>
+<li>Provide opt-out controls and aggregated errors for model/class initialization where appropriate.</li>
 </ul>
-<h3 id="14-error-handling-result">1.4 Error Handling (<code>Result</code> / <code>?</code>)<a class="headerlink" href="#14-error-handling-result" title="Permanent link">&para;</a></h3>
+<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>Result[T, E]</code></strong>: Primary error type; represents <code>Ok(value)</code> or <code>Err(error)</code>.</li>
-<li><strong><code>Option[T]</code></strong>: Represents <code>Some(value)</code> or <code>None</code>; for optional values.</li>
-<li><strong><code>?</code> operator</strong>: If expression is <code>Err(e)</code>, early-return with that error; if <code>Ok(v)</code>, unwrap to <code>v</code>.</li>
-<li><strong>Compile-time enforcement</strong>: Functions using <code>?</code> must return a compatible <code>Result</code>.</li>
-<li><strong>Panics are exceptional</strong>: Reserved for unrecoverable errors; normal errors use <code>Result</code>.</li>
-<li><code>unwrap()</code>/<code>expect()</code> are for unrecoverable paths only; normal errors use <code>Result</code> + <code>?</code>.</li>
-<li><strong>Optional sugar</strong>: <code>Result[T, E1 | E2]</code> may be provided as syntax sugar, desugaring to a generated enum so <code>?</code> still operates on a single concrete error type. Prefer one error type per function; use <code>map_err</code> / <code>From</code> conversions as needed.</li>
+<li>Implicit ambient primitive conversions (<code>str -&gt; int</code>, <code>int -&gt; float</code>, etc.) as part of coercion rewriting.</li>
+<li>Non-deterministic or effectful validation inside the implicit-coercion contract.</li>
+<li>Labeled control flow or other unrelated language features.</li>
 </ul>
-<h3 id="15-traits">1.5 Traits<a class="headerlink" href="#15-traits" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Behavior-only</strong>: Traits define methods only; no storage/fields. Traits must not declare fields; if a trait assumes fields exist, they must be provided by the adopter. This is enforced at compile time.</li>
-<li><strong>Default methods</strong>: Traits can provide default implementations that may assume fields exist on the adopter.</li>
-<li><strong>Deterministic composition</strong>: Multiple traits compose left-to-right; order is explicit and compile-time resolved.</li>
-<li><strong>No Python MRO</strong>: No dynamic method resolution order; conflicts must be resolved explicitly.</li>
-<li><strong>No runtime patching</strong>: Traits cannot be added at runtime; no monkey-patching.</li>
-<li><strong>Conflict resolution</strong>: When multiple traits provide the same method, the adopting class must explicitly resolve (e.g., <code>TraitA.method(self, ...)</code>).</li>
-<li><strong>Optional <code>@requires</code></strong>: Annotation to declare expected fields/methods on adopters.</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">trait</span> <span class="nc">Loggable</span><span class="p">:</span>
-  <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># assumes self.name exists</span>
-
-<span class="c1"># With explicit requires (optional ergonomic)</span>
-<span class="nd">@requires</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span>
-<span class="k">trait</span> <span class="nc">Loggable</span><span class="p">:</span>
-  <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
+<h3 id="newtype-validationconversion-hook-canonical">Newtype validation/conversion hook (canonical)<a class="headerlink" href="#newtype-validationconversion-hook-canonical" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Attempts</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
 </code></pre></div>
-<h3 id="16-models">1.6 Models<a class="headerlink" href="#16-models" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Data-first containers</strong>: Declarative fields with optional validation.</li>
-<li><strong>Own storage</strong>: Models own their fields.</li>
-<li><strong>Validation</strong>: Via <code>@derive(Validate)</code> or manual <code>validate(self) -&gt; Result[Self, E]</code> methods.</li>
-<li><strong>Cannot inherit from classes</strong>: Models are not classes; they are data containers.</li>
-<li><strong>Can implement traits</strong>: Models can adopt storage-free traits.</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Validate</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-  <span class="nb">id</span><span class="p">:</span> <span class="nc">UserId</span>
-  <span class="n">email</span><span class="p">:</span> <span class="nc">Email</span>
-  <span class="n">is_active</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="k">true</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_active</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span><span class="o">.</span><span class="nb">endswith</span><span class="p">(</span><span class="s2">&quot;@example.com&quot;</span><span class="p">):</span>
-      <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="o">.</span><span class="nc">InactiveExternal</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+<h3 id="constrained-underlying-type-syntax">Constrained underlying type syntax<a class="headerlink" href="#constrained-underlying-type-syntax" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">NonNegativeInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
+<span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 </code></pre></div>
-<h3 id="17-classes">1.7 Classes<a class="headerlink" href="#17-classes" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>General-purpose types</strong>: Fields, methods, single inheritance, trait composition.</li>
-<li><strong>Own storage</strong>: Classes own their fields.</li>
-<li><strong>Single inheritance</strong>: <code>class Child extends Parent</code>.</li>
-<li><strong>Trait composition</strong>: <code>class Service with TraitA, TraitB</code>.</li>
-</ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Service</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">:</span>
-  <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-  <span class="n">repo</span><span class="p">:</span> <span class="nc">UserRepo</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">onboard</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;creating </span><span class="si">{</span><span class="n">user</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">as_str</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">repo</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
+<h3 id="newtype-on-newtype-transitive-coercion">Newtype-on-newtype (transitive coercion)<a class="headerlink" href="#newtype-on-newtype-transitive-coercion" title="Permanent link">&para;</a></h3>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
+<span class="nb">type</span> <span class="nc">RetryAttempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PositiveInt</span>
 </code></pre></div>
-<h3 id="18-newtypes">1.8 Newtypes<a class="headerlink" href="#18-newtypes" title="Permanent link">&para;</a></h3>
+<p>Implicit coercion from <code>int</code> to <code>RetryAttempts</code> follows the chain <code>int -&gt; PositiveInt -&gt; RetryAttempts</code> when the compiler accepts the coercion sites.</p>
+<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
+<h3 id="from_underlying-compiler-recognized-hook"><code>from_underlying</code> (compiler-recognized hook)<a class="headerlink" href="#from_underlying-compiler-recognized-hook" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Zero-cost wrappers</strong>: Enforce invariants at construction.</li>
-<li><strong>Constructors return <code>Result</code></strong>: Validation failures are explicit. Newtypes must be constructed via their validated constructors; direct field construction is disallowed. Codegen enforces the constructor path.</li>
-<li><strong>Type-safe</strong>: Newtypes are distinct from their underlying type.</li>
+<li><code>from_underlying</code> is the canonical validated conversion from the newtype’s underlying type, defined in the newtype body (no separate <code>impl</code> block in Incan today).</li>
+<li>If a newtype does not define <code>from_underlying</code>, the compiler may auto-generate a default: <code>from_underlying(x) = Ok(T(x))</code> when there are no constraints; when the underlying type carries constraints (e.g. <code>int[gt=0]</code>), the generated hook must enforce those constraints.</li>
+<li><code>from_underlying</code> is a reserved hook name for newtypes for coercion and validation.</li>
+<li><strong>Contract:</strong> <code>from_underlying</code> must be deterministic and side-effect free (no I/O, no global mutation, no time/random dependence, no randomized hashing dependence). It must not panic; invalid input is expressed as <code>Err(ValidationError)</code>. On <code>Ok</code>, the result must be the fully validated newtype value for the input (no partial values). Validators that consult the filesystem, clock, randomness, or network require explicit validation or a future opt-in extension.</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Email</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">:</span>
-  <span class="nd">@validate</span> <span class="n">new</span>
-  <span class="k">def</span><span class="w"> </span><span class="nf">from_str</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Email</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="s2">&quot;@&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">v</span><span class="p">:</span>
-      <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="o">.</span><span class="nc">EmailMissingAt</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Email</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="nb">lower</span><span class="p">()))</span>
-
-<span class="nb">type</span> <span class="nc">UserId</span> <span class="o">=</span> <span class="k">newtype</span> <span class="n">uuid</span>
-</code></pre></div>
-<h3 id="19-enums">1.9 Enums<a class="headerlink" href="#19-enums" title="Permanent link">&para;</a></h3>
+<h3 id="relationship-to-tryfromt-stdlib">Relationship to <code>TryFrom[T]</code> (stdlib)<a class="headerlink" href="#relationship-to-tryfromt-stdlib" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Algebraic data types</strong>: Variants can carry data.</li>
-<li><strong>Exhaustive matching</strong>: <code>match</code> must cover all variants.</li>
+<li>Incan has <code>TryFrom[T]</code> with <code>@classmethod def try_from(cls, value: T) -&gt; Result[Self, str]</code>.</li>
+<li>This RFC uses <code>from_underlying(...) -&gt; Result[T, ValidationError]</code> as the dedicated hook for structured validation errors and path metadata, and to avoid requiring <code>impl</code> blocks on newtypes. A future compiler could derive <code>TryFrom</code> from <code>from_underlying</code>; the hook remains canonical.</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="kt">ValidationError</span><span class="p">:</span>
-  <span class="nc">EmailMissingAt</span>
-  <span class="nc">InactiveExternal</span>
-  <span class="nc">RepoError</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-
-<span class="k">enum</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">]:</span>
-  <span class="nb">Some</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
-  <span class="kc">None</span>
-
-<span class="k">enum</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">E</span><span class="p">]:</span>
-  <span class="nb">Ok</span><span class="p">(</span><span class="nc">T</span><span class="p">)</span>
-  <span class="nb">Err</span><span class="p">(</span><span class="nc">E</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="110-functions">1.10 Functions<a class="headerlink" href="#110-functions" title="Permanent link">&para;</a></h3>
+<h3 id="constrained-primitive-types">Constrained primitive types<a class="headerlink" href="#constrained-primitive-types" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>def</code> keyword</strong>: <code>def name(params) -&gt; ReturnType:</code>.</li>
-<li><strong><code>async def</code></strong>: For async functions.</li>
-<li><strong>Explicit return types</strong>: Required for all functions.</li>
-<li><strong>No implicit returns</strong>: Functions must use <code>return</code>. (Future: implicit last-expression returns could be considered, but are not allowed now.)</li>
+<li><code>int("5")</code> remains a plain conversion to <code>int</code> (no constraint keyword arguments at runtime).</li>
+<li>Constraints live on the constrained type (<code>int[ge=0]</code>) and are enforced by <code>from_underlying</code> and by implicit coercion sites.</li>
+<li>Constrained primitives are intended as newtype underlyings, not as universal drop-in replacements for bare <code>int</code>/<code>float</code> everywhere.</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-  <span class="n">raw</span> <span class="o">=</span> <span class="nb">read_file</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
-  <span class="k">return</span> <span class="nc">Config</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">?</span>
-
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_all</span><span class="p">(</span><span class="n">urls</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">List</span><span class="p">[</span><span class="nc">Bytes</span><span class="p">]:</span>
-  <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">fetch</span><span class="p">(</span><span class="n">u</span><span class="p">)</span> <span class="k">for</span> <span class="n">u</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
-  <span class="k">return</span> <span class="k">await</span> <span class="n">gather</span><span class="p">(</span><span class="n">tasks</span><span class="p">)</span>
-</code></pre></div>
-<hr />
-<h2 id="2-builtin-types-and-traits">2. Builtin Types and Traits<a class="headerlink" href="#2-builtin-types-and-traits" title="Permanent link">&para;</a></h2>
-<h3 id="21-core-types">2.1 Core Types<a class="headerlink" href="#21-core-types" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>int</code></td>
-<td>Signed integer (platform-sized or explicit: <code>i32</code>, <code>i64</code>)</td>
-</tr>
-<tr>
-<td><code>float</code></td>
-<td>Floating point (<code>f32</code>, <code>f64</code>)</td>
-</tr>
-<tr>
-<td><code>bool</code></td>
-<td>Boolean (<code>true</code>, <code>false</code>)</td>
-</tr>
-<tr>
-<td><code>str</code></td>
-<td>UTF-8 string</td>
-</tr>
-<tr>
-<td><code>bytes</code></td>
-<td>Byte sequence</td>
-</tr>
-<tr>
-<td><code>List[T]</code></td>
-<td>Growable list</td>
-</tr>
-<tr>
-<td><code>Dict[K, V]</code></td>
-<td>Hash map</td>
-</tr>
-<tr>
-<td><code>Set[T]</code></td>
-<td>Hash set</td>
-</tr>
-<tr>
-<td><code>Tuple[T, ...]</code></td>
-<td>Fixed-size heterogeneous tuple</td>
-</tr>
-<tr>
-<td><code>Option[T]</code></td>
-<td><code>Some(T)</code> or <code>None</code></td>
-</tr>
-<tr>
-<td><code>Result[T, E]</code></td>
-<td><code>Ok(T)</code> or <code>Err(E)</code></td>
-</tr>
-<tr>
-<td><code>Unit</code></td>
-<td>Void/unit type (empty tuple)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="22-core-traits">2.2 Core Traits<a class="headerlink" href="#22-core-traits" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Trait</th>
-<th>Description</th>
-<th>Python Analog</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>Debug</code></td>
-<td>Debug formatting</td>
-<td><code>__repr__</code></td>
-</tr>
-<tr>
-<td><code>Display</code></td>
-<td>User-facing formatting</td>
-<td><code>__str__</code></td>
-</tr>
-<tr>
-<td><code>Eq</code></td>
-<td>Equality comparison</td>
-<td><code>__eq__</code></td>
-</tr>
-<tr>
-<td><code>PartialEq</code></td>
-<td>Partial equality</td>
-<td><code>__eq__</code></td>
-</tr>
-<tr>
-<td><code>Ord</code></td>
-<td>Total ordering</td>
-<td><code>__lt__</code>, <code>__le__</code>, etc.</td>
-</tr>
-<tr>
-<td><code>PartialOrd</code></td>
-<td>Partial ordering</td>
-<td><code>__lt__</code>, <code>__le__</code>, etc.</td>
-</tr>
-<tr>
-<td><code>Hash</code></td>
-<td>Hashable</td>
-<td><code>__hash__</code></td>
-</tr>
-<tr>
-<td><code>Clone</code></td>
-<td>Explicit duplication</td>
-<td><code>copy.copy</code></td>
-</tr>
-<tr>
-<td><code>Default</code></td>
-<td>Default construction</td>
-<td><code>__init__</code> with defaults</td>
-</tr>
-<tr>
-<td><code>From[T]</code></td>
-<td>Conversion from <code>T</code></td>
-<td><code>@classmethod</code> constructor</td>
-</tr>
-<tr>
-<td><code>Into[T]</code></td>
-<td>Conversion into <code>T</code></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>TryFrom[T]</code></td>
-<td>Fallible conversion from <code>T</code></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>TryInto[T]</code></td>
-<td>Fallible conversion into <code>T</code></td>
-<td>—</td>
-</tr>
-<tr>
-<td><code>Iterator</code></td>
-<td>Iteration protocol</td>
-<td><code>__iter__</code>, <code>__next__</code></td>
-</tr>
-<tr>
-<td><code>IntoIterator</code></td>
-<td>Convert to iterator</td>
-<td><code>__iter__</code></td>
-</tr>
-<tr>
-<td><code>Error</code></td>
-<td>Error behavior</td>
-<td><code>Exception</code></td>
-</tr>
-</tbody>
-</table>
-<h3 id="23-derives">2.3 Derives<a class="headerlink" href="#23-derives" title="Permanent link">&para;</a></h3>
-<p>Derives auto-generate trait implementations for models and newtypes:</p>
-<table>
-<thead>
-<tr>
-<th>Derive</th>
-<th>Generated</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>@derive(Debug)</code></td>
-<td>Debug formatting</td>
-</tr>
-<tr>
-<td><code>@derive(Display)</code></td>
-<td>Display formatting</td>
-</tr>
-<tr>
-<td><code>@derive(Eq)</code></td>
-<td>Equality + PartialEq</td>
-</tr>
-<tr>
-<td><code>@derive(Ord)</code></td>
-<td>Ordering + PartialOrd</td>
-</tr>
-<tr>
-<td><code>@derive(Hash)</code></td>
-<td>Hash implementation</td>
-</tr>
-<tr>
-<td><code>@derive(Clone)</code></td>
-<td>Clone implementation</td>
-</tr>
-<tr>
-<td><code>@derive(Default)</code></td>
-<td>Default construction</td>
-</tr>
-<tr>
-<td><code>@derive(Validate)</code></td>
-<td>Validation hooks</td>
-</tr>
-</tbody>
-</table>
-<p>Multiple derives: <code>@derive(Debug, Eq, Hash, Clone)</code>.</p>
-<hr />
-<h2 id="3-grammar-ebnf-like">3. Grammar (EBNF-like)<a class="headerlink" href="#3-grammar-ebnf-like" title="Permanent link">&para;</a></h2>
-<div class="language-ebnf highlight"><pre><span></span><code><span class="cm">(* Top-level declarations *)</span>
-<span class="k">program        </span><span class="o">=</span> <span class="p">{</span> <span class="k">declaration </span><span class="p">}</span> <span class="p">;</span>
-<span class="k">declaration    </span><span class="o">=</span> <span class="k">model_decl </span><span class="p">|</span> <span class="k">class_decl </span><span class="p">|</span> <span class="k">trait_decl </span><span class="p">|</span> <span class="k">newtype_decl</span>
-               <span class="p">|</span> <span class="k">enum_decl </span><span class="p">|</span> <span class="k">function_decl </span><span class="p">|</span> <span class="k">import_decl </span><span class="p">;</span>
-
-<span class="cm">(* Imports *)</span>
-<span class="k">import_decl    </span><span class="o">=</span> <span class="k">import_stmt </span><span class="p">|</span> <span class="k">from_import_stmt </span><span class="p">;</span>
-
-<span class="k">import_stmt    </span><span class="o">=</span> <span class="s2">&quot;import&quot;</span> <span class="p">(</span> <span class="k">python_import </span><span class="p">|</span> <span class="k">rust_import </span><span class="p">|</span> <span class="k">module_path </span><span class="p">)</span> <span class="p">[</span> <span class="s2">&quot;as&quot;</span> <span class="k">IDENT </span><span class="p">]</span> <span class="p">;</span>
-<span class="k">from_import_stmt</span>
-              <span class="o">=</span> <span class="s2">&quot;from&quot;</span> <span class="k">rust_import </span><span class="s2">&quot;import&quot;</span> <span class="k">import_item </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">import_item </span><span class="p">}</span>
-              <span class="p">|</span> <span class="s2">&quot;from&quot;</span> <span class="k">module_path </span><span class="s2">&quot;import&quot;</span> <span class="k">import_item </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">import_item </span><span class="p">}</span> <span class="p">;</span>
-
-<span class="k">import_item    </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">[</span> <span class="s2">&quot;as&quot;</span> <span class="k">IDENT </span><span class="p">]</span> <span class="p">;</span>
-
-<span class="k">python_import  </span><span class="o">=</span> <span class="s2">&quot;python&quot;</span> <span class="k">STRING </span><span class="p">;</span>
-<span class="k">rust_import    </span><span class="o">=</span> <span class="s2">&quot;rust&quot;</span> <span class="s2">&quot;::&quot;</span> <span class="k">IDENT </span><span class="p">{</span> <span class="s2">&quot;::&quot;</span> <span class="k">IDENT </span><span class="p">}</span> <span class="p">;</span>
-
-<span class="cm">(* Module paths *)</span>
-<span class="k">module_path    </span><span class="o">=</span> <span class="k">parent_prefix IDENT </span><span class="p">{</span> <span class="p">(</span> <span class="s2">&quot;::&quot;</span> <span class="p">|</span> <span class="s2">&quot;.&quot;</span> <span class="p">)</span> <span class="k">IDENT </span><span class="p">}</span> <span class="p">;</span>
-<span class="k">parent_prefix  </span><span class="o">=</span> <span class="p">{</span> <span class="s2">&quot;..&quot;</span> <span class="p">}</span>
-              <span class="p">|</span> <span class="p">{</span> <span class="s2">&quot;super&quot;</span> <span class="p">(</span> <span class="s2">&quot;::&quot;</span> <span class="p">|</span> <span class="s2">&quot;.&quot;</span> <span class="p">)</span> <span class="p">}</span> <span class="p">;</span>
-<span class="cm">(*</span>
-<span class="cm">  Note: Absolute (project-root) module paths via `crate::...` are specified by RFC 005.</span>
-<span class="cm">*)</span>
-
-<span class="cm">(* Model *)</span>
-<span class="k">model_decl     </span><span class="o">=</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="s2">&quot;model&quot;</span> <span class="k">IDENT </span><span class="p">[</span> <span class="k">type_params </span><span class="p">]</span> <span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">field_decl </span><span class="p">|</span> <span class="k">method_decl </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">field_decl     </span><span class="o">=</span> <span class="k">IDENT </span><span class="s2">&quot;:&quot;</span> <span class="k">type </span><span class="p">[</span> <span class="s2">&quot;=&quot;</span> <span class="k">expr </span><span class="p">]</span> <span class="p">;</span>
-
-<span class="cm">(* Class *)</span>
-<span class="k">class_decl     </span><span class="o">=</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="s2">&quot;class&quot;</span> <span class="k">IDENT </span><span class="p">[</span> <span class="k">type_params </span><span class="p">]</span>
-                 <span class="p">[</span> <span class="s2">&quot;extends&quot;</span> <span class="k">IDENT </span><span class="p">]</span> <span class="p">[</span> <span class="s2">&quot;with&quot;</span> <span class="k">trait_list </span><span class="p">]</span> <span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">field_decl </span><span class="p">|</span> <span class="k">method_decl </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">trait_list     </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">IDENT </span><span class="p">}</span> <span class="p">;</span>
-
-<span class="cm">(* Trait *)</span>
-<span class="k">trait_decl     </span><span class="o">=</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="s2">&quot;trait&quot;</span> <span class="k">IDENT </span><span class="p">[</span> <span class="k">type_params </span><span class="p">]</span> <span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">method_decl </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-
-<span class="cm">(* Newtype *)</span>
-<span class="k">newtype_decl   </span><span class="o">=</span> <span class="s2">&quot;type&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;=&quot;</span> <span class="s2">&quot;newtype&quot;</span> <span class="k">type </span><span class="p">[</span> <span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">method_decl </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">]</span> <span class="p">;</span>
-
-<span class="cm">(* Enum *)</span>
-<span class="k">enum_decl      </span><span class="o">=</span> <span class="s2">&quot;enum&quot;</span> <span class="k">IDENT </span><span class="p">[</span> <span class="k">type_params </span><span class="p">]</span> <span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">variant_decl </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">variant_decl   </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">[</span> <span class="s2">&quot;(&quot;</span> <span class="k">type_list </span><span class="s2">&quot;)&quot;</span> <span class="p">]</span> <span class="p">;</span>
-
-<span class="cm">(* Function / Method *)</span>
-<span class="k">function_decl  </span><span class="o">=</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="p">[</span> <span class="s2">&quot;async&quot;</span> <span class="p">]</span> <span class="s2">&quot;def&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;(&quot;</span> <span class="k">params </span><span class="s2">&quot;)&quot;</span> <span class="s2">&quot;-&gt;&quot;</span> <span class="k">type </span><span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">method_decl    </span><span class="o">=</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="p">[</span> <span class="s2">&quot;async&quot;</span> <span class="p">]</span> <span class="s2">&quot;def&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;(&quot;</span> <span class="k">receiver </span><span class="p">[</span> <span class="s2">&quot;,&quot;</span> <span class="k">params </span><span class="p">]</span> <span class="s2">&quot;)&quot;</span> <span class="s2">&quot;-&gt;&quot;</span> <span class="k">type </span><span class="s2">&quot;:&quot;</span>
-                 <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT</span>
-               <span class="p">|</span> <span class="p">{</span> <span class="k">decorator </span><span class="p">}</span> <span class="p">[</span> <span class="s2">&quot;async&quot;</span> <span class="p">]</span> <span class="s2">&quot;def&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;(&quot;</span> <span class="k">params </span><span class="s2">&quot;)&quot;</span> <span class="s2">&quot;-&gt;&quot;</span> <span class="k">type </span><span class="s2">&quot;:&quot;</span> <span class="s2">&quot;...&quot;</span> <span class="p">;</span>
-
-<span class="k">receiver       </span><span class="o">=</span> <span class="s2">&quot;self&quot;</span> <span class="p">|</span> <span class="s2">&quot;mut&quot;</span> <span class="s2">&quot;self&quot;</span> <span class="p">;</span>
-<span class="k">params         </span><span class="o">=</span> <span class="p">[</span> <span class="k">param </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">param </span><span class="p">}</span> <span class="p">]</span> <span class="p">;</span>
-<span class="k">param          </span><span class="o">=</span> <span class="k">IDENT </span><span class="s2">&quot;:&quot;</span> <span class="k">type </span><span class="p">[</span> <span class="s2">&quot;=&quot;</span> <span class="k">expr </span><span class="p">]</span> <span class="p">;</span>
-
-<span class="cm">(* Decorators *)</span>
-<span class="k">decorator      </span><span class="o">=</span> <span class="s2">&quot;@&quot;</span> <span class="k">IDENT </span><span class="p">[</span> <span class="s2">&quot;(&quot;</span> <span class="k">decorator_args </span><span class="s2">&quot;)&quot;</span> <span class="p">]</span> <span class="p">;</span>
-<span class="k">decorator_args </span><span class="o">=</span> <span class="k">expr </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">expr </span><span class="p">}</span> <span class="p">|</span> <span class="k">IDENT </span><span class="s2">&quot;:&quot;</span> <span class="k">type </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;:&quot;</span> <span class="k">type </span><span class="p">}</span> <span class="p">;</span>
-
-<span class="err">(</span><span class="k">Note</span><span class="err">:</span> <span class="k">Core supports both </span><span class="err">`</span><span class="k">import foo</span><span class="err">.</span><span class="k">bar</span><span class="err">`</span> <span class="k">and </span><span class="err">`</span><span class="k">from foo import bar</span><span class="err">`.</span> <span class="k">Decorator syntax is reserved</span><span class="err">;</span> <span class="k">semantics are defined per decorator in later phases</span><span class="err">/</span><span class="k">stdlib</span><span class="err">.)</span>
-
-<span class="cm">(* Types *)</span>
-<span class="k">type           </span><span class="o">=</span> <span class="k">simple_type </span><span class="p">|</span> <span class="k">generic_type </span><span class="p">|</span> <span class="k">function_type </span><span class="p">;</span>
-<span class="k">simple_type    </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">|</span> <span class="s2">&quot;Unit&quot;</span> <span class="p">;</span>
-<span class="k">generic_type   </span><span class="o">=</span> <span class="k">IDENT </span><span class="s2">&quot;[&quot;</span> <span class="k">type_list </span><span class="s2">&quot;]&quot;</span> <span class="p">;</span>
-<span class="k">type_list      </span><span class="o">=</span> <span class="k">type </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">type </span><span class="p">}</span> <span class="p">;</span>
-<span class="k">type_params    </span><span class="o">=</span> <span class="s2">&quot;[&quot;</span> <span class="k">IDENT </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">IDENT </span><span class="p">}</span> <span class="s2">&quot;]&quot;</span> <span class="p">;</span>
-<span class="k">function_type  </span><span class="o">=</span> <span class="s2">&quot;(&quot;</span> <span class="k">type_list </span><span class="s2">&quot;)&quot;</span> <span class="s2">&quot;-&gt;&quot;</span> <span class="k">type </span><span class="p">;</span>
-
-<span class="cm">(* Expressions *)</span>
-<span class="k">expr           </span><span class="o">=</span> <span class="k">primary </span><span class="p">|</span> <span class="k">binary_expr </span><span class="p">|</span> <span class="k">unary_expr </span><span class="p">|</span> <span class="k">call_expr </span><span class="p">|</span> <span class="k">index_expr</span>
-               <span class="p">|</span> <span class="k">field_expr </span><span class="p">|</span> <span class="k">method_expr </span><span class="p">|</span> <span class="k">await_expr </span><span class="p">|</span> <span class="k">try_expr </span><span class="p">|</span> <span class="k">match_expr</span>
-               <span class="p">|</span> <span class="k">if_expr </span><span class="p">|</span> <span class="k">list_comp </span><span class="p">|</span> <span class="k">dict_comp </span><span class="p">|</span> <span class="k">closure_expr </span><span class="p">;</span>
-               <span class="cm">(* Note: Python-style lambda intentionally omitted in favor of arrow closures *)</span>
-
-<span class="k">closure_expr   </span><span class="o">=</span> <span class="s2">&quot;(&quot;</span> <span class="p">[</span> <span class="k">IDENT </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">IDENT </span><span class="p">}</span> <span class="p">]</span> <span class="s2">&quot;)&quot;</span> <span class="s2">&quot;=&gt;&quot;</span> <span class="k">expr </span><span class="p">;</span>
-
-<span class="k">primary        </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">|</span> <span class="k">literal </span><span class="p">|</span> <span class="s2">&quot;(&quot;</span> <span class="k">expr </span><span class="s2">&quot;)&quot;</span> <span class="p">|</span> <span class="s2">&quot;self&quot;</span> <span class="p">;</span>
-<span class="k">literal        </span><span class="o">=</span> <span class="k">INT </span><span class="p">|</span> <span class="k">FLOAT </span><span class="p">|</span> <span class="k">STRING </span><span class="p">|</span> <span class="s2">&quot;true&quot;</span> <span class="p">|</span> <span class="s2">&quot;false&quot;</span> <span class="p">|</span> <span class="s2">&quot;None&quot;</span>
-               <span class="p">|</span> <span class="k">list_literal </span><span class="p">|</span> <span class="k">dict_literal </span><span class="p">|</span> <span class="k">tuple_literal </span><span class="p">;</span>
-<span class="k">list_literal   </span><span class="o">=</span> <span class="s2">&quot;[&quot;</span> <span class="p">[</span> <span class="k">expr </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">expr </span><span class="p">}</span> <span class="p">]</span> <span class="s2">&quot;]&quot;</span> <span class="p">;</span>
-<span class="k">dict_literal   </span><span class="o">=</span> <span class="s2">&quot;{&quot;</span> <span class="p">[</span> <span class="k">dict_entry </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">dict_entry </span><span class="p">}</span> <span class="p">]</span> <span class="s2">&quot;}&quot;</span> <span class="p">;</span>
-<span class="k">dict_entry     </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">expr </span><span class="p">;</span>
-<span class="k">tuple_literal  </span><span class="o">=</span> <span class="s2">&quot;(&quot;</span> <span class="k">expr </span><span class="s2">&quot;,&quot;</span> <span class="p">[</span> <span class="k">expr </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">expr </span><span class="p">}</span> <span class="p">]</span> <span class="s2">&quot;)&quot;</span> <span class="p">;</span>
-
-<span class="k">binary_expr    </span><span class="o">=</span> <span class="k">expr binary_op expr </span><span class="p">;</span>
-<span class="k">binary_op      </span><span class="o">=</span> <span class="s2">&quot;+&quot;</span> <span class="p">|</span> <span class="s2">&quot;-&quot;</span> <span class="p">|</span> <span class="s2">&quot;*&quot;</span> <span class="p">|</span> <span class="s2">&quot;/&quot;</span> <span class="p">|</span> <span class="s2">&quot;%&quot;</span> <span class="p">|</span> <span class="s2">&quot;==&quot;</span> <span class="p">|</span> <span class="s2">&quot;!=&quot;</span> <span class="p">|</span> <span class="s2">&quot;&lt;&quot;</span> <span class="p">|</span> <span class="s2">&quot;&gt;&quot;</span> <span class="p">|</span> <span class="s2">&quot;&lt;=&quot;</span> <span class="p">|</span> <span class="s2">&quot;&gt;=&quot;</span>
-               <span class="p">|</span> <span class="s2">&quot;and&quot;</span> <span class="p">|</span> <span class="s2">&quot;or&quot;</span> <span class="p">|</span> <span class="s2">&quot;in&quot;</span> <span class="p">|</span> <span class="s2">&quot;not in&quot;</span> <span class="p">;</span>
-<span class="k">unary_expr     </span><span class="o">=</span> <span class="k">unary_op expr </span><span class="p">;</span>
-<span class="k">unary_op       </span><span class="o">=</span> <span class="s2">&quot;-&quot;</span> <span class="p">|</span> <span class="s2">&quot;not&quot;</span> <span class="p">;</span>
-
-<span class="k">call_expr      </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;(&quot;</span> <span class="p">[</span> <span class="k">arg_list </span><span class="p">]</span> <span class="s2">&quot;)&quot;</span> <span class="p">;</span>
-<span class="k">arg_list       </span><span class="o">=</span> <span class="k">arg </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">arg </span><span class="p">}</span> <span class="p">;</span>
-<span class="k">arg            </span><span class="o">=</span> <span class="k">expr </span><span class="p">|</span> <span class="k">IDENT </span><span class="s2">&quot;=&quot;</span> <span class="k">expr </span><span class="p">;</span>
-
-<span class="k">index_expr     </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;[&quot;</span> <span class="k">expr </span><span class="s2">&quot;]&quot;</span> <span class="p">;</span>
-<span class="k">field_expr     </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;.&quot;</span> <span class="k">IDENT </span><span class="p">;</span>
-<span class="k">method_expr    </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;.&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;(&quot;</span> <span class="p">[</span> <span class="k">arg_list </span><span class="p">]</span> <span class="s2">&quot;)&quot;</span> <span class="p">;</span>
-<span class="k">await_expr     </span><span class="o">=</span> <span class="s2">&quot;await&quot;</span> <span class="k">expr </span><span class="p">;</span>
-<span class="k">try_expr       </span><span class="o">=</span> <span class="k">expr </span><span class="s2">&quot;?&quot;</span> <span class="p">;</span>
-
-<span class="k">match_expr     </span><span class="o">=</span> <span class="s2">&quot;match&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">match_arm </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">match_arm      </span><span class="o">=</span> <span class="s2">&quot;case&quot;</span> <span class="k">pattern </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT</span>
-               <span class="p">|</span> <span class="k">pattern </span><span class="s2">&quot;=&gt;&quot;</span> <span class="k">expr</span>
-               <span class="p">|</span> <span class="k">pattern </span><span class="s2">&quot;=&gt;&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">pattern        </span><span class="o">=</span> <span class="k">IDENT </span><span class="p">|</span> <span class="k">literal </span><span class="p">|</span> <span class="k">IDENT </span><span class="s2">&quot;(&quot;</span> <span class="k">pattern_list </span><span class="s2">&quot;)&quot;</span> <span class="p">|</span> <span class="s2">&quot;_&quot;</span> <span class="p">;</span>
-<span class="k">pattern_list   </span><span class="o">=</span> <span class="k">pattern </span><span class="p">{</span> <span class="s2">&quot;,&quot;</span> <span class="k">pattern </span><span class="p">}</span> <span class="p">;</span>
-
-<span class="k">if_expr        </span><span class="o">=</span> <span class="s2">&quot;if&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT</span>
-                 <span class="p">{</span> <span class="s2">&quot;elif&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">}</span>
-                 <span class="p">[</span> <span class="s2">&quot;else&quot;</span> <span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">]</span> <span class="p">;</span>
-
-<span class="k">list_comp      </span><span class="o">=</span> <span class="s2">&quot;[&quot;</span> <span class="k">expr </span><span class="s2">&quot;for&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;in&quot;</span> <span class="k">expr </span><span class="p">[</span> <span class="s2">&quot;if&quot;</span> <span class="k">expr </span><span class="p">]</span> <span class="s2">&quot;]&quot;</span> <span class="p">;</span>
-<span class="k">dict_comp      </span><span class="o">=</span> <span class="s2">&quot;{&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">expr </span><span class="s2">&quot;for&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;in&quot;</span> <span class="k">expr </span><span class="p">[</span> <span class="s2">&quot;if&quot;</span> <span class="k">expr </span><span class="p">]</span> <span class="s2">&quot;}&quot;</span> <span class="p">;</span>
-
-<span class="cm">(* Statements *)</span>
-<span class="k">statement      </span><span class="o">=</span> <span class="k">assignment </span><span class="p">|</span> <span class="k">return_stmt </span><span class="p">|</span> <span class="k">if_stmt </span><span class="p">|</span> <span class="k">while_stmt </span><span class="p">|</span> <span class="k">for_stmt</span>
-               <span class="p">|</span> <span class="k">expr_stmt </span><span class="p">|</span> <span class="k">pass_stmt </span><span class="p">;</span>
-<span class="k">assignment     </span><span class="o">=</span> <span class="p">[</span> <span class="s2">&quot;let&quot;</span> <span class="p">|</span> <span class="s2">&quot;mut&quot;</span> <span class="p">]</span> <span class="k">IDENT </span><span class="p">[</span> <span class="s2">&quot;:&quot;</span> <span class="k">type </span><span class="p">]</span> <span class="s2">&quot;=&quot;</span> <span class="k">expr </span><span class="p">;</span>
-<span class="k">return_stmt    </span><span class="o">=</span> <span class="s2">&quot;return&quot;</span> <span class="p">[</span> <span class="k">expr </span><span class="p">]</span> <span class="p">;</span>
-<span class="k">if_stmt        </span><span class="o">=</span> <span class="k">if_expr </span><span class="p">;</span>
-<span class="k">while_stmt     </span><span class="o">=</span> <span class="s2">&quot;while&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">for_stmt       </span><span class="o">=</span> <span class="s2">&quot;for&quot;</span> <span class="k">IDENT </span><span class="s2">&quot;in&quot;</span> <span class="k">expr </span><span class="s2">&quot;:&quot;</span> <span class="k">INDENT </span><span class="p">{</span> <span class="k">statement </span><span class="p">}</span> <span class="k">DEDENT </span><span class="p">;</span>
-<span class="k">expr_stmt      </span><span class="o">=</span> <span class="k">expr </span><span class="p">;</span>
-<span class="k">pass_stmt      </span><span class="o">=</span> <span class="s2">&quot;pass&quot;</span> <span class="p">|</span> <span class="s2">&quot;...&quot;</span> <span class="p">;</span>
-</code></pre></div>
-<hr />
-<h2 id="4-type-rules">4. Type Rules<a class="headerlink" href="#4-type-rules" title="Permanent link">&para;</a></h2>
-<h3 id="41-assignment">4.1 Assignment<a class="headerlink" href="#41-assignment" title="Permanent link">&para;</a></h3>
+<p><strong>Constraint vocabulary:</strong></p>
 <ul>
-<li>LHS type must match RHS type exactly (or be inferred).</li>
-<li><code>mut</code> bindings can be reassigned; non-<code>mut</code> bindings cannot.</li>
+<li><code>int[...]</code>: <code>ge</code>, <code>gt</code>, <code>le</code>, <code>lt</code> (values must be compile-time constants: literals or named <code>const</code>s).</li>
+<li><code>float[...]</code> may use the same keys; values must be compile-time constants. IEEE comparisons with NaN are false, so NaN must fail all such constraints by default.</li>
 </ul>
-<h3 id="42-function-signatures">4.2 Function Signatures<a class="headerlink" href="#42-function-signatures" title="Permanent link">&para;</a></h3>
-<ul>
-<li>All parameters must have explicit types.</li>
-<li>Return type must be explicit.</li>
-<li>Functions using <code>?</code> must return <code>Result[T, E]</code> where <code>E</code> is compatible with the propagated error.</li>
-</ul>
-<h3 id="43-method-resolution">4.3 Method Resolution<a class="headerlink" href="#43-method-resolution" title="Permanent link">&para;</a></h3>
+<p><strong>Constraint semantics:</strong> <code>ge</code> / <code>gt</code> / <code>le</code> / <code>lt</code> have the usual ordered comparisons. Multiple constraints may appear in one bracket list (<code>int[ge=0, lt=10]</code>); order is irrelevant and all must hold. Constraint parameters are compile-time constants, not arbitrary expressions. Only one constraint block is permitted on a primitive. Duplicate keys are rejected.</p>
+<h3 id="implicit-coercion-sites">Implicit coercion sites<a class="headerlink" href="#implicit-coercion-sites" title="Permanent link">&para;</a></h3>
+<p>When a context expects validated newtype <code>T_target</code> but a value has type <code>S0</code>, the compiler may insert implicit coercions consisting <strong>only</strong> of validated newtype conversions (<code>from_underlying</code>), possibly chained across nested newtypes. The compiler <strong>must not</strong> insert ambient primitive conversions (e.g. <code>str -&gt; int</code>, <code>int -&gt; float</code>).</p>
+<p><strong>Proposed contexts:</strong></p>
 <ol>
-<li>Check the type's own methods.</li>
-<li>Check composed traits in left-to-right order.</li>
-<li>If conflict, require explicit resolution or compile error.</li>
+<li>Function arguments</li>
+<li>Typed initializers</li>
+<li>Model/class field initialization</li>
+<li>Newtype construction <code>T(x)</code> (checked by default at that site)</li>
 </ol>
-<h3 id="44-trait-adoption">4.4 Trait Adoption<a class="headerlink" href="#44-trait-adoption" title="Permanent link">&para;</a></h3>
+<p>The coercion graph must be acyclic; cycles are rejected with a clear diagnostic.</p>
+<h3 id="failure-behavior">Failure behavior<a class="headerlink" href="#failure-behavior" title="Permanent link">&para;</a></h3>
+<p>If <code>from_underlying</code> returns <code>Err</code> during implicit coercion, the runtime behavior is a validation failure (panic carrying validation diagnostics), analogous to pydantic raising on invalid input.</p>
 <ul>
-<li><code>class X with TraitA, TraitB</code>: <code>X</code> must satisfy all trait requirements.</li>
-<li>Missing required methods → compile error.</li>
-<li>Conflicting methods → must resolve explicitly.</li>
+<li>Function arguments and typed initializers: fail fast (first invalid coercion).</li>
+<li>Model/class field initialization: aggregate field coercion errors and fail once with a multi-error report where specified.</li>
 </ul>
-<h3 id="45-error-propagation">4.5 Error Propagation (<code>?</code>)<a class="headerlink" href="#45-error-propagation" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>expr?</code> on <code>Result[T, E]</code>:<ul>
-<li>If <code>Err(e)</code>: return <code>Err(e)</code> from enclosing function.</li>
-<li>If <code>Ok(v)</code>: evaluate to <code>v</code>.</li>
-</ul>
+<h3 id="controls-and-policy">Controls and policy<a class="headerlink" href="#controls-and-policy" title="Permanent link">&para;</a></h3>
+<p>Implicit coercion is for boundary ergonomics; it can hide panics in library APIs. Authors must be able to opt out (e.g. <code>@no_implicit_coercion</code> at type level and/or per-site controls) and to use explicit <code>Result</code>-returning construction where panics are unacceptable.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-bracket-syntax-for-constraints">Why bracket syntax for constraints<a class="headerlink" href="#why-bracket-syntax-for-constraints" title="Permanent link">&para;</a></h3>
+<p>Bracket syntax keeps constraints in the type-parameter family (like <code>list[T]</code>) instead of looking like a runtime call with keyword arguments on <code>int(...)</code>.</p>
+<h3 id="why-keep-implicit-coercion-when-explicit-result-exists">Why keep implicit coercion when explicit <code>Result</code> exists<a class="headerlink" href="#why-keep-implicit-coercion-when-explicit-result-exists" title="Permanent link">&para;</a></h3>
+<p>Multiple exit shapes (success, timeout, error) and call-site noise are reduced at boundaries; explicit hooks remain for recoverable paths.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Explicit constructors only</strong> — Rejected: does not deliver boundary ergonomics this RFC targets.</p>
 </li>
-<li>Enclosing function must return <code>Result[_, E]</code> (or compatible).</li>
-</ul>
-<h3 id="46-newtype-invariants">4.6 Newtype Invariants<a class="headerlink" href="#46-newtype-invariants" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Newtype constructors returning <code>Result</code> enforce invariants.</li>
-<li>Cannot construct newtype directly; must use constructor.</li>
-</ul>
-<hr />
-<h2 id="5-invariants">5. Invariants<a class="headerlink" href="#5-invariants" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>No implicit mutation</strong>: All mutations require <code>mut</code>.</li>
-<li><strong>No silent errors</strong>: Errors surface via <code>Result</code>; <code>?</code> propagates explicitly.</li>
-<li><strong>No runtime trait patching</strong>: Trait composition is static.</li>
-<li><strong>Deterministic dispatch</strong>: Method resolution is predictable (no MRO).</li>
-<li><strong>Type safety</strong>: All types known at compile time; no dynamic typing.</li>
-<li><strong>Explicit receiver</strong>: <code>self</code> is required in method signatures.</li>
+<li>
+<p><strong><code>TryFrom</code> only, no reserved hook</strong> — Rejected: error type and metadata requirements favor a dedicated <code>ValidationError</code>-oriented hook without forcing newtype <code>impl</code> blocks today.</p>
+</li>
+<li>
+<p><strong>Implicit primitive parsing (<code>str -&gt; int</code>)</strong> — Rejected: too much hidden work and failure surface; parsing stays explicit at call sites.</p>
+</li>
 </ol>
-<hr />
-<h2 id="6-examples">6. Examples<a class="headerlink" href="#6-examples" title="Permanent link">&para;</a></h2>
-<h3 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="p">::</span><span class="n">prelude</span> <span class="k">as</span> <span class="n">pl</span>
-
-<span class="c1"># Structured error type</span>
-<span class="k">enum</span> <span class="nc">AppError</span><span class="p">:</span>
-  <span class="kt">ValidationError</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-  <span class="nc">IoError</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
-  <span class="nc">NotFound</span>
-
-<span class="c1"># Newtype with invariant</span>
-<span class="nb">type</span> <span class="nc">Email</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">:</span>
-  <span class="nd">@validate</span> <span class="n">new</span>
-  <span class="k">def</span><span class="w"> </span><span class="nf">from_str</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Email</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="s2">&quot;@&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">v</span><span class="p">:</span>
-      <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;missing @&quot;</span><span class="p">))</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Email</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="nb">lower</span><span class="p">()))</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">as_str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="bp">self</span><span class="mf">.0</span>   <span class="c1"># access underlying value</span>
-
-<span class="c1"># Model with validation</span>
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Eq</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-  <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
-  <span class="n">email</span><span class="p">:</span> <span class="nc">Email</span>
-  <span class="n">is_active</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="k">true</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_active</span><span class="p">:</span>
-      <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;inactive&quot;</span><span class="p">))</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-<span class="c1"># Trait</span>
-<span class="k">trait</span> <span class="nc">Loggable</span><span class="p">:</span>
-  <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-<span class="c1"># Class with trait</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">UserService</span> <span class="k">with</span> <span class="nc">Loggable</span><span class="p">:</span>
-  <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-  <span class="n">users</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">User</span><span class="p">]</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">create</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">email_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="n">email</span> <span class="o">=</span> <span class="nc">Email</span><span class="o">.</span><span class="n">from_str</span><span class="p">(</span><span class="n">email_str</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">user</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="n">email</span><span class="p">)</span><span class="o">.</span><span class="n">validate</span><span class="p">()</span><span class="o">?</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">[</span><span class="n">user</span><span class="o">.</span><span class="n">id</span><span class="p">]</span> <span class="o">=</span> <span class="n">user</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;created user </span><span class="si">{</span><span class="n">user</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
-
-  <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">User</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-    <span class="k">match</span> <span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="nb">id</span><span class="p">):</span>
-      <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">user</span><span class="p">):</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
-      <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">NotFound</span><span class="p">)</span>
-
-<span class="c1"># Usage</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Unit</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
-  <span class="k">mut</span> <span class="n">svc</span> <span class="o">=</span> <span class="nc">UserService</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;user-svc&quot;</span><span class="p">,</span> <span class="n">users</span><span class="o">=</span><span class="p">{})</span>
-  <span class="n">user</span> <span class="o">=</span> <span class="n">svc</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">&quot;ada@example.com&quot;</span><span class="p">)</span><span class="o">?</span>
-  <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Created: </span><span class="si">{</span><span class="n">user</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-  <span class="k">return</span> <span class="nb">Ok</span><span class="p">(())</span>
-</code></pre></div>
-<hr />
-<h2 id="7-checklist">7. Checklist<a class="headerlink" href="#7-checklist" title="Permanent link">&para;</a></h2>
-<h3 id="core-semantics">Core Semantics<a class="headerlink" href="#core-semantics" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Required typing</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Immutable-by-default bindings</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>self</code> / <code>mut self</code> receivers</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Result</code> / <code>Option</code> / <code>?</code> error handling</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Behavior-only traits with deterministic composition</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Models vs Classes distinction</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Newtypes with validation</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Enums (algebraic data types)</li>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Validation panics at implicit sites can surprise readers of call sites unless conventions and docs are clear.</li>
+<li>Unifying coercion chains and diagnostics adds compiler and runtime complexity.</li>
+<li>Constrained types and aggregation must be tuned to avoid confusing error volumes.</li>
 </ul>
-<h3 id="builtin-types">Builtin Types<a class="headerlink" href="#builtin-types" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Primitives: <code>int</code>, <code>float</code>, <code>bool</code>, <code>str</code>, <code>bytes</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Collections: <code>List</code>, <code>Dict</code>, <code>Set</code>, <code>Tuple</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Error types: <code>Result</code>, <code>Option</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Unit</code> type</li>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> A practical rollout has four broad pieces:</p>
+<ol>
+<li><strong>Type surface and hook recognition</strong>: support constrained primitive syntax in type position, represent those constraints structurally, and recognize <code>from_underlying(...) -&gt; Result[Self, ValidationError]</code> as the canonical newtype validation hook.</li>
+<li><strong>Coercion insertion</strong>: apply implicit validated coercion only at the approved language sites in this RFC, including newtype construction, function arguments, typed initializers, and model or class field initialization, while preserving the rule that there are no ambient primitive conversions such as <code>str -&gt; int</code>.</li>
+<li><strong>Failure and diagnostics model</strong>: preserve fail-fast behavior at ordinary coercion sites, aggregated failures for model or class construction, deterministic coercion ordering, and diagnostics that explain both the coercion site and the chain being attempted.</li>
+<li><strong>Runtime and tooling support</strong>: provide the canonical <code>ValidationError</code> shape, aggregation helpers, documentation for explicit recovery paths, and comprehensive tests for constraints, coercion insertion, diagnostics, and aggregation behavior.</li>
+</ol>
+<p>Implementation sequencing is not part of the public contract. The RFC’s design claim is the full validated-newtype boundary model, not any one stepping-stone rollout order.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Lexer/parser/AST/formatter:</strong> constrained primitive syntax in type position; structured representation; stable formatting.</li>
+<li><strong>Typechecker:</strong> reserved hook shape, coercion insertion at approved sites, cycle detection, diagnostics.</li>
+<li><strong>Lowering/IR/emission:</strong> validated coercion representation; deterministic evaluation order; panic paths for failed coercion.</li>
+<li><strong>Runtime/stdlib:</strong> <code>ValidationError</code> shape, aggregation helpers, stable formatting.</li>
+<li><strong>Docs/tooling:</strong> teach hooks, coercion sites, opt-outs, and explicit alternatives.</li>
 </ul>
-<h3 id="builtin-traits">Builtin Traits<a class="headerlink" href="#builtin-traits" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Debug</code>, <code>Display</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Eq</code>, <code>PartialEq</code>, <code>Ord</code>, <code>PartialOrd</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Hash</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Clone</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Default</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>From</code>, <code>Into</code>, <code>TryFrom</code>, <code>TryInto</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Iterator</code>, <code>IntoIterator</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>Error</code></li>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-type-surface-and-validation-metadata">Phase 1: Type surface and validation metadata<a class="headerlink" href="#phase-1-type-surface-and-validation-metadata" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add constrained primitive type syntax in type position and keep it as structured AST/type metadata.</li>
+<li>Preserve formatter and parser round-tripping for constrained primitive types.</li>
+<li>Recognize <code>from_underlying</code> as the canonical newtype hook and validate its deterministic, underlying-to-newtype shape.</li>
+<li>Provide default generated validation metadata for unconstrained newtypes and constrained primitive underlyings.</li>
 </ul>
-<h3 id="derives">Derives<a class="headerlink" href="#derives" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>@derive(Debug, Display, Eq, Ord, Hash, Clone, Default, Validate)</code></li>
+<h3 id="phase-2-coercion-eligibility-and-insertion">Phase 2: Coercion eligibility and insertion<a class="headerlink" href="#phase-2-coercion-eligibility-and-insertion" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Build a typechecker-owned validated-newtype coercion planner for underlying-to-newtype and newtype-to-newtype chains.</li>
+<li>Apply coercion only at approved sites: newtype construction, function arguments, typed initializers, and model/class field initialization.</li>
+<li>Reject coercion cycles, primitive parsing, unrelated primitive widening, and opted-out implicit coercion with precise diagnostics.</li>
 </ul>
-<h3 id="grammar">Grammar<a class="headerlink" href="#grammar" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Declarations: model, class, trait, newtype, enum, function</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Expressions: calls, <code>?</code>, match, if, comprehensions</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Statements: assignment, return, control flow</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Receivers: <code>self</code>, <code>mut self</code></li>
+<h3 id="phase-3-lowering-emission-and-runtime-errors">Phase 3: Lowering, emission, and runtime errors<a class="headerlink" href="#phase-3-lowering-emission-and-runtime-errors" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Carry validated coercion decisions through lowering instead of rediscovering them during emission.</li>
+<li>Emit deterministic fail-fast coercion calls for ordinary sites.</li>
+<li>Add the runtime <code>ValidationError</code> and aggregation representation needed for model/class field initialization.</li>
+<li>Emit aggregated model/class construction failures where multiple fields fail validation.</li>
 </ul>
-<h3 id="type-rules">Type Rules<a class="headerlink" href="#type-rules" title="Permanent link">&para;</a></h3>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Assignment typing</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Function signature requirements</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Method resolution order</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Trait adoption rules</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Error propagation (<code>?</code>)</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Newtype invariants</li>
+<h3 id="phase-4-user-facing-docs-release-notes-and-closeout">Phase 4: User-facing docs, release notes, and closeout<a class="headerlink" href="#phase-4-user-facing-docs-release-notes-and-closeout" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Update the newtypes tutorial/reference material to describe checked construction, implicit coercion sites, opt-outs, and explicit recovery paths.</li>
+<li>Add active <code>0.3</code> release notes for validated-newtype work.</li>
+<li>Bump the active development version by one <code>0.3.0-dev.N</code> increment.</li>
+<li>Run focused parser/typechecker/codegen tests plus the repository pre-commit gate.</li>
 </ul>
+<h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
+<h3 id="spec-lifecycle">Spec / lifecycle<a class="headerlink" href="#spec-lifecycle" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Review RFC 017 for In Progress hygiene and establish the implementation phases/checklist.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep the RFC checklist synchronized as implementation slices land.</li>
+</ul>
+<h3 id="parser-ast-formatter">Parser / AST / Formatter<a class="headerlink" href="#parser-ast-formatter" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser: accept constrained primitive syntax in type position.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> AST: represent primitive constraints structurally instead of as ordinary generic arguments.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Formatter: round-trip constrained primitive types stably.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: reject duplicate keys, unsupported keys, non-constant values, and repeated constraint blocks.</li>
+</ul>
+<h3 id="typechecker">Typechecker<a class="headerlink" href="#typechecker" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Recognize <code>from_underlying</code> as the canonical newtype validation hook.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Validate hook parameter and return shape against the newtype underlying type and <code>Result[Self, ValidationError]</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Generate/default validation metadata for unconstrained and constrained underlyings.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Plan validated-newtype coercion chains without ambient primitive conversions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Insert coercion at newtype construction, function arguments, typed initializers, and model/class field initialization.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Reject cycles and opted-out implicit coercion with span-precise diagnostics.</li>
+</ul>
+<h3 id="lowering-ir-emission">Lowering / IR / Emission<a class="headerlink" href="#lowering-ir-emission" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Carry checked coercion plans through lowering/IR.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit fail-fast validated coercion calls for ordinary coercion sites.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit aggregated validation failures for model/class field initialization.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Preserve deterministic evaluation order and avoid ad hoc emission-time type guesses.</li>
+</ul>
+<h3 id="runtime-stdlib">Runtime / Stdlib<a class="headerlink" href="#runtime-stdlib" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Provide canonical <code>ValidationError</code> support for validated newtypes.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Provide aggregation helpers or data structures for model/class construction failures.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep explicit <code>Result</code>-returning construction available for recoverable flows.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser and formatter tests for constrained primitive syntax.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Typechecker tests for valid hooks, malformed hooks, coercion chains, cycles, opt-outs, and invalid primitive conversions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen snapshots for checked construction, function arguments, typed initializers, and model/class fields.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Runtime/integration tests for successful coercion, fail-fast errors, and aggregated field errors.</li>
+</ul>
+<h3 id="docs-release">Docs / Release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update authored user-facing newtype documentation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update relevant reference material for validation errors and coercion controls.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add active <code>0.3</code> release notes.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Bump the active development version from <code>0.3.0-dev.38</code> to the next dev increment.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Panic strategy (unwind vs abort)</strong> — Validation failures from implicit coercion use the language runtime’s normal panic mechanism (typically unwinding). A distinct abort-only policy is out of scope unless specified separately.</p>
+</li>
+<li>
+<p><strong>Constraint catalog</strong> — Start with <code>ge</code> / <code>gt</code> / <code>le</code> / <code>lt</code> on <code>int</code>, with optional extension to <code>float</code> under the same keys; additional constraints or types ship via follow-up RFCs or releases.</p>
+</li>
+<li>
+<p><strong>Non-panicking mode</strong> — Explicit <code>Type.from_underlying(value)</code> (and related explicit APIs) remains the supported recoverable path. Implicit coercion stays panic-on-invalid until a dedicated opt-in “Result mode” is specified and implemented.</p>
+</li>
+<li>
+<p><strong>Serialization and FFI</strong> — Implicit coercion applies only at the Incan-language sites listed in this RFC. Serialization codecs and FFI boundaries must use explicit constructors or adapters; no implicit coercion across foreign boundaries in this RFC.</p>
+</li>
+</ol>
 
 
 

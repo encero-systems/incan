@@ -4985,14 +4985,38 @@ better static checking.</p>
 <h2 id="validated-construction">Validated construction<a class="headerlink" href="#validated-construction" title="Permanent link">&para;</a></h2>
 <p>Newtypes can optionally define a reserved validation hook:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Attempts</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Attempts</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
         <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">))</span>
         <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
 </code></pre></div>
 <p>If a newtype defines <code>from_underlying</code>, then calling it like <code>Attempts(5)</code> performs <strong>checked construction</strong>
-(it calls <code>Attempts.from_underlying(5)</code> and panics if it returns <code>Err(...)</code>). This is a stepping stone toward the full
-v0.2 RFC behavior.</p>
+(it calls <code>Attempts.from_underlying(5)</code> and raises a validation error if it returns <code>Err(...)</code>).</p>
+<p>The compiler also applies that checked construction at typed boundary sites where the destination type is already known:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">retry</span><span class="p">(</span><span class="n">attempts</span><span class="p">:</span> <span class="nc">Attempts</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;attempts=</span><span class="si">{</span><span class="n">attempts</span><span class="mf">.0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">retry</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>                  <span class="c1"># checked as Attempts.from_underlying(3)</span>
+    <span class="n">attempts</span><span class="p">:</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="mi">4</span>    <span class="c1"># checked at the typed initializer</span>
+</code></pre></div>
+<p>Implicit coercion does not parse unrelated primitive types. For example, <code>"3"</code> does not become an <code>int</code> on the way into <code>Attempts</code>; parse strings explicitly before constructing the newtype.</p>
+<p>You can also write simple numeric constraints on primitive underlyings:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">NonNegativeInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
+<span class="nb">type</span> <span class="nc">Percentage</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">100</span><span class="p">]</span>
+</code></pre></div>
+<p>Generated constraints are checked at the same validated construction sites as <code>from_underlying</code>.</p>
+<p>Use <code>@no_implicit_coercion</code> when a newtype should require explicit construction:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@no_implicit_coercion</span>
+<span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">retry</span><span class="p">(</span><span class="n">attempts</span><span class="p">:</span> <span class="nc">Attempts</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">return</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">retry</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>  <span class="c1"># ok</span>
+    <span class="c1"># retry(3)          # type error</span>
+</code></pre></div>
 <p>To access the wrapped value, use <code>.0</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">user_id</span> <span class="o">=</span> <span class="nc">UserId</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
@@ -5011,14 +5035,11 @@ v0.2 RFC behavior.</p>
 <p>You can then use <code>match</code> (or <code>?</code> if you’re inside a function returning <code>Result</code>) to handle failures.</p>
 <h2 id="methods-on-newtypes">Methods on newtypes<a class="headerlink" href="#methods-on-newtypes" title="Permanent link">&para;</a></h2>
 <p>Newtypes can also define methods:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">EmailError</span><span class="p">:</span>
-    <span class="nc">MissingAt</span>
-
-<span class="nb">type</span> <span class="nc">Email</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Email</span><span class="p">,</span> <span class="nc">EmailError</span><span class="p">]:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Email</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Email</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Validate an email address by checking for the presence of an @ symbol&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="s2">&quot;@&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">v</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">EmailError</span><span class="o">.</span><span class="nc">MissingAt</span><span class="p">)</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;missing @&quot;</span><span class="p">))</span>
         <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Email</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="nb">lower</span><span class="p">()))</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -5029,16 +5050,16 @@ v0.2 RFC behavior.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Define <code>type CartItems = newtype List[str]</code>.</li>
-<li>Write <code>def non_empty(items: List[str]) -&gt; Result[CartItems, str]</code> that rejects empty lists.</li>
+<li>Write <code>def non_empty(items: List[str]) -&gt; Result[CartItems, ValidationError]</code> that rejects empty lists.</li>
 <li>In <code>main()</code>, call it with both <code>[]</code> and <code>["a"]</code> and print either the error or the first item.</li>
 </ol>
 <details class="example">
 <summary>One possible solution</summary>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">CartItems</span> <span class="o">=</span> <span class="k">newtype</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">non_empty</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">CartItems</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">non_empty</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">CartItems</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
     <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;must not be empty&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;must not be empty&quot;</span><span class="p">))</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">CartItems</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>

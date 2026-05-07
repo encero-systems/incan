@@ -4878,16 +4878,16 @@
         <span class="k">return</span> <span class="kc">None</span>
 </code></pre></div>
 <h2 id="example-simple-structured-error">Example: simple structured error<a class="headerlink" href="#example-simple-structured-error" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">ValidationError</span> <span class="k">with</span> <span class="nc">Error</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">AgeValidationError</span> <span class="k">with</span> <span class="nc">Error</span><span class="p">:</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">msg</span><span class="p">:</span> <span class="nb">str</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">message</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Validation failed for &#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">field</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">validate_age</span><span class="p">(</span><span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">ValidationError</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_age</span><span class="p">(</span><span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">AgeValidationError</span><span class="p">]:</span>
     <span class="k">if</span> <span class="n">age</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">ValidationError</span><span class="p">(</span><span class="n">field</span><span class="o">=</span><span class="s2">&quot;age&quot;</span><span class="p">,</span> <span class="n">msg</span><span class="o">=</span><span class="s2">&quot;cannot be negative&quot;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">AgeValidationError</span><span class="p">(</span><span class="n">field</span><span class="o">=</span><span class="s2">&quot;age&quot;</span><span class="p">,</span> <span class="n">msg</span><span class="o">=</span><span class="s2">&quot;cannot be negative&quot;</span><span class="p">))</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">age</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="example-chaining-with-source">Example: chaining with <code>source()</code><a class="headerlink" href="#example-chaining-with-source" title="Permanent link">&para;</a></h2>
