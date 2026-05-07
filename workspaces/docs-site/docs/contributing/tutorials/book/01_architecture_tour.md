@@ -21,6 +21,8 @@ At a high level, the compiler/toolchain splits into:
 - **Project generation**: writes a Cargo project, builds/runs it
 - **Tooling**: formatter, LSP, test runner, and other developer-facing workflows
 
+Workspace crates split across stable contracts, compiler/toolchain implementation, and runtime-only implementation. Keep that split in mind before adding a dependency: generated programs may use runtime crates, but compiler code should normally consume stable contract crates and toolchain crates only.
+
 ## Where to look in the repository
 
 You can orient yourself with these anchors:
@@ -28,6 +30,16 @@ You can orient yourself with these anchors:
 - `crates/incan_syntax/`:
     - shared lexer/parser/AST/diagnostics
     - used by compiler, formatter, and LSP to avoid drift
+- `crates/incan_core/`:
+    - pure language policy and registries shared across compiler/runtime boundaries
+- `crates/incan_semantics_core/` and `crates/incan_semantics_stdlib/`:
+    - descriptor contracts plus current stdlib semantics-pack implementation
+- `crates/incan_vocab/`:
+    - stable library manifest/desugarer contract for import-activated library DSLs
+- `crates/rust_inspect/`:
+    - staged Rust metadata preparation/cache subsystem for Rust interop
+- `crates/incan_stdlib/`, `crates/incan_derive/`, and `crates/incan_web_macros/`:
+    - runtime-only support used by generated Rust programs
 - `src/frontend/`:
     - module resolution (`module.rs`)
     - typechecker (`typechecker/`)
@@ -44,6 +56,7 @@ You can orient yourself with these anchors:
 If you want the deep version (module layout, key types, entry points), read:
 
 - [Architecture](../../explanation/architecture.md)
+- [Layering rules](../../explanation/layering.md)
 
 ## Contributor workflow: “touch points”
 

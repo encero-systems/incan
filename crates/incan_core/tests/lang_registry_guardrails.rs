@@ -8,6 +8,7 @@ use incan_core::lang::magic_methods;
 use incan_core::lang::operators;
 use incan_core::lang::punctuation;
 use incan_core::lang::registry::{RFC, Since};
+use incan_core::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
 use incan_core::lang::surface::{constructors, functions, types as surface_types};
 use incan_core::lang::traits;
 use incan_core::lang::types::{collections, numerics, stringlike};
@@ -312,6 +313,63 @@ fn surface_types_spellings_unique_and_resolvable() {
         from_str: surface_types::from_str,
         as_str: surface_types::as_str,
     });
+}
+
+#[test]
+fn surface_types_have_explicit_ownership_metadata() {
+    for info in surface_types::SURFACE_TYPES {
+        let id = info.item.id;
+
+        assert_eq!(surface_types::owner(id), info.ownership.owner);
+        assert_eq!(surface_types::category(id), info.ownership.category);
+        assert_eq!(surface_types::stdlib_module_path(id), info.ownership.stdlib_module_path);
+        assert!(
+            !info.ownership.rationale.trim().is_empty(),
+            "surface type {:?} must explain why incan_core owns its spelling",
+            id
+        );
+    }
+
+    let globally_available: Vec<SurfaceTypeId> = surface_types::SURFACE_TYPES
+        .iter()
+        .filter(|info| surface_types::is_global(info.item.id))
+        .map(|info| info.item.id)
+        .collect();
+    assert_eq!(
+        globally_available,
+        vec![
+            SurfaceTypeId::Vec,
+            SurfaceTypeId::HashMap,
+            SurfaceTypeId::ValidationError
+        ]
+    );
+
+    let interop_types: Vec<SurfaceTypeId> = surface_types::types_for_owner(SurfaceTypeOwner::Interop)
+        .map(|info| info.item.id)
+        .collect();
+    assert_eq!(interop_types, vec![SurfaceTypeId::Vec, SurfaceTypeId::HashMap]);
+
+    let web_types: Vec<SurfaceTypeId> = surface_types::types_in_category(SurfaceTypeCategory::Web)
+        .map(|info| info.item.id)
+        .collect();
+    assert_eq!(
+        web_types,
+        vec![
+            SurfaceTypeId::App,
+            SurfaceTypeId::Response,
+            SurfaceTypeId::Html,
+            SurfaceTypeId::Json,
+            SurfaceTypeId::Query,
+            SurfaceTypeId::Path,
+            SurfaceTypeId::Body,
+            SurfaceTypeId::Request,
+        ]
+    );
+
+    let validation_types: Vec<SurfaceTypeId> = surface_types::types_in_category(SurfaceTypeCategory::Validation)
+        .map(|info| info.item.id)
+        .collect();
+    assert_eq!(validation_types, vec![SurfaceTypeId::ValidationError]);
 }
 
 // -------------------------------------------------------------------------------------------------

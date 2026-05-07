@@ -1,4 +1,7 @@
 //! Load a Cargo tree into rust-analyzer's `RootDatabase`.
+//!
+//! This module is intentionally behind the rust-inspect preparation/cache boundary. It owns the unstable rust-analyzer
+//! embedding details so parser/typechecker/codegen code does not load Cargo workspaces directly.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,7 +54,8 @@ impl RustWorkspace {
 
     /// Load the Cargo project rooted at `manifest_dir` (directory containing `Cargo.toml`).
     ///
-    /// `progress` is forwarded to rust-analyzer while discovering workspace members.
+    /// `progress` is forwarded to rust-analyzer while discovering workspace members. Call this only from explicit
+    /// inspection preparation paths, not from ordinary semantic lookups.
     pub fn load(manifest_dir: &Path, progress: &(dyn Fn(String) + Sync)) -> Result<Self, RustMetadataError> {
         Self::load_with_options(manifest_dir, progress, false)
     }

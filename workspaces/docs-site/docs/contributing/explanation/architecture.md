@@ -159,6 +159,26 @@ Runtime crates (used by generated Rust programs, not the compiler)
         - Proc-macro derives to generate impls for stdlib traits
 ```
 
+## Workspace Crate Boundary Policy
+
+Workspace crates are not interchangeable buckets for compiler code. Treat each crate as one of these ownership categories:
+
+- **Stable contract crates**: `incan_core`, `incan_syntax`, `incan_semantics_core`, and `incan_vocab`. These crates hold shared language contracts used across compiler, tooling, library manifests, and generated-package boundaries. Keep them deterministic, dependency-light, and explicit about what is stable.
+- **Compiler/toolchain implementation crates**: `incan`, `incan_semantics_stdlib`, and `rust_inspect`. These crates own compiler orchestration, stdlib semantics packs, and Rust metadata preparation. They may evolve with the toolchain and should not be treated as general runtime APIs.
+- **Runtime-only crates**: `incan_stdlib`, `incan_derive`, and `incan_web_macros`. These crates back generated Rust programs and runtime behavior. The compiler must not depend on them in normal builds.
+- **Transitional runtime surfaces**: the current `incan_stdlib::web` backing plus related macro glue. Keep transitional runtime code quarantined behind runtime-only crates until it is either stabilized or replaced by Incan-authored library code.
+
+The useful distinction is stable contract versus implementation detail, not "more crates" versus "fewer crates." A new crate boundary is justified when it protects a real contract: syntax shared with formatter/LSP, pure semantic policy shared with runtime, a semantics-pack interface, a library manifest ABI, or a staged interop subsystem. It is not justified when it only hides a pile of toolchain internals behind a new package name.
+
+When moving code, preserve these rules:
+
+- Language policy that both compiler and runtime must share belongs in `incan_core` or another stable contract crate.
+- Syntax shapes, parser diagnostics, and AST vocabulary belong in `incan_syntax`; compiler-only name resolution and typechecking stay out of that crate.
+- Surface semantics packs return descriptors through `incan_semantics_core`; they do not call compiler frontend/backend code directly.
+- Runtime facades, proc macros, web glue, panics, allocation-heavy wrappers, and generated-program helpers stay in runtime-only crates.
+- Rust interop metadata loading stays staged and cache-oriented in `rust_inspect`; semantic hot paths should read prepared metadata rather than performing hidden workspace extraction.
+- If a type looks stdlib-owned (`Mutex`, `JoinHandle`, `App`, `Response`, etc.), do not add more core-owned surface metadata without an explicit rationale. Prefer library-defined ownership when the current manifest and semantics-pack machinery can express it.
+
 ## Semantic Core
 
 Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministic helpers shared by the compiler and
@@ -170,6 +190,8 @@ runtime, without creating dependency cycles.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
 - **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution,
   unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
+
+`incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
 See crate-level documentation in `crates/incan_core` for the contract, extension checklist,
 and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth
@@ -317,9 +339,9 @@ descriptors represent compiler behavior patterns, not individual keywords.
 | `ir/decl.rs`        | IR declarations (`IrDecl`)                      |
 | `project.rs`        | Cargo project scaffolding and generation        |
 
-### Rust inspect subsystem (`src/rust_inspect/`)
+### Rust inspect subsystem (`crates/rust_inspect/`, re-exported through `src/rust_inspect/`)
 
-`rust_inspect/` powers RFC 041 interop checks that need Rust-side signatures and item shapes.
+`rust_inspect` is a staged interop subsystem for checks that need Rust-side signatures and item shapes. It is toolchain-locked implementation code, not a stable language contract crate.
 
 | Module         | Purpose                                                              |
 | -------------- | -------------------------------------------------------------------- |
@@ -328,6 +350,8 @@ descriptors represent compiler behavior patterns, not individual keywords.
 | `loader.rs`    | Rust workspace loading and crate graph setup for metadata extraction |
 | `extractor.rs` | rust-analyzer-backed extraction of item signatures and method shapes |
 | `error.rs`     | Typed metadata load/extract error surface                            |
+
+Keep Rust inspection as explicit preparation followed by cache reads. CLI/LSP/project setup may prepare the inspection workspace and prewarm metadata; parser/typechecker/lowering paths should not silently trigger expensive Rust workspace loading.
 
 #### Expression Emission (`src/backend/ir/emit/expressions/`)
 
