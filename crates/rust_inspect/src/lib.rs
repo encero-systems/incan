@@ -2,6 +2,10 @@
 //!
 //! The `Inspector` API separates eager extraction (`prewarm`) from cache-only reads (`get`) so compiler hot paths can
 //! remain extraction-free.
+//!
+//! This crate is a toolchain-locked compiler subsystem. It is responsible for staged Rust interop preparation and
+//! metadata cache access, not for ambient semantic analysis. Callers should make workspace loading and extraction
+//! explicit before typechecking/codegen paths ask for cached metadata.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -80,6 +84,9 @@ impl Inspector {
     }
 
     /// Create an inspector bound to one generated lock workspace.
+    ///
+    /// The workspace should be compiler-managed, usually the generated lock workspace used for Rust interop
+    /// preparation rather than the user's live application tree.
     pub fn new(config: InspectorConfig) -> Self {
         Self {
             config,
@@ -90,7 +97,8 @@ impl Inspector {
     /// Eagerly extract/cache metadata for the supplied canonical query paths.
     ///
     /// This is the expensive path. Callers should do this in explicit preparation phases rather than semantic hot
-    /// loops.
+    /// loops. A missing item that is stable enough to cache negatively is skipped here so later cache-only lookups can
+    /// report the miss without reloading the Rust workspace.
     pub fn prewarm<I>(&self, canonical_paths: I, progress: &(dyn Fn(String) + Sync)) -> Result<(), InspectError>
     where
         I: IntoIterator<Item = String>,

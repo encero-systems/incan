@@ -8,6 +8,8 @@ This crate is the compiler-side boundary for looking up Rust function/type metad
 - extract `RustItemMetadata` for canonical Rust paths
 - cache extracted items so compiler hot paths can read metadata without re-extracting it
 
+`rust_inspect` is toolchain-locked to the Incan compiler. Treat it as staged interop-preparation infrastructure, not as a reusable crate API for downstream programs.
+
 ## Purpose
 
 Incan needs Rust-side signatures and item shapes for some interop checks:
@@ -41,6 +43,7 @@ The intended contract is:
 - `prewarm(...)` may perform expensive extraction
 - `get(...)` should be cache-only
 - compiler/typechecker hot paths should prefer cached reads over fresh extraction
+- workspace loading is owned by explicit preparation/cache code, not by semantic checks as a side effect
 
 ## Architecture Notes
 
@@ -72,6 +75,8 @@ Keeping it separate makes that boundary explicit.
 ### Not a stable public contract
 
 This crate is an internal compiler subsystem. The API may change as Incan settles the right architecture for Rust inspection. In particular, cache layout, fidelity reporting, and workspace loading strategy should be treated as implementation details unless explicitly documented otherwise.
+
+The stable architectural rule is the phase boundary: extraction happens before hot semantic/codegen paths need the data, and those paths consume cached metadata or report a miss.
 
 ### Internal module layout
 

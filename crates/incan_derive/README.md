@@ -4,6 +4,8 @@ Derive macros for the Incan programming language standard library.
 
 This crate provides procedural macros that generate boilerplate implementations for Incan language features. These macros are automatically used by the Incan compiler when you use decorators like `@derive(...)` in your Incan code.
 
+This crate is toolchain-locked to the Incan compiler and `incan_stdlib`. Its macros are exported because Rust procedural macro crates must export proc macros, not because they are intended as an independently stable public macro toolkit.
+
 ## Purpose
 
 When you write:
@@ -118,6 +120,10 @@ The compiler automatically:
 4. Ensures both `incan_stdlib` and `incan_derive` are in scope
 
 You should never need to use these macros directly - the compiler handles it.
+
+### Toolchain-locked boundary
+
+`incan_derive` is an implementation companion for generated Rust. Changes to macro names, generated helper methods, and trait wiring should follow the compiler and `incan_stdlib` together. If a behavior becomes part of the user-facing language contract, document it in the Incan language or stdlib docs first; keep this crate focused on the Rust expansion required to implement that contract.
 
 ## Development
 

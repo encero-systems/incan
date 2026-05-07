@@ -1,4 +1,7 @@
 //! In-memory cache: one loaded workspace per manifest directory, plus per-item metadata.
+//!
+//! The cache is the boundary that keeps rust-analyzer/Cargo extraction out of compiler hot paths. Preparation code may
+//! call `get_or_extract`; ordinary semantic/codegen consumers should use cache-only reads through `Inspector::get`.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -26,6 +29,9 @@ const INSPECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// The workspace is loaded at most once per canonical manifest directory; item metadata is stored per `(workspace_root,
 /// canonical_path)` and reused without re-querying salsa.
+///
+/// This type is internal plumbing for the toolchain-locked inspection subsystem. Its persistence format and negative
+/// lookup behavior are implementation details unless promoted through the crate-level API.
 ///
 /// The entire cache is protected by one mutex so `RustWorkspace` (which is not `Sync` because of the retained `Vfs`)
 /// never has to live inside `Arc` for cross-thread sharing.

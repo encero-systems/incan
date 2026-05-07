@@ -8,6 +8,8 @@ This crate provides the runtime support that all Incan-compiled programs depend 
 
 When you write Incan code with models, classes, and decorators, the compiler generates Rust code that leverages this standard library. Think of it as the bridge between Incan's Python-like ergonomics and Rust's performance.
 
+The user-facing contract is the Incan `std.*` surface declared by the stdlib stubs under `stdlib/`. The Rust modules under `src/` are the generated-code runtime backing for that surface. Some modules are stable support crates for generated Rust, while others are temporary host implementations that should not be treated as independent public APIs.
+
 ## What's Inside
 
 ### Core Traits
@@ -64,6 +66,12 @@ Enables JSON serialization support. Adds dependencies on `serde` and `serde_json
 
 **Enabled when**: Your Incan code imports and derives `std.serde.json`
 
+### `web` (optional)
+
+Enables the current Axum-backed host runtime for generated Incan web programs.
+
+**Boundary**: `incan_stdlib::web` is transitional generated-code support. It provides route registration, response helpers, and `App::run` while the Incan-owned `std.web` runtime surface is still maturing. Do not treat it as a stable standalone web framework API unless that contract is first reflected in the Incan stdlib stubs and language documentation.
+
 ## Architecture Notes
 
 ### Incan stdlib stubs
@@ -76,6 +84,16 @@ These files define the user-facing `std.*` API surface and are parsed by the com
 For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution.
 The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`.
 The language `assert` statement is always available without importing `std.testing`; the stdlib assertion helpers mirror that behavior for call-style assertions and unwrap-style helpers.
+
+### Transitional web runtime
+
+The web runtime is deliberately quarantined in `src/web.rs`. It re-exports a small set of Axum types, collects routes through `inventory`, and starts a Tokio/Axum server for generated programs. That is a compiler/runtime implementation bridge, not the final ownership model for `std.web`.
+
+Changes to this module should keep the generated-code boundary explicit: add stable user-facing behavior in the Incan stdlib stubs first, then update the Rust backing only where host integration is still required.
+
+### Internal generated-code support
+
+The `__private` module re-exports host crates needed by generated Rust. It is toolchain-locked to the compiler and may change with generated code. It is not part of the Incan language stdlib.
 
 ### Why a Separate Crate?
 
