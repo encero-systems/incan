@@ -5424,7 +5424,7 @@
     <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>  <span class="c1"># Compiler: &quot;T has no method to_json&quot;</span>
 </code></pre></div>
 <p>With trait-based derives, this becomes expressible:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">](</span><span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>  <span class="c1"># Verified: json.Serialize guarantees .to_json()</span>
 </code></pre></div>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
@@ -5463,7 +5463,7 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <p>Both format modules define their own <code>Serialize</code> trait, each carrying <code>@rust.derive("serde::Serialize")</code>. The compiler deduplicates to a single Rust-level derive, while each module injects its own distinct methods (<code>.to_json()</code> vs
 <code>.to_yaml()</code>).</p>
 <h3 id="partial-derives-serialize-only-deserialize-only">Partial derives (serialize-only, deserialize-only)<a class="headerlink" href="#partial-derives-serialize-only-deserialize-only" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span> <span class="k">as</span> <span class="n">json_write</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span> <span class="k">as</span> <span class="n">json_write</span>
 
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json_write</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">LogEntry</span><span class="p">:</span>
@@ -5508,7 +5508,7 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <p>Because derives are backed by traits, they compose with the <code>with</code> bound syntax ([RFC 023]):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span><span class="p">,</span> <span class="n">yaml</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">yaml</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">)](</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">,</span> <span class="n">yaml</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">)](</span>
     <span class="n">data</span><span class="p">:</span> <span class="nc">T</span><span class="p">,</span>
     <span class="nb">format</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -5521,14 +5521,14 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># my_company/formats/internal.incn</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_codec</span> <span class="kn">import</span><span class="w"> </span><span class="nn">encode</span><span class="o">,</span><span class="w"> </span><span class="nn">decode</span>
 
-<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
+<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 
 <span class="c1"># No @rust.derive needed — encode/decode handle serialization directly, without requiring a Rust derive on the struct.</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_internal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
 
-<span class="k">trait</span> <span class="kt">Deserialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Deserialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_internal</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="k">return</span> <span class="n">decode</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
@@ -5544,7 +5544,7 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="the-__derives__-module-attribute">The <code>__derives__</code> module attribute<a class="headerlink" href="#the-__derives__-module-attribute" title="Permanent link">&para;</a></h3>
 <p>A module that defines a <code>__derives__</code> attribute at module level is a <strong>derivable module</strong>. The attribute lists which of the module's traits are adoptable via <code>@derive()</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 </code></pre></div>
 <p>Here, <code>Serialize</code> and <code>Deserialize</code> refer to traits defined in the same module. When a type writes
 <code>@derive(module_name)</code>, the compiler:</p>
@@ -5562,7 +5562,7 @@ decorators on the adopted traits)</li>
 <em>type itself</em> requires a Rust-level derive for the trait's methods to work.</p>
 <p>The <code>@rust.derive("path::to::Derive")</code> decorator on a trait declaration carries this binding:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
@@ -5572,7 +5572,7 @@ decorators on the adopted traits)</li>
 <p>Multiple modules may declare the same <code>@rust.derive</code> path. For example, both <code>json.Serialize</code> and <code>yaml.Serialize</code> carry <code>@rust.derive("serde::Serialize")</code>. The compiler collects all <code>@rust.derive</code> paths from all adopted traits into a set before emission, producing one <code>#[derive(serde::Serialize, serde::Deserialize)]</code> regardless of how many format modules are derived.</p>
 <h3 id="individual-trait-imports">Individual trait imports<a class="headerlink" href="#individual-trait-imports" title="Permanent link">&para;</a></h3>
 <p>Traits within a derivable module can be imported individually:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
 </code></pre></div>
 <p>When used in <code>@derive(Serialize)</code>, only that single trait is adopted (and its <code>@rust.derive</code> path, if any, is emitted). This enables fine-grained control — derive only serialization, only deserialization, etc.</p>
 <h3 id="method-resolution">Method resolution<a class="headerlink" href="#method-resolution" title="Permanent link">&para;</a></h3>
@@ -5583,7 +5583,7 @@ decorators on the adopted traits)</li>
 <ol>
 <li>
 <p><strong>Module-level <code>__derives__</code> attribute</strong>: a list of derive names assigned at module scope.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 </code></pre></div>
 <p>Parsed as a const assignment where the name is <code>__derives__</code> and the value is a list of identifiers. Each identifier
 must resolve to a trait defined in the same module.</p>
@@ -5602,7 +5602,7 @@ derive names). When the argument resolves to a module with a <code>__derives__</
 <p><strong><code>@rust.derive</code> decorator on traits</strong>: declares the Rust <code>#[derive(...)]</code> attribute that must be emitted on any
 struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
@@ -5664,15 +5664,15 @@ necessary Rust-level derives from the adopted traits during emission.</li>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/serde/json.incn</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="kn">import</span><span class="w"> </span><span class="nn">to_string</span><span class="o">,</span><span class="w"> </span><span class="nn">from_str</span>
 
-<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">]</span>
+<span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 
 <span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
         <span class="k">return</span> <span class="nb">to_string</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">?</span>
 
 <span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Deserialize&quot;</span><span class="p">)</span>
-<span class="k">trait</span> <span class="kt">Deserialize</span><span class="p">:</span>
+<span class="k">trait</span> <span class="nc">Deserialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_json</span><span class="p">(</span><span class="n">json_str</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
         <span class="k">return</span> <span class="n">from_str</span><span class="p">(</span><span class="n">json_str</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
@@ -5785,7 +5785,7 @@ that is not in scope for this RFC.</p>
 <p>The <code>rust::</code> import mechanism is the primary way derivable modules access Rust codec libraries. A derivable module's trait methods are pure Incan that call into Rust libraries via <code>rust::</code> imports. The two mechanisms are complementary.</p>
 <h4 id="with-trait-bounds-rfc-023"><code>with</code> trait bounds (RFC 023)<a class="headerlink" href="#with-trait-bounds-rfc-023" title="Permanent link">&para;</a></h4>
 <p>Traits from derivable modules work with the existing <code>with</code> bound syntax. A function can require specific format capabilities:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="nc">AvroSchema</span><span class="p">)](</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">publish</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">,</span> <span class="n">avro</span><span class="o">.</span><span class="nc">AvroSchema</span><span class="p">)](</span>
     <span class="n">events</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span>
     <span class="n">target</span><span class="p">:</span> <span class="nc">ExportTarget</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
@@ -5815,7 +5815,7 @@ that is not in scope for this RFC.</p>
 <code>DeriveId</code> registry once the <code>std.serde.json</code> module is available (see design decision #4). Users migrate to the
 explicit module form:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (deprecated — will be removed)</span>
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
     <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
 

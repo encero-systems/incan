@@ -4995,7 +4995,7 @@
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
 </code></pre></div>
 <p><code>@derive(json)</code> adopts <code>json.Serialize</code> and <code>json.Deserialize</code>, forwards the required Rust serde derives, and makes the
@@ -5004,11 +5004,13 @@ one side of the protocol.</p>
 <hr />
 <h2 id="serialize">Serialize<a class="headerlink" href="#serialize" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Derive</strong>: <code>@derive(Serialize)</code> or <code>@derive(json)</code></li>
+<li><strong>Derive</strong>: <code>@derive(json)</code> for both JSON directions, or <code>@derive(Serialize)</code> after importing <code>Serialize</code> directly</li>
 <li><strong>API</strong>: <code>json_stringify(value) -&gt; str</code></li>
 <li><strong>Trait import</strong>: <code>from std.serde.json import Serialize</code> + <code>with Serialize</code> gives a default <code>.to_json()</code> implementation</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Serialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
@@ -5017,9 +5019,9 @@ one side of the protocol.</p>
     <span class="n">u</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">age</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="nb">json_stringify</span><span class="p">(</span><span class="n">u</span><span class="p">))</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
 
-<span class="k">model</span> <span class="nc">User</span> <span class="k">with</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">model</span> <span class="nc">User</span> <span class="k">with</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
 
@@ -5029,11 +5031,13 @@ one side of the protocol.</p>
 <hr />
 <h2 id="deserialize">Deserialize<a class="headerlink" href="#deserialize" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Derive</strong>: <code>@derive(Deserialize)</code> or <code>@derive(json)</code></li>
+<li><strong>Derive</strong>: <code>@derive(json)</code> for both JSON directions, or <code>@derive(Deserialize)</code> after importing <code>Deserialize</code> directly</li>
 <li><strong>API</strong>: <code>T.from_json(input: str) -&gt; Result[T, str]</code></li>
-<li><strong>Trait import</strong>: <code>with Deserialize</code> still requires either <code>@derive(Deserialize)</code> or an explicit <code>from_json()</code> implementation</li>
+<li><strong>Trait import</strong>: <code>with Deserialize</code> still requires either an imported <code>@derive(Deserialize)</code> or an explicit <code>from_json()</code> implementation</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Deserialize</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
@@ -5045,59 +5049,69 @@ one side of the protocol.</p>
 <h2 id="schema-safe-field-names-models-only">Schema-safe field names (models only)<a class="headerlink" href="#schema-safe-field-names-models-only" title="Permanent link">&para;</a></h2>
 <p>If your JSON schema uses keys that are not valid Incan identifiers (or are keywords like <code>type</code>), represent them using a
 <code>model</code> field alias and choose a schema-safe canonical field name (e.g. <code>type_</code>).</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </code></pre></div>
-<p>When <code>Serialize</code>/<code>Deserialize</code> is derived, the alias is used as the JSON key (<code>"type"</code>). The canonical identifier
+<p>When <code>json</code> is derived, the alias is used as the JSON key (<code>"type"</code>). The canonical identifier
 (<code>type_</code>) remains the stable field name in code. See <a href="../../../explanation/models_and_classes/models/#using-aliases-in-code">Models: Using aliases in code</a>.</p>
 <p><code>class</code> does not support field metadata/aliases, so class JSON keys always match the canonical field names.</p>
 <h2 id="enums">Enums<a class="headerlink" href="#enums" title="Permanent link">&para;</a></h2>
-<p>Ordinary enums support <code>Serialize</code> and <code>Deserialize</code> just like models:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<p>Ordinary enums support <code>@derive(json)</code> just like models:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">Status</span><span class="p">:</span>
     <span class="nc">Pending</span>
     <span class="nc">Active</span>
     <span class="nc">Completed</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">ApiResponse</span><span class="p">:</span>
     <span class="nc">Success</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
     <span class="nc">Error</span><span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
 </code></pre></div>
 <p>Value enums serialize and deserialize through their declared raw value rather than the variant name:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">Environment</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
     <span class="nc">Development</span> <span class="o">=</span> <span class="s2">&quot;development&quot;</span>
     <span class="nc">Production</span> <span class="o">=</span> <span class="s2">&quot;production&quot;</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">HttpStatus</span><span class="p">(</span><span class="nb">int</span><span class="p">):</span>
     <span class="nb">Ok</span> <span class="o">=</span> <span class="mi">200</span>
     <span class="nc">NotFound</span> <span class="o">=</span> <span class="mi">404</span>
 </code></pre></div>
 <p><code>Environment.Production</code> serializes as <code>"production"</code> and deserializes only from known raw values. <code>HttpStatus.NotFound</code>
 serializes as <code>404</code>.</p>
-<p>When a model references an enum in its fields, the compiler automatically propagates <code>Serialize</code>/<code>Deserialize</code> derives
+<p>When a model references an enum in its fields, the compiler automatically propagates JSON serde derives
 to the enum:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">enum</span> <span class="nc">Priority</span><span class="p">:</span>
     <span class="nc">Low</span>
     <span class="nc">Medium</span>
     <span class="nc">High</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Task</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">priority</span><span class="p">:</span> <span class="nc">Priority</span>  <span class="c1"># Priority automatically gets serde derives</span>
 </code></pre></div>
 <hr />
 <h2 id="newtypes">Newtypes<a class="headerlink" href="#newtypes" title="Permanent link">&para;</a></h2>
-<p>Newtypes also support <code>Serialize</code> and <code>Deserialize</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<p>Newtypes also support <code>@derive(json)</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">newtype</span> <span class="nc">UserId</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">newtype</span> <span class="nc">Email</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
 </code></pre></div>
 <p>Newtypes serialize to/from their underlying type's JSON representation.</p>

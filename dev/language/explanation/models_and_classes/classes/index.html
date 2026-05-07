@@ -5298,7 +5298,9 @@
         <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">species</span><span class="si">}</span><span class="s2">)&quot;</span>
 </code></pre></div>
 <p>A more complex example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
     <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>

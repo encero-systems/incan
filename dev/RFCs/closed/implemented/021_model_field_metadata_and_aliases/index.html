@@ -5161,7 +5161,7 @@
    <span class="n">field_name</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;wire&quot;</span><span class="p">:</span> <span class="nc">Type</span>
 </code></pre></div>
 <p>Example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
 <span class="hll">    <span class="n">type_</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </span></code></pre></div>
@@ -5224,7 +5224,7 @@ protobuf surface yet.</p>
 (JSON/YAML/TOON/TOML/proto JSON), nor does it define format-scoped overrides.</p>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <p>When modeling external data, you typically define a <code>model</code> and derive <code>Deserialize</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;type&quot;</span><span class="p">]:</span> <span class="nb">str</span>
     <span class="n">class_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;class&quot;</span><span class="p">]:</span> <span class="nb">str</span>
@@ -5240,7 +5240,7 @@ below):</p>
     <span class="k">return</span> <span class="n">a</span><span class="o">.</span><span class="k">type</span>
 </code></pre></div>
 <p>Non-identifier wire names are still representable as aliases, but must be accessed using the canonical field name in code:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">WeirdKeys</span><span class="p">:</span>
     <span class="n">one_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;1&quot;</span><span class="p">]:</span> <span class="nb">int</span>
 
@@ -5255,18 +5255,18 @@ below):</p>
         <span class="nc">Account</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">&quot;basic&quot;</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;basic&quot;</span>
 </code></pre></div>
 <p>For the common “just alias this one field” case, you can use sugar:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </code></pre></div>
 <p>You can also add descriptions for documentation purposes:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;type&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier (e.g. premium, basic)&quot;</span><span class="p">]:</span> <span class="nb">str</span>
     <span class="n">balance</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Current balance in cents&quot;</span><span class="p">]:</span> <span class="nb">int</span>
 </code></pre></div>
 <p>You can also combine description metadata with <code>as</code> sugar (only <code>alias="..."</code> conflicts with <code>as "..."</code>):</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier (e.g. premium, basic)&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </code></pre></div>

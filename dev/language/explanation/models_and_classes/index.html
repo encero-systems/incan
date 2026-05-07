@@ -4869,9 +4869,11 @@ Understanding when to use each is key to writing idiomatic Incan code.</p>
 <ul>
 <li>Start with a <code>model</code> when you're defining <strong>data you store or exchange</strong> (payloads, configs, schema-shaped data).</li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
-<span class="hll"><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
-</span>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+<span class="hll">
+</span><span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
 </code></pre></div>
 <ul>

@@ -5713,16 +5713,10 @@ So we can change the destination in one place if we move/rename sections.
 <td>Baseline constructor</td>
 </tr>
 <tr>
-<td><a href="#serialize">Serialize</a></td>
-<td>JSON stringify</td>
+<td><a href="#serialize">json</a></td>
+<td>JSON stringify/parse</td>
 <td>—</td>
-<td><code>json_stringify(value)</code></td>
-</tr>
-<tr>
-<td><a href="#deserialize">Deserialize</a></td>
-<td>JSON parse</td>
-<td>—</td>
-<td><code>T.from_json(str)</code></td>
+<td><code>std.serde</code> module</td>
 </tr>
 <tr>
 <td><a href="#validate-models-only">Validate</a></td>
@@ -6255,7 +6249,9 @@ they must have).</p>
 <li><code>json_stringify(value)</code> → <code>str</code></li>
 <li><code>value.to_json()</code> → <code>str</code> when the type imports and adopts <code>std.serde.json.Serialize</code></li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Serialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
@@ -6264,9 +6260,9 @@ they must have).</p>
     <span class="n">u</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="n">age</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="nb">json_stringify</span><span class="p">(</span><span class="n">u</span><span class="p">))</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Serialize</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span>
 
-<span class="k">model</span> <span class="nc">User</span> <span class="k">with</span> <span class="kt">Serialize</span><span class="p">:</span>
+<span class="k">model</span> <span class="nc">User</span> <span class="k">with</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
 
@@ -6281,7 +6277,7 @@ they must have).</p>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="kt">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">[</span><span class="nc">T</span> <span class="k">with</span> <span class="n">json</span><span class="o">.</span><span class="nc">Serialize</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
 </code></pre></div>
 <hr />
@@ -6291,8 +6287,10 @@ they must have).</p>
 <ul>
 <li><code>T.from_json(input: str)</code> → <code>Result[T, str]</code></li>
 </ul>
-<p>Note: explicit <code>with Deserialize</code> adoption still needs either <code>@derive(Deserialize)</code> or a user-defined <code>from_json(input)</code> implementation.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">)</span>
+<p>Note: explicit <code>with Deserialize</code> adoption still needs either an imported <code>@derive(Deserialize)</code> or a user-defined <code>from_json(input)</code> implementation.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Deserialize</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>

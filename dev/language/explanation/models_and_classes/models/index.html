@@ -5104,7 +5104,9 @@ for configs, DTOs, and serialization.</p>
 <p>If you're deciding between <code>model</code> and <code>class</code>, start with the <a href="../">Models &amp; classes overview</a>. This page focuses
 on how models behave once you've chosen them.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># (1)</span>
     <span class="n">is_admin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="k">false</span>  <span class="c1"># (2)</span>
@@ -5188,7 +5190,9 @@ a <code>class</code> is "this is an object with behavior".</p>
 <li><code>description="..."</code>: documentation string</li>
 <li><strong>sugar</strong>: <code>name as "wire"</code> is equivalent to <code>name [alias="wire"]</code></li>
 </ul>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Serialize</span><span class="p">,</span> <span class="kt">Deserialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="n">type_</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </code></pre></div>
@@ -5221,7 +5225,9 @@ wire mapping (e.g. JSON) and reflection.</p>
 </ul>
 <p>So non-identifier aliases can't be written in code. In those cases, use the <strong>canonical field name</strong> in code and keep the
 alias for wire mapping and reflection.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Deserialize</span><span class="p">,</span> <span class="kt">Serialize</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">WeirdWireKeys</span><span class="p">:</span>
     <span class="n">one</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;1&quot;</span><span class="p">]:</span> <span class="nb">int</span>
 
@@ -5304,7 +5310,7 @@ identifier/keyword-shaped). The canonical name always works.</p>
 </code></pre></div>
 <p>See: <a href="../classes/#static-methods-staticmethod">Classes: Static methods</a> for full details.</p>
 <h2 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h2>
-<p>With <code>@derive(Serialize)</code> / <code>@derive(Deserialize)</code>, a model serializes/deserializes as a JSON object.</p>
+<p>With <code>@derive(json)</code>, a model serializes/deserializes as a JSON object.</p>
 <p>If a field has an alias, that alias is used as the JSON key (wire name). This lets you keep schema-safe canonical field
 names in code while still matching external payloads.</p>
 <p>See: <a href="../../../reference/derives/serialization/">Derives: Serialization (Reference)</a>.</p>
