@@ -3,7 +3,7 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and Cargo build/run.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +22,8 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
+#[cfg(feature = "rust_inspect")]
+use crate::library_manifest::LibraryRustAbi;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 
@@ -36,6 +38,8 @@ use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_worksp
 use super::lock::{LockResolutionRequest, resolve_lock_payload};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
+#[cfg(feature = "rust_inspect")]
+use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
 
 // ============================================================================
 // Project Preparation (shared between build and run)
@@ -154,6 +158,46 @@ fn collect_rust_extern_contexts(modules: &[ParsedModule]) -> Vec<RustExternDeclC
         }
     }
     contexts
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Collect canonical Rust metadata paths that must be shipped in a library manifest's ABI payload.
+fn collect_library_rust_abi_query_paths(
+    modules: &[ParsedModule],
+    rust_extern_contexts: &[RustExternDeclContext],
+) -> Vec<String> {
+    let mut paths: BTreeSet<String> = collect_rust_inspect_query_paths(modules).into_iter().collect();
+    for context in rust_extern_contexts {
+        paths.insert(format!("{}::{}", context.rust_module_path, context.item_name));
+    }
+    paths.into_iter().collect()
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Read prewarmed Rust metadata from the generated inspect workspace and package it as manifest ABI.
+fn collect_library_rust_abi(
+    rust_inspect_manifest_dir: &Path,
+    query_paths: &[String],
+) -> CliResult<Option<LibraryRustAbi>> {
+    if query_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
+    let mut items = Vec::new();
+    for path in query_paths {
+        match inspector.get(path) {
+            Ok(result) => items.push((*result.metadata).clone()),
+            Err(InspectError::MetadataMiss { .. }) => {}
+            Err(err) => {
+                return Err(CliError::failure(format!(
+                    "failed to read Rust ABI metadata for `{path}` from {}: {err}",
+                    rust_inspect_manifest_dir.display()
+                )));
+            }
+        }
+    }
+    Ok(LibraryRustAbi::from_items(items))
 }
 
 fn classify_rust_extern_build_failure(
@@ -467,7 +511,7 @@ fn prepare_project(
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     #[cfg(feature = "rust_inspect")]
-    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
+    let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -652,7 +696,7 @@ pub fn build_library(
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     #[cfg(feature = "rust_inspect")]
-    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
+    let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
 
     let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
@@ -787,6 +831,10 @@ pub fn build_library(
         }),
         modules: api_metadata_modules,
     });
+    #[cfg(feature = "rust_inspect")]
+    {
+        library_manifest.rust_abi = collect_library_rust_abi(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+    }
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
 
     if let Some(vocab_extraction) = collect_library_vocab_metadata(&manifest, &project_root)? {
@@ -813,8 +861,6 @@ pub fn build_library(
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
     #[cfg(feature = "rust_inspect")]
-    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
-
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
@@ -1002,6 +1048,32 @@ mod tests {
         };
         assert!(rendered.contains("Rust backing item"));
         assert!(rendered.contains("incan_stdlib::testing::fail"));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn library_rust_abi_query_paths_include_rust_extern_backing_items() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "rust.module(\"incan_stdlib::num\")\n@rust.extern\npub def gcd_i64(a: int, b: int) -> int:\n  ...\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let module = ParsedModule {
+            name: "lib".to_string(),
+            path_segments: vec!["lib".to_string()],
+            file_path: PathBuf::from("src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let modules = vec![module];
+        let contexts = collect_rust_extern_contexts(&modules);
+        let paths = collect_library_rust_abi_query_paths(&modules, &contexts);
+
+        assert!(
+            paths.iter().any(|path| path == "incan_stdlib::num::gcd_i64"),
+            "expected rust.extern backing item in ABI query paths, got: {paths:?}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -20,3 +20,6 @@ pub(crate) use type_refs::type_ref_from_resolved;
 
 /// Stable on-disk format version for `.incnlib` manifests.
 pub const LIBRARY_MANIFEST_FORMAT: u32 = 1;
+
+/// Stable schema version for Rust ABI metadata embedded in `.incnlib` manifests.
+pub const RUST_ABI_SCHEMA_VERSION: u32 = 1;

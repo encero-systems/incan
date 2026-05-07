@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::library_manifest::{LibraryManifest, LibraryManifestError};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use serde::Deserialize;
 
@@ -164,6 +165,27 @@ impl LibraryManifestIndex {
             LibraryManifestIndexEntry::Loaded { metadata, .. } => Some(metadata),
             LibraryManifestIndexEntry::Failed(_) => None,
         }
+    }
+
+    /// Return shipped Rust ABI metadata from loaded dependency manifests.
+    ///
+    /// This is the consumer hot-path lookup for Rust-backed symbols published by `.incnlib` artifacts. It deliberately
+    /// searches deterministic dependency-key order so duplicate metadata across dependencies is stable.
+    pub(crate) fn rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let mut keys: Vec<&String> = self.entries.keys().collect();
+        keys.sort();
+        for key in keys {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = self.entries.get(key) else {
+                continue;
+            };
+            let Some(abi) = manifest.rust_abi.as_ref() else {
+                continue;
+            };
+            if let Some(item) = abi.get(canonical_path) {
+                return Some(item.clone());
+            }
+        }
+        None
     }
 
     /// Build path-based Cargo dependencies for all successfully loaded library artifacts.

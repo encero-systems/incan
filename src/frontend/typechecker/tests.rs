@@ -13,13 +13,12 @@ use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
-    LibraryContractMetadata, LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport,
-    PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport,
-    TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamExport,
+    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport,
+    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
-#[cfg(feature = "rust_inspect")]
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
     RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
@@ -100,6 +99,51 @@ fn synthetic_artifact_root(name: &str) -> PathBuf {
     root.push("target");
     root.push("lib");
     root
+}
+
+fn library_index_with_rust_abi_item(name: &str, metadata: RustItemMetadata) -> LibraryManifestIndex {
+    let mut manifest = LibraryManifest::new("runtime_facade", "0.1.0");
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![metadata]);
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "runtime_facade".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "runtime_facade",
+                "runtime_facade",
+                synthetic_artifact_root(name),
+            ),
+        },
+    )]))
+}
+
+#[test]
+fn rust_item_metadata_prefers_shipped_library_abi() {
+    let manifest_metadata = RustItemMetadata {
+        canonical_path: "demo_runtime::parse".to_string(),
+        definition_path: Some("demo_runtime::parse".to_string()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("source".to_string()),
+                type_display: "&str".to_string(),
+            }],
+            return_type: "demo_runtime::Plan".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        }),
+    };
+
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index_with_rust_abi_item(
+        "demo_runtime_parse",
+        manifest_metadata.clone(),
+    ));
+
+    let Some(actual) = checker.rust_item_metadata_for_path("rust::demo_runtime::parse") else {
+        panic!("expected shipped Rust ABI metadata");
+    };
+    assert_eq!(actual, manifest_metadata);
 }
 
 fn clone_trait_name() -> String {
@@ -1405,6 +1449,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         vocab: None,
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1447,6 +1492,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         vocab: None,
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1585,6 +1631,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         vocab: None,
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1805,6 +1852,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         vocab: None,
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -2777,23 +2825,21 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
     Ok(())
 }
 
-#[cfg(feature = "rust_inspect")]
 #[test]
-fn test_rust_inspect_lookup_path_strips_outer_generic_instantiation() {
+fn test_rust_metadata_lookup_path_strips_outer_generic_instantiation() {
     assert_eq!(
-        TypeChecker::rust_inspect_lookup_path("incan_stdlib::r#async::channel::SendError<T>"),
+        TypeChecker::rust_metadata_lookup_path("incan_stdlib::r#async::channel::SendError<T>"),
         Some("incan_stdlib::r#async::channel::SendError")
     );
     assert_eq!(
-        TypeChecker::rust_inspect_lookup_path("Result<(),incan_stdlib::r#async::channel::SendError<T>>"),
+        TypeChecker::rust_metadata_lookup_path("Result<(),incan_stdlib::r#async::channel::SendError<T>>"),
         None
     );
 }
 
-#[cfg(feature = "rust_inspect")]
 #[test]
-fn test_rust_inspect_lookup_path_rejects_unknown_placeholder() {
-    assert_eq!(TypeChecker::rust_inspect_lookup_path("{unknown}"), None);
+fn test_rust_metadata_lookup_path_rejects_unknown_placeholder() {
+    assert_eq!(TypeChecker::rust_metadata_lookup_path("{unknown}"), None);
 }
 
 #[cfg(feature = "rust_inspect")]

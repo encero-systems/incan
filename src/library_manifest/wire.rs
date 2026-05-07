@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
-    LibraryExports, LibraryManifest, LibraryManifestError, ModelExport, NewtypeExport, PartialExport,
+    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport, NewtypeExport, PartialExport,
     SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
     VocabExports, VocabKeywordRegistration, VocabProviderManifest,
 };
@@ -24,6 +24,8 @@ pub(super) struct RawLibraryManifest {
     pub(super) soft_keywords: RawSoftKeywordExports,
     #[serde(default)]
     pub(super) contract_metadata: LibraryContractMetadata,
+    #[serde(default)]
+    pub(super) rust_abi: Option<LibraryRustAbi>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -105,6 +107,7 @@ impl RawLibraryManifest {
                 activations: semantic.soft_keywords.activations.clone(),
             },
             contract_metadata: semantic.contract_metadata.clone(),
+            rust_abi: semantic.rust_abi.clone(),
         }
     }
 
@@ -140,6 +143,7 @@ impl RawLibraryManifest {
                 activations: self.soft_keywords.activations,
             },
             contract_metadata: self.contract_metadata,
+            rust_abi: self.rust_abi,
         })
     }
 }

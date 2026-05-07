@@ -138,7 +138,7 @@ $ incan build
 
 A library produces two artifacts during `incan build --lib`:
 
-1. **Type manifest** (`.incnlib`) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, and soft keyword declarations. Generated from the library's checked public API — never hand-written.
+1. **Type manifest** (`.incnlib`) — a JSON file containing everything the typechecker needs: exported models, classes, functions, traits, enums, type aliases, soft keyword declarations, checked contract metadata, and shipped Rust ABI metadata for Rust-backed items. Generated from the library's checked public API and Rust ABI extraction during `build --lib` — never hand-written.
 
 2. **Generated Rust crate** — the library's `.incn` source lowered to Rust source plus `Cargo.toml`, ready for `cargo` to compile and link against. The Phase 1 artifact ships generated `.rs` source, not a compiled `.rlib`, so the artifact remains target-independent and compatible with the consumer's toolchain.
 
@@ -173,9 +173,15 @@ Manifest:
     activations: list[SoftKeywordActivation]
       # Extracted from the library's vocab crate (RFC 027) during build --lib.
       # Never hand-authored.
+
+  rust_abi:
+    schema_version: int               # Rust ABI schema version
+    items: list[RustItemMetadata]     # Canonical Rust item signatures captured during build --lib
 ```
 
 The manifest is serialized as JSON for Phase 1 because it is human-readable, debuggable, and requires no extra dependencies. Implementations should isolate the encoding behind a stable manifest read/write boundary so the on-disk format may evolve later without changing the language contract. The semantic contract is the manifest schema, not JSON as a forever format.
+
+Consumers use embedded `rust_abi` metadata before falling back to workspace inspection. That keeps published-library Rust-backed signatures deterministic: the producer captures the Rust ABI once, ships it in `.incnlib`, and consumers do not need to inspect the producer workspace on compiler hot paths.
 
 `TypeRef` is recursive: it must support plain named types, applied generics, optionals, results/unions, and nested combinations. Bounds belong at the declarations that introduce type parameters, not on every individual use site, so exported generic types and exported generic functions must carry their type parameters plus bound metadata alongside the recursive `TypeRef` tree.
 

@@ -103,6 +103,35 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![RustItemMetadata {
+        canonical_path: "mylib_runtime::parse".to_string(),
+        definition_path: Some("mylib_runtime::parse".to_string()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("source".to_string()),
+                type_display: "&str".to_string(),
+            }],
+            return_type: "Result<mylib_runtime::Plan, mylib_runtime::Error>".to_string(),
+            is_async: true,
+            is_unsafe: false,
+        }),
+    }]);
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
 fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn std::error::Error>> {
     let mut base = LibraryManifest::new("mylib", "0.1.0");
     base.exports.partials.push(PartialExport {
@@ -148,6 +177,65 @@ fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn s
         );
     }
     Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_duplicate_rust_abi_paths() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_core::interop::{RustItemKind, RustItemMetadata, RustModuleInfo, RustVisibility};
+
+    let duplicate = RustItemMetadata {
+        canonical_path: "mylib_runtime::Plan".to_string(),
+        definition_path: None,
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Module(RustModuleInfo { children: Vec::new() }),
+    };
+    let raw = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "{}",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{}},
+  "rust_abi": {{
+    "schema_version": {},
+    "items": [{}, {}]
+  }}
+}}"#,
+        crate::version::INCAN_VERSION,
+        LIBRARY_MANIFEST_FORMAT,
+        RUST_ABI_SCHEMA_VERSION,
+        serde_json::to_string(&duplicate)?,
+        serde_json::to_string(&duplicate)?
+    );
+
+    let err = LibraryManifest::from_json_str(&raw);
+    assert!(err.is_err(), "expected duplicate Rust ABI metadata to fail");
+    Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_unsupported_rust_abi_schema_version() {
+    let raw = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "{}",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{}},
+  "rust_abi": {{
+    "schema_version": {},
+    "items": []
+  }}
+}}"#,
+        crate::version::INCAN_VERSION,
+        LIBRARY_MANIFEST_FORMAT,
+        RUST_ABI_SCHEMA_VERSION + 1
+    );
+
+    let err = LibraryManifest::from_json_str(&raw);
+    assert!(err.is_err(), "expected unsupported Rust ABI schema to fail");
 }
 
 #[test]

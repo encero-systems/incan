@@ -392,9 +392,13 @@ impl TypeChecker {
     }
 
     #[cfg(feature = "rust_inspect")]
+    /// Return Rust item metadata, preferring shipped dependency ABI over rust-inspect cache reads.
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_inspect_lookup_path(canonical_path)?;
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        if let Some(metadata) = self.library_manifests.rust_abi_item(lookup_path) {
+            return Some(metadata);
+        }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
         match self.rust_inspect_cache.get_cached(dir, lookup_path) {
             Ok(Some(hit)) => Some((*hit.metadata).clone()),
@@ -411,9 +415,13 @@ impl TypeChecker {
     }
 
     #[cfg(feature = "rust_inspect")]
+    /// Return Rust item metadata, falling back to extraction only after shipped ABI and cache-only reads miss.
     pub(crate) fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        let lookup_path = Self::rust_inspect_lookup_path(canonical_path)?;
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        if let Some(metadata) = self.library_manifests.rust_abi_item(lookup_path) {
+            return Some(metadata);
+        }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
         // stdlib interop paths are conventionally stable and intentionally stay cache-only.
         if lookup_path.starts_with("incan_stdlib::") {
@@ -444,13 +452,17 @@ impl TypeChecker {
     }
 
     #[cfg(not(feature = "rust_inspect"))]
-    pub(crate) fn rust_item_metadata_for_path(&self, _canonical_path: &str) -> Option<RustItemMetadata> {
-        None
+    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        self.library_manifests.rust_abi_item(lookup_path)
     }
 
     #[cfg(not(feature = "rust_inspect"))]
-    pub(crate) fn rust_item_metadata_for_path_blocking(&self, _canonical_path: &str) -> Option<RustItemMetadata> {
-        None
+    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    pub(crate) fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.rust_item_metadata_for_path(canonical_path)
     }
 
     fn split_top_level_generic_args(args: &str) -> Vec<&str> {
@@ -480,14 +492,20 @@ impl TypeChecker {
     /// rust-analyzer metadata is keyed by the item path (`foo::Bar`), not by instantiated spellings like
     /// `foo::Bar<T>` or placeholder displays like `{unknown}`. This strips outer generic instantiation from a Rust
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
-    #[cfg(feature = "rust_inspect")]
-    fn rust_inspect_lookup_path(canonical_path: &str) -> Option<&str> {
-        crate::rust_inspect::Inspector::normalize_lookup_path(canonical_path)
-    }
-
-    #[cfg(not(feature = "rust_inspect"))]
-    fn rust_inspect_lookup_path(_canonical_path: &str) -> Option<&str> {
-        None
+    fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
+        let trimmed = canonical_path.trim();
+        if trimmed.is_empty() || trimmed == "{unknown}" {
+            return None;
+        }
+        let had_generics = trimmed.contains('<');
+        let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
+        if had_generics && !base.contains("::") {
+            return None;
+        }
+        if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
+            return None;
+        }
+        Some(base)
     }
 
     /// Strip the synthetic `rust::` namespace prefix used in Incan source paths.

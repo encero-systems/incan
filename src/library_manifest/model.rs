@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
 use super::wire::RawLibraryManifest;
-use super::{DslSurface, LIBRARY_MANIFEST_FORMAT, VocabKeywordRegistration, VocabProviderManifest};
+use super::{
+    DslSurface, LIBRARY_MANIFEST_FORMAT, RUST_ABI_SCHEMA_VERSION, VocabKeywordRegistration, VocabProviderManifest,
+};
 use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
@@ -16,6 +18,7 @@ use crate::frontend::library_exports::{
     CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
+use incan_core::interop::RustItemMetadata;
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +63,8 @@ pub struct LibraryManifest {
     pub soft_keywords: SoftKeywordExports,
     /// Optional RFC 048 checked metadata embedded in the manifest.
     pub contract_metadata: LibraryContractMetadata,
+    /// Optional Rust-backed ABI metadata captured at library publication time.
+    pub rust_abi: Option<LibraryRustAbi>,
 }
 
 /// Public library exports grouped by declaration kind.
@@ -161,6 +166,47 @@ pub struct LibraryContractMetadata {
     /// Checked public API metadata extracted from the producer source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<CheckedApiMetadataPackage>,
+}
+
+/// Versioned Rust ABI payload persisted into `.incnlib`.
+///
+/// The payload stores the same backend-neutral metadata shape that `rust_inspect` extracts, but ships it with the
+/// library artifact so consumers can resolve Rust-backed imports without loading the producer workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryRustAbi {
+    /// Serialized ABI schema version.
+    #[serde(default = "default_rust_abi_schema_version")]
+    pub schema_version: u32,
+    /// Canonical Rust item metadata keyed by `RustItemMetadata::canonical_path`.
+    #[serde(default)]
+    pub items: Vec<RustItemMetadata>,
+}
+
+/// Default Rust ABI schema version for manifest payloads that predate explicit serde fields.
+fn default_rust_abi_schema_version() -> u32 {
+    RUST_ABI_SCHEMA_VERSION
+}
+
+impl LibraryRustAbi {
+    /// Build a deterministic ABI payload from extracted Rust metadata.
+    pub fn from_items(mut items: Vec<RustItemMetadata>) -> Option<Self> {
+        items.sort_by(|left, right| left.canonical_path.cmp(&right.canonical_path));
+        items.dedup_by(|left, right| left.canonical_path == right.canonical_path);
+        if items.is_empty() {
+            return None;
+        }
+        Some(Self {
+            schema_version: RUST_ABI_SCHEMA_VERSION,
+            items,
+        })
+    }
+
+    /// Return metadata for one canonical Rust path.
+    pub fn get(&self, canonical_path: &str) -> Option<&RustItemMetadata> {
+        self.items.iter().find(|item| {
+            item.canonical_path == canonical_path || item.definition_path.as_deref() == Some(canonical_path)
+        })
+    }
 }
 
 /// Soft keywords that become active when the library is imported.
@@ -488,6 +534,7 @@ impl LibraryManifest {
             vocab: None,
             soft_keywords: SoftKeywordExports::default(),
             contract_metadata: LibraryContractMetadata::default(),
+            rust_abi: None,
         }
     }
 

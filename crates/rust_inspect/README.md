@@ -42,8 +42,10 @@ The intended contract is:
 
 - `prewarm(...)` may perform expensive extraction
 - `get(...)` should be cache-only
-- compiler/typechecker hot paths should prefer cached reads over fresh extraction
 - workspace loading is owned by explicit preparation/cache code, not by semantic checks as a side effect
+- published-library consumers should prefer shipped `.incnlib` Rust ABI metadata over workspace inspection
+- `rust_inspect` remains the producer-side ABI capture and local/fallback inspection backend
+- compiler/typechecker fallback paths should prefer cached reads over fresh extraction
 
 ## Architecture Notes
 

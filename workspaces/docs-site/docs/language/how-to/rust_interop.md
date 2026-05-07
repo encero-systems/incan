@@ -224,6 +224,12 @@ adopted Rust trait. In that case Incan treats the alias as already satisfying th
 the Incan-facing async contract, but Rust `Future` bridge emission still needs safe pin-projection and output-mapping
 metadata before it can replace handwritten Rust adapters.
 
+## Published libraries and shipped ABI metadata
+
+When a library exposes Rust-backed items, run `incan build --lib` before another project consumes it through `pub::`. The generated `.incnlib` embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.
+
+Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
+
 ### Qualified backing paths
 
 When a `rust::` import binds a Rust module (or other namespace), you can name a concrete type inside it with `::` after that binding:

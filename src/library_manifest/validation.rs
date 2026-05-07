@@ -13,7 +13,7 @@ use semver::Version;
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
     EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, PartialExport, VocabProviderManifest,
+    ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
@@ -23,8 +23,37 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
     validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
     validate_contract_metadata(raw)?;
+    validate_rust_abi(raw)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Validate embedded Rust ABI metadata before consumers use it as a hot-path lookup source.
+fn validate_rust_abi(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let Some(abi) = &raw.rust_abi else {
+        return Ok(());
+    };
+    if abi.schema_version != RUST_ABI_SCHEMA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "rust_abi.schema_version {} is unsupported (expected {})",
+            abi.schema_version, RUST_ABI_SCHEMA_VERSION
+        )));
+    }
+    let mut paths = HashSet::new();
+    for item in &abi.items {
+        if item.canonical_path.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(
+                "rust_abi.items canonical_path cannot be empty".to_string(),
+            ));
+        }
+        if !paths.insert(item.canonical_path.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "rust_abi.items contains duplicate canonical path `{}`",
+                item.canonical_path
+            )));
+        }
+    }
     Ok(())
 }
 
