@@ -518,7 +518,7 @@ impl TypeChecker {
             if self.symbols.lookup(alias).is_none() {
                 self.validate_root_namespace(alias, span);
                 if matches!(imported_kind, SymbolKind::Static(_)) {
-                    self.type_info.static_bindings.insert(
+                    self.type_info.declarations.static_bindings.insert(
                         alias.clone(),
                         crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
                     );
@@ -984,7 +984,7 @@ impl TypeChecker {
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
 
         if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info.static_bindings.insert(
+            self.type_info.declarations.static_bindings.insert(
                 local_name.clone(),
                 crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
             );
@@ -1554,7 +1554,7 @@ impl TypeChecker {
             );
         }
         if !trait_methods.is_empty() {
-            self.type_info.rust_trait_imports.insert(
+            self.type_info.rust.trait_imports.insert(
                 name.clone(),
                 RustTraitImportInfo {
                     trait_path: info.path.clone(),
@@ -1648,7 +1648,7 @@ impl TypeChecker {
             touched_static = true;
         }
         if touched_static {
-            self.type_info.static_bindings.insert(
+            self.type_info.declarations.static_bindings.insert(
                 name.to_string(),
                 crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
             );

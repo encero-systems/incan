@@ -158,7 +158,7 @@ impl AstLowering {
         let supertraits: Vec<(String, Vec<IrType>)> = if let Some(ti) = self
             .type_info
             .as_ref()
-            .and_then(|info| info.trait_direct_supertraits.get(&t.name))
+            .and_then(|info| info.traits.direct_supertraits.get(&t.name))
         {
             ti.iter()
                 .map(|(name, args)| self.lower_supertrait_from_resolved(name, args))

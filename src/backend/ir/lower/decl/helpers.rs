@@ -167,7 +167,7 @@ impl AstLowering {
             || self
                 .type_info
                 .as_ref()
-                .is_some_and(|info| info.trait_type_params.contains_key(name))
+                .is_some_and(|info| info.traits.type_params.contains_key(name))
     }
 
     /// Lower an annotation like `Collection[int]` to a Rust trait bound shape.
@@ -418,7 +418,7 @@ impl AstLowering {
         if let Some(traits) = self
             .type_info
             .as_ref()
-            .and_then(|info| info.derivable_modules.get(&key))
+            .and_then(|info| info.derivations.derivable_modules.get(&key))
         {
             return Some(traits.clone());
         }
@@ -431,7 +431,7 @@ impl AstLowering {
         if let Some(paths) = self
             .type_info
             .as_ref()
-            .and_then(|info| info.trait_rust_derive_paths.get(&key))
+            .and_then(|info| info.derivations.trait_rust_derive_paths.get(&key))
         {
             return paths.clone();
         }
@@ -447,13 +447,14 @@ impl AstLowering {
         if self
             .type_info
             .as_ref()
-            .and_then(|info| info.derivable_modules.get(&module_key))
+            .and_then(|info| info.derivations.derivable_modules.get(&module_key))
             .is_some_and(|traits| traits.iter().any(|candidate| candidate == trait_name))
         {
             return true;
         }
         if self.type_info.as_ref().is_some_and(|info| {
-            info.trait_rust_derive_paths
+            info.derivations
+                .trait_rust_derive_paths
                 .contains_key(&format!("{module_key}.{trait_name}"))
         }) {
             return true;

@@ -112,6 +112,7 @@ impl TypeChecker {
                 if let Some(fields) = ctor_fields {
                     self.record_expr_type(callee.span, self_ty.clone());
                     self.type_info
+                        .expressions
                         .ident_kinds
                         .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                     self.check_model_or_class_constructor_call(&owner_name, &fields, args, span);
@@ -154,6 +155,7 @@ impl TypeChecker {
                         }
                         self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                         self.type_info
+                            .expressions
                             .ident_kinds
                             .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                         return self.check_constructor(name, args, span);
@@ -179,6 +181,7 @@ impl TypeChecker {
                                     self.resolved_function_type_from_rust_sig(sig, false),
                                 );
                                 self.type_info
+                                    .expressions
                                     .ident_kinds
                                     .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
                             }
@@ -231,6 +234,7 @@ impl TypeChecker {
                 let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
                 self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                 self.type_info
+                    .expressions
                     .ident_kinds
                     .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                 if in_scope && let Some(tid) = surface_types::from_str(name) {

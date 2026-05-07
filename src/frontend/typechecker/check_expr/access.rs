@@ -1353,7 +1353,8 @@ impl TypeChecker {
         };
         let matches = self
             .type_info
-            .rust_trait_imports
+            .rust
+            .trait_imports
             .iter()
             .filter_map(|(binding, import)| {
                 Self::rust_trait_import_matches_receiver(type_info, import, method).map(|signature| {
@@ -1967,7 +1968,7 @@ impl TypeChecker {
         // ---- `&str` → `String` (Incan `str` = Rust `String`) ----
         let is_borrowed_str = normalized == "&str" || (normalized.starts_with("&'") && normalized.ends_with("str"));
         if is_borrowed_str && matches!(incan_ret, ResolvedType::Str) {
-            self.type_info.rust_return_coercions.insert(
+            self.type_info.rust.return_coercions.insert(
                 (span.start, span.end),
                 crate::frontend::typechecker::RustArgCoercionInfo {
                     rust_target_type: "String".to_string(),
@@ -1980,7 +1981,7 @@ impl TypeChecker {
         // ---- `&[u8]` → `Vec<u8>` (Incan `bytes` = Rust `Vec<u8>`) ----
         let is_borrowed_bytes = normalized == "&[u8]" || (normalized.starts_with("&'") && normalized.ends_with("[u8]"));
         if is_borrowed_bytes && matches!(incan_ret, ResolvedType::Bytes) {
-            self.type_info.rust_return_coercions.insert(
+            self.type_info.rust.return_coercions.insert(
                 (span.start, span.end),
                 crate::frontend::typechecker::RustArgCoercionInfo {
                     rust_target_type: "Vec<u8>".to_string(),
@@ -2459,6 +2460,7 @@ impl TypeChecker {
                 ));
             }
             self.type_info
+                .expressions
                 .ident_kinds
                 .insert((base.span.start, base.span.end), IdentKind::TypeName);
             return self.check_builtin_list_repeat_call(args, span);

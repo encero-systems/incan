@@ -957,7 +957,7 @@ impl AstLowering {
                     let ir_underlying = self
                         .type_info
                         .as_ref()
-                        .and_then(|ti| ti.rusttype_canonical_rust_paths.get(&n.name))
+                        .and_then(|ti| ti.rust.rusttype_canonical_paths.get(&n.name))
                         .cloned()
                         .map(IrType::Struct)
                         .unwrap_or_else(|| self.lower_type(&n.underlying.node));
@@ -1037,7 +1037,7 @@ impl AstLowering {
                 let return_type = self
                     .type_info
                     .as_ref()
-                    .and_then(|info| info.decorated_function_bindings.get(&f.name))
+                    .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name))
                     .and_then(|binding| match &binding.ty {
                         crate::frontend::symbols::ResolvedType::Function(_, ret) => Some(self.lower_resolved_type(ret)),
                         _ => None,
@@ -1052,7 +1052,7 @@ impl AstLowering {
                 if self
                     .type_info
                     .as_ref()
-                    .is_some_and(|info| info.decorated_function_bindings.contains_key(&f.name))
+                    .is_some_and(|info| info.declarations.decorated_function_bindings.contains_key(&f.name))
                 {
                     let original_name = Self::decorator_original_function_name(&f.name);
                     let original_return_type =
@@ -1502,7 +1502,7 @@ impl AstLowering {
         let Some(binding) = self
             .type_info
             .as_ref()
-            .and_then(|info| info.decorated_function_bindings.get(&f.name).cloned())
+            .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name).cloned())
         else {
             return Ok(vec![self.lower_declaration(&ast::Declaration::Function(f.clone()))?]);
         };

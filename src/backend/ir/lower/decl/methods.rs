@@ -106,7 +106,7 @@ impl AstLowering {
         }
         self.type_info
             .as_ref()
-            .and_then(|info| info.trait_type_params.get(trait_name).cloned())
+            .and_then(|info| info.traits.type_params.get(trait_name).cloned())
     }
 
     /// Infer the concrete trait arguments for `impl Trait<...> for Type<...>` from the adopter's leading type params.
@@ -148,7 +148,7 @@ impl AstLowering {
         let Some(type_info) = &self.type_info else {
             return;
         };
-        let Some(direct_supertraits) = type_info.trait_direct_supertraits.get(trait_name) else {
+        let Some(direct_supertraits) = type_info.traits.direct_supertraits.get(trait_name) else {
             return;
         };
         let Some(param_names) = self.trait_type_param_names(trait_name) else {
@@ -210,7 +210,8 @@ impl AstLowering {
         trait_name: &str,
     ) -> bool {
         self.type_info.as_ref().is_some_and(|info| {
-            info.rusttype_forwarded_trait_adoptions
+            info.rust
+                .rusttype_forwarded_trait_adoptions
                 .contains(&(type_name.to_string(), trait_name.to_string()))
         })
     }
@@ -302,7 +303,8 @@ impl AstLowering {
         let mut out = Vec::new();
         for method in methods {
             let Some(binding) = self.type_info.as_ref().and_then(|info| {
-                info.decorated_method_bindings
+                info.declarations
+                    .decorated_method_bindings
                     .get(&(type_name.to_string(), method.node.name.clone()))
                     .cloned()
             }) else {
@@ -337,7 +339,8 @@ impl AstLowering {
         type_param_names: Option<&HashSet<&str>>,
     ) -> Result<Vec<IrFunction>, LoweringError> {
         if self.type_info.as_ref().is_some_and(|info| {
-            info.decorated_method_bindings
+            info.declarations
+                .decorated_method_bindings
                 .contains_key(&(owner.to_string(), method.name.clone()))
         }) {
             let original = self.lower_method_named_with_type_params(
@@ -361,7 +364,8 @@ impl AstLowering {
         method: &ast::MethodDecl,
     ) -> Result<IrFunction, LoweringError> {
         let Some(binding) = self.type_info.as_ref().and_then(|info| {
-            info.decorated_method_bindings
+            info.declarations
+                .decorated_method_bindings
                 .get(&(owner.to_string(), method.name.clone()))
                 .cloned()
         }) else {
@@ -465,7 +469,8 @@ impl AstLowering {
         method: &ast::MethodDecl,
     ) -> Result<IrFunction, LoweringError> {
         let Some(binding) = self.type_info.as_ref().and_then(|info| {
-            info.decorated_method_bindings
+            info.declarations
+                .decorated_method_bindings
                 .get(&(owner.to_string(), method.name.clone()))
                 .cloned()
         }) else {

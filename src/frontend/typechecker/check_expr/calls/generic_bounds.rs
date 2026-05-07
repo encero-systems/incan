@@ -100,6 +100,7 @@ impl TypeChecker {
         }
     }
 
+    /// Record explicit call-site generic arguments after every type parameter has a concrete resolved type.
     fn record_call_site_monomorph_if_complete(
         &mut self,
         call_span: Span,
@@ -117,6 +118,7 @@ impl TypeChecker {
             out.push(ty.clone());
         }
         self.type_info
+            .calls
             .call_site_monomorph_type_args
             .insert((call_span.start, call_span.end), out);
     }
@@ -135,7 +137,7 @@ impl TypeChecker {
     /// - Validates value arguments against the specialized formals, then runs [`Self::infer_type_param_bindings`] so
     ///   remaining type parameters are filled from argument types.
     /// - Enforces explicit `with` bounds, requires every method type parameter to be concretely bound when brackets
-    ///   were present, and records `TypeCheckInfo::call_site_monomorph_type_args` for lowering.
+    ///   were present, and records `TypeCheckInfo::calls.call_site_monomorph_type_args` for lowering.
     ///
     /// # Parameters
     ///
