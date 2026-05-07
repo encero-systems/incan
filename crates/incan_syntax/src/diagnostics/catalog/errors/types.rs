@@ -812,6 +812,15 @@ pub fn ambiguous_trait_method_call(method: &str, span: Span) -> CompileError {
         .with_hint("Add an expected result type or make the call arguments select one trait instantiation")
 }
 
+/// Report an abstract method spelling used where a concrete type method body is required.
+pub fn concrete_method_requires_body(method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Method '{}' must have a body outside trait declarations", method),
+        span,
+    )
+    .with_hint("Use `:` followed by an indented method body")
+}
+
 pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Trait '{}' requires method '{}' to be implemented", trait_name, method),

@@ -59,7 +59,7 @@ Enums use the same adoption model when a closed set of variants should satisfy a
 
 ```incan
 trait Describable:
-    def describe(self) -> str: ...
+    def describe(self) -> str
 
 enum Outcome with Describable:
     Success

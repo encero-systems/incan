@@ -640,7 +640,7 @@ model User:
 
 
 trait Service:
-    def connect(self) -> None: ...
+    def connect(self) -> None
 
     def reset(self) -> None:
         pass

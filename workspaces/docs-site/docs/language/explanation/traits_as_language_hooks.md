@@ -68,7 +68,7 @@ For example, a type can expose one conversion hook for more than one target type
 
 ```incan
 trait Snapshot[T]:
-    def snapshot(self) -> T: ...
+    def snapshot(self) -> T
 
 model Reading with Snapshot[str], Snapshot[bytes]:
     value: int

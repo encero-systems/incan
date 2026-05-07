@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
                 }
 
                 let method_decorators = self.decorators()?;
-                methods.push(self.method_decl(method_decorators)?);
+                methods.push(self.method_decl(method_decorators, false)?);
                 self.skip_newlines();
             }
 

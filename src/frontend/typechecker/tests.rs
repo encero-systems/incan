@@ -68,6 +68,21 @@ fn has_unknown_symbol_error(errors: &[CompileError], symbol: &str) -> bool {
     errors.iter().any(|err| err.message.contains(&needle))
 }
 
+#[test]
+fn test_ellipsis_abstract_method_outside_trait_is_type_error() {
+    let source = r#"
+model User:
+  def name(self) -> str: ...
+"#;
+    let errs = check_str_err(source, "abstract concrete method should fail typechecking");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Method 'name' must have a body outside trait declarations")),
+        "expected concrete method body diagnostic, got: {errs:?}"
+    );
+}
+
 fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;

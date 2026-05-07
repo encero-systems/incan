@@ -784,7 +784,6 @@ impl Formatter {
         self.format_type(&method.return_type.node);
 
         if method.body.is_none() {
-            self.writer.write(": ...");
             if self.writer.line_length_exceeded() {
                 self.writer.restore(checkpoint);
                 self.write_method_prefix(method);
@@ -792,7 +791,6 @@ impl Formatter {
                 self.format_params_multiline(method.receiver.as_ref(), &method.params);
                 self.writer.write(") -> ");
                 self.format_type(&method.return_type.node);
-                self.writer.write(": ...");
             }
             self.writer.newline();
             return;

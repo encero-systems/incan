@@ -135,7 +135,7 @@ impl<'a> Parser<'a> {
                 } else if self.starts_property_decl() {
                     properties.push(self.property_decl(method_decorators, true)?);
                 } else {
-                    methods.push(self.method_decl(method_decorators)?);
+                    methods.push(self.method_decl(method_decorators, true)?);
                 }
                 self.skip_newlines();
             }
@@ -179,7 +179,7 @@ impl<'a> Parser<'a> {
 
             // Check if it's a method (`def` or surface-modifier-prefixed `def`).
             if self.starts_surface_function_decl() {
-                methods.push(self.method_decl(decorators)?);
+                methods.push(self.method_decl(decorators, false)?);
             } else if self.starts_surface_property_decl() {
                 properties.push(self.property_decl(decorators, false)?);
             } else if self.starts_method_alias_decl() {
