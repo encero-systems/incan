@@ -996,6 +996,8 @@
       
         
       
+        
+      
     
     
       
@@ -1185,6 +1187,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
   </span>
   
 
@@ -1772,6 +1795,8 @@
       
         
       
+        
+      
     
     
       
@@ -1824,6 +1849,27 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
   </span>
   
 
@@ -4859,6 +4905,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfc-030-stdcollections" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 030 std.collections
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5274,6 +5329,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfc-030-stdcollections" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 030 std.collections
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5386,7 +5450,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, a graph stdlib surface, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, graph and collections stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; and RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -5401,6 +5465,7 @@
 <li>enum-owned behavior should live on the enum itself, and enums should be able to adopt the same trait protocols as models and classes</li>
 <li>operator overloading should present traits as nominal capability contracts while keeping dunder methods as the explicit implementation hooks</li>
 <li>in-memory graph-shaped data should have one small stdlib vocabulary for node ids, edge ids, directed graphs, DAGs, multigraphs, adjacency, traversal, and cycle-aware ordering</li>
+<li>specialized collection semantics should have explicit stdlib types instead of forcing every queue, multiset, ordered map, sorted set, layered map, or priority queue through bare builtin containers</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>testing should feel like a first-class workflow, with inline unit tests, fixtures, parametrization, selection, scheduling, and machine-readable reports owned by Incan rather than delegated to ad hoc scripts</li>
 <li>iterator pipelines should be lazy by default, with terminal consumers such as <code>.collect()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, and <code>.fold()</code> making realization or summarization explicit</li>
@@ -5549,6 +5614,11 @@
 <p>Graphs are ordinary values rather than ambient singletons. Store them on models, pass them to functions, and keep separate graph instances for separate requests, tests, or pipeline plans.</p>
 <p>The v1 surface is intentionally not a graph database, persistence layer, query language, or distributed graph engine. Future graph expansion remains stdlib design work rather than ad hoc growth.</p>
 <p>See also: <a href="../../language/reference/stdlib/graph/">std.graph reference</a>, <a href="/dev/RFCs/closed/implemented/047_lightweight_directed_graph_stdlib">RFC 047</a>.</p>
+<h3 id="rfc-030-stdcollections">RFC 030 <code>std.collections</code><a class="headerlink" href="#rfc-030-stdcollections" title="Permanent link">&para;</a></h3>
+<p><code>std.collections</code> now provides the standard-library namespace for specialized container types that are semantically distinct from builtin <code>list</code>, <code>dict</code>, and <code>set</code>. The module covers <code>Deque[T]</code>, <code>Counter[T]</code>, <code>DefaultDict[K, V]</code>, <code>OrderedDict[K, V]</code>, <code>OrderedSet[T]</code>, <code>SortedDict[K, V]</code>, <code>SortedSet[T]</code>, <code>ChainMap[K, V]</code>, and <code>PriorityQueue[T]</code>.</p>
+<p>These are ordinary Incan stdlib types. They import through <code>from std.collections import ...</code>, resolve through the standard stdlib registry and source loader, and do not use Rust-backed stdlib dispatch.</p>
+<p>Use builtin collections for ordinary values. Use <code>std.collections</code> when the collection behavior is the point: double-ended queue operations, counted membership, missing-key defaulting, insertion-order stability, sorted traversal, layered configuration, or priority scheduling.</p>
+<p>See also: <a href="../../language/reference/stdlib/collections/">std.collections reference</a>, <a href="/dev/RFCs/closed/implemented/030_std_collections">RFC 030</a>.</p>
 <h2 id="detailed-inventory">Detailed inventory<a class="headerlink" href="#detailed-inventory" title="Permanent link">&para;</a></h2>
 <p>The sections above are the release story. The list below is the detailed inventory of language, compiler, runtime, tooling, and docs changes that have landed for <code>0.3</code>, grouped roughly by theme rather than by the order work happened to land.</p>
 <h3 id="control-flow">Control flow<a class="headerlink" href="#control-flow" title="Permanent link">&para;</a></h3>
@@ -5610,6 +5680,7 @@
 <h3 id="parser-and-syntax">Parser and syntax<a class="headerlink" href="#parser-and-syntax" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Language/Stdlib</strong>: <code>std.graph</code> adds explicit in-memory graph values with direct <code>DiGraph[T]()</code>, <code>Dag[T]()</code>, and <code>MultiDiGraph[T]()</code> construction, acyclicity-enforcing DAGs, stable <code>EdgeId</code> values for parallel multigraph edges, stable <code>NodeId</code> values, typed node payloads, node and edge removal, adjacency queries, roots and sinks, BFS/DFS traversal helpers, and cycle-reporting topological order for dependency and plan graphs (#204, RFC 047).</li>
+<li><strong>Language/Stdlib</strong>: <code>std.collections</code> adds explicit specialized collection types for double-ended queues, multisets, default-valued maps, ordered maps and sets, sorted maps and sets, layered maps, and priority queues. The namespace is registered as an ordinary source stdlib module with no feature gate, no extra Cargo dependencies, and no Rust-backed stdlib dispatch (#164, RFC 030).</li>
 <li><strong>Language/Compiler</strong>: RFC 029 adds anonymous closed union annotations with canonical <code>Union[A, B, ...]</code> and <code>A | B</code> syntax. The compiler normalizes duplicates, nested unions, ordering, and <code>None</code>-containing unions, accepts member-to-union and union-to-union assignability, lowers ordinary unions to generated closed Rust enums, preserves <code>None</code> unions on the existing <code>Option[...]</code> path, and supports <code>isinstance</code> narrowing for true branches, else branches, wider unions, chained <code>elif</code> branches, and <code>Option[Union[...]]</code>, plus <code>is None</code> / <code>is not None</code> narrowing and exhaustive <code>match</code> type patterns (#163, RFC 029).</li>
 <li><strong>Language/Stdlib</strong>: RFC 028 expands <code>std.traits.ops</code> into the nominal operator capability vocabulary for custom types, including <code>FloorDiv</code>, <code>Pow</code>, shifts, bitwise operators, pipe operators, <code>MatMul</code>, unary <code>Not</code>, <code>GetItem</code> / <code>SetItem</code>, and explicit in-place compound-assignment traits for <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>@=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, and <code>&gt;&gt;=</code> (#162, RFC 028).</li>
 <li><strong>Language/Stdlib</strong>: RFC 055 introduces <code>std.fs</code> as the path-centric filesystem module: <code>Path</code>, <code>File</code>, <code>OpenOptions</code>, directory entries, metadata, disk usage, structured <code>IoError</code>, whole-file byte/text helpers, chunked file handles, traversal, globbing, copy/move, recursive deletion, links, permissions, and explicit durability syncs (#286, RFC 055).</li>
@@ -5670,6 +5741,7 @@
 <li>Extensible derive protocol: <a href="/dev/RFCs/closed/implemented/024_extensible_derive_protocol">RFC 024</a></li>
 <li>Trait-based operator overloading: <a href="/dev/RFCs/closed/implemented/028_trait_based_operator_overloading">RFC 028</a></li>
 <li>Union types and type narrowing: <a href="/dev/RFCs/closed/implemented/029_union_types">RFC 029</a></li>
+<li>Extended collection types: <a href="/dev/RFCs/closed/implemented/030_std_collections">RFC 030</a></li>
 <li>Value enums: <a href="/dev/RFCs/032_value_enums">RFC 032</a></li>
 <li>Variadic positional arguments and keyword capture: <a href="/dev/RFCs/closed/implemented/038_variadic_positional_args_and_keyword_capture">RFC 038</a></li>
 <li>Computed properties: <a href="/dev/RFCs/closed/implemented/046_computed_properties">RFC 046</a></li>

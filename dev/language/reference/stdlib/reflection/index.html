@@ -998,6 +998,8 @@
       
         
       
+        
+      
     
     
       
@@ -1187,6 +1189,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
   </span>
   
 
@@ -1778,6 +1801,8 @@
       
         
       
+        
+      
     
     
       
@@ -1830,6 +1855,27 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
   </span>
   
 
@@ -2026,6 +2072,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiler-generated-field-value-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler-generated field value views
+    </span>
+  </a>
   
 </li>
       
@@ -4854,6 +4909,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#compiler-generated-field-value-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler-generated field value views
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4942,6 +5006,8 @@ Calling <code>obj.__fields__()</code> and inspecting the returned records does n
 <li>Field metadata like <code>[alias="..."]</code> and <code>[description="..."]</code> is model-only.</li>
 <li>For a <code>class</code>, <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</li>
 </ul>
+<h2 id="compiler-generated-field-value-views">Compiler-generated field value views<a class="headerlink" href="#compiler-generated-field-value-views" title="Permanent link">&para;</a></h2>
+<p>Model and class values expose <code>__field_value__(name: str) -&gt; Option[T]</code> and <code>__field_items__() -&gt; list[tuple[str, T]]</code> directly; no <code>std.reflection</code> import is required. <code>T</code> is the common field type when all exposed fields share one type, otherwise a union of the exposed field types. These views are read-only and use the same field ordering as <code>__fields__()</code>.</p>
 
 
 

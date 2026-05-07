@@ -998,6 +998,8 @@
       
         
       
+        
+      
     
     
       
@@ -1187,6 +1189,27 @@
   
   <span class="md-ellipsis">
     Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
   </span>
   
 
@@ -1793,6 +1816,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#runtime-field-overlay-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime Field Overlay Views
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1834,6 +1866,8 @@
       
         
           
+        
+      
         
       
         
@@ -1910,6 +1944,27 @@
   
   <span class="md-ellipsis">
     std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
   </span>
   
 
@@ -4870,6 +4925,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#runtime-field-overlay-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime Field Overlay Views
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4972,6 +5036,30 @@
 <p>Check if a field exists:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">has_email</span> <span class="o">=</span> <span class="nb">any</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;email&quot;</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">user</span><span class="o">.</span><span class="n">__fields__</span><span class="p">())</span>
 </code></pre></div>
+<h2 id="runtime-field-overlay-views">Runtime Field Overlay Views<a class="headerlink" href="#runtime-field-overlay-views" title="Permanent link">&para;</a></h2>
+<p>Models and classes also expose compiler-generated read-only field value views. These hooks are intended for collection and reflection protocols that need to treat a model or class value as a stable named-field overlay without using stringly dynamic attribute access.</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Returns</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>obj.__field_value__(name: str)</code></td>
+<td><code>Option[T]</code></td>
+<td>Returns <code>Some(value)</code> for a known field and <code>None</code> for an unknown field name. <code>T</code> is the common field type when all exposed fields share one type, otherwise a union of the exposed field types.</td>
+</tr>
+<tr>
+<td><code>obj.__field_items__()</code></td>
+<td><code>list[tuple[str, T]]</code></td>
+<td>Returns <code>(field_name, value)</code> pairs in the same field order used by <code>__fields__()</code>. <code>T</code> follows the same common-type-or-union rule as <code>__field_value__</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>class</code> values, inherited fields are included before fields declared on the child class, matching <code>__fields__()</code> ordering. The returned views are read-only snapshots of field names and values; mutating a returned list does not add, remove, rename, or update object fields.</p>
 
 
 
