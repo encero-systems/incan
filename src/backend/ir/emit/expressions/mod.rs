@@ -91,6 +91,31 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Convert a direct `Vec<T>` argument into `Vec<U>` at external Rust call boundaries.
+    ///
+    /// The Incan typechecker does not prove Rust `From<T>` relationships. At an external Rust boundary, Rust's own
+    /// trait checker is the source of truth, so this emits an element-level `.into()` map only when metadata says the
+    /// parameter expects a different direct list element type.
+    pub(super) fn external_list_arg_element_coercion(
+        &self,
+        arg: &TypedExpr,
+        target_ty: Option<&IrType>,
+        emitted: TokenStream,
+    ) -> Option<TokenStream> {
+        let Some(IrType::List(target_elem)) = target_ty else {
+            return None;
+        };
+        let IrType::List(source_elem) = &arg.ty else {
+            return None;
+        };
+        if source_elem == target_elem || Self::is_unresolved_call_seed_type(target_elem) {
+            return None;
+        }
+        Some(quote! {
+            (#emitted).into_iter().map(|__incan_item| ::std::convert::Into::into(__incan_item)).collect::<Vec<_>>()
+        })
+    }
+
     /// Build a typed tuple-field read for compiler-expanded tuple unpacking.
     pub(super) fn tuple_field_expr(expr: &TypedExpr, idx: usize, ty: IrType) -> TypedExpr {
         TypedExpr::new(
@@ -1660,6 +1685,234 @@ mod tests {
         assert!(
             !rendered.contains(". into ()"),
             "namespace call must not apply external-Rust `.into()` coercions, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_call_coerces_list_elements_to_target_vec_element() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "build_frame".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Function {
+                        params: vec![IrType::List(Box::new(IrType::Struct(
+                            "polars::prelude::Column".to_string(),
+                        )))],
+                        ret: Box::new(IrType::Unit),
+                    },
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "columns".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::List(Box::new(IrType::Struct("polars::series::Series".to_string()))),
+                    ),
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            IrType::Unit,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("(columns) . into_iter () . map"),
+            "expected external Rust list arg to map elements through Into, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains(":: std :: convert :: Into :: into"),
+            "expected external Rust list arg to use fully qualified Into::into, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("collect :: < Vec < _ >> ()"),
+            "expected external Rust list arg to collect into Vec<_>, got `{rendered}`"
+        );
+
+        let literal_expr = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "build_frame".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Function {
+                        params: vec![IrType::List(Box::new(IrType::Struct(
+                            "polars::prelude::Column".to_string(),
+                        )))],
+                        ret: Box::new(IrType::Unit),
+                    },
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::List(vec![
+                            IrListEntry::Element(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "id_series".to_string(),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("polars::series::Series".to_string()),
+                            )),
+                            IrListEntry::Element(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "value_series".to_string(),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("polars::series::Series".to_string()),
+                            )),
+                        ]),
+                        IrType::List(Box::new(IrType::Struct("polars::series::Series".to_string()))),
+                    ),
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            IrType::Unit,
+        );
+        let literal_rendered = emitter
+            .emit_expr(&literal_expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?
+            .to_string();
+        assert!(
+            literal_rendered.contains("vec ! [id_series , value_series]") && literal_rendered.contains("into_iter"),
+            "expected list literal external arg to get element coercion wrapper, got `{literal_rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_call_leaves_matching_list_elements_unmapped() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let series_ty = IrType::Struct("polars::series::Series".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "use_series".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Function {
+                        params: vec![IrType::List(Box::new(series_ty.clone()))],
+                        ret: Box::new(IrType::Unit),
+                    },
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "series".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::List(Box::new(series_ty)),
+                    ),
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            IrType::Unit,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("use_series (series)"),
+            "expected matching Vec element types to pass through directly, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("into_iter"),
+            "matching Vec element types must not add element coercion, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_associated_method_coerces_list_elements_to_target_vec_element() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "DataFrame".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Struct("polars::prelude::DataFrame".to_string()),
+                )),
+                method: "new".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "columns".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::List(Box::new(IrType::Struct("polars::series::Series".to_string()))),
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "columns".to_string(),
+                        ty: IrType::List(Box::new(IrType::Struct("polars::prelude::Column".to_string()))),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Struct("polars::prelude::DataFrame".to_string()),
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("polars::prelude::DataFrame".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("DataFrame :: new ((columns) . into_iter () . map"),
+            "expected external Rust associated method list arg to map elements through Into, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains(":: std :: convert :: Into :: into"),
+            "expected external Rust associated method list arg to use fully qualified Into::into, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("collect :: < Vec < _ >> ()"),
+            "expected external Rust associated method list arg to collect into Vec<_>, got `{rendered}`"
         );
         Ok(())
     }

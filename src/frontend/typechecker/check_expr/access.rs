@@ -2664,6 +2664,20 @@ impl TypeChecker {
                             }
                             return ResolvedType::Unit;
                         }
+                        M::Clone => {
+                            if !args.is_empty() {
+                                self.errors.push(errors::type_mismatch(
+                                    "no arguments",
+                                    &format!("{} argument(s)", args.len()),
+                                    span,
+                                ));
+                            }
+                            if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
+                                self.errors
+                                    .push(errors::list_clone_requires_clone(&elem.to_string(), span));
+                            }
+                            return list_ty(elem.clone());
+                        }
                         M::Pop => return elem,
                         M::Contains => return ResolvedType::Bool,
                         M::Swap | M::Reserve | M::ReserveExact | M::Remove => return ResolvedType::Unit,

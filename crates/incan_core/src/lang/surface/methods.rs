@@ -280,6 +280,7 @@ pub mod list_methods {
     pub enum ListMethodId {
         Append,
         Extend,
+        Clone,
         Pop,
         Contains,
         Swap,
@@ -309,6 +310,14 @@ pub mod list_methods {
             "Append all elements from another list.",
             RFC::_009,
             Since(0, 2),
+        ),
+        info(
+            ListMethodId::Clone,
+            "clone",
+            &[],
+            "Clone the list container and each element.",
+            RFC::_009,
+            Since(0, 3),
         ),
         info(
             ListMethodId::Pop,

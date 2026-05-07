@@ -113,6 +113,7 @@ pub(super) fn emit_collection_method(
             }
             Ok(quote! { () })
         }
+        CollectionMethodKind::Clone => Ok(quote! { #r.clone() }),
         CollectionMethodKind::Pop => {
             // Incan types `pop()` as `T`, not `Option<T>`. Route through the runtime helper so generated Rust does not
             // encode the empty-list fallback itself while preserving the canonical Python-like error message.

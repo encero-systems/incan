@@ -25,6 +25,17 @@ Use `append` to add an element at the end, and `pop()` to remove and return the 
 !!! tip "Coming from Python?"
     Incan lists are close to Python’s: out-of-range indexing and empty `list.pop()` both surface as [`IndexError`](../../reference/language.md#indexerror) panics with the same canonical messages as CPython where applicable (including `pop from empty list`).
 
+Use `clone()` when you need to keep the original list and work with a copy. The element type must satisfy `Clone`, so models and classes that are not plain scalar values should derive or implement that capability.
+
+```incan
+@derive(Clone)
+model Node:
+    id: int
+
+nodes = [Node(id=1), Node(id=2)]
+copy = nodes.clone()
+```
+
 Use `list.repeat(value, count)` for fixed-length initialization when every element should start from the same clone-derived value:
 
 ```incan

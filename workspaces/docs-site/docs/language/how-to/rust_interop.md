@@ -304,9 +304,12 @@ When calling Rust functions or methods, the compiler can apply a bounded, compil
 | `bool`         | `bool`                  | `bool`                         |
 | `str`          | `String`                | `String`, `&str`               |
 | `bytes`        | `Vec<u8>`               | `Vec<u8>`, `&[u8]`             |
+| `List[T]`      | `Vec<T>`                | `Vec<U>` when Rust accepts `U: From<T>` |
 | `None` / unit  | `()`                    | `()`                           |
 
 Exact-width numeric adaptation is intentionally narrow. `i8` can flow into an `i16`/`i32`/`i64` Rust parameter, `u8` can flow into a wider unsigned or strictly wider signed parameter, and `f32` can flow into `f64`. Narrowing, signed-to-unsigned conversion, and `float`/`f64` to `f32` are rejected unless the Incan code performs an explicit conversion first.
+
+For direct list arguments passed to external Rust functions or methods, Incan can adapt the element type at the boundary. If a Rust callable expects `Vec<U>` and the Incan value is `list[T]`, the generated Rust maps each element through `.into()` and lets Rust enforce that `U: From<T>`. This is intentionally one level deep; nested collection adaptation is not implied.
 
 Example (`f32 -> f64` boundary adaptation):
 
@@ -446,6 +449,8 @@ Incan types map to canonical Rust types:
     ```
 
     This keeps interop ergonomic without exposing Rust borrow syntax in Incan code.
+
+Direct `list[T]` arguments lower to Rust `Vec<T>`. At external Rust call boundaries, a `list[T]` can also satisfy a `Vec<U>` parameter when Rust has the corresponding `From<T>` / `Into<U>` element conversion.
 
 ## Understanding Rust types (optional)
 

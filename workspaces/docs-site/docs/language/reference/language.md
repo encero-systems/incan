@@ -593,6 +593,7 @@ and `@requires` keep their existing special behavior.
 |---|---|---|---|---|---|---|
 | Append | `append` |  | Append an element to the end of the list. | RFC 009 | 0.1 | Stable |
 | Extend | `extend` |  | Append all elements from another list. | RFC 009 | 0.2 | Stable |
+| Clone | `clone` |  | Clone the list container and each element. | RFC 009 | 0.3 | Stable |
 | Pop | `pop` |  | Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible). | RFC 009 | 0.1 | Stable |
 | Contains | `contains` |  | Return true if the list contains a value. | RFC 009 | 0.1 | Stable |
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |

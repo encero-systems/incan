@@ -303,6 +303,7 @@ impl<'a> IrEmitter<'a> {
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
+                let external_call_arg_shape = matches!(base_use_site, ValueUseSite::ExternalCallArg { .. });
                 let arg_use_site = match (base_use_site, param) {
                     (ValueUseSite::ExternalCallArg { .. }, Some(param)) if !matches!(&param.ty, IrType::Generic(_)) => {
                         ValueUseSite::ExternalCallArg {
@@ -364,6 +365,12 @@ impl<'a> IrEmitter<'a> {
                 };
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
                     return Ok(wrapped);
+                }
+                if external_call_arg_shape
+                    && let Some(coerced) =
+                        self.external_list_arg_element_coercion(arg, Some(&param.ty), emitted.clone())
+                {
+                    emitted = coerced;
                 }
                 if external_method_shape
                     && !external_param_planned
