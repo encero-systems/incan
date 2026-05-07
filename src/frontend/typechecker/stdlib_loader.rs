@@ -53,6 +53,7 @@ struct StdlibModuleData {
     traits: Vec<(String, TraitInfo)>,
     types: Vec<(String, TypeInfo)>,
     constants: Vec<(String, VariableInfo)>,
+    derivable_traits: Vec<String>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
 }
@@ -66,6 +67,7 @@ pub(crate) struct FunctionMeta {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TraitMeta {
     pub rust_module_path: Option<String>,
+    pub rust_derive_paths: Vec<String>,
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
@@ -164,6 +166,14 @@ impl StdlibAstCache {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");
         self.cache.get(&key)?.trait_meta.get(trait_name).cloned()
+    }
+
+    /// Return the traits listed by a module-level `__derives__ = [...]` declaration.
+    pub fn lookup_derivable_traits(&mut self, module_path: &[String]) -> Option<Vec<String>> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        let traits = &self.cache.get(&key)?.derivable_traits;
+        (!traits.is_empty()).then(|| traits.clone())
     }
 
     /// Return the already-loaded stdlib module path that exports `trait_name`, if known.
@@ -269,6 +279,7 @@ fn load_stdlib_module_data_unguarded(
         traits,
         types,
         constants,
+        derivable_traits: extract_derivable_traits(&program),
         function_meta,
         trait_meta,
     })
@@ -553,6 +564,9 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
         let ast::Declaration::Const(konst) = &decl.node else {
             continue;
         };
+        if konst.name == "__derives__" {
+            continue;
+        }
         let ty = konst
             .ty
             .as_ref()
@@ -568,6 +582,32 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
         ));
     }
     consts
+}
+
+/// Extract RFC 024 module-level derivable trait declarations.
+fn extract_derivable_traits(program: &ast::Program) -> Vec<String> {
+    for decl in &program.declarations {
+        let ast::Declaration::Const(konst) = &decl.node else {
+            continue;
+        };
+        if konst.name != "__derives__" {
+            continue;
+        }
+        let ast::Expr::List(entries) = &konst.value.node else {
+            return Vec::new();
+        };
+        return entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ast::ListEntry::Element(expr) => match &expr.node {
+                    ast::Expr::Ident(name) => Some(name.clone()),
+                    _ => None,
+                },
+                ast::ListEntry::Spread(_) => None,
+            })
+            .collect();
+    }
+    Vec::new()
 }
 
 /// Map one `with` supertrait bound to `(trait_name, type_arguments)` for stdlib trait metadata (RFC 042).
@@ -1057,15 +1097,39 @@ fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
     let rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
     for decl in &program.declarations {
         if let ast::Declaration::Trait(tr) = &decl.node {
+            let rust_derive_paths = rust_derive_paths_from_decorators(&tr.decorators);
             meta.insert(
                 tr.name.clone(),
                 TraitMeta {
                     rust_module_path: rust_module_path.clone(),
+                    rust_derive_paths,
                 },
             );
         }
     }
     meta
+}
+
+/// Extract RFC 024 `@rust.derive(...)` path strings from stdlib trait decorators.
+fn rust_derive_paths_from_decorators(decorators: &[ast::Spanned<ast::Decorator>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for decorator in decorators {
+        if decorators::from_str(&decorator.node.path.segments.join(".")) != Some(DecoratorId::RustDerive) {
+            continue;
+        }
+        for arg in &decorator.node.args {
+            let ast::DecoratorArg::Positional(expr) = arg else {
+                continue;
+            };
+            let ast::Expr::Literal(ast::Literal::String(path)) = &expr.node else {
+                continue;
+            };
+            if !out.iter().any(|existing| existing == path) {
+                out.push(path.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Convert an AST `Type` to a `ResolvedType`.
@@ -1368,6 +1432,7 @@ pub type File = rusttype RustFile:
             traits: extract_trait_signatures(&program),
             types: extract_type_signatures(&program),
             constants: extract_const_signatures(&program),
+            derivable_traits: extract_derivable_traits(&program),
             function_meta: extract_function_meta(&program),
             trait_meta: extract_trait_meta(&program),
         };
@@ -1664,6 +1729,29 @@ pub type File = rusttype RustFile:
         assert!(iterator_info.methods.contains_key("map"));
         assert!(iterator_info.methods.contains_key("flat_map"));
         assert!(iterator_info.methods.contains_key("sum"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_serde_json_derivable_traits() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load stdlib/serde/json.incn")?;
+
+        assert_eq!(
+            module.derivable_traits,
+            vec!["Serialize".to_string(), "Deserialize".to_string()]
+        );
+        let serialize_meta = module.trait_meta.get("Serialize").ok_or("Serialize metadata missing")?;
+        assert_eq!(serialize_meta.rust_derive_paths, vec!["serde::Serialize".to_string()]);
+        let deserialize_meta = module
+            .trait_meta
+            .get("Deserialize")
+            .ok_or("Deserialize metadata missing")?;
+        assert_eq!(
+            deserialize_meta.rust_derive_paths,
+            vec!["serde::Deserialize".to_string()]
+        );
 
         Ok(())
     }

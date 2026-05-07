@@ -58,6 +58,20 @@ impl<'a> Parser<'a> {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.starts_surface_function_decl() {
             Declaration::Function(self.function_decl(decorators, visibility)?)
+        } else if self.starts_implicit_derives_decl() {
+            if visibility == Visibility::Public {
+                return Err(CompileError::syntax(
+                    "`__derives__` cannot be public".to_string(),
+                    self.current_span(),
+                ));
+            }
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "`__derives__` cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Const(self.implicit_derives_decl()?)
         } else if self.starts_alias_decl() {
             if !decorators.is_empty() {
                 return Err(CompileError::syntax(
@@ -92,6 +106,25 @@ impl<'a> Parser<'a> {
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;
         Ok(Spanned::new(decl, Span::new(start, end)))
+    }
+
+    /// Return whether the cursor is at an RFC 024 module-level `__derives__ = ...` declaration.
+    fn starts_implicit_derives_decl(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "__derives__")
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Parse an RFC 024 module-level `__derives__` declaration as compiler-recognized const metadata.
+    fn implicit_derives_decl(&mut self) -> Result<ConstDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' after __derives__")?;
+        let value = self.expression()?;
+        Ok(ConstDecl {
+            visibility: Visibility::Private,
+            name,
+            ty: None,
+            value,
+        })
     }
 
     fn const_decl_with_visibility(&mut self, visibility: Visibility) -> Result<ConstDecl, CompileError> {

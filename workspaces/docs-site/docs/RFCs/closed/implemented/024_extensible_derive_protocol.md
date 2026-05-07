@@ -1,6 +1,6 @@
 # RFC 024: extensible derive protocol
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-02-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/148
 - **RFC PR:** —
 - **Written against:** v0.1
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -520,30 +520,6 @@ multiple adopted traits. This is straightforward, but it does add another loweri
 
 The implementation order is not part of the public contract. The important point is that the derive protocol remains module-driven rather than hardcoded around one closed compiler registry.
 
-## Design decisions
-
-The following questions were considered during design and are recorded here for posterity.
-
-1. **Trait naming within modules**: modules use short names (`Serialize`, `Deserialize`). Users who need disambiguation
-use import aliasing: `from std.serde.json import Serialize as JsonSerialize`. This keeps module definitions simple and pushes naming concerns to the import site where the user has full context.
-
-2. **`__derives__` syntax**: parsed as an implicit const assignment. The dunder convention already signals
-"compiler-recognized"; an explicit `const` keyword would be redundant. It is semantically immutable — reassigning
-   `__derives__` is a compile error.
-
-3. **Missing or empty `__derives__`**: a module without `__derives__` is not derivable. A module with
-   `__derives__ = []` is a compile error (or at minimum a warning) — an empty list signals a mistake, since there is
-no reason to declare `__derives__` without listing at least one trait.
-
-4. **Bare `Serialize` / `Deserialize` derives**: bare `@derive(Serialize, Deserialize)` ceases to exist as a `DeriveId`
-shortcut. Users import the format module and derive it: `@derive(json)`. If direct access to the Rust serde traits is needed, `rust::` interop remains available. This eliminates ambiguity and makes the format dependency explicit.
-
-5. **`@rust.derive` validation**: treated the same as `@rust.extern` — the path string is passed through to the emitted
-Rust code. Validation happens at Rust compile time, not in the Incan compiler. This keeps the protocol simple and works with any Rust derive crate without the Incan compiler needing to know about them.
-
-6. **Multiple `@rust.derive` on one trait**: allowed. A single trait may require multiple Rust-level derives. The
-decorator accepts multiple arguments: `@rust.derive("serde::Serialize", "apache_avro::AvroSchema")`.
-
 ## Layers affected
 
 - **Parser / AST**: must recognize the derive protocol surface, including module-level `__derives__` declarations and format-module derive usage.
@@ -552,13 +528,102 @@ decorator accepts multiple arguments: `@rust.derive("serde::Serialize", "apache_
 - **Stdlib / library surfaces**: derivable modules must declare their exported traits and methods coherently enough to participate in generic bounds and method adoption.
 - **Docs / tooling**: must explain the difference between compiler intrinsics and extensible derive modules clearly.
 
+## Implementation Plan
+
+### Phase 1: Derive protocol metadata
+
+- Recognize module-level `__derives__` declarations as derivable-module metadata rather than ordinary runtime state.
+- Recognize trait-level `@rust.derive(...)` metadata, including multiple Rust derive paths on one trait.
+- Validate invalid derive metadata with span-precise diagnostics for missing traits, non-trait entries, duplicate or empty lists, and reassignment of `__derives__`.
+
+### Phase 2: Derive resolution and trait adoption
+
+- Extend `@derive(...)` resolution so imported modules can expand through `module.__derives__`.
+- Allow direct imports or aliases of derivable traits to adopt only that trait.
+- Preserve built-in compiler derives as `DeriveId` intrinsics and remove format-specific shortcuts from that path when the protocol supplies the library-backed spelling.
+- Ensure adopted traits participate in normal method resolution, associated-function lookup, and generic `with` bounds.
+
+### Phase 3: Lowering and emission
+
+- Carry adopted derive-trait metadata through lowering so emission can collect required Rust `#[derive(...)]` paths.
+- Deduplicate backend derive paths across multiple adopted traits and modules.
+- Keep generated imports coherent for stdlib JSON traits and custom derivable modules.
+
+### Phase 4: Proof points, docs, and release hygiene
+
+- Migrate `std.serde.json` to the protocol as the compatibility proof point.
+- Add at least one non-Serde derivable module test fixture so the protocol is not JSON-shaped.
+- Add parser/typechecker/codegen/integration coverage for module derives, multiple modules, partial trait imports and aliases, invalid metadata, and ambiguous methods.
+- Update authored language docs and release notes, then bump the active `0.3.0-dev.N` version.
+
+## Implementation log
+
+### Spec / lifecycle
+
+- [x] Review RFC 024 and confirm Phase 4 proof-point scope remains part of issue #148.
+- [x] Keep RFC 024 lifecycle state and checklist current as implementation lands.
+
+### Parser / AST
+
+- [x] Parse and preserve module-level `__derives__` declarations as compiler-recognized metadata.
+- [x] Parse and preserve trait-level `@rust.derive(...)` metadata.
+- [x] Reject malformed `__derives__` declarations with useful diagnostics.
+
+### Typechecker / symbol resolution
+
+- [x] Resolve `@derive(module)` through imported derivable modules.
+- [x] Resolve `@derive(TraitAlias)` for direct and aliased trait imports.
+- [x] Adopt selected derive traits onto models/classes and surface their methods.
+- [x] Preserve built-in derives as intrinsics and avoid hardcoded JSON-only behavior in new protocol paths.
+- [x] Diagnose missing `__derives__`, non-trait entries, collisions, and ambiguity.
+
+### Lowering / emission
+
+- [x] Carry adopted derive-trait metadata into IR/lowering.
+- [x] Emit and deduplicate Rust derive paths from adopted traits.
+- [x] Preserve generated imports for stdlib derivable modules and aliased derivable traits.
+
+### Stdlib / runtime
+
+- [x] Migrate `std.serde.json` declarations to use `__derives__` and `@rust.derive`.
+- [x] Add a second Serde-format derivable fixture/proof point.
+- [x] Add a non-Serde derivable fixture/proof point.
+
+### Tests
+
+- [x] Add parser/typechecker coverage for valid and invalid derivable modules.
+- [x] Add codegen snapshots for single module derive and partial/aliased trait derives.
+- [x] Add integration-style codegen coverage proving adopted methods and generic bounds lower.
+- [x] Add diagnostics regression tests for invalid derive metadata.
+
+### Docs / release
+
+- [x] Update language derive/trait docs for module-based derives and partial derives.
+- [x] Update stdlib derive/serde documentation as needed.
+- [x] Add a `0.3` release notes entry.
+- [x] Bump the active development version.
+
 ## Design Decisions
 
-1. **Derive-time metadata** is out of scope for this RFC and is deferred to future format-specific RFCs.
+The following questions were considered during design and are recorded here for posterity.
+
+1. **Trait naming within modules**: modules use short names (`Serialize`, `Deserialize`). Users who need disambiguation use import aliasing: `from std.serde.json import Serialize as JsonSerialize`. This keeps module definitions simple and pushes naming concerns to the import site where the user has full context.
+
+2. **`__derives__` syntax**: parsed as an implicit const assignment. The dunder convention already signals "compiler-recognized"; an explicit `const` keyword would be redundant. It is semantically immutable — reassigning `__derives__` is a compile error.
+
+3. **Missing or empty `__derives__`**: a module without `__derives__` is not derivable. A module with `__derives__ = []` is a compile error, since there is no reason to declare `__derives__` without listing at least one trait.
+
+4. **Bare `Serialize` / `Deserialize` derives**: bare `@derive(Serialize, Deserialize)` ceases to exist as a `DeriveId` shortcut. Users import the format module and derive it: `@derive(json)`. If direct access to the Rust serde traits is needed, `rust::` interop remains available. This eliminates ambiguity and makes the format dependency explicit.
+
+5. **`@rust.derive` validation**: treated the same as `@rust.extern` — the path string is passed through to the emitted Rust code. Validation happens at Rust compile time, not in the Incan compiler. This keeps the protocol simple and works with any Rust derive crate without the Incan compiler needing to know about them.
+
+6. **Multiple `@rust.derive` on one trait**: allowed. A single trait may require multiple Rust-level derives. The decorator accepts multiple arguments: `@rust.derive("serde::Serialize", "apache_avro::AvroSchema")`.
+
+7. **Derive-time metadata** is out of scope for this RFC and is deferred to future format-specific RFCs.
    - Some formats may need per-model configuration such as JSON naming conventions or Protobuf field numbering strategy.
    - This RFC does not decide whether that metadata belongs in decorator args, field metadata, or a separate mechanism.
 
-2. **Pretty printing** is deferred to the `std.serde.json` implementation rather than settled here.
+8. **Pretty printing** is deferred to the `std.serde.json` implementation rather than settled here.
    - This RFC does not decide whether `.to_json()` should accept formatting options or whether pretty printing should be a separate helper such as `json.pretty(...)`.
 
 ## References

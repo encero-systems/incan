@@ -25,6 +25,11 @@ fn generate_rust(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+fn parse_incan_program(source: &str, context: &str) -> incan::frontend::ast::Program {
+    let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lexer failed: {errs:?}"));
+    parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parser failed: {errs:?}"))
+}
+
 /// Generate Rust code from Incan source with a populated library index
 fn generate_rust_with_widgets_manifest(source: &str) -> String {
     use incan::frontend::library_manifest_index::{
@@ -2422,6 +2427,140 @@ fn test_std_serde_with_serialize_trait_codegen() {
     let source = load_test_file("std_serde_with_serialize_trait");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
+}
+
+/// RFC 024: module-level derive metadata should let `@derive(json)` adopt serde traits and emit Rust derives.
+#[test]
+fn test_rfc024_module_derive_json_codegen() {
+    let source = load_test_file("rfc024_module_derive_json");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("serde::Serialize,serde::Deserialize"),
+        "expected @derive(json) to forward serde derives; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impljson::SerializeforPayload{fnto_json(&self)->String"),
+        "expected @derive(json) to emit the adopted json.Serialize trait impl with its serde adapter; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc024_module_derive_json", rust_code);
+}
+
+/// RFC 024: imported trait aliases should work as partial derives.
+#[test]
+fn test_rfc024_partial_alias_derive_codegen() {
+    let source = load_test_file("rfc024_partial_alias_derive");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implJsonSerializeforPayload{fnto_json(&self)->String"),
+        "expected @derive(JsonSerialize) to emit the adopted aliased trait impl with its serde adapter; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("rfc024_partial_alias_derive", rust_code);
+}
+
+/// RFC 024: user modules can define a second serde-backed format without compiler changes.
+#[test]
+fn test_rfc024_user_module_serde_format_codegen() {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+from std.serde import json
+import yaml
+
+@derive(json, yaml)
+model Payload:
+  value: int
+
+def encode_yaml[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def encode_json[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode_yaml(Payload(value=1))
+"#;
+
+    let yaml_ast = parse_incan_program(yaml_source, "yaml module");
+    let main_ast = parse_incan_program(source, "consumer");
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("yaml", &yaml_ast, vec!["yaml".to_string()]);
+    let (main_code, _modules) = codegen
+        .try_generate_multi_file_nested(&main_ast, &[vec!["yaml".to_string()]])
+        .unwrap_or_else(|err| panic!("user serde derivable module should codegen: {err:?}"));
+    let rust_code = normalize_codegen_output(&main_code);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert_eq!(
+        rust_code.matches("serde::Serialize").count(),
+        1,
+        "expected duplicate serde derive paths to be deduplicated; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("impljson::SerializeforPayload"),
+        "expected stdlib json.Serialize impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implyaml::SerializeforPayload"),
+        "expected user yaml.Serialize impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnto_yaml(&self)->String"),
+        "expected yaml default method body to expand into the impl; generated:\n{rust_code}"
+    );
+}
+
+/// RFC 024: derivable modules are not limited to serde-backed Rust derives.
+#[test]
+fn test_rfc024_user_module_pure_incan_derivable_codegen() {
+    let schema_source = r#"
+__derives__ = [Named]
+
+pub trait Named:
+  def schema_name(self) -> str:
+    return str("schema")
+"#;
+    let source = r#"
+import schema
+
+@derive(schema)
+model Payload:
+  value: int
+
+def name[T with schema.Named](value: T) -> str:
+  return value.schema_name()
+
+def main() -> str:
+  return name(Payload(value=1))
+"#;
+
+    let schema_ast = parse_incan_program(schema_source, "schema module");
+    let main_ast = parse_incan_program(source, "consumer");
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("schema", &schema_ast, vec!["schema".to_string()]);
+    let (main_code, _modules) = codegen
+        .try_generate_multi_file_nested(&main_ast, &[vec!["schema".to_string()]])
+        .unwrap_or_else(|err| panic!("pure Incan derivable module should codegen: {err:?}"));
+    let rust_code = normalize_codegen_output(&main_code);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implschema::NamedforPayload"),
+        "expected user schema.Named impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnschema_name(&self)->String"),
+        "expected pure Incan default method body to expand into the impl; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("serde::Serialize"),
+        "pure derivable fixture should not emit serde derives; generated:\n{rust_code}"
+    );
 }
 
 #[test]

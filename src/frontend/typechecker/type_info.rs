@@ -46,6 +46,16 @@ pub struct TypeCheckInfo {
     /// Includes locally-declared and imported traits so backend lowering can handle cross-module trait hierarchies
     /// without relying on local AST declarations.
     pub trait_type_params: HashMap<String, Vec<String>>,
+    /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
+    ///
+    /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
+    /// user-authored derivable modules participate in the same derive expansion path as stdlib modules.
+    pub derivable_modules: HashMap<String, Vec<String>>,
+    /// RFC 024: Trait-level Rust derive paths keyed by module-qualified trait name, such as `yaml.Serialize`.
+    ///
+    /// The typechecker owns this because dependency modules are already imported and validated there. Lowering should
+    /// not re-run module resolution or assume RFC 024 metadata only exists in stdlib source.
+    pub trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// `rusttype` Incan name → canonical Rust path string (`substrait::proto::type::Binary`), when the checker
     /// resolved the underlying type to [`ResolvedType::RustPath`]. Used by lowering so `m::T` spellings emit full
     /// paths without re-running import resolution.
